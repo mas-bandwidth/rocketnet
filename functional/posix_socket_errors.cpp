@@ -239,40 +239,18 @@ static uint16_t posix_local_port( rocketnet_platform_socket_t * socket )
     return ntohs( ( (struct sockaddr_in*) &storage )->sin_port );
 }
 
-// datagrams queued on a socket and not yet read. darwin counts them
-// (SO_NUMRCVPKT, zero-length ones included); elsewhere the count is unknown
-// and the caller's bounded update loop is the only wait.
-
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+// datagrams queued on a socket and not yet read: darwin counts them
+// (SO_NUMRCVPKT, zero-length ones included). Only the darwin create case
+// below asks.
 static int posix_queued_datagrams( rocketnet_platform_socket_t * socket )
 {
-#if defined(SO_NUMRCVPKT)
     int count = 0;
     socklen_t bytes = sizeof(count);
     posix_check( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &count, &bytes ) == 0 );
     return count;
-#else
-    (void) socket;
-    return -1;
+}
 #endif
-}
-
-static void posix_wait_queued( rocketnet_platform_socket_t * socket, int expected )
-{
-    const double deadline = rocketnet_platform_time() + 5.0;
-    for ( ;; )
-    {
-        const int queued = posix_queued_datagrams( socket );
-        if ( queued < 0 )
-        {
-            rocketnet_platform_sleep( 0.005 );
-            return;
-        }
-        if ( queued >= expected )
-            return;
-        posix_check( rocketnet_platform_time() < deadline );
-        rocketnet_platform_sleep( 0.0002 );
-    }
-}
 
 // ---------------------------------------------------
 // a connected pair on one cell
@@ -420,7 +398,6 @@ static void posix_pair_destroy( struct posix_pair_t * pair )
 #define POSIX_WEATHER_ROUNDS        20
 #define POSIX_WEATHER_ZEROS         8       // zero-length datagrams per round, interleaved
 #define POSIX_WEATHER_VALID_BYTES   100
-#define POSIX_WEATHER_MAX_UPDATES   3       // updates a queued round may take to drain
 
 struct posix_expect_t
 {
@@ -529,27 +506,21 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     posix_weather_native = at_server ? pair.native : POSIX_NATIVE_NONE;
     posix_weather_transport = at_server ? pair.transport : NULL;
 
-    // a native transport drains on its own (a worker thread, a multishot
-    // receive), so its bound is a deadline, as a client's is
-    const bool bounded_updates = at_server && pair.native == POSIX_NATIVE_NONE;
 
     int sender;
     bool own_sender = false;
     struct sockaddr_storage to;
     socklen_t to_bytes;
-    rocketnet_platform_socket_t * receiver;
     if ( at_server )
     {
         sender = posix_open_raw_sender( ipv6 );
         own_sender = true;
         to_bytes = posix_sockaddr( ipv6, (uint16_t) rocketnet_server_transport_port( pair.server ), &to );
-        receiver = pair.server_socket;
     }
     else
     {
         sender = pair.server_socket->handle;
         to_bytes = posix_sockaddr( ipv6, posix_local_port( pair.client_socket ), &to );
-        receiver = pair.client_socket;
     }
 
 
@@ -564,8 +535,6 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
     for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
     {
-        int datagrams = 0;
-
         // the valid traffic for this round leaves first, through the
         // transport, so its datagram is in flight while the weather lands
 
@@ -586,7 +555,6 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
                 rocketnet_server_transport_send_packets( pair.server );
             }
             valid_sent++;
-            datagrams++;
         }
 
         // the first round carries the oversize datagram and the two runts
@@ -603,7 +571,6 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             buffer[0] = 0x40;
             posix_send_datagram( sender, &to, to_bytes, buffer, 1, &expect );
             posix_send_datagram( sender, &to, to_bytes, buffer, ROCKETNET_PREFILTER_BYTES - 1, &expect );
-            datagrams += 3;
         }
 
         // the seeded storm, a zero-length datagram between every few
@@ -614,24 +581,19 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             if ( g % ( garbage_this_round / POSIX_WEATHER_ZEROS ) == 0 )
             {
                 posix_send_datagram( sender, &to, to_bytes, buffer, 0, posix_weather_native != POSIX_NATIVE_NONE ? &expect : NULL );
-                datagrams++;
             }
             const int bytes = (int) ( posix_next_random( &random_state ) % 1500 ) + 1;
             for ( int i = 0; i < bytes; i++ )
                 buffer[i] = (uint8_t) posix_next_random( &random_state );
             posix_send_datagram( sender, &to, to_bytes, buffer, bytes, &expect );
             garbage_sent++;
-            datagrams++;
         }
 
-        // a server receiver: the round is queued whole before the first
-        // update, and every datagram behind every zero-length one must be
-        // read within a few updates (a drain that stopped at a zero-length
-        // datagram would need one update per zero). a client receiver
-        // drains on its own I/O thread, so its bound is a deadline.
-
-        if ( bounded_updates )
-            posix_wait_queued( receiver, datagrams );
+        // every receiver drains on its own thread (the server transports'
+        // receive workers, the client's I/O thread), so the bound is a
+        // deadline: every datagram behind every zero-length one is read
+        // well inside it, where a drain that stopped at a zero-length
+        // datagram would stall.
 
         const double deadline = rocketnet_platform_time() + 5.0;
         int updates = 0;
@@ -672,7 +634,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
                 break;
 
-            const bool short_now = bounded_updates ? updates >= POSIX_WEATHER_MAX_UPDATES : rocketnet_platform_time() >= deadline;
+            const bool short_now = rocketnet_platform_time() >= deadline;
             if ( short_now )
             {
                 {
@@ -1459,6 +1421,12 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     }
     fail( pair, 1000 );
     posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
+    // the GSO transport sends on its transmit worker: hold the injected
+    // failure until the worker has taken and dropped the flushed bank
+    const double drop_deadline = rocketnet_platform_time() + 5.0;
+    while ( posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) - dropped_before < 8 &&
+            rocketnet_platform_time() < drop_deadline )
+        rocketnet_platform_sleep( 0.001 );
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent ) - sent_before;

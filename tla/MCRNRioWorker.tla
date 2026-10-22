@@ -1,0 +1,20 @@
+---------------------------- MODULE MCRNRioWorker ----------------------------
+(***************************************************************************)
+(* The small instance of RNRioWorker: two receive slices, three banks of   *)
+(* two, a process view of four, three datagrams and two staged sends.      *)
+(* MCRNRioWorker.cfg is the rule.  Each reversed witness turns off one     *)
+(* rule switch and must fail:                                              *)
+(* MCRNRioWorkerTwoBanks.cfg is the rule with two banks and four       *)
+(* datagrams, the backpressure case.                                       *)
+(*   MCRNRioWorkerBrokenSwitchBeforeIdle.cfg  (SwitchOnIdle)               *)
+(*                                            FillPhaseOwnedByMain         *)
+(*   MCRNRioWorkerBrokenUnboundedDequeue.cfg  (BoundedDequeue)             *)
+(*                                            ExactDelivery                *)
+(*   MCRNRioWorkerBrokenExitBeforeDrain.cfg   (DrainBeforeExit)            *)
+(*                                            FreedOnlyWhenDrained         *)
+(*   MCRNRioWorkerBrokenNoWake.cfg            (WakeOnReturn)               *)
+(*                                            EveryDatagramConsumed        *)
+(* README-RNRioWorker.md gives each trace and its check against the code.  *)
+(***************************************************************************)
+EXTENDS RNRioWorker
+=============================================================================

@@ -4157,6 +4157,25 @@ void rocketnet_test_server_transport_io_pin_rio()
 
 #include "rocketnet_server_rio.h"
 
+// The I/O worker returns a posted phase idle only after its completions are
+// retired, so start_packet may be refused (and count SEND_FULL) until a later
+// flush opens the other phase. Every earlier reservation is finished, so the
+// retry may flush. refused counts the refusals for the counter checks.
+static uint8_t * rocketnet_test_server_rio_start( rocketnet_server_rio_t * rio, const rocketnet_address_t * to,
+    uint64_t * packet_id, uint64_t * refused )
+{
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        uint8_t * frame = rocketnet_server_rio_start_packet( rio, to, packet_id );
+        if ( frame || rocketnet_platform_time() - start >= 5.0 )
+            return frame;
+        ( *refused )++;
+        rocketnet_server_rio_send_packets( rio );
+        rocketnet_platform_sleep( 0.0005 );
+    }
+}
+
 void rocketnet_test_server_rio_probe()
 {
     rocketnet_check( rocketnet_server_rio_available() );
@@ -4288,22 +4307,25 @@ void rocketnet_test_server_rio_wire_ipv4()
         rocketnet_check( num_seen == last );
     }
 
-    // transport -> peer: one send_packets per chunk, so the chunks alternate
-    // between the two send phases; each reply arrives byte-exact
+    // transport -> peer: one chunk per phase, so the chunks rotate through the
+    // three send phases; a flush keeps a phase open while the next is not yet
+    // idle, so the wait flushes again, as a frame loop does; each reply
+    // arrives byte-exact
 
     memset( seen, 0, sizeof(seen) );
     num_seen = 0;
     int flushes_with_packets = 0;
-    bool used_phase[2] = { false, false };
+    uint64_t refused = 0;
+    bool used_phase[3] = { false, false, false };
     for ( int first = 0; first < ROCKETNET_RIO_TEST_PACKETS; first += ROCKETNET_RIO_TEST_CHUNK )
     {
         const int last = first + ROCKETNET_RIO_TEST_CHUNK < ROCKETNET_RIO_TEST_PACKETS ? first + ROCKETNET_RIO_TEST_CHUNK : ROCKETNET_RIO_TEST_PACKETS;
         for ( int i = first; i < last; i++ )
         {
             uint64_t packet_id = 0;
-            uint8_t * frame = rocketnet_server_rio_start_packet( rio, &peer_address, &packet_id );
+            uint8_t * frame = rocketnet_test_server_rio_start( rio, &peer_address, &packet_id, &refused );
             rocketnet_check( frame );
-            used_phase[packet_id >= ROCKETNET_RIO_SEND_QUEUE_SIZE ? 1 : 0] = true;
+            used_phase[packet_id / ROCKETNET_RIO_SEND_QUEUE_SIZE] = true;
             const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
             uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
             wire[0] = (uint8_t) i;
@@ -4318,6 +4340,7 @@ void rocketnet_test_server_rio_wire_ipv4()
         double start = rocketnet_platform_time();
         while ( rocketnet_platform_time() - start < 5.0 && num_seen < last )
         {
+            rocketnet_server_rio_send_packets( rio );
             rocketnet_address_t from;
             const int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
             if ( packet_bytes <= 0 )
@@ -4337,7 +4360,7 @@ void rocketnet_test_server_rio_wire_ipv4()
         }
         rocketnet_check( num_seen == last );
     }
-    rocketnet_check( used_phase[0] && used_phase[1] );
+    rocketnet_check( used_phase[0] && used_phase[1] && used_phase[2] );
 
     // the last phase's completions retire on the next flushes
     uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
@@ -4359,11 +4382,15 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] >= (uint64_t) flushes_with_packets );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
-    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FULL] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FULL] == refused );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
+    // the worker counts a completion before it re-posts or retires the request
+    start = rocketnet_platform_time();
+    while ( rocketnet_server_rio_pending( rio ) != ROCKETNET_RIO_RECEIVES && rocketnet_platform_time() - start < 5.0 )
+        rocketnet_platform_sleep( 0.0005 );
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
     rocketnet_platform_socket_destroy( peer );
@@ -4405,7 +4432,8 @@ static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * ri
     rocketnet_check( received_peer );
 
     uint64_t packet_id = 0;
-    uint8_t * frame = rocketnet_server_rio_start_packet( rio, peer_address, &packet_id );
+    uint64_t refused = 0;
+    uint8_t * frame = rocketnet_test_server_rio_start( rio, peer_address, &packet_id, &refused );
     rocketnet_check( frame );
     uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
     for ( int i = 0; i < packet_bytes; ++i )
@@ -4417,6 +4445,7 @@ static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * ri
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 && !received_reply )
     {
+        rocketnet_server_rio_send_packets( rio ); // a flush may keep the phase open a frame
         rocketnet_address_t from;
         const int bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, sizeof(packet) );
         if ( bytes > 0 )
@@ -5361,6 +5390,39 @@ void rocketnet_test_server_gso_probe()
 // including equal-size same-destination runs, the shape GSO coalesces --
 // and the peer must receive each byte-exact.
 
+// The GSO transport's transmit worker sends published banks off the caller
+// thread and counts them as it goes. A check of the send counters first waits
+// for the counter to reach its value; each retry may also publish a producer
+// that a contended try retained.
+static void rocketnet_test_gso_wait_sends( struct rocketnet_server_gso_t * gso, int counter, uint64_t value )
+{
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        rocketnet_server_gso_send_packets( gso );
+        rocketnet_server_gso_counters( gso, counters );
+        if ( counters[counter] >= value || rocketnet_platform_time() - start >= 5.0 )
+            return;
+        rocketnet_platform_sleep( 0.001 );
+    }
+}
+
+static void rocketnet_test_gso_wait_sent_or_dropped( struct rocketnet_server_gso_t * gso, uint64_t value )
+{
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        rocketnet_server_gso_send_packets( gso );
+        rocketnet_server_gso_counters( gso, counters );
+        if ( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] >= value ||
+             rocketnet_platform_time() - start >= 5.0 )
+            return;
+        rocketnet_platform_sleep( 0.001 );
+    }
+}
+
 static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name */, const char * bind_string, const char * peer_string, const char * server_host, int flags, int expect_ipv4_from )
 {
     rocketnet_address_t bind_address;
@@ -5479,6 +5541,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     // the counter is the proof the fast path ran, not just that packets
     // arrived
 
+    rocketnet_test_gso_wait_sends( gso, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT, ROCKETNET_GSO_TEST_PACKETS );
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == ROCKETNET_GSO_TEST_PACKETS );
@@ -5672,6 +5735,7 @@ void rocketnet_test_server_gso_send_overflow()
     // every staged packet was either sent or dropped, and nothing vanished
     // uncounted
 
+    rocketnet_test_gso_wait_sent_or_dropped( gso, ROCKETNET_GSO_SEND_QUEUE_SIZE );
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == ROCKETNET_GSO_SEND_QUEUE_SIZE );
@@ -5724,6 +5788,7 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_server_gso_finish_packet( gso, id, frame, 64 );
     rocketnet_server_gso_test_fail_sends( gso, 1024, EINTR );
     rocketnet_server_gso_send_packets( gso );
+    rocketnet_test_gso_wait_sends( gso, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 1 );
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 1 );
