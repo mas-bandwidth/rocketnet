@@ -170,7 +170,7 @@ int main( int argc, char ** argv )
                         break;
                     }
                     payload[0] = (uint8_t) next_mode;
-                    memcpy( payload + 1, happy_pattern, pattern_bytes );
+                    memcpy( payload + 1, happy_pattern, (size_t) pattern_bytes );
                     serials[next_mode] = rocketnet_client_finish_message( client, payload_bytes );
                     if ( serials[next_mode] == 0 )
                     {
