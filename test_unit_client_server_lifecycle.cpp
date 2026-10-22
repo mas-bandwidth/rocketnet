@@ -993,7 +993,7 @@ static void test_server_destination_flow_id_refused()
     lifecycle_connect( &world, 0, 0x1A01 );
     const int flow_index = rocketnet_client_index( world.clients[0] );
     check( flow_index >= 0 );
-    const uint64_t flow = ROCKETNET_FLOW_ID_BIT | (uint64_t) flow_index;
+    const uint64_t flow = (uint64_t) ROCKETNET_FLOW_ID_BIT | (uint64_t) flow_index;
 
     // the flow refusal names FLOW_ID_RESERVED; an index merely out of range
     // (no flow bit) is refused without it
