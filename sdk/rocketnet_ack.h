@@ -121,6 +121,8 @@ struct rocketnet_received_packet_record_t
 // the named run, so acknowledged and never-written sequences cost nothing.
 
 #define ROCKETNET_SENT_BITMAP_WORDS ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 64 )
+#define ROCKETNET_RECEIVED_WRITTEN_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
+#define ROCKETNET_AGGREGATES_WRITTEN_WORDS ( ( ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
@@ -213,6 +215,14 @@ struct rocketnet_ack_endpoint_t
 
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
 
+    // bit (slot) set: the record at slot was written since the reset. The three
+    // record rings are never zeroed (271 KB a connection): a record is read
+    // only when its written bit is set, and an unwritten one reads as the
+    // empty record (sequence 0, id 0), so the reset clears only these bits
+    uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
+    uint64_t received_written[ROCKETNET_RECEIVED_WRITTEN_WORDS];
+    uint64_t aggregates_written[ROCKETNET_AGGREGATES_WRITTEN_WORDS];
+
     uint64_t sent_held[ROCKETNET_SENT_BITMAP_WORDS];     // bit (slot) set: the record at slot was written; fill under sent_lock
     uint64_t sent_unacked[ROCKETNET_SENT_BITMAP_WORDS];  // bit (slot) set: written and not yet acknowledged
     uint64_t sent_bits_checked;                          // update thread only: highest sequence whose slot's bits were reconciled
@@ -224,6 +234,11 @@ struct rocketnet_ack_endpoint_t
 };
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
+
+// true when two endpoints hold the same state: every field before the record
+// rings, the rtt history, and each ring's records where both wrote them (an
+// unwritten record is the empty record, whatever its bytes)
+bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t * a, const struct rocketnet_ack_endpoint_t * b );
 
 // records one sent session packet. packet_id is surfaced on ack only when
 // has_packet_id is nonzero -- keep-alive, disconnect and standalone ack

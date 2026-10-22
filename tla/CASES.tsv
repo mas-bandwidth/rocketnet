@@ -290,3 +290,6 @@ MCRNClientIoLiveArrivedLast.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio
 MCRNLazyPool.cfg	MCRNLazyPool.tla	pass	-	check	rnlazypool	required	-
 MCRNLazyPoolBrokenNoGuard.cfg	MCRNLazyPool.tla	invariant	InUseExact	check	rnlazypool	required	-
 MCRNLazyPoolBrokenKeepFresh.cfg	MCRNLazyPool.tla	invariant	Refines	check	rnlazypool	required	-
+MCRNWrittenRing.cfg	MCRNWrittenRing.tla	pass	-	check	rnwrittenring	required	-
+MCRNWrittenRingBrokenNoGuard.cfg	MCRNWrittenRing.tla	invariant	NoUnwrittenRead	check	rnwrittenring	required	-
+MCRNWrittenRingBrokenKeepBits.cfg	MCRNWrittenRing.tla	invariant	BitsMatchWrites	check	rnwrittenring	required	-

@@ -45,7 +45,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     // Key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
     rocketnet_client_protocol_wipe_secrets( client );
-    memset( client, 0, sizeof(*client) );
+    rocketnet_client_protocol_zero_state( client );
 
     memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
     client->send_rate = send_rate;
@@ -77,9 +77,9 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
 
     /*
-        Remove first: rocketnet_encryption_map_remove wipes the session keys,
-        nonce, challenge and token record while the slot still identifies the
-        mapping. The slot identity and user data are cleared only afterwards.
+        Remove first: rocketnet_encryption_map_remove wipes the session keys
+        and nonce, and takes the entry out of live, while the slot still
+        identifies the mapping. The slot identity and user data are cleared only afterwards.
     */
     if ( mapping_index >= 0 && server->encryption_map )
         rocketnet_encryption_map_remove( server->encryption_map, mapping_index );

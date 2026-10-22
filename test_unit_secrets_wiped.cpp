@@ -233,6 +233,11 @@ static void * secrets_wiped_malloc( void * context, size_t bytes )
 {
     (void) context;
     void * p = malloc( bytes );
+    // a canary, not zeros: the SDK may not rely on zeroed memory, and the
+    // copies and comparisons below read every byte of a block, so every byte
+    // is defined (memcheck reads them as written)
+    if ( p )
+        memset( p, 0xC5, bytes );
     if ( p && secrets_wiped_sizes )
         ( *secrets_wiped_sizes )[p] = bytes;
     return p;
@@ -584,6 +589,7 @@ static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
     check( bytes > 0 );
     uint8_t * raw = (uint8_t *) malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw != NULL );
+    memset( raw, 0xC5, (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     uint8_t * block = secrets_wiped_aligned( raw );
 
     struct rocketnet_counters_t counters;

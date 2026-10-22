@@ -351,6 +351,39 @@ struct rocketnet_server_transport_t
     uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
+// The server transport's state zeroed in its raw storage, then default
+// initialization, then the buffers' counts. The buffers (the payload ring's
+// slots, the send and receive buffers, the payloads and their storage: 49 MB
+// at the defaults) are never written here, so their pages are touched only
+// when a packet uses them.
+static void rocketnet_server_transport_construct( rocketnet_server_transport_t * server_transport )
+{
+    typedef rocketnet_server_transport_t T;
+    typedef rocketnet_server_payload_ring_t R;
+    typedef rocketnet_server_send_buffer_t B;
+    typedef rocketnet_server_payloads_t P;
+    const size_t ring = offsetof( T, payload_ring );
+    const size_t send = offsetof( T, send_buffer );
+    const size_t payloads = offsetof( T, payloads );
+    const rocketnet_span_t skip[] =
+    {
+        { ring, offsetof( R, num_packets ) },
+        { ring + offsetof( R, num_packets ) + sizeof( uint64_t ), sizeof( R ) - offsetof( R, num_packets ) - sizeof( uint64_t ) },
+        { send + offsetof( B, to ), sizeof( B ) - offsetof( B, to ) },
+        { offsetof( T, receive_buffer ), sizeof( rocketnet_server_receive_buffer_t ) },
+        { payloads + offsetof( P, client_index ), sizeof( P ) - offsetof( P, client_index ) },
+        { offsetof( T, payload_storage ), sizeof( ( (T *) 0 )->payload_storage ) },
+    };
+    static_assert( offsetof( T, payload_ring ) < offsetof( T, send_buffer ) && offsetof( T, send_buffer ) < offsetof( T, receive_buffer ) &&
+                   offsetof( T, receive_buffer ) < offsetof( T, payloads ) && offsetof( T, payloads ) < offsetof( T, payload_storage ),
+                   "the skipped buffers are listed in their order in the struct" );
+    rocketnet_zero_except( server_transport, sizeof( T ), skip, (int) ( sizeof( skip ) / sizeof( skip[0] ) ) );
+    new ( server_transport ) rocketnet_server_transport_t;
+    server_transport->payload_ring.num_packets = 0;
+    server_transport->send_buffer.num_packets = 0;
+    server_transport->payloads.num_payloads = 0;
+}
+
 static void rocketnet_server_stats_clear_delta( rocketnet_ack_stats_delta_t * delta )
 {
     memset(delta->sent_dirty, 0, sizeof(delta->sent_dirty));
@@ -542,15 +575,25 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
     }
     worker->slots = (rocketnet_server_stats_slot_t*) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->slots));
     if ( !worker->slots ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
-    memset(worker->slots, 0, (size_t)max_clients * sizeof(*worker->slots));
     worker->spares = (rocketnet_ack_stats_delta_t**) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->spares));
     if ( !worker->spares ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+    // Each slot's state, never its 469 KB of values and history: a delta's
+    // values are read only where its dirty bits say they were written, and
+    // the history is cleared by the slot's first compute (deltas[0] starts
+    // with reset set, and no history generation matches 0).
     for ( int i = 0; i < max_clients; ++i )
     {
-        worker->slots[i].deltas[0].generation = 1;
-        worker->slots[i].deltas[1].generation = 1;
-        worker->slots[i].deltas[0].reset = true;
-        worker->spares[i] = &worker->slots[i].deltas[1];
+        rocketnet_server_stats_slot_t * slot = &worker->slots[i];
+        for ( int d = 0; d < 2; ++d )
+        {
+            rocketnet_server_stats_clear_delta(&slot->deltas[d]);
+            slot->deltas[d].generation = 1;
+            slot->deltas[d].values.highest_sent = 0;
+            slot->deltas[d].values.highest_received = 0;
+        }
+        slot->deltas[0].reset = true;
+        slot->history_generation = 0;
+        worker->spares[i] = &slot->deltas[1];
     }
     if ( !rocketnet_platform_mutex_create(&worker->exchange_mutex) )
         return ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
@@ -609,7 +652,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         // The stats producer binding is transport-lifetime ownership, not
         // connection state. Reset preserves this one pointer deliberately.
         fresh->stats_delta = protocol->acks->endpoints[client_index].stats_delta;
-        if ( memcmp( fresh, &protocol->acks->endpoints[client_index], sizeof(*fresh) ) != 0 )
+        if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
             member = "rocketnet_server_acks_t.endpoints";
         free( fresh );
     }
@@ -1489,7 +1532,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server transport create: could not allocate server transport" );
         return NULL;
     }
-    new ( server_transport ) rocketnet_server_transport_t();
+    rocketnet_server_transport_construct( server_transport );
 
     server_transport->context = context;
     server_transport->time = time;

@@ -2223,20 +2223,24 @@ void rocketnet_test_encryption_map()
     rocketnet_check( rocketnet_encryption_map_add( map, &address_d, 100.0 ) != -1 );
     rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) == -1 );
 
-    // remove zeroes the key material and frees the slot for reuse
+    // remove zeroes the key material (the session keys and nonce, the
+    // mapping's only secrets) and frees the slot for reuse; the rest of the
+    // entry is unreachable until an add writes it whole
     memset( &mapping->keys, 0xAB, sizeof(mapping->keys) );
+    memset( mapping->session_nonce, 0xAB, sizeof(mapping->session_nonce) );
     rocketnet_encryption_mapping_control_t * control = mapping->control;
     control->last_receive_time = 42.0;
     rocketnet_encryption_map_remove( map, index_a );
     rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == -1 );
     rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 3 );
-    const uint8_t * raw = (const uint8_t*) mapping;
-    for ( int i = 0; i < (int) sizeof(struct rocketnet_encryption_mapping_t); i++ )
+    const uint8_t * raw = (const uint8_t*) &mapping->keys;
+    for ( int i = 0; i < (int) sizeof(mapping->keys); i++ )
         rocketnet_check( raw[i] == 0 );
-    raw = (const uint8_t*) control;
-    for ( int i = 0; i < (int) sizeof(struct rocketnet_encryption_mapping_control_t); i++ )
-        rocketnet_check( raw[i] == 0 );
-    rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) != -1 );
+    for ( int i = 0; i < (int) sizeof(mapping->session_nonce); i++ )
+        rocketnet_check( mapping->session_nonce[i] == 0 );
+    const int index_reused = rocketnet_encryption_map_add( map, &address_e, 100.0 );
+    rocketnet_check( index_reused == index_a );
+    rocketnet_check( control->last_receive_time == 0.0 );
 
     rocketnet_encryption_map_destroy( map );
 }
@@ -10140,8 +10144,10 @@ void rocketnet_test_send_history_silent_peer_overflows()
 
         // the record this send replaces, read before the send: unacknowledged
         // and no acknowledgment above it is an eviction of unknown fate
-        const struct rocketnet_sent_packet_record_t * replaced = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-        if ( replaced->sequence && !replaced->acked )
+        const uint64_t replaced_slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+        const struct rocketnet_sent_packet_record_t * replaced = &endpoint->sent[replaced_slot];
+        const bool replaced_written = ( endpoint->sent_written[replaced_slot >> 6] >> ( replaced_slot & 63 ) ) & 1;
+        if ( replaced_written && replaced->sequence && !replaced->acked )
         {
             rocketnet_check( replaced->sequence + ROCKETNET_LOSS_PACKET_THRESHOLD > endpoint->largest_acked_sequence );
             expected_overflow++;

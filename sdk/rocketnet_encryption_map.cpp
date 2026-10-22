@@ -85,22 +85,31 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
         map->next[i] = i + 1 < capacity ? i + 1 : -1;
     map->free_head = 0;
 
-    memset( map->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
+    // live is the state: every reader of an entry's address, control or
+    // mapping reaches it through live (the bucket chains hold live entries
+    // only), and add writes the entry whole, so those three arrays (3.4 KB an
+    // entry) are never zeroed here
     memset( map->live, 0, sizeof(int) * (size_t) capacity );
-    memset( map->control, 0, sizeof(struct rocketnet_encryption_mapping_control_t) * (size_t) capacity );
-    memset( map->mapping, 0, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) capacity );
 
     return map;
+}
+
+// the mapping's secrets, and only those: the session keys and the session
+// nonce they were derived with
+static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encryption_mapping_t * mapping )
+{
+    sodium_memzero( &mapping->keys, sizeof(mapping->keys) );
+    sodium_memzero( mapping->session_nonce, sizeof(mapping->session_nonce) );
 }
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
     // a removed mapping was wiped by its remove; a live one still holds its
-    // session keys, and those are the only secrets here
+    // secrets, and those are the only secrets here
     for ( int i = 0; i < map->capacity; i++ )
         if ( map->live[i] )
-            sodium_memzero( &map->mapping[i].keys, sizeof(map->mapping[i].keys) );
+            rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
     rocketnet_free( map->context, map->bucket_head );
     rocketnet_free( map->context, map->next );
     rocketnet_free( map->context, map->address );
@@ -230,9 +239,9 @@ void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, i
         (void) found;
     }
 
-    sodium_memzero( &map->mapping[index], sizeof(struct rocketnet_encryption_mapping_t) );
-    memset( &map->control[index], 0, sizeof(struct rocketnet_encryption_mapping_control_t) );
-    memset( &map->address[index], 0, sizeof(struct rocketnet_address_t) );
+    // the secrets are wiped; the rest of the entry is unreachable once it is
+    // not live, and the next add writes it whole
+    rocketnet_encryption_mapping_wipe_secrets( &map->mapping[index] );
     map->live[index] = 0;
 
     map->next[index] = map->free_head;

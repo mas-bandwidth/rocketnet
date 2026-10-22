@@ -112,6 +112,12 @@ struct rocketnet_client_protocol_t
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
 
+// Every field zeroed but the ack history's record rings (guarded by its
+// written bits, rocketnet_ack_endpoint_reset) and the acked packet ids
+// (read only below num_acked): 295 KB of the protocol's 300 KB are never
+// zeroed. The caller resets the ack endpoint and sets the nonzero fields.
+void rocketnet_client_protocol_zero_state( struct rocketnet_client_protocol_t * client );
+
 // Begins a connection attempt: parses the token, runs the pre-send checks --
 // address flags valid, create not after expire, not already expired --
 // generates the salt and the ephemeral keypair, picks the server address

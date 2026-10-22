@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <initializer_list>
+#include <string.h>
 
 #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
 #define ROCKETNET_REASSEMBLY_MEMORY_MIB 512
@@ -72,3 +73,28 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
 
 bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan);
+
+// Zero an object's raw storage except its buffers, before it is constructed:
+// skip lists the buffers as (offset, bytes) spans, ascending and disjoint.
+// A buffer's bytes are written before they are read, below the count that
+// names them, so only its count is state, set after construction; its pages
+// are touched only by use. Zero only what is state (Glenn 2026-10-22).
+struct rocketnet_span_t
+{
+    size_t offset;
+    size_t bytes;
+};
+
+inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet_span_t * skip, int num_skip )
+{
+    uint8_t * base = (uint8_t *) storage;
+    size_t at = 0;
+    for ( int i = 0; i < num_skip; i++ )
+    {
+        if ( skip[i].offset > at )
+            memset( base + at, 0, skip[i].offset - at );
+        at = skip[i].offset + skip[i].bytes;
+    }
+    if ( at < bytes )
+        memset( base + at, 0, bytes - at );
+}
