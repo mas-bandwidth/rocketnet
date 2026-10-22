@@ -10,6 +10,7 @@
 
 #include "test_unit_registry.h"
 #include "test/fake_client_driver.h"
+#include "test/client_io_rig.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -37,52 +38,21 @@ static void client_io_stop_test_open( rocketnet_fake_client_transport_io_t * fak
     rocketnet_unit_check( rocketnet_client_transport_io_open( operations, fake, &config, &bind, transport ) );
 }
 
-static void client_io_stop_test_setup( rocketnet_client_io_t * io, rocketnet_client_transport_io_t * transport,
-    rocketnet_client_io_ring_view_t * view0, rocketnet_client_io_ring_view_t * view1, uint8_t * ring0,
-    uint8_t * ring1, int * counts0, int * counts1, int slots,
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )
-{
-    for ( int i = 0; i < slots; i++ )
-        ring0[ROCKETNET_FRAME_WIRE_OFFSET + i] = (uint8_t) ( i + 1 );
-
-    view0->data = ring0;
-    view0->frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0->wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0->wire_bytes = (const uint8_t *) counts0;
-    view0->wire_bytes_stride = sizeof( int );
-
-    view1->data = ring1;
-    view1->frame_stride = ROCKETNET_FRAME_STRIDE;
-    view1->wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view1->wire_bytes = (const uint8_t *) counts1;
-    view1->wire_bytes_stride = sizeof( int );
-
-    client_io_stop_test_clock_t clock = { 1000.0 };
-    rocketnet_client_io_init( io, transport, view0, view1, buffers, client_io_stop_test_time, &clock );
-}
-
 // Stop with a handed-off ring: the I/O thread sends the ring in flight (both
-// packets) and then exits on the same step. wake_calls 2: the hand-off wakes
-// once, stop wakes again. RNClientIo Stop, IoExit.
+// packets), then exits, in the same step. wake_calls 2: the hand-off wakes
+// once, stop wakes again. RNClientIo Stop, IoExit; RNBufferHandoff WorkerExit.
 static void test_client_io_stop_sends_in_flight_ring_first()
 {
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_io_t transport = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[2 * ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[2 * ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[2] = { 5, 7 };
-    int counts1[2] = { 0, 0 };
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 5;
+    rig->counts[0][1] = 7;
+    client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_ring_view_t view0 = {};
-    rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 2, buffers );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9000 );
@@ -90,20 +60,67 @@ static void test_client_io_stop_sends_in_flight_ring_first()
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 2, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
     rocketnet_unit_check( fake.wake_calls == 1 );
 
-    rocketnet_client_io_stop( &io );
+    rocketnet_client_io_stop( &io, 0, &to );
     rocketnet_unit_check( fake.wake_calls == 2 );
+    rocketnet_unit_check( io.send_final == -1 );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
     rocketnet_unit_check( fake.send_calls == 2 );
     rocketnet_unit_check( fake.num_sent == 2 );
     rocketnet_unit_check( fake.sent[0].bytes == 5 );
     rocketnet_unit_check( fake.sent[1].bytes == 7 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_stop_sends_in_flight_ring_first );
+
+// Stop with committed slots in the Filling ring and two rings queued: stop
+// takes no mutex and hands the Filling ring over with quit; the I/O thread
+// sends both queued rings in order, then that one, then exits; nothing
+// committed is lost. RNBufferHandoff StopSendsAll, ExitSentAll,
+// MCRNBufferHandoffBrokenDropFinal.cfg.
+static void test_client_io_stop_hands_over_the_filling_ring()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+    {
+        rig->counts[ring][0] = 3;
+        rocketnet_client_io_rig_slot( rig, ring, 0 )[0] = (uint8_t) ( 0xB0 + ring );
+    }
+    client_io_stop_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
+
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9050 );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( io.send_fill == 2 );
+
+    // the mutex is busy at stop: stop does not need it
+    rocketnet_platform_mutex_acquire( &rig->mutex );
+    rocketnet_client_io_stop( &io, 1, &to );
+    rocketnet_platform_mutex_release( &rig->mutex );
+    rocketnet_unit_check( io.send_final == 2 );
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( fake.num_sent == 3 );
+    rocketnet_unit_check( fake.sent[0].data[0] == 0xB0 );
+    rocketnet_unit_check( fake.sent[1].data[0] == 0xB1 );
+    rocketnet_unit_check( fake.sent[2].data[0] == 0xB2 );
+    rocketnet_unit_check( rocketnet_address_equal( &fake.sent[2].address, &to ) );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_stop_hands_over_the_filling_ring );
 
 // Stop with nothing handed off and a datagram waiting: the step exits at once,
 // sends nothing, does not receive, does not wait. RNClientIo IoExit (no
@@ -114,19 +131,10 @@ static void test_client_io_stop_exits_with_nothing_new()
     rocketnet_client_transport_io_t transport = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 0 };
-    int counts1[1] = { 0 };
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_ring_view_t view0 = {};
-    rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 0, buffers );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
@@ -135,7 +143,7 @@ static void test_client_io_stop_exits_with_nothing_new()
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9100 );
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
 
-    rocketnet_client_io_stop( &io );
+    rocketnet_client_io_stop( &io, 0, &from );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     rocketnet_unit_check( fake.send_calls == 0 );
@@ -143,8 +151,7 @@ static void test_client_io_stop_exits_with_nothing_new()
     rocketnet_unit_check( fake.wait_calls == 0 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_stop_exits_with_nothing_new );
 
@@ -174,35 +181,30 @@ static void test_client_io_hand_off_after_stop_asserts()
     rocketnet_client_transport_io_t transport = {};
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 5 };
-    int counts1[1] = { 0 };
-
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] =
-    {
-        new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t
-    };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 5;
+    client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_ring_view_t view0 = {};
-    rocketnet_client_io_ring_view_t view1 = {};
-    client_io_stop_test_setup( &io, &transport, &view0, &view1, ring0, ring1, counts0, counts1, 1, buffers );
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
 
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9200 );
 
-    rocketnet_client_io_stop( &io );
+    rocketnet_client_io_stop( &io, 0, &to );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
-    const int fill = io.rings.fill;
-    const int state0 = io.rings.state[0].load( std::memory_order_relaxed );
-    const int state1 = io.rings.state[1].load( std::memory_order_relaxed );
-    const uint64_t committed0 = io.rings.committed[0];
-    const uint64_t committed1 = io.rings.committed[1];
-    const rocketnet_address_t destination0 = io.to[0];
-    const rocketnet_address_t destination1 = io.to[1];
-    const bool held0 = io.to_held[0];
-    const bool held1 = io.to_held[1];
+    const int fill = io.send_fill;
+    const int ready = io.send.ready_count;
+    const int free_count = io.send.free_count;
+    uint64_t committed[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    rocketnet_address_t destination[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    bool held[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
+    {
+        committed[i] = io.committed[i];
+        destination[i] = io.to[i];
+        held[i] = io.to_held[i];
+    }
     const int wakes = fake.wake_calls;
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_EMPTY );
 
@@ -211,20 +213,20 @@ static void test_client_io_hand_off_after_stop_asserts()
 #else
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 0 );
 #endif
-    rocketnet_unit_check( io.rings.fill == fill );
-    rocketnet_unit_check( io.rings.state[0].load( std::memory_order_relaxed ) == state0 );
-    rocketnet_unit_check( io.rings.state[1].load( std::memory_order_relaxed ) == state1 );
-    rocketnet_unit_check( io.rings.committed[0] == committed0 && io.rings.committed[1] == committed1 );
-    rocketnet_unit_check( memcmp( &io.to[0], &destination0, sizeof( destination0 ) ) == 0 );
-    rocketnet_unit_check( memcmp( &io.to[1], &destination1, sizeof( destination1 ) ) == 0 );
-    rocketnet_unit_check( io.to_held[0] == held0 && io.to_held[1] == held1 );
+    rocketnet_unit_check( io.send_fill == fill );
+    rocketnet_unit_check( io.send.ready_count == ready && io.send.free_count == free_count );
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
+    {
+        rocketnet_unit_check( io.committed[i] == committed[i] );
+        rocketnet_unit_check( memcmp( &io.to[i], &destination[i], sizeof( destination[i] ) ) == 0 );
+        rocketnet_unit_check( io.to_held[i] == held[i] );
+    }
     rocketnet_unit_check( fake.wake_calls == wakes );
 
     rocketnet_assert_function( saved_assert );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_hand_off_after_stop_asserts );
 
@@ -337,9 +339,9 @@ static rocketnet_client_transport_t * destroy_wait_transport_create( destroy_wai
     return h->transport;
 }
 
-// A stuck worker owns ring 0 indefinitely. Stop publishes the final ring and
-// returns, polling neither advances the clock nor frees worker-owned storage.
-// The fixture explicitly releases ownership before finalization.
+// A worker that does not run (stuck in a platform call) holds two queued
+// rings. Stop returns at once, polling neither advances the clock nor frees
+// worker-owned storage, and completion waits for the worker's own steps.
 static void test_client_io_stop_retains_stuck_ring_without_waiting()
 {
     destroy_wait_harness_t h = {};
@@ -351,8 +353,7 @@ static void test_client_io_stop_retains_stuck_ring_without_waiting()
     rocketnet_unit_check( io != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
     rocketnet_client_transport_update( transport, 1001.0 );
-    rocketnet_unit_check( io->rings.fill == 1 );
-    io->rings.state[0].store( ROCKETNET_CLIENT_RING_SENDING, std::memory_order_relaxed );
+    rocketnet_unit_check( io->send_fill == 2 && io->send.ready_count == 2 );
     const double before = h.clock.now;
     const long steps = h.clock.steps;
     rocketnet_client_transport_stop( transport );
@@ -364,12 +365,10 @@ static void test_client_io_stop_retains_stuck_ring_without_waiting()
     rocketnet_unit_check( h.clock.now == before );
     rocketnet_unit_check( h.clock.steps == steps );
     rocketnet_unit_check( h.fake.destroy_calls == 0 );
-    rocketnet_unit_check( io->rings.state[0].load() == ROCKETNET_CLIENT_RING_SENDING );
-    rocketnet_unit_check( io->rings.state[1].load() == ROCKETNET_CLIENT_RING_HANDED_OFF );
-    rocketnet_client_send_rings_finish( &io->rings, 0 );
+    rocketnet_unit_check( io->send.ready_count == 2 );
     rocketnet_unit_check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     rocketnet_unit_check( rocketnet_client_transport_stopped( transport ) );
-    rocketnet_unit_check( h.fake.num_sent == 1 );
+    rocketnet_unit_check( h.fake.num_sent == 2 );
     rocketnet_client_transport_destroy( transport );
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
     rocketnet_unit_check( h.clock.dropped == 0 );
@@ -385,8 +384,6 @@ static void test_client_io_destroy_requires_completed_stop()
     h.clock.budget = 100;
     rocketnet_client_transport_t * transport = destroy_wait_transport_create( &h );
     rocketnet_unit_check( transport != NULL );
-    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
-    io->rings.state[0].store( ROCKETNET_CLIENT_RING_SENDING, std::memory_order_relaxed );
     rocketnet_client_transport_stop( transport );
     auto saved_assert = rn_assert_function;
     client_io_stop_hand_off_asserts = 0;
@@ -399,7 +396,6 @@ static void test_client_io_destroy_requires_completed_stop()
     rocketnet_unit_check( h.fake.destroy_calls == 0 );
     rocketnet_unit_check( !rocketnet_client_transport_stopped( transport ) );
     rocketnet_unit_check( h.clock.now == 1000.0 );
-    rocketnet_client_send_rings_finish( &io->rings, 0 );
     rocketnet_client_transport_update( transport, 1000.0 );
     rocketnet_unit_check( rocketnet_client_transport_stopped( transport ) );
     rocketnet_client_transport_destroy( transport );
