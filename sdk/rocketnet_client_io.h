@@ -480,6 +480,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
 
+    // a step after the exit does nothing: the final ring went once
+    if ( io->stopped.load( std::memory_order_acquire ) )
+        return ROCKETNET_CLIENT_IO_EXITED;
+
     // RNClientIo Stop: the main thread stores quit and wakes. Read it first:
     // every ring the main thread published, and the final ring stop handed
     // over, happened before the store this load sees.
