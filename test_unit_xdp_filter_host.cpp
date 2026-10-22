@@ -1757,6 +1757,7 @@ static void test_xdp_transport_host_udp_length_drops()
 #if ROCKETNET_XDP
 
 #include "sdk/rocketnet.h"
+#include "sdk/rocketnet_layers.h"
 #include "sdk/rocketnet_memory.h"
 
 static void test_xdp_transport_queue_default_matches_memory_plan()
