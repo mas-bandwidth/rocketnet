@@ -22,6 +22,7 @@
 #include <new>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
 
 // The 16-aligned members lead, each starting where the one before ends, so the
 // compiler inserts no alignment padding; the struct takes their alignment.
@@ -219,6 +220,14 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
     return false;
 }
 
+#include <stdlib.h>
+static std::atomic<uint64_t> diag_worker_loops{0}, diag_tx_loops{0}, diag_recv_out{0}, diag_send_out{0};
+static std::atomic<uint64_t> diag_main_receive_calls{0}, diag_main_receive_packets{0}, diag_main_send_calls{0}, diag_main_send_published{0};
+static std::atomic<uint64_t> diag_recv_fail_status{0}, diag_last_fail_status{0}, diag_worker_in_mutex{0}, diag_worker_phase{0};
+static std::atomic<uint64_t> diag_max_gqcs_gap_us{0}, diag_start_null{0};
+static uint32_t diag_port_att[65536], diag_port_null[65536], diag_port_rx[65536]; static double diag_port_last_att[65536], diag_port_last_ok[65536], diag_port_last_rx[65536];
+static std::atomic<int> diag_started{0}, diag_exited{0};
+static rocketnet_platform_thread_t * diag_thread_handle = NULL;
 static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op )
 {
     // Only a completion worker or the creating thread posts a receive; no
@@ -264,7 +273,10 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     if ( result != 0 && error == 0 )
         error = WSAGetLastError();
     if ( result == 0 || error == WSA_IO_PENDING )
+    {
+        diag_recv_out.fetch_add( 1 );
         return true; // Immediate success also produces exactly one IOCP event.
+    }
     iocp->pending.fetch_sub( 1, std::memory_order_release );
     // a post refused with an ICMP report of an earlier send is counted with
     // the reset statuses, then waits on the retry list like every refused post
@@ -397,6 +409,8 @@ static void rocketnet_iocp_worker( void * argument )
 
         OVERLAPPED_ENTRY entries[64];
         ULONG count = 0;
+        diag_worker_loops.fetch_add( 1 );
+        diag_worker_phase.store( 1 );
         const DWORD timeout = QueryDepthSList( &iocp->retry_receives ) ? 1 : 50;
         const BOOL ok = GetQueuedCompletionStatusEx( iocp->port, entries, 64, &count, timeout, FALSE );
         if ( !ok )
@@ -408,6 +422,7 @@ static void rocketnet_iocp_worker( void * argument )
                 rocketnet_platform_sleep( 0.001 );
             }
         }
+        diag_worker_phase.store( 2 );
         if ( count )
             iocp->counters[ROCKETNET_IOCP_COMPLETION_BATCHES].fetch_add( 1, std::memory_order_relaxed );
 
@@ -439,11 +454,14 @@ static void rocketnet_iocp_worker( void * argument )
                 const int counter = success && bytes == (DWORD) op->run_bytes ? ROCKETNET_IOCP_SEND_COMPLETED : ROCKETNET_IOCP_SEND_FAILED;
                 iocp->counters[counter].fetch_add( (uint64_t) op->run_count, std::memory_order_relaxed );
                 iocp->pending.fetch_sub( 1, std::memory_order_release );
+                diag_send_out.fetch_sub( 1 );
                 rocketnet_iocp_retire_send( iocp, op );
                 continue;
             }
 
             rocketnet_address_t from;
+            diag_recv_out.fetch_sub( 1 );
+            if ( status != 0 ) { diag_recv_fail_status.fetch_add( 1 ); diag_last_fail_status.store( (uint64_t) status ); }
             const bool running = !iocp->stopping.load( std::memory_order_acquire );
             if ( !success && running && entries[i].Internal != 0 )
             {
@@ -468,6 +486,7 @@ static void rocketnet_iocp_worker( void * argument )
             {
                 const int index = buffer->num_packets++;
                 buffer->from[index] = from;
+                diag_port_rx[from.port]++; diag_port_last_rx[from.port] = rocketnet_platform_time();
                 buffer->packet_bytes[index] = (int) bytes;
                 memcpy( buffer->data[index], op->frame, bytes );
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
@@ -489,8 +508,10 @@ static void rocketnet_iocp_worker( void * argument )
             rocketnet_iocp_post_receive( iocp, op );
             retry = next;
         }
+        diag_worker_phase.store( 3 );
         if ( !iocp->stopping.load( std::memory_order_acquire ) )
             rocketnet_iocp_publish_receive_bank( worker );
+        diag_worker_phase.store( 4 );
 #if defined(ROCKETNET_IOCP_TESTS)
         iocp->test_active_completion_batches.fetch_sub( 1, std::memory_order_release );
 #endif
@@ -518,6 +539,8 @@ bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp )
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
 {
     if ( !iocp ) return;
+    { int n = 0; const double now = rocketnet_platform_time(); for ( int p = 0; p < 65536; ++p ) if ( diag_port_att[p] > 200 ) { fprintf( stderr, "iocp_port: port=%d att=%u null=%u rx=%u since_att=%.1f since_ok=%.1f since_rx=%.1f\n", p, diag_port_att[p], diag_port_null[p], diag_port_rx[p], now - diag_port_last_att[p], now - diag_port_last_ok[p], now - diag_port_last_rx[p] ); ++n; } fflush( stderr ); memset( diag_port_att, 0, sizeof(diag_port_att) ); memset( diag_port_null, 0, sizeof(diag_port_null) ); memset( diag_port_rx, 0, sizeof(diag_port_rx) ); (void) n; }
+    if ( diag_started.load() ) { while ( !diag_exited.load() ) rocketnet_platform_sleep( 0.01 ); if ( diag_thread_handle ) { rocketnet_platform_thread_join( diag_thread_handle ); rocketnet_platform_thread_destroy( diag_thread_handle ); diag_thread_handle = NULL; } diag_exited.store( 0 ); diag_started.store( 0 ); }
     const bool stopped = rocketnet_server_iocp_stopped( iocp );
     rocketnet_assert( stopped );
     if ( !stopped ) return;
@@ -704,7 +727,8 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) ) return NULL;
     SLIST_ENTRY * entry = InterlockedPopEntrySList( &iocp->free_sends );
-    if ( !entry ) return NULL;
+    { const double now = rocketnet_platform_time(); diag_port_att[to->port]++; diag_port_last_att[to->port] = now; if ( entry ) diag_port_last_ok[to->port] = now; }
+    if ( !entry ) { diag_start_null.fetch_add( 1 ); diag_port_null[to->port]++; return NULL; }
     rocketnet_iocp_operation_t * op = CONTAINING_RECORD( entry, rocketnet_iocp_operation_t, free_entry );
     op->address_bytes = rocketnet_iocp_address_write( to, iocp->ipv6, &op->address );
     if ( !op->address_bytes )
@@ -792,6 +816,8 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, rocketnet_
         iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
         InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
     }
+    else
+        diag_send_out.fetch_add( 1 );
 }
 
 // A USO run: one overlapped WSASendMsg with one WSABUF per frame, the socket's
@@ -834,6 +860,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
             result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
             if ( result == 0 )
             {
+                diag_send_out.fetch_add( 1 );
                 iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
                 return true;
             }
@@ -841,6 +868,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         }
         if ( error == WSA_IO_PENDING )
         {
+            diag_send_out.fetch_add( 1 );
             iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
             return true;
         }
@@ -867,6 +895,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
 void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
 {
+    diag_main_send_calls.fetch_add( 1 );
     uint64_t count = iocp->num_staged.load( std::memory_order_relaxed );
     if ( count > ROCKETNET_IOCP_SEND_QUEUE_SIZE ) count = ROCKETNET_IOCP_SEND_QUEUE_SIZE;
     if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
@@ -900,7 +929,14 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
     iocp->num_staged.store( 0, std::memory_order_relaxed );
 }
 
+static void rocketnet_iocp_diag_receive_done( rocketnet_server_iocp_t * iocp );
+void rocketnet_server_iocp_receive_packets_inner( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp )
+{
+    rocketnet_server_iocp_receive_packets_inner( iocp );
+    rocketnet_iocp_diag_receive_done( iocp );
+}
+void rocketnet_server_iocp_receive_packets_inner( rocketnet_server_iocp_t * iocp )
 {
     iocp->process.num_packets = 0;
     for ( int q = 0; q < iocp->num_workers; ++q )
@@ -1037,6 +1073,45 @@ int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int 
 }
 #endif
 
+
+static void rocketnet_iocp_diag_thread( void * argument )
+{
+    rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t*) argument;
+    const double start = rocketnet_platform_time();
+    while ( !iocp->stopping.load() )
+    {
+        rocketnet_platform_sleep( 0.5 );
+        uint64_t c[ROCKETNET_IOCP_NUM_COUNTERS];
+        rocketnet_server_iocp_counters( iocp, c );
+        int ready = -1, freec = -1, fill = -1, exposed = -1;
+        rocketnet_iocp_worker_t * w = &iocp->workers[0];
+        if ( rocketnet_platform_mutex_try_acquire( &w->mutex ) )
+        {
+            ready = w->ready_count; freec = w->free_count; exposed = w->exposed_count; fill = w->buffers[w->fill_index].num_packets;
+            rocketnet_platform_mutex_release( &w->mutex );
+        }
+        fprintf( stderr, "iocp_diag: t=%.1f wloops=%llu txloops=%llu phase=%llu rx_done=%llu rx_drop=%llu repost_fail=%llu rx_fail=%llu last_fail=0x%llx tx_done=%llu tx_fail=%llu batches=%llu pending=%d rx_out=%lld tx_out=%lld free_sends=%u retry=%u staged=%llu start_null=%llu ready=%d free=%d exposed=%d fill=%d mrecv=%llu mpkts=%llu msend=%llu mpub=%llu uso=%llu uro=%llu feat=%d\n",
+            rocketnet_platform_time() - start, (unsigned long long) diag_worker_loops.load(), (unsigned long long) diag_tx_loops.load(), (unsigned long long) diag_worker_phase.load(),
+            (unsigned long long) c[ROCKETNET_IOCP_RECEIVE_COMPLETED], (unsigned long long) c[ROCKETNET_IOCP_RECEIVE_DROPPED], (unsigned long long) c[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED],
+            (unsigned long long) diag_recv_fail_status.load(), (unsigned long long) diag_last_fail_status.load(),
+            (unsigned long long) c[ROCKETNET_IOCP_SEND_COMPLETED], (unsigned long long) c[ROCKETNET_IOCP_SEND_FAILED], (unsigned long long) c[ROCKETNET_IOCP_COMPLETION_BATCHES],
+            iocp->pending.load(), (long long) diag_recv_out.load(), (long long) diag_send_out.load(),
+            (unsigned) QueryDepthSList( &iocp->free_sends ), (unsigned) QueryDepthSList( &iocp->retry_receives ), (unsigned long long) iocp->num_staged.load(),
+            (unsigned long long) diag_start_null.load(), ready, freec, exposed, fill,
+            (unsigned long long) diag_main_receive_calls.load(), (unsigned long long) diag_main_receive_packets.load(),
+            (unsigned long long) diag_main_send_calls.load(), (unsigned long long) diag_main_send_published.load(),
+            (unsigned long long) c[ROCKETNET_IOCP_USO_SENDS], (unsigned long long) c[ROCKETNET_IOCP_URO_BATCHES], iocp->features.load() );
+        fflush( stderr );
+    }
+    diag_exited.store( 1 );
+}
+static void rocketnet_iocp_diag_receive_done( rocketnet_server_iocp_t * iocp )
+{
+    diag_main_receive_calls.fetch_add( 1 );
+    diag_main_receive_packets.fetch_add( (uint64_t) iocp->process.num_packets );
+    if ( GetEnvironmentVariableA( "ROCKETNET_IOCP_DIAG", NULL, 0 ) > 0 && diag_started.exchange( 1 ) == 0 )
+        diag_thread_handle = rocketnet_platform_thread_create( iocp->context, rocketnet_iocp_diag_thread, iocp );
+}
 #endif // ROCKETNET_PLATFORM_WINDOWS
 
 int rocketnet_server_iocp_windows_cpp_dummy = 0;
