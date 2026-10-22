@@ -45,7 +45,7 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ❌ | ❌ | ❌ |
 | Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ❌ | ❌ | ❌ |
 | Attack-surface reduction: the token claim is written only after the signature verifies | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a token created beyond the five-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a token created beyond the 30-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
 | ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
