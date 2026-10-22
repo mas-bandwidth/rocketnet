@@ -1,0 +1,30 @@
+# Dictionary for fuzz/rocketnet_fuzz_token_private.cpp. Each entry is the
+# little-endian spelling of a named constant in sdk/ (cited beside it), the
+# bytes the token readers and the request ladder compare against.
+
+# selectors: private layout, signed layout, minted, raw signed (input[0] & 3)
+sel_private="\x00"
+sel_signed="\x01"
+sel_minted="\x02"
+sel_raw_signed="\x03"
+
+# ROCKETNET_WIRE_VERSION 0x4E7C1A93 (sdk/rocketnet_connect_token.h)
+version="\x93\x1a\x7c\x4e"
+
+# ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788 (sdk/rocketnet_connect_token.h)
+dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
+
+# ROCKETNET_ADDRESS_FLAG_IPV4, _IPV6, both (sdk/rocketnet_connect_token.h)
+addr_ipv4="\x01"
+addr_ipv6="\x02"
+addr_both="\x03"
+
+# ROCKETNET_TEST_CREATE_TS (sdk/rocketnet_test_vectors.h) and the harness clock, ROCKETNET_TEST_CREATE_TS + 100
+test_create_ts="\x00\xf9\xac\x68\x00\x00\x00\x00"
+harness_now="\x64\xf9\xac\x68\x00\x00\x00\x00"
+
+# the advertised vector address 203.0.113.10:40000 in the signed ipv4 layout
+dev_server_ipv4="\xcb\x00\x71\x0a\x40\x9c"
+
+# ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS 10, as the signed int32
+dev_timeout="\x0a\x00\x00\x00"
