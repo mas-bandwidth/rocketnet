@@ -735,7 +735,7 @@ static void test_client_disconnect_sends_burst_staged_in_link_simulator()
     {
         double now = 1000.0;
         rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
-        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE410ULL + (uint64_t) i, false, true );
+        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), UINT64_C( 0xE410 ) + (uint64_t) i, false, true );
         const int slot = destroy_disconnect_connect_client( server, client, &now );
         rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
         check( rocketnet_client_transport_network_simulator( transport, latency_ms[i], 0, 0, 0 ) );
