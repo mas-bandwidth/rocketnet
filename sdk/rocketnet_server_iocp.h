@@ -9,13 +9,15 @@
 #include "rocketnet_wire.h"
 
 // Windows server transport. The public transport API is unchanged. Fill threads
-// acquire and seal directly into transport-owned frames. Flush posts overlapped
-// UDP sends; only their completions return those frames to the free pool.
+// acquire and seal directly into transport-owned cold frames. Flush try-publishes
+// one of three compact index banks to a dedicated TX worker. That worker alone
+// coalesces and posts UDP sends; only completions return frames to the free pool.
 // Receive workers dequeue completions in batches and publish private four-bank
 // buffers. Completion work never runs under the publication mutex; the main
 // receive call swaps bank ownership without waiting for that mutex.
 
-// One worker by default: workers race on the one completion port and each
+// One completion worker by default, plus one dedicated TX worker. Completion
+// workers race on the one completion port and each
 // publishes its own buffer, so more than one reorders a client's datagrams
 // at the drain, which the reliable layer answers with resends.
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
@@ -97,6 +99,12 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
+// TX tests can hold worker service or the short publication mutex separately.
+void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
+void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * iocp, bool hold );
+int rocketnet_server_iocp_test_ready_tx_banks( rocketnet_server_iocp_t * iocp );
+// Published banks are fully serviced; outstanding kernel sends are separate.
+bool rocketnet_server_iocp_test_tx_idle( rocketnet_server_iocp_t * iocp );
 // Hold/release pauses completion work through a test-only atomic gate.
 void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp, bool hold );
 // Hold/release the short publication mutexes on one thread. The main receive

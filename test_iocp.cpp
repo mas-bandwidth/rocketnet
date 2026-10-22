@@ -20,6 +20,23 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
+// Native workers advance in real time. Wait for the asserted state, never for
+// an assumed amount of work to fit inside one caller flush or a fixed sleep.
+template <typename Predicate>
+static void wait_until( const char * name, Predicate predicate, double seconds = 5.0 )
+{
+    const double deadline = rocketnet_platform_time() + seconds;
+    while ( !predicate() )
+    {
+        if ( rocketnet_platform_time() >= deadline )
+        {
+            fprintf( stderr, "IOCP check failed: timed out waiting for %s\n", name );
+            exit(1);
+        }
+        rocketnet_platform_sleep(0.001);
+    }
+}
+
 static std::atomic<int> live_allocations{0};
 static std::atomic<int> allocations{0};
 static int fail_allocation = -1;
@@ -213,6 +230,11 @@ static void test_uso_run_owns_frames()
     }
     rocketnet_server_iocp_send_packets(transport);
     uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    wait_until( "worker USO submission", [&]() {
+        rocketnet_server_iocp_send_packets(transport);
+        rocketnet_server_iocp_counters(transport, counters);
+        return counters[ROCKETNET_IOCP_USO_SENDS] >= 1;
+    } );
     rocketnet_server_iocp_counters(transport, counters);
     CHECK(counters[ROCKETNET_IOCP_USO_SENDS] == 1);
     CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
@@ -228,6 +250,7 @@ static void test_uso_run_owns_frames()
     const double deadline = rocketnet_platform_time() + 5.0;
     do
     {
+        rocketnet_server_iocp_send_packets(transport); // retry a contended publication
         rocketnet_server_iocp_counters(transport, counters);
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] == (uint64_t) run ) break;
         rocketnet_platform_sleep(0.001);
@@ -693,8 +716,8 @@ static void test_iocp_send_completion_fails()
         rocketnet_server_iocp_test_fail_next(transport, ROCKETNET_IOCP_TEST_FAULT_SEND_COMPLETION, 1, WSAENOBUFS);
         iocp_stage(transport, &peer_address, 0xEE, 16);
         rocketnet_server_iocp_send_packets(transport);
-        CHECK(iocp_counter(transport, ROCKETNET_IOCP_USO_SENDS) == 1);
         iocp_wait_sends(transport, retired + 16);
+        CHECK(iocp_counter(transport, ROCKETNET_IOCP_USO_SENDS) == 1);
         CHECK(iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED) == 16);
         iocp_all_frames_free(transport, &peer_address);
     }
@@ -729,6 +752,7 @@ static void test_iocp_send_post_fails()
             iocp_stage(transport, &peer_address, 0xEE, runs ? 16 : frames);
             rocketnet_server_iocp_send_packets(transport);
         }
+        iocp_wait_sends(transport, (uint64_t) frames);
         CHECK(rocketnet_server_iocp_test_faults_left(transport, ROCKETNET_IOCP_TEST_FAULT_SEND_POST) == 0);
         CHECK(iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED) == (uint64_t) frames);
         CHECK(iocp_counter(transport, ROCKETNET_IOCP_SEND_COMPLETED) == 0);
@@ -815,6 +839,11 @@ static void test_iocp_send_queue_full_recovers()
     CHECK(!rocketnet_server_iocp_start_packet(transport, &peer_address, &id));
     rocketnet_server_iocp_send_packets(transport);
     CHECK(!rocketnet_server_iocp_start_packet(transport, &peer_address, &id));
+    wait_until( "held IOCP send submission", [&]() {
+        rocketnet_server_iocp_send_packets(transport);
+        return rocketnet_server_iocp_pending(transport) > ROCKETNET_IOCP_RECEIVES_PER_WORKER ||
+               iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED) > 0;
+    } );
     CHECK(rocketnet_server_iocp_pending(transport) > ROCKETNET_IOCP_RECEIVES_PER_WORKER ||
           iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED) > 0);
     rocketnet_server_iocp_send_packets(transport);
