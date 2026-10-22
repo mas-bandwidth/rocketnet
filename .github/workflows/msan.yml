@@ -5,8 +5,11 @@
 # is the one command. A clean run prints "MSan: clean". The script fails when a
 # finding is not listed in tools/msan_known.txt, when a test crashes or fails,
 # or when the run stops without a test fail line; a listed finding does not
-# fail the script (MSan's exitcode is 0, so the suite runs every test). Findings are present at BASE, so this job is
-# continue-on-error.
+# fail the script (MSan's exitcode is 0, so the suite runs every test). The
+# C++ library is the MSan-instrumented libc++ the fleet installs under
+# /opt/msan-libcxx-<clang version> (tools/build_msan_libcxx.sh); a runner
+# without it fails with a TOOL-MISSING line. The run is clean and the known
+# list empty, so the job gates: it is no longer continue-on-error.
 name: msan
 
 on:
@@ -24,7 +27,6 @@ jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
-    continue-on-error: true
     steps:
 
       - uses: actions/checkout@v4

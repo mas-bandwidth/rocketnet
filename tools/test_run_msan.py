@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_MSAN = REPO_ROOT / "tools" / "run_msan.sh"
 
 MSAN_EXITCODE = 86
-KNOWN_TOP = "load64_be sodium/sodium.h:1464:5"
+KNOWN_TOP = "known_frame tools/fixture.cpp:2:1"
 UNKNOWN_TOP = "unlisted_frame tools/fixture.cpp:1:1"
 
 FAKE_TEMPLATE = '''#!/usr/bin/env python3
@@ -56,8 +56,11 @@ class RunMsanGateTest(unittest.TestCase):
             % {"warning": warning_text(top), "stdout": stdout, "status": status}
         )
         binary.chmod(0o755)
+        known = Path(self.tmp.name) / "known.txt"
+        known.write_text("# the fixture's known list\n%s\n" % KNOWN_TOP)
         env = dict(os.environ)
         env["RUN_MSAN_TEST_BIN"] = str(binary)
+        env["RUN_MSAN_KNOWN_FILE"] = str(known)
         result = subprocess.run(
             ["bash", str(RUN_MSAN)],
             cwd=str(REPO_ROOT),

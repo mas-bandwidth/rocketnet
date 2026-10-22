@@ -204,7 +204,9 @@ static int secrets_wiped_pattern_count( const uint8_t * block, size_t bytes )
 
 // the counting allocator: it keeps each block's size, and on the free of a
 // block that holds the watched client or server it counts the planted
-// message's occurrences still in the block
+// message's occurrences still in the block. Its blocks start zeroed: the
+// count reads every byte, including bytes the SDK never wrote, and an
+// unwritten byte has no value to compare
 static std::map<void *, size_t> * secrets_wiped_sizes = NULL;
 static const void * secrets_wiped_watched[2] = { NULL, NULL };
 static int secrets_wiped_watched_frees = 0;
@@ -213,7 +215,7 @@ static int secrets_wiped_watched_pattern = 0;
 static void * secrets_wiped_malloc( void * context, size_t bytes )
 {
     (void) context;
-    void * p = malloc( bytes );
+    void * p = calloc( 1, bytes );
     if ( p && secrets_wiped_sizes )
         ( *secrets_wiped_sizes )[p] = bytes;
     return p;
@@ -454,6 +456,10 @@ static void test_secrets_wiped_arena_destroy_in_block()
     uint8_t * raw = (uint8_t *) malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw != NULL );
     uint8_t * block = secrets_wiped_aligned( raw );
+
+    // the scan below reads every byte of the block, including bytes the arena
+    // never writes, so the block starts zeroed: an unwritten byte has no value
+    memset( raw, 0, (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
 
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );

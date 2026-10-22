@@ -11306,6 +11306,15 @@ static int rocketnet_test_reassembly_snapshot( struct rocketnet_reassembly_set_t
     return (int) ( p - out );
 }
 
+// a set's payload staging (the slot arena and the delivered buffers) is
+// written only as fragments arrive, so its bytes start indeterminate; zeroed
+// first, a snapshot of it compares defined bytes, and any write shows
+static void rocketnet_test_reassembly_zero_staging( struct rocketnet_reassembly_set_t * set )
+{
+    memset( set->arena, 0, (size_t) set->num_connections * (size_t) set->num_slots * set->slot_arena_bytes );
+    memset( set->delivered, 0, (size_t) set->delivered_capacity * (size_t) set->max_payload_bytes );
+}
+
 void rocketnet_test_fragment_before_connected_touches_no_reassembly()
 {
     // a fragment is accepted only on a connected slot: a client in
@@ -11369,6 +11378,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     rocketnet_check( frag_count == 3 );
 
     const uint64_t * client_counters = pair.client_counters.values;
+    rocketnet_test_reassembly_zero_staging( pair.client.reassembly );
     int snap = rocketnet_test_reassembly_snapshot( pair.client.reassembly, before );
     uint64_t wrong_state_before = client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE];
     uint64_t received_before = client_counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED];
@@ -11412,6 +11422,7 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     pair.time = 101.0;
 
     const uint64_t * server_counters = pair.test.counters.values;
+    rocketnet_test_reassembly_zero_staging( pair.test.server.reassembly );
     snap = rocketnet_test_reassembly_snapshot( pair.test.server.reassembly, before );
     uint64_t not_connected_before = server_counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED];
     // a valid sealed fragment under the client's live session keys
