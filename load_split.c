@@ -1165,6 +1165,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const int local = cursor;
             cursor = (cursor + 1) % count;
             struct split_client_t * peer = &clients[local];
+            { static double diag_last_iter = 0.0; const double dn = rocketnet_time(); if ( diag_last_iter > 0.0 && dn - diag_last_iter > 0.2 ) fprintf(stderr, "shard_loop_gap: t=%.3f gap=%.3f\n", dn, dn - diag_last_iter); diag_last_iter = dn; }
             rocketnet_client_update(peer->api, rocketnet_time());
             if ( rocketnet_time() >= drain_end ) result.barrier_active = 1;
             const struct rocketnet_message_batch_t * batch = NULL;
