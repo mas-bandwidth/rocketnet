@@ -811,6 +811,12 @@ void rocketnet_test_posix_init_term_1000()
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
 
+        // term closes the bundled sodium random source on macOS (dfd1a54b) and
+        // sodium reopens it at its next draw, not at init: one cycle first, so
+        // the baseline is the state every cycle below ends in (inited, nothing
+        // drawn yet), and a descriptor that is really left open still shows
+        posix_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+        posix_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
         const posix_resource_counts_t before = posix_stable_counts();
         const double start = posix_now_seconds();
         const int count = posix_count( cell, 1000 );
