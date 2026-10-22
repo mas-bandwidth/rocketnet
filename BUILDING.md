@@ -287,7 +287,10 @@ networks remote clients connect from.
 
 The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
-compiler. The generated header lives in each build tree, so concurrent
+compiler. Without such a clang, without libbpf or libxdp, or with
+`-DROCKETNET_XDP=OFF`, the build still succeeds with the XDP transport compiled
+out: the library carries no XDP code and links neither library, and a
+transport list naming `xdp` refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
@@ -299,14 +302,16 @@ BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
     cmake -S . -B build-no-xdp -DROCKETNET_XDP=OFF -DCMAKE_BUILD_TYPE=Release
     cmake --build build-no-xdp --parallel 4
 
-The `xdp` rung reports that it was disabled at build time and refuses create.
-A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
+The `xdp` rung reports that it was disabled at build time and refuses create
+with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
 (when built), then `portable` in development builds only. The installed CMake package also omits the
 BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
-Configure with `-DROCKETNET_XDP=ON` to restore the native backend and its
-dependencies. Missing BPF/libxdp development files remain a configure error
-when XDP is enabled.
+Configure with `-DROCKETNET_XDP=ON` (the default) to restore the native
+backend and its dependencies. With it on, a configure that finds no clang with
+the BPF target, or no libbpf or libxdp development files, is not an error: it
+says why and builds exactly as `-DROCKETNET_XDP=OFF` does
+(`tools/check_xdp_compiled_out.py --absent` checks the built library).
 
 ## Pinned sodium
 

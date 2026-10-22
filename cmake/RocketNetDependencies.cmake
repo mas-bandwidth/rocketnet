@@ -31,16 +31,26 @@ if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
             "configure with -DROCKETNET_USE_SYSTEM_SODIUM=OFF to build the vendored 1.0.22.")
     endif()
 endif()
+# libbpf and libxdp for the XDP server transport: optional when building
+# (absent, CMakeLists.txt compiles XDP out), required when the installed
+# package was built with XDP (ROCKETNET_XDP_REQUIRED, set by the config).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     foreach(dependency Bpf Xdp)
         if(NOT TARGET RocketNet::${dependency})
             string(TOLOWER "${dependency}" name)
-            find_library(ROCKETNET_${dependency}_LIBRARY NAMES ${name} REQUIRED)
-            find_path(ROCKETNET_${dependency}_INCLUDE_DIR NAMES ${name}/lib${name}.h REQUIRED)
-            add_library(RocketNet::${dependency} UNKNOWN IMPORTED)
-            set_target_properties(RocketNet::${dependency} PROPERTIES
-                IMPORTED_LOCATION "${ROCKETNET_${dependency}_LIBRARY}"
-                INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_${dependency}_INCLUDE_DIR}")
+            if(ROCKETNET_XDP_REQUIRED)
+                find_library(ROCKETNET_${dependency}_LIBRARY NAMES ${name} REQUIRED)
+                find_path(ROCKETNET_${dependency}_INCLUDE_DIR NAMES ${name}/lib${name}.h REQUIRED)
+            else()
+                find_library(ROCKETNET_${dependency}_LIBRARY NAMES ${name})
+                find_path(ROCKETNET_${dependency}_INCLUDE_DIR NAMES ${name}/lib${name}.h)
+            endif()
+            if(ROCKETNET_${dependency}_LIBRARY AND ROCKETNET_${dependency}_INCLUDE_DIR)
+                add_library(RocketNet::${dependency} UNKNOWN IMPORTED)
+                set_target_properties(RocketNet::${dependency} PROPERTIES
+                    IMPORTED_LOCATION "${ROCKETNET_${dependency}_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_${dependency}_INCLUDE_DIR}")
+            endif()
         endif()
     endforeach()
 endif()

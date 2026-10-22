@@ -12,6 +12,10 @@ on:
       - '.github/workflows/cbmc.yml'
   workflow_dispatch:
 
+concurrency:
+  group: cbmc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
