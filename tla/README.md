@@ -27,8 +27,9 @@ match the current inputs; it does not turn a debt failure into a proof.
 ## Pinned runner and checker
 
 Build `tools/tlacheck` from public `mas-bandwidth/nova-tools` commit
-`0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a`, using Go 1.26.6 on Linux.
-Keep that pin aligned with the CI workflow and the runner that measured the
+`0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a`, using Go 1.26.6 or a later 1.26
+patch on Linux (its go.mod minimum; tlacheck records no Go version). Keep the
+commit pin aligned with the CI workflow and the runner that measured the
 records. Its result-producing source files are part of every fingerprint.
 Use the TLC JAR with SHA-256
 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
