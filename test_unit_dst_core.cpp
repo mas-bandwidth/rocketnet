@@ -129,9 +129,24 @@ static void test_dst_server_kick_reaches_slot_holder()
     rocketnet_unit_check( result.passed );
 }
 
+// The server's maintenance sends a standalone ACK while a slot owes one, as
+// the server transport does, and the wire's duplicate fault replays some of
+// them at the client: CLIENT_ACK_ALREADY_RECEIVED is explained under that
+// fault, as soak_sim explains it. Seed 8 replays server ACKs at the client.
+static void test_dst_duplicate_server_ack_explained()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 2500 );
+    options.fault_steps = 500;
+    options.faults = ROCKETNET_DST_FAULT_DUP;
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 8, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+}
+
 REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
 REGISTER_UNIT_TEST( test_dst_seeds_differ );
 REGISTER_UNIT_TEST( test_dst_substreams_independent );
 REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
 REGISTER_UNIT_TEST( test_dst_fail_names_seed );
 REGISTER_UNIT_TEST( test_dst_server_kick_reaches_slot_holder );
+REGISTER_UNIT_TEST( test_dst_duplicate_server_ack_explained );

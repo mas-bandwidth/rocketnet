@@ -347,14 +347,18 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
         rocketnet_server_protocol_update( &w->server, time );
         for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
         {
-            const int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &w->server, slot, time, response );
-            if ( keep_alive_bytes > 0 )
+            // the server transport's maintenance: a keep-alive when one is
+            // due, otherwise a standalone ack while the slot owes one
+            int maintenance_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &w->server, slot, time, response );
+            if ( maintenance_bytes == 0 )
+                maintenance_bytes = rocketnet_server_protocol_write_ack_if_due( &w->server, slot, time, response );
+            if ( maintenance_bytes > 0 )
             {
                 const int mapping_index = rocketnet_client_slots_mapping_index( w->server.client_slots, slot );
                 const struct rocketnet_address_t * to = rocketnet_encryption_map_address( w->server.encryption_map, mapping_index );
                 if ( to )
                     rocketnet_dst_endpoint_send_control( endpoint, rocketnet_dst_world_client_for_slot( w, slot ) + 1,
-                                                         response, keep_alive_bytes, to );
+                                                         response, maintenance_bytes, to );
             }
         }
         return;
@@ -1266,9 +1270,11 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             rocketnet_dst_check_conservation( &w->check, &w->server_counters, "server" );
             rocketnet_dst_check_conservation( &w->check, &w->client_counters, "clients" );
             rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server",
-                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0,
+                ( options->faults & ROCKETNET_DST_FAULT_DUP ) != 0 );
             rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients",
-                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0 );
+                ( options->faults & ( ROCKETNET_DST_FAULT_DUP | ROCKETNET_DST_FAULT_REORDER | ROCKETNET_DST_FAULT_DELAY ) ) != 0,
+                ( options->faults & ROCKETNET_DST_FAULT_DUP ) != 0 );
         }
         if ( w->check.failed && !w->failed )
         {
