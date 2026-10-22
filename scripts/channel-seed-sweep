@@ -5,7 +5,7 @@
 #   scripts/channel-seed-sweep --cases a,b --seeds 1-1000 [--timeout 120] [--jobs N] [--bin ./bin/functional]
 #   scripts/channel-seed-sweep --all --seeds 1-2000
 #
-# Each run is one process: ROCKETNET_CHANNEL_SEED=<seed> <bin> --run <case>
+# Each run is one process: ROCKETNET_CHANNEL_SEED=<seed> <bin> --run test_<case>
 # (functional/channel_harness.h reads the variable once at create). Lanes run
 # in parallel, never more than the machine's cores. One line per failure:
 #
@@ -13,7 +13,7 @@
 #
 # and a last line `sweep: <runs> runs, <failures> failures`. Exit 0 only with
 # zero failures. A failing seed replays with
-#   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run <case>
+#   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run test_<case>
 # --all takes every case defined in functional/channel_*.cpp.
 
 set -u
@@ -88,7 +88,8 @@ trap 'rm -f "$report" "$runs_file"' EXIT
 set -u
 bin="$SWEEP_BIN"; timeout="$SWEEP_TIMEOUT"; runs_file="$RUNS_FILE"
 case_name=${1:-}; seed=${2:-}
-out=$( ROCKETNET_CHANNEL_SEED=$seed timeout "$timeout" "$bin" --run "$case_name" 2>&1 )
+# the functional binary registers each case as test_<function>; a name given with the prefix runs unchanged
+out=$( ROCKETNET_CHANNEL_SEED=$seed timeout "$timeout" "$bin" --run "test_${case_name#test_}" 2>&1 )
 status=$?
 printf "\n" >> "$runs_file"
 [ $status -eq 0 ] && exit 0
@@ -105,7 +106,7 @@ fi
 printf "FAIL seed=%s case=%s reason=%s\n" "$seed" "$case_name" "$reason"
 ' _ > "$report"
 
-runs=$( wc -l < "$runs_file" )
+runs=$(( $( wc -l < "$runs_file" ) ))
 failures=$( grep -c '^FAIL ' "$report" )
 sort -k3,3 -k2.6,2n "$report"
 echo "sweep: $runs runs, $failures failures"
