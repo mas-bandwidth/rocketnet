@@ -263,20 +263,16 @@ MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks AckReport
 ### 2026-10-21: GateBeforeOpen and NoOpenBeforeConnect
 
 This change edits `ReplayWindow.tla`, so all four `replaywindow` cases were
-re-measured on captain (Linux, pinned jar, `tlacheck` at nova-tools 0c97d59,
-one shard per case; the mid case `--manual` under its 1500 s debt budget).
-`tlacheck merge --keep tla/RUNS.tsv` refuses to join them while seven other
-groups (fragmentsandacks, rnblocks, rnchannel, rnchanneltypes, rnreceipts,
-rnscheduler, rnslots) are already stale at origin/main b6091dff, so
-`tla/RUNS.tsv` is not edited by hand here. The records the runner wrote,
-verbatim, for the merge that refreshes those groups:
-
-```
-MCReplayWindow.cfg	MCReplayWindow.tla	483faab5cfdfefc3c693da675f70db8c1688e11eb08e1b424a7180e24bba6938	8	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T14:52:00.738304+00:00	2	1917003	53249	11.806	0	PASS	pass	-	110	bounded
-MCReplayWindowMid.cfg	MCReplayWindow.tla	032ef70122077b2501805279d79b76e1aa2a71b7aa39369948002378d47cfa71	8	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T14:54:03.472261+00:00	2	69206063	3145729	303.298	0	PASS	pass	-	1500	manual
-MCReplayWindowBrokenLongSkip.cfg	MCReplayWindow.tla	70db4af6ea226067459abbd99ddec2f14b9d5d6799f39c6a1bcec038311678c4	8	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T14:52:00.738175+00:00	1	656	127	1.523	12	PASS	invariant	WindowIsTruth	110	bounded
-MCReplayWindowBrokenOpenBeforeGate.cfg	MCReplayWindow.tla	1291cd5a66e4c426ec6e32d7c32c4af5bd1c6289c02eb6f11381aa586749a683	8	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	25.0.4.1	linux-amd64	64	2026-10-21T14:52:00.740155+00:00	1	2	2	1.355	12	PASS	invariant	NoOpenBeforeConnect	110	bounded
-```
+re-measured. The records in `tla/RUNS.tsv` were written by `tlacheck run` on
+amd-1 (Linux, pinned jar, one shard per case, `mode = bounded`, 110 s budget)
+when the branch was brought onto main 0f44ecd8, and joined with
+`tlacheck merge --keep tla/RUNS.tsv`: `MCReplayWindow.cfg` passes (1,917,003
+generated / 53,249 distinct), both reversed witnesses reach their declared
+invariant (`WindowIsTruth`, `NoOpenBeforeConnect`), and the mid case is
+recorded as its bounded run, which ends at the budget as the bench row
+declares (see below). An earlier captain measurement of the mid case under a
+1500 s manual budget passed: 69,206,063 generated / 3,145,729 distinct states
+in 303.298 s, exit 0.
 
 ## Mid-scale instance
 
