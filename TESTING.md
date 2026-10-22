@@ -166,7 +166,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnclientio (8 required) | planned for the final deliverable |
 | TLA+ model check: rnendpoint (5 required, 2 bench) | planned for the final deliverable |
 | TLA+ model check: rnxdpreplay (3 required) | planned for the final deliverable |
-| TLA+ model check: rnxdpreceivering (2 required) | planned for the final deliverable |
+| TLA+ model check: rnxdpreceivering (3 required) | planned for the final deliverable |
 | TLA+ model check: rnriodriver (4 required) | planned for the final deliverable |
 | TLA+ model check: rnflows (2 required) | planned for the final deliverable |
 | TLA+ model check: rnclientiodecrypt (5 required) | planned for the final deliverable |

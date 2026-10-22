@@ -92,7 +92,7 @@ static void test_xdp_transport_umem_config_sizes_fill_and_completion_rings()
 
     check( power_of_two( config.fill_size ) );
     check( power_of_two( config.comp_size ) );
-    check( config.fill_size >= ROCKETNET_XDP_FILL_QUEUE_SIZE );
+    check( config.fill_size >= 2 * ROCKETNET_XDP_FILL_FRAMES );
     check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
     check( config.frame_headroom == 0 );
     check( config.flags == 0 );
