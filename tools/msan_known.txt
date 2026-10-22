@@ -120,9 +120,9 @@ rocketnet_sodium_blake2b_final sodium/sodium.c:21104:5
 # explicit_bzero is reported). The config decode staging is wiped that way
 # and then copied by the secret-wipe hook; bytes the base64 decode never
 # wrote stay poisoned although they are zero.
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:69:14
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:69:23
-# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:626:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:74:14
+secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:74:23
+# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:771:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
 
 # Uninstrumented libstdc++ tree navigation (the class above): the counting
 # allocator's std::map<void*, size_t> (test_unit_secrets_wiped.cpp) and a

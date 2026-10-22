@@ -79,6 +79,16 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 // A buffer's bytes are written before they are read, below the count that
 // names them, so only its count is state, set after construction; its pages
 // are touched only by use. Zero only what is state (Glenn 2026-10-22).
+//
+// The zeroed state survives the default-initialization that follows
+// (`new ( p ) T;`, never `T()`, which would zero the buffers too) because the
+// types constructed this way have implicit constructors only: their own
+// members are left as the bytes are, and the only user-provided constructors
+// inside them are std::atomic's, which set their own value. GCC's lifetime
+// dead-store elimination clobbers an object only at the start of a
+// user-provided constructor, so it never discards these stores. The destroy
+// tests in test_unit_secrets_wiped.cpp construct both transports over a 0xC5
+// canary, so a lost store fails them.
 struct rocketnet_span_t
 {
     size_t offset;
