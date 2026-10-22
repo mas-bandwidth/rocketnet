@@ -540,12 +540,16 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_se
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
+#if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
+#endif // #if ROCKETNET_XDP
 
 // the native transports' drop counts behind send_failures and receive_drops,
 // defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2598
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+#if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
+#endif // #if ROCKETNET_XDP
 
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
@@ -673,9 +677,14 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
 #else
 // Keep a refusing rung: removing this known row would make an all-skipped
 // pin expand to auto under the fleet-wide list policy. No socket is opened.
-static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * )
+// XDP is compiled out (CMakeLists.txt: ROCKETNET_XDP=OFF, or no clang with the
+// BPF target, libbpf or libxdp at configure), so a list naming xdp refuses it
+// with TRANSPORT_NOT_BUILT and auto falls past it to the next transport.
+static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
-    rocketnet_error( "xdp create refused: built with ROCKETNET_XDP=OFF" );
+    if ( config->status )
+        *config->status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
+    rocketnet_error( "xdp create refused: XDP is compiled out of this build (ROCKETNET_XDP=OFF, or no clang with the BPF target, libbpf or libxdp at configure)" );
     return NULL;
 }
 static void xdp_disabled_destroy( void * ) {}

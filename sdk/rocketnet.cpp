@@ -230,6 +230,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_FLOW_ID_RESERVED:                return "FLOW_ID_RESERVED";
         case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:  return "TRANSPORT_FAMILIES_UNSUPPORTED";
         case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:          return "CONFIG_NOT_INITIALIZED";
+        case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
         default:
             break;
     }

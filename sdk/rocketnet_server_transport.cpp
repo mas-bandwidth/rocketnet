@@ -69,7 +69,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
 #include <stdlib.h>
 #include <time.h>
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
 #include <linux/if_xdp.h>
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -1607,10 +1607,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( port_zero_refused_seen, 0, sizeof(port_zero_refused_seen) );
 
-    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED is the
-    // start status when every open refused for that reason.
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
+    // TRANSPORT_NOT_BUILT are the start status when every open refused for
+    // that reason.
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
+    int not_built_refusals = 0;
 
     for ( int i = 0; i < ladder.num_candidates && granted_transport < 0; i++ )
     {
@@ -1703,6 +1705,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 open_refusals++;
                 if ( transport_status == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED )
                     families_unsupported_refusals++;
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT )
+                    not_built_refusals++;
             }
         }
 
@@ -1764,6 +1768,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
             else if ( open_refusals > 0 && families_unsupported_refusals == open_refusals )
                 *status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+            else if ( open_refusals > 0 && not_built_refusals == open_refusals )
+                *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
             else
                 *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         }
