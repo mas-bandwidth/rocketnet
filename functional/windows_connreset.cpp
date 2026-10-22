@@ -19,6 +19,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "../test/portable_crt.h"
+#include "../test/time_scale.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,7 +36,11 @@
 #define WINDOWS_CONNRESET_CHILD_ENV "ROCKETNET_CONNRESET_CHILD_SERVER"
 #define WINDOWS_CONNRESET_PARENT_ENV "ROCKETNET_CONNRESET_PARENT_SERVER"
 #define WINDOWS_CONNRESET_TICK ( 1.0 / 60.0 )
-#define WINDOWS_CONNRESET_GAP_BOUND ( WINDOWS_CONNRESET_TICK + 0.050 )
+// the 50 ms allowance over one tick is a Release bound; a Debug or sanitizer
+// build scales it by the suites' one time scale (test/time_scale.h). Measured
+// 2026-10-22 on captain, Debug, exclusive, 10 runs of the 16 cases: max gap
+// 183.5 ms, 20 of 160 over the unscaled 66.7 ms. Release keeps 66.7 ms.
+#define WINDOWS_CONNRESET_GAP_BOUND ( WINDOWS_CONNRESET_TICK + 0.050 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
 #define WINDOWS_CONNRESET_PAYLOAD_BYTES 32
 // packets a server sends each client per tick in the hard-killed case: a
