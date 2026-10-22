@@ -58,15 +58,15 @@ Clients run their frames before the server's, so the server reads a message in
 the frame it was sent (0) and a client reads its state update no earlier than
 the next frame (1): that is the delay of running in one process, and
 `extra frame(s)` is what the frame order adds on top, read from client->server.
-That direction has no
-receive handoff, so every message must read 0 in the correct order and 1 with
+That direction has no receive handoff, so every message must read 0 in the correct order and 1 with
 `--wrong-order`. Server->client passes through a background receive handoff;
-its min, mean and max include worker scheduling and remain measurements rather
-than a frame-count performance contract. The causal minimum is still fixed by
-the loop order: at least 1 frame in the correct order and 2 in the wrong order.
-`PASS` means every client stayed connected, every reliable event arrived, the
-client->server order was exact, and no state update arrived before its causal
-minimum.
+moving that receive work off the frame thread lets data processing scale, with
+extra frames under load as the chosen cost. Its min, mean and max expose that
+cost, but worker scheduling has no fixed frame-count maximum. The causal
+minimum is still fixed by the loop order: at least 1 frame in the correct order
+and 2 in the wrong order. `PASS` means every client stayed connected, every
+reliable event arrived, the client->server order had no unnecessary extra
+frame, and no state update arrived before its causal minimum.
 
 ## Public calls it uses
 

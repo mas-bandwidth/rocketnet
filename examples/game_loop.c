@@ -220,11 +220,11 @@ int main( int argc, char ** argv )
     // client's message the frame it was sent (0) and a client reads its
     // state update no earlier than the next frame (1). Client to server has no
     // receive handoff (the client sends in its call, then the server updates),
-    // so it measures the frame-order cost exactly. Server to client passes a
-    // background receive handoff, so its observed maximum is informational:
-    // scheduler delay can span any number of game frames when catch-up frames
-    // run back to back, but it cannot make an update arrive before this order
-    // permits.
+    // so it measures the frame-order cost exactly and rejects an unnecessary
+    // extra frame. Server to client moves receive work off the frame thread to
+    // scale data processing; under load, its background handoff and worker
+    // scheduling can add game frames. That chosen cost is reported rather than
+    // capped, but an update still cannot arrive before this order permits.
     if ( to_server.count == 0 || to_client.count == 0 ) { printf( "FAIL: no messages measured\n" ); goto cleanup; }
     print_costs( "[end]", &costs[1], frames );
     printf( "client frame budget %s at p99 (informational, never a failure)\n", percentile( &costs[1], 0.99 ) <= BUDGET_US ? "held" : "exceeded" );

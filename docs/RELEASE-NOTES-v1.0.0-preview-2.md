@@ -93,7 +93,9 @@ receive and handshake acceptance in preview-2:
 - Portable and Windows RIO server receive paths use bounded worker handoffs;
   portable server sends also use a worker. Receive-bank capacity follows the
   configured client count. An extra server-to-client update from the background
-  handoff is expected. Client-to-server traffic also uses a bounded handoff;
+  handoff is expected. Moving bulk send and receive work into the background
+  trades added latency under load for scale; unnecessary extra delay remains
+  a regression. Client-to-server traffic also uses a bounded handoff;
   there is no fixed public update-count guarantee in either direction.
   This does not change the application's frame order.
   These changes do not establish the frame-time target.
