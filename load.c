@@ -99,6 +99,8 @@
 #include <tlhelp32.h>
 #endif
 
+#include "load_census.h"
+
 #define LOAD_NUM_COMBOS         8
 #define LOAD_PAYLOAD_BYTES      32
 #define LOAD_MAGIC_CLIENT_TO_SV 0x524E4C44u
@@ -486,6 +488,93 @@ static long count_threads( void )
 #else
     return -1;
 #endif
+}
+
+/* The resource phases each harness role samples, by count for the receipt
+ * and by census for the verdict (load_census.h). load and load_split share them. */
+enum { LOAD_PRE_INIT, LOAD_POST_INIT, LOAD_PRE_TERM, LOAD_POST_TERM, LOAD_PHASES };
+static struct load_census_t load_census_phase[LOAD_PHASES];
+#define LOAD_CENSUS( phase ) ( (void) load_census_take( &load_census_phase[phase] ) )
+
+/* One warm cycle before the baseline: init, a one-client server on an
+ * ephemeral loopback port, one client that connects to it, a few frames of
+ * the five-step loop, teardown and term. Whatever the operating system keeps
+ * after the first use of these calls (Windows: about 34 handles of ETW,
+ * registry, thread pool and ALPC state) is then outside the measured cycle.
+ * Nothing here is checked: the warm cycle only pays first-use costs. */
+static void load_warm_cycle( void )
+{
+    if ( rocketnet_init(NULL, NULL, NULL) != ROCKETNET_STATUS_OK ) return;
+    static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config(&server_config);
+    server_config.protocol_id = LOAD_PROTOCOL_ID;
+    server_config.max_clients = 1;
+    memcpy(server_config.backend_public_key, dev_backend_key, sizeof(server_config.backend_public_key));
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", NULL, &server_config, &status);
+    struct rocketnet_client_t * client = NULL;
+    if ( server && rocketnet_server_start(server) == ROCKETNET_STATUS_OK )
+    {
+        char address[64];
+        snprintf(address, sizeof(address), "127.0.0.1:%u", (unsigned) rocketnet_server_port(server));
+        uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+        rocketnet_server_public_key(server, key);
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        struct rocketnet_client_config_t client_config;
+        rocketnet_client_default_config(&client_config);
+        if ( rocketnet_create_dev_connect_token(address, NULL, key, 30, 10, 1, LOAD_PROTOCOL_ID,
+                                                (uint64_t) time(NULL), NULL, token) == ROCKETNET_STATUS_OK )
+            client = rocketnet_client_create(NULL, &client_config, &status);
+        if ( client && rocketnet_client_connect(client, token) != ROCKETNET_STATUS_OK )
+        {
+            rocketnet_client_destroy(client);
+            client = NULL;
+        }
+        for ( int frame = 0; frame < 50; ++frame )
+        {
+            rocketnet_server_update(server, rocketnet_time());
+            while ( rocketnet_server_receive_messages(server) != NULL ) {}
+            rocketnet_server_send_packets(server);
+            if ( client )
+            {
+                rocketnet_client_update(client, rocketnet_time());
+                while ( rocketnet_client_receive_messages(client) != NULL ) {}
+                rocketnet_client_send_packets(client);
+                if ( frame >= 10 && rocketnet_client_state(client) == ROCKETNET_CLIENT_STATE_CONNECTED ) break;
+            }
+            rocketnet_sleep(0.01);
+        }
+    }
+    if ( client ) rn_cli_client_stop_and_destroy(client);
+    if ( server ) rn_cli_server_stop_and_destroy(server);
+    rocketnet_term();
+}
+
+/* The resource verdict. With a census at all four phases, no thread or
+ * handle may survive from post_init to pre_term (operational) or from
+ * pre_init to post_term (total); operating-system thread pool workers are
+ * reported, not counted. Without a census (a platform that has none) the
+ * counts must return to both phase baselines. */
+static int load_resource_verdict( const char * role,
+                                   long fds_pre_init, long fds_post_init, long fds_pre_term, long fds_post_term,
+                                   long threads_pre_init, long threads_post_init, long threads_pre_term, long threads_post_term,
+                                   struct load_census_survivors_t * operational, struct load_census_survivors_t * total,
+                                   int * census )
+{
+    char prefix[64];
+    snprintf(prefix, sizeof(prefix), "load_resource: role=%s", role);
+    const int counted = fds_pre_init >= 0 && fds_post_init >= 0 && fds_pre_term >= 0 && fds_post_term >= 0 &&
+        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0;
+    *census = load_census_survivors(prefix, "operational", 1, &load_census_phase[LOAD_POST_INIT], &load_census_phase[LOAD_PRE_TERM], operational) &&
+              load_census_survivors(prefix, "total", 0, &load_census_phase[LOAD_PRE_INIT], &load_census_phase[LOAD_POST_TERM], total);
+    if ( *census )
+        return counted && operational->threads == 0 && operational->handles == 0 &&
+               total->threads == 0 && total->handles == 0;
+    memset(operational, 0, sizeof(*operational));
+    memset(total, 0, sizeof(*total));
+    return counted && fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
+           threads_post_init == threads_pre_term && threads_pre_init == threads_post_term;
 }
 
 static void sample_resources( long * peak_fds, long * peak_threads )
@@ -961,8 +1050,10 @@ int main( int argc, char ** argv )
         load_timing_record( &timing, LOAD_TIMING_CLOCK_PAIR, start_ns );
     }
 
+    load_warm_cycle();
     const long fds_pre_init = count_open_fds();
     const long threads_pre_init = count_threads();
+    LOAD_CENSUS( LOAD_PRE_INIT );
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
@@ -971,6 +1062,7 @@ int main( int argc, char ** argv )
     }
     const long fds_start = count_open_fds();
     const long threads_start = count_threads();
+    LOAD_CENSUS( LOAD_POST_INIT );
     const long fds_post_init = fds_start;
     const long threads_post_init = threads_start;
     long fds_peak = fds_start;
@@ -1909,6 +2001,7 @@ int main( int argc, char ** argv )
     free( client_max_update_gap );
     const long fds_pre_term = count_open_fds();
     const long threads_pre_term = count_threads();
+    LOAD_CENSUS( LOAD_PRE_TERM );
 #if defined(_WIN32)
     if ( threads_pre_term > threads_peak )
         threads_peak = threads_pre_term;
@@ -1917,13 +2010,16 @@ int main( int argc, char ** argv )
 
     const long fds_end = count_open_fds();
     const long threads_end = count_threads();
+    LOAD_CENSUS( LOAD_POST_TERM );
     const long fds_post_term = fds_end;
     const long threads_post_term = threads_end;
-    const int resource_baseline =
-        fds_pre_init >= 0 && fds_post_init >= 0 && fds_pre_term >= 0 && fds_post_term >= 0 &&
-        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0 &&
-        fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
-        threads_post_init == threads_pre_term && threads_pre_init == threads_post_term;
+    struct load_census_survivors_t survivors_operational, survivors_total;
+    int census = 0;
+    const int resource_baseline = load_resource_verdict( "load",
+        fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+        threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+        &survivors_operational, &survivors_total, &census );
+    const char * resource_schema = census ? "census_v1" : "phase_counts_v1";
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         if ( strcmp( failed_criterion, "none" ) == 0 )
@@ -1957,7 +2053,10 @@ int main( int argc, char ** argv )
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
                 "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
-                "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=PASS "
+                "term_status_code=%d resource_baseline_schema=%s warm_cycle=1 "
+                "survivor_threads_operational=%ld survivor_handles_operational=%ld "
+                "survivor_threads_total=%ld survivor_handles_total=%ld os_pool_threads=%ld "
+                "resource_baseline=PASS "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
                 "timing_baseline=%s",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
@@ -1970,7 +2069,10 @@ int main( int argc, char ** argv )
                 threads_start, threads_peak, threads_end,
                 fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
-                (int) term_status, timing_baseline );
+                (int) term_status, resource_schema,
+                survivors_operational.threads, survivors_operational.handles,
+                survivors_total.threads, survivors_total.handles, survivors_total.os_pool_threads,
+                timing_baseline );
     }
     else
     {
@@ -1985,7 +2087,10 @@ int main( int argc, char ** argv )
                 "threads_start=%ld threads_peak=%ld threads_end=%ld "
                 "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
                 "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
-                "term_status_code=%d resource_baseline_schema=phase_pairs_v1 resource_baseline=%s "
+                "term_status_code=%d resource_baseline_schema=%s warm_cycle=1 "
+                "survivor_threads_operational=%ld survivor_handles_operational=%ld "
+                "survivor_threads_total=%ld survivor_handles_total=%ld os_pool_threads=%ld "
+                "resource_baseline=%s "
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
                 "timing_baseline=%s "
                 "failed_criterion=%s",
@@ -2004,7 +2109,10 @@ int main( int argc, char ** argv )
                 threads_start, threads_peak, threads_end,
                 fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                 threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
-                (int) term_status, resource_baseline ? "PASS" : "FAIL", timing_baseline,
+                (int) term_status, resource_schema,
+                survivors_operational.threads, survivors_operational.handles,
+                survivors_total.threads, survivors_total.handles, survivors_total.os_pool_threads,
+                resource_baseline ? "PASS" : "FAIL", timing_baseline,
                 failed_criterion );
     }
 

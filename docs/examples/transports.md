@@ -57,6 +57,10 @@ their kind promises and every started server completed the exchange.
 The environment overrides the config struct at create, with precedence
 default < struct < environment:
 
+`portable` is available to clients in development and production builds, but
+the portable server is available only in development builds on every platform.
+Production servers use the platform's native transports.
+
 ```sh
 ROCKETNET_SERVER_TRANSPORT=portable ./my_server
 ROCKETNET_CLIENT_TRANSPORT=portable ./my_client

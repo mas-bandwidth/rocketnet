@@ -84,13 +84,21 @@ and the deployment target.
 ## The macOS transports
 
 The transport registry has two rows that build on macOS: `portable` (every
-platform, server rank 30, client rank 30) and `msgx` (macOS, server rank 10,
-client rank 10); lower ranks win (`sdk/rocketnet_drivers.inc`, lines 5 and 8).
-So `auto` asks for `msgx` first on both endpoints and falls to `portable` when
-`msgx` refuses. The `loopback` row is pin-only, an in-memory transport for
-tests (`sdk/rocketnet_drivers.inc`, line 10). Both socket transports use the
-same operation tables (`sdk/rocketnet_driver_builtin.cpp`,
-`rocketnet_msgx_transport`); what differs is the pump under the socket.
+platform; server rank 30 only in development builds and unavailable in
+production, client rank 30 in either; the `PORTABLE` registry entry in
+`sdk/rocketnet_drivers.inc`)
+and `msgx` (macOS, server and client rank 10; the `MSGX` registry entry);
+lower ranks win. Server `auto` asks for `msgx` first and falls to `portable`
+only in a development build. In production, `msgx` is the macOS server
+transport; portable remains
+available to clients if `msgx` refuses. The `loopback` row is pin-only, an
+in-memory transport for tests (the `LOOPBACK` registry entry). The backends
+share `portable_client_operations`, but use distinct server operation tables:
+`portable_server_operations` stages sends into owned TX banks and a worker,
+while `msgx_server_operations` calls the platform socket's batch operations.
+On macOS those platform calls use the Darwin `sendmsg_x` and `recvmsg_x` pump.
+These definitions are in `sdk/rocketnet_driver_builtin.cpp` and
+`sdk/rocketnet_platform.cpp`.
 
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
 (`sdk/rocketnet_platform.cpp`, the block that opens "The darwin batch pump").

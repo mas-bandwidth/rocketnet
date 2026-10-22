@@ -306,7 +306,14 @@ enum rocketnet_status_t
     /// A config's config_bytes is 0 or too small. Fill the config with its
     /// default_config call first.
 
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27,
+
+    /// A transport the candidate list names is compiled out of this build:
+    /// the xdp server transport in a Linux build configured with
+    /// ROCKETNET_XDP=OFF, or without a clang that has the BPF target, libbpf
+    /// or libxdp.
+
+    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28
 };
 
 

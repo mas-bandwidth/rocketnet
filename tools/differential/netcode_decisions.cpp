@@ -234,7 +234,6 @@ static void rocketnet_server_setup( struct rocketnet_server_protocol_t * server,
     rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" );
     memcpy( server->cookie_key, rocketnet_test_backend_secret_key, 32 );   // any 32-byte cookie key
     server->cookie_lifetime_seconds = 3;
-    server->max_token_lifetime_seconds = 600;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );

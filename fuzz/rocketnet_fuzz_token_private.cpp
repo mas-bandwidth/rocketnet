@@ -177,7 +177,6 @@ static void fuzz_server_create( struct fuzz_server_t * server )
     for ( int i = 0; i < ROCKETNET_COOKIE_KEY_BYTES; i++ )
         p->cookie_key[i] = (uint8_t) ( 0xC0 + i );
     p->cookie_lifetime_seconds = 3;
-    p->max_token_lifetime_seconds = 600;
     p->handshake_deadline_seconds = 5.0;
     p->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     p->used_token_history = rocketnet_used_token_history_create( NULL, 64 );

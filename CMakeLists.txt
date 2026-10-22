@@ -140,7 +140,6 @@ else()
     endif()
 endif()
 add_compile_definitions(
-    $<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
     ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
@@ -176,10 +175,16 @@ endfunction()
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
+#
+# The build is tolerant: ROCKETNET_XDP=ON builds XDP only where a clang with
+# the BPF target, libbpf and libxdp are all found (libbpf and libxdp are
+# optional here, cmake/RocketNetDependencies.cmake). Short of any of them
+# ROCKETNET_XDP turns OFF for this build, exactly as if configured OFF: no
+# embedded program, no XDP code in the library, no libbpf or libxdp link, and
+# a transport list naming xdp refuses it with TRANSPORT_NOT_BUILT.
 set(ROCKETNET_BPF_CLANG "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(ROCKETNET_XDP)
-        find_program(ROCKETNET_XXD xxd REQUIRED)
         find_program(ROCKETNET_CLANG clang)
     endif()
     if(ROCKETNET_XDP AND ROCKETNET_CLANG)
@@ -189,13 +194,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             set(ROCKETNET_BPF_CLANG "${ROCKETNET_CLANG}")
         endif()
     endif()
-    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
-        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     if(NOT ROCKETNET_XDP)
         message(STATUS "XDP off: ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not required")
     elseif(NOT ROCKETNET_BPF_CLANG)
-        message(STATUS "XDP off: no clang with the BPF target was found, so server_xdp.o is not built and the xdp server transport refuses at create")
+        message(STATUS "XDP off: no clang with the BPF target was found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
+    elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
+        message(STATUS "XDP off: libbpf or libxdp was not found, so XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
     endif()
+endif()
+# One value for every target in the tree: the library, the unit suite, the
+# functional suite and the tools agree on whether the XDP transport exists.
+add_compile_definitions($<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+    find_program(ROCKETNET_XXD xxd REQUIRED)
+    execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
@@ -237,6 +252,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_encryption_map.cpp
     sdk/rocketnet_fragment.cpp
     sdk/rocketnet_frame_sync.cpp
+    sdk/rocketnet_gateway_netlink_linux.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
@@ -686,7 +702,7 @@ if(ROCKETNET_BUILD_TESTS)
     rocketnet_use_sodium(test_transport_control)
     rocketnet_warning_floor(test_transport_control)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
-        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
+        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp sdk/rocketnet_gateway_netlink_linux.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(test_xdp rocketnet_xdp_header)
         target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS
@@ -774,6 +790,7 @@ endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
     add_executable(load load.c)
+    add_executable(load_split load_split.c)
     add_executable(soak_sim soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
@@ -788,7 +805,7 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(instruction_count bench/instruction_count.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load soak_sim transport_memory transport_fill client_main_thread_cost instruction_count lease_cost)
+    foreach(tool soak load load_split soak_sim transport_memory transport_fill client_main_thread_cost instruction_count lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_compile_features(instruction_count PRIVATE cxx_std_11)

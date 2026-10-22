@@ -19,6 +19,9 @@
 #include <string>
 #include <vector>
 
+// functional/harness.inc: the token stamp from the clock that judges it
+uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+
 #if defined(_WIN32)
 #include <stdlib.h>
 #else

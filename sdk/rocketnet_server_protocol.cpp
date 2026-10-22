@@ -369,26 +369,14 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
 
-        // Creation skew is independent of the optional maximum lifetime.
+        // a token created more than the 5-second skew allowance after the
+        // server's clock is refused, always: there is no maximum lifetime.
         // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
         if ( token_create_timestamp > current_timestamp && token_create_timestamp - current_timestamp > 5 )
         {
             rocketnet_debug( "server ignored connection request. connect token created in future" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
-
-        if ( server->max_token_lifetime_seconds > 0 )
-        {
-            uint64_t lifetime = token_expire_timestamp > token_create_timestamp ?
-                                token_expire_timestamp - token_create_timestamp : 0;
-            if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
-            {
-                rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
-                // one counter per refusal reason (STANDARD.md, Counters).
-                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG]++;
-                return ROCKETNET_SERVER_PROCESS_IGNORED;
-            }
         }
     }
 
@@ -551,12 +539,12 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     // the token-to-address claim and the map capacity are the remaining cheap
-    // rungs, both above the signature. the first address to present a valid
-    // request owns the token until the handshake deadline or until its
-    // response binds the token; a request from a second address is refused
-    // here, so one token buys one half-open mapping and no asymmetric work
-    // (STANDARD.md, Processing Connection Requests; tla/ReceiveOrder.tla,
-    // Claim and Capacity).
+    // rungs, both above the signature and both read-only. the first address
+    // to present a request whose signature verifies owns the token until the
+    // handshake deadline or until its response binds the token; a request
+    // from a second address is refused here, so one token buys one half-open
+    // mapping and no asymmetric work (STANDARD.md, Processing Connection
+    // Requests; tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
     {
@@ -573,8 +561,12 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
-                                                     current_time + server->handshake_deadline_seconds, current_time ) )
+    // the claim rung refuses on capacity here, read-only: the claim is
+    // written only once the signature verifies, so a request that proves
+    // nothing writes nothing (tla/ReceiveOrder.tla, ClaimCheck and
+    // ClaimWrite).
+
+    if ( !rocketnet_used_token_history_claim_can_record( server->used_token_history, token_identifier, current_time ) )
     {
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
@@ -584,9 +576,20 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
         rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
-        rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // nothing between the capacity check and here touches the claim table,
+    // so this record cannot fail; a failure is a bug, refused closed
+
+    if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
+                                                     current_time + server->handshake_deadline_seconds, current_time ) )
+    {
+        rocketnet_assert( 0 );
+        rocketnet_debug( "server ignored connection request. could not claim connect token" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
