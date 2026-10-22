@@ -426,13 +426,13 @@ struct mo_pair_t
     double time;
 };
 
-static rocketnet_message_server_t * mo_server_create( mo_net_t * net, const rocketnet_message_config_t * config, int slots, uint32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
+static rocketnet_message_server_t * mo_server_create( mo_net_t * net, const rocketnet_message_config_t * config, int slots, int32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     rn_message_link_t link = mo_link( net->server );
     return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, slots, config, memory, memory_bytes, kbps, MO_T0 );
 }
 
-static rocketnet_message_client_t * mo_client_create( mo_net_t * net, int slot, const rocketnet_message_config_t * config, uint32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
+static rocketnet_message_client_t * mo_client_create( mo_net_t * net, int slot, const rocketnet_message_config_t * config, int32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     mo_endpoint_t * e = mo_net_client( net, slot );
     rn_message_link_t link = mo_link( e );
@@ -440,7 +440,7 @@ static rocketnet_message_client_t * mo_client_create( mo_net_t * net, int slot, 
 }
 
 static void mo_pair_setup( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
+                           int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )
@@ -1966,12 +1966,12 @@ static void test_message_objects_client_clock_starts_at_first_update()
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
     const uint64_t misuse_before = rocketnet_api_misuse_count();
-    check( rocketnet_message_client_update( client, NAN ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_client_update( client, (double) NAN ) == ROCKETNET_UPDATE_OK );
     check( !client->object.clock_started );
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
     check( client->object.time == 0.0 );
     check( e->time == 0.0 );
-    check( rocketnet_message_client_update( client, INFINITY ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_client_update( client, (double) INFINITY ) == ROCKETNET_UPDATE_OK );
     check( !client->object.clock_started );
     check( rocketnet_api_misuse_count() == misuse_before + 2 );
     check( client->object.time == 0.0 );
@@ -2668,15 +2668,15 @@ static void test_update_time_bad_counted_once_never_stored_or_wedged()
             check( rocketnet_api_misuse_count() == base + 1 );
             check( client->object.time == MO_T0 );
 
-            check( rocketnet_message_client_update( client, NAN ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_client_update( client, (double) NAN ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 2 );
             check( client->object.time == MO_T0 );
 
-            check( rocketnet_message_client_update( client, INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_client_update( client, (double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 3 );
             check( client->object.time == MO_T0 );
 
-            check( rocketnet_message_client_update( client, -INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_client_update( client, -(double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 4 );
             check( client->object.time == MO_T0 );
 
@@ -2695,15 +2695,15 @@ static void test_update_time_bad_counted_once_never_stored_or_wedged()
             check( rocketnet_api_misuse_count() == base + 1 );
             check( server->object.time == MO_T0 );
 
-            check( rocketnet_message_server_update( server, NAN ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_server_update( server, (double) NAN ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 2 );
             check( server->object.time == MO_T0 );
 
-            check( rocketnet_message_server_update( server, INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_server_update( server, (double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 3 );
             check( server->object.time == MO_T0 );
 
-            check( rocketnet_message_server_update( server, -INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_server_update( server, -(double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 4 );
             check( server->object.time == MO_T0 );
 
@@ -2739,11 +2739,11 @@ static void test_update_time_first_update_not_finite_refused()
         if ( side == 0 )
         {
             rocketnet_message_client_t * client = pair.clients[0];
-            check( rocketnet_message_client_update( client, NAN ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_client_update( client, (double) NAN ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 1 );
             check( client->object.time == MO_T0 );
 
-            check( rocketnet_message_client_update( client, INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_client_update( client, (double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 2 );
             check( client->object.time == MO_T0 );
 
@@ -2755,11 +2755,11 @@ static void test_update_time_first_update_not_finite_refused()
         else
         {
             rocketnet_message_server_t * server = pair.server;
-            check( rocketnet_message_server_update( server, NAN ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_server_update( server, (double) NAN ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 1 );
             check( server->object.time == MO_T0 );
 
-            check( rocketnet_message_server_update( server, INFINITY ) == ROCKETNET_UPDATE_OK );
+            check( rocketnet_message_server_update( server, (double) INFINITY ) == ROCKETNET_UPDATE_OK );
             check( rocketnet_api_misuse_count() == base + 2 );
             check( server->object.time == MO_T0 );
 
@@ -2959,7 +2959,7 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
             {
                 data = batch->data[i];
                 bytes = batch->bytes[i];
-                sender = batch->client_index[i];
+                sender = (uint64_t) batch->client_index[i];
                 check( sender == 0 );
                 check( bytes == 2 && data[0] == tag && data[1] == (uint8_t) at_server );
 

@@ -323,7 +323,7 @@ static void write_self_test( const char * path, const char * label )
                 {
                     const int over = ( bucket == ROCKETNET_LIVE_BUCKET_OVER );
                     r_cell( f, label, 0, dir, mode, channel, bucket,
-                            1, over ? 0 : 1, over ? 0 : 1, 0, 0, 0, 0, 0, 0, over, 0 );
+                            1, over ? 0 : 1, over ? 0 : 1, 0, 0, 0, 0, 0, 0, (uint64_t) over, 0 );
                 }
             }
         }
@@ -409,9 +409,9 @@ static int send_message( struct rocketnet_client_t * client, int mode, int chann
 {
     int len = rocketnet_live_generate( &st->cfg, 0, mode, channel, cycle, sequence, buf, cap );
     if ( len <= 0 ) return 0;
-    uint8_t * out = rocketnet_client_start_message( client, channel, mode, len );
+    uint8_t * out = rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, len );
     if ( !out ) return -1;
-    memcpy( out, buf, len );
+    memcpy( out, buf, (size_t) len );
     rocketnet_client_finish_message( client, len );
     return len;
 }
@@ -620,7 +620,7 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
             const int channel = channels[k];
             const int counter = ( mode == 0 || mode == 1 ) ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
             const uint64_t before = rocketnet_counter_value( counters, counter );
-            uint8_t * out = rocketnet_client_start_message( client, channel, mode, max_m + 1 );
+            uint8_t * out = rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, max_m + 1 );
             if ( out )
             {
                 rocketnet_client_finish_message( client, max_m + 1 );
@@ -1049,7 +1049,7 @@ int main( int argc, char ** argv )
     uint64_t payloads_sent = 0;
     uint64_t payloads_received = 0;
 
-    uint8_t * received = (uint8_t*) malloc( rocketnet_client_transport_max_payload_bytes( client ) );
+    uint8_t * received = (uint8_t*) malloc( (size_t) rocketnet_client_transport_max_payload_bytes( client ) );
     if ( !received )
     {
         rn_native_client_transport_stop_and_destroy( client );

@@ -47,7 +47,7 @@
 #endif
 #endif
 
-#if ROCKETNET_URING_BUILT
+#if defined(ROCKETNET_URING_BUILT) && ROCKETNET_URING_BUILT
 
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
@@ -978,7 +978,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     uring->packet_id = 1;
     uring->test_source = source;
 
-    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * num_queues );
+    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
     if ( !uring->queues )
     {
         uring->~rocketnet_server_uring_t();
@@ -1080,7 +1080,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->packet_id = 1;
 
-    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * num_queues );
+    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
     if ( !uring->queues )
     {
         uring->~rocketnet_server_uring_t();

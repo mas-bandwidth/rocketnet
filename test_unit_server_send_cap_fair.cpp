@@ -417,7 +417,7 @@ static void test_server_send_cap_two_multi_packet_service()
     fair_world_t world;
     fair_world_create( &world, 3, 2 );
     for ( int c = 0; c < 3; c++ )
-        fair_connect( &world, c, 0x9200 + c );
+        fair_connect( &world, c, 0x9200 + (uint64_t) c );
     int last_service[3] = { -1, -1, -1 };
     for ( int tick = 0; tick < 24; tick++ )
     {

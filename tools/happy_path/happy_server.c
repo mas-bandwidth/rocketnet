@@ -110,7 +110,7 @@ int main( int argc, char ** argv )
                     const int mode = bytes > 0 ? data[0] : -1;
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&
-                                   memcmp( data + 1, happy_pattern, pattern_bytes ) == 0;
+                                   memcmp( data + 1, happy_pattern, (size_t) pattern_bytes ) == 0;
                     if ( ok )
                         printf( "received mode %d %s ok\n", mode, reliability_names[mode] );
                     else

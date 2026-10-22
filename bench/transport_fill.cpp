@@ -72,14 +72,14 @@ int main(int argc, char ** argv)
             rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_server_transport_start_packet(server, client_index, payload_bytes, &context);
             CHECK(frame);
-            memset(frame + context.payload_index, i, payload_bytes);
+            memset(frame + context.payload_index, i, size_t(payload_bytes));
             // Instrument honesty: an optional dependent volatile workload must
             // move the timing. It is caller work, never a production SDK branch.
             if (plant)
                 for (int j = 0; j < 4096; ++j) plant_state = plant_state * 1664525 + 1013904223;
             const int bytes = rocketnet_server_transport_finish_packet(server, &context, payload_bytes);
             CHECK(bytes > payload_bytes);
-            if (batch >= 0) wire_bytes += bytes;
+            if (batch >= 0) wire_bytes += uint64_t(bytes);
         }
         const auto end = std::chrono::steady_clock::now();
         if (batch >= 0) elapsed_ns += std::chrono::duration<double, std::nano>(end - start).count();
@@ -97,7 +97,7 @@ int main(int argc, char ** argv)
         const auto drain_end = std::chrono::steady_clock::now();
         if (batch >= 0)
         {
-            drained_packets += drained_here;
+            drained_packets += uint64_t(drained_here);
             if (drain)
                 drain_ns += std::chrono::duration<double, std::nano>(drain_end - drain_start).count();
         }

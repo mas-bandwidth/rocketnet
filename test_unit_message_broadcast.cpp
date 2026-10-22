@@ -364,14 +364,14 @@ struct mb_pair_t
     double time;
 };
 
-static rocketnet_message_server_t * mb_server_create_seam( mb_net_t * net, const rocketnet_message_config_t * config, int slots, uint32_t kbps )
+static rocketnet_message_server_t * mb_server_create_seam( mb_net_t * net, const rocketnet_message_config_t * config, int slots, int32_t kbps )
 {
     (void) slots;
     rn_message_link_t link = mb_link( net->server );
     return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, MB_MAX_SLOTS, config, NULL, 0, kbps, MB_T0 );
 }
 
-static rocketnet_message_client_t * mb_client_create( mb_net_t * net, int slot, const rocketnet_message_config_t * config, uint32_t kbps )
+static rocketnet_message_client_t * mb_client_create( mb_net_t * net, int slot, const rocketnet_message_config_t * config, int32_t kbps )
 {
     mb_endpoint_t * e = mb_net_client( net, slot );
     rn_message_link_t link = mb_link( e );
@@ -379,7 +379,7 @@ static rocketnet_message_client_t * mb_client_create( mb_net_t * net, int slot, 
 }
 
 static void mb_pair_setup( mb_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
-                           uint32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, uint32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
+                           int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
     if ( !config )

@@ -105,7 +105,7 @@ static void test_never_exceeds_budget_per_window()
     for ( int r = 0; r < 4; r++ )
     {
         const uint32_t kbps = rates[r];
-        g_lcg = 1234 + r;
+        g_lcg = 1234 + (uint64_t) r;
         memset( &g_log, 0, sizeof( g_log ) );
 
         rocketnet_send_budget_t budget;
@@ -143,7 +143,7 @@ static void test_never_exceeds_budget_per_window()
             int sent_this_update = 0;
             while ( reliable_backlog > 0 )
             {
-                const int bytes = 200 + (int) ( ( reliable_sent * 2654435761u ) % 1000 );     // a fixed size per item
+                const int bytes = 200 + (int) ( ( (uint32_t) reliable_sent * 2654435761u ) % 1000 );     // a fixed size per item
                 const int decision = rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, bytes );
                 check( decision == ROCKETNET_SEND_BUDGET_SEND || decision == ROCKETNET_SEND_BUDGET_WAIT );
                 if ( decision != ROCKETNET_SEND_BUDGET_SEND )
@@ -542,7 +542,7 @@ static void test_wire_bytes_match_the_transport()
         }
     }
     rocketnet_ack_endpoint_update_stats( &g_endpoint );
-    const double measured = g_endpoint.bandwidth_sent_kbps;
+    const double measured = (double) g_endpoint.bandwidth_sent_kbps;
     // n packets over n - 1 intervals reads slightly above the rate; 2048
     // packets bound that to well under 1%
     check( measured <= kbps * 1.01 );

@@ -13,7 +13,7 @@ int rocketnet_stats_window_advance(Bucket (&buckets)[N], int index, uint64_t fra
     if (!buckets[index].frame || time < buckets[index].time ||
         time - buckets[index].time >= 1.0 / double(N - 1))
     {
-        index = (index + 1) % N;
+        index = (index + 1) % int(N);
         buckets[index] = Bucket{};
         buckets[index].frame = frame;
         buckets[index].time = time;

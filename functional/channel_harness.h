@@ -990,7 +990,7 @@ static inline void rocketnet_channel_harness_clear_held( rocketnet_channel_harne
     h->held_count = 0;
 }
 
-static inline int rocketnet_channel_harness_set_budgets( rocketnet_channel_harness_t * h, uint32_t client_kbps, uint32_t server_kbps )
+static inline int rocketnet_channel_harness_set_budgets( rocketnet_channel_harness_t * h, int32_t client_kbps, int32_t server_kbps )
 {
     return rocketnet_message_client_set_send_kbps( h->message_client, client_kbps ) &&
            rocketnet_message_server_set_send_kbps( h->message_server, h->client_slot, server_kbps );

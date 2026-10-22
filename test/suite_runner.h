@@ -925,8 +925,8 @@ inline int suite_main( int argc, char ** argv,
         if ( !running.empty() )
         {
             HANDLE handles[8];
-            const int n = (int) running.size();
-            for ( int i = 0; i < n; i++ )
+            const size_t n = running.size();
+            for ( size_t i = 0; i < n; i++ )
                 handles[i] = running[i].process;
             WaitForMultipleObjects( (DWORD) n, handles, FALSE, 50 );
         }

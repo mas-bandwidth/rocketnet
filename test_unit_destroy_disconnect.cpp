@@ -395,7 +395,7 @@ static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_cl
 
     for ( int i = 0; i < NUM_CLIENTS; i++ )
     {
-        clients[i] = destroy_disconnect_client_create( &keys, port, 0xD200ULL + (uint64_t) i );
+        clients[i] = destroy_disconnect_client_create( &keys, port, 0xD200 + (uint64_t) i );
         slots[i] = destroy_disconnect_connect_client( server, clients[i], &time );
         check( slots[i] >= 0 && slots[i] < DESTROY_DISCONNECT_MAX_CLIENTS );
         check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -441,7 +441,7 @@ REGISTER_UNIT_TEST( test_stop_then_destroy_server_sends_disconnect_to_every_conn
 
 // Steps a public client against a loopback server until the client reaches
 // no handshake target: destroy at once, before any handshake state
-#define DESTROY_DISCONNECT_NO_TARGET ( (enum rocketnet_client_state_t) -100 )
+#define DESTROY_DISCONNECT_NO_TARGET -100
 
 // the target handshake state (or, for DESTROY_DISCONNECT_NO_TARGET, not at
 // all: the client is destroyed right after create), hands off whatever the client has queued, and lets the server
@@ -620,7 +620,7 @@ static void test_shutdown_without_live_connection_sends_nothing()
         int slots[NUM_CLIENTS] = {};
         for ( int i = 0; i < NUM_CLIENTS; i++ )
         {
-            clients[i] = destroy_disconnect_observed_client_create( &keys, port, 0xE310ULL + (uint64_t) i, &observed, &endpoints[i] );
+            clients[i] = destroy_disconnect_observed_client_create( &keys, port, 0xE310 + (uint64_t) i, &observed, &endpoints[i] );
             slots[i] = destroy_disconnect_connect_client( server, clients[i], &time );
         }
         check( rocketnet_server_num_connected_clients( server ) == NUM_CLIENTS );
@@ -735,7 +735,7 @@ static void test_client_disconnect_sends_burst_staged_in_link_simulator()
     {
         double now = 1000.0;
         rocketnet_server_t * server = destroy_disconnect_server_create( &keys, now );
-        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), 0xE410ULL + (uint64_t) i, false, true );
+        rocketnet_client_t * client = destroy_disconnect_client_create( &keys, rocketnet_server_port( server ), UINT64_C( 0xE410 ) + (uint64_t) i, false, true );
         const int slot = destroy_disconnect_connect_client( server, client, &now );
         rocketnet_client_transport_t * transport = rocketnet_message_client_transport( rocketnet_client_message_client( client ) );
         check( rocketnet_client_transport_network_simulator( transport, latency_ms[i], 0, 0, 0 ) );

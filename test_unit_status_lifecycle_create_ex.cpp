@@ -214,7 +214,7 @@ static void test_lifecycle_ex_reports_every_status()
     check( rocketnet_frame_sync_create_ex( &state, 1000000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
     status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, NAN, &status ) == NULL );
+    check( rocketnet_frame_sync_create_ex( &state, (double) NAN, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // frame sync F2: the single allocation fails

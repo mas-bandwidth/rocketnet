@@ -538,7 +538,7 @@ static int fault_peer_receive( rocketnet_platform_socket_t * peer, int round, in
         const int bytes = rocketnet_platform_socket_receive_packet(peer, &from, packet, sizeof(packet));
         if ( !bytes ) { rocketnet_platform_sleep(0.001); continue; }
         const int index = fault_index(packet, bytes, round);
-        if ( index >= 0 && index < n && !seen[index] ) { seen[index] = true; ++count; }
+        if ( index >= 0 && index < n && !seen[(size_t) index] ) { seen[(size_t) index] = true; ++count; }
     }
     return count;
 }
@@ -643,7 +643,7 @@ static void iocp_exchange( rocketnet_server_iocp_t * transport, const rocketnet_
         for ( int i = 0; i < batch->num_packets; ++i )
         {
             const int index = fault_index(batch->packet_data[i], batch->packet_bytes[i], round);
-            if ( index >= 0 && index < n && !seen[index] ) { seen[index] = true; ++count; }
+            if ( index >= 0 && index < n && !seen[(size_t) index] ) { seen[(size_t) index] = true; ++count; }
         }
         rocketnet_platform_sleep(0.001);
     }
@@ -785,7 +785,7 @@ static void test_iocp_receive_completion_fails()
         for ( int i = 0; i < batch->num_packets; ++i )
         {
             const int index = fault_index(batch->packet_data[i], batch->packet_bytes[i], round);
-            if ( index >= 0 && index < 64 && !seen[index] ) { seen[index] = true; ++count; }
+            if ( index >= 0 && index < 64 && !seen[(size_t) index] ) { seen[(size_t) index] = true; ++count; }
         }
         rocketnet_platform_sleep(0.001);
     }
@@ -973,7 +973,7 @@ static void rio_exchange( rocketnet_server_rio_t * rio, const rocketnet_address_
         for ( int i = 0; i < batch->num_packets; ++i )
         {
             const int index = fault_index(batch->packet_data[i], batch->packet_bytes[i], round);
-            if ( index >= 0 && index < n && !seen[index] ) { seen[index] = true; ++count; }
+            if ( index >= 0 && index < n && !seen[(size_t) index] ) { seen[(size_t) index] = true; ++count; }
         }
         rocketnet_platform_sleep(0.001);
     }
@@ -1071,7 +1071,7 @@ static void test_rio_request_queue_full()
         for ( int i = 0; i < batch->num_packets; ++i )
         {
             const int index = fault_index(batch->packet_data[i], batch->packet_bytes[i], round);
-            if ( index >= 0 && index < 100 && !seen[index] ) { seen[index] = true; ++count; }
+            if ( index >= 0 && index < 100 && !seen[(size_t) index] ) { seen[(size_t) index] = true; ++count; }
         }
         rocketnet_platform_sleep(0.001);
     }
@@ -1241,7 +1241,7 @@ static bool port_thief_binds( const rocketnet_address_t * owner, SOCKET * thief 
     BOOL reuse = TRUE;
     CHECK(setsockopt(*thief, SOL_SOCKET, SO_REUSEADDR, (const char*) &reuse, sizeof(reuse)) == 0);
     u_long non_blocking = 1;
-    CHECK(ioctlsocket(*thief, FIONBIO, &non_blocking) == 0);
+    CHECK(ioctlsocket(*thief, (long) FIONBIO, &non_blocking) == 0);
     sockaddr_storage storage;
     memset(&storage, 0, sizeof(storage));
     int bytes;

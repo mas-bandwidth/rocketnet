@@ -175,7 +175,7 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     memcpy( data, &index, 4 );
     data[4] = (uint8_t) kind;
     for ( int i = 8; i < bytes; i++ )
-        data[i] = (uint8_t) ( index + i );
+        data[i] = (uint8_t) ( index + (uint32_t) i );
 
     const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, ROCKETNET_PRIORITY_MEDIUM, channel, 0 );
     if ( serial == 0 )
@@ -202,7 +202,7 @@ static void ep_deliver( ep_side_t * side, ep_side_t * peer, const rn_delivery_t 
     if ( kind == EP_KIND_ORDERED )
         check( (int) delivery->channel == peer->channel_of[index] );   // codes 0 and 2 carry no channel on the wire (9.1)
     for ( int i = 8; i < delivery->bytes; i++ )
-        check( delivery->data[i] == (uint8_t) ( index + i ) );
+        check( delivery->data[i] == (uint8_t) ( index + (uint32_t) i ) );
     side->delivered[index]++;
     check( side->delivered[index] == 1 );                       // ReliableExactlyOnce's at most once, UnreliableAtMostOnce
     if ( kind == EP_KIND_ORDERED )
@@ -478,7 +478,7 @@ static uint64_t ep_frees = 0;
 // Elsewhere the intercept is absent, and the determinism check below stands
 // alone.
 
-#if ROCKETNET_TEST_CLOCK_WRAP
+#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
 static uint64_t ep_clock_reads = 0;
 static double ep_fake_clock = 1000.0;
 extern "C" double __real_rocketnet_platform_time();
@@ -488,7 +488,7 @@ extern "C" double __wrap_rocketnet_platform_time()
     ep_fake_clock += ( 1.0 / 60.0 );
     return ep_fake_clock;
 }
-#endif // #if ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
 
 static void * ep_malloc( void * context, size_t bytes )
 {
@@ -512,14 +512,14 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     rocketnet_message_config_t config;
     ep_config( &config );
 
-#if ROCKETNET_TEST_CLOCK_WRAP
+#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
     // the intercept works: a read of the library's clock is counted
     {
         const uint64_t before = ep_clock_reads;
         rocketnet_time();
         check( ep_clock_reads == before + 1 );
     }
-#endif // #if ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
 
     uint64_t traces[2];
     int steps[2];
@@ -535,9 +535,9 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
         // payload, tick, receipts, error or deadline
         const uint64_t mallocs = ep_mallocs;
         const uint64_t frees = ep_frees;
-#if ROCKETNET_TEST_CLOCK_WRAP
+#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
         const uint64_t clock_reads = ep_clock_reads;
-#endif // #if ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
 
         ep_stats_t stats;
         steps[run] = ep_back_to_back( a, b, 77, &stats );
@@ -550,9 +550,9 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
         check( ep_mallocs == mallocs );
         check( ep_frees == frees );
-#if ROCKETNET_TEST_CLOCK_WRAP
+#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
         check( ep_clock_reads == clock_reads );                 // not one clock read from the endpoint
-#endif // #if ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
         traces[run] = stats.trace;
 
         ep_side_destroy( a );

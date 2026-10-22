@@ -153,7 +153,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
         check( rocketnet_address_parse( &addresses[i], address_string ) );
         rocketnet_client_protocol_init( &clients[i], &client_counters );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-        srb_mint_token( token_data, 0x5B000000ULL + (uint64_t) i );
+        srb_mint_token( token_data, UINT64_C( 0x5B000000 ) + (uint64_t) i );
         check( rocketnet_client_protocol_connect( &clients[i], token_data, time, ROCKETNET_TEST_CREATE_TS ) );
     }
 
