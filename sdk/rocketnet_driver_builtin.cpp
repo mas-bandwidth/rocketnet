@@ -21,7 +21,11 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 static const int PORTABLE_TX_BANKS = 3;
 static const int PORTABLE_TX_CAPACITY = ROCKETNET_SERVER_MAX_SEND_PACKETS;
 static const int PORTABLE_RX_BANKS = 3;
-static const int PORTABLE_RX_CAPACITY = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+// An RX bank is one swap, not one update: main drains every ready bank within
+// its per-update budget and the worker refills each returned bank, so a bank
+// holds one datagram per client, the TX bank's size. A bank sized to the whole
+// update budget (16 per client) put 70 MB in every portable server.
+static const int PORTABLE_RX_CAPACITY = ROCKETNET_MAX_CLIENTS;
 struct portable_tx_bank_t
 {
     int count = 0;

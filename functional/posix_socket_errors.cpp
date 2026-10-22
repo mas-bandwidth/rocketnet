@@ -966,14 +966,14 @@ void rocketnet_test_posix_platform_send_seam()
 // ENOBUFS, then EAGAIN, keeps its pump and its connection, counts what it
 // dropped, and its traffic resumes on the next update
 
-// the portable server's send calls happen on its TX worker after
+// the portable and msgx servers' send calls happen on their TX worker after
 // send_packets returns, so an injected failure covers an update only if it
-// is held until the worker has sent every bank that update published.
-// msgx sends inside send_packets and needs no wait
+// is held until the worker has sent every bank that update published
 
 static void posix_server_sends_drained( struct posix_pair_t * pair )
 {
-    if ( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) != 0 )
+    const char * name = rocketnet_server_transport_io_name( pair->server );
+    if ( strcmp( name, "portable" ) != 0 && strcmp( name, "msgx" ) != 0 )
         return;
     void * transport = rocketnet_server_transport_io_name_for_testing( pair->server );
     bool drained = rocketnet_portable_tx_test_drained( transport );
