@@ -16,6 +16,10 @@ COMPILED_OUT = [
     "0000000000000000 D rocketnet_xdp_transport",
     "                 U rocketnet_xdp_transport",
     "                 U memcpy",
+    "rocketnet_server_socket_linux.cpp.o:",
+    "0000000000000000 B rocketnet_server_socket_linux_cpp_dummy",
+    "rocketnet_gateway_netlink_linux.cpp.o:",
+    "0000000000000000 B rocketnet_gateway_netlink_linux_cpp_dummy",
 ]
 
 COMPILED_IN = [
@@ -52,6 +56,10 @@ class CheckXdpCompiledOutTest(unittest.TestCase):
     def test_one_stray_symbol_fails_absent(self):
         problems = check.absent_problems(*check.classify(COMPILED_OUT + ["0000000000000000 t xdp_create(void*)"], NEEDED_OUT))
         self.assertEqual(problems, ["XDP symbol defined: xdp_create"])
+
+    def test_a_dummy_off_linux_files_fails_absent(self):
+        problems = check.absent_problems(*check.classify(COMPILED_OUT + ["0000000000000000 B rocketnet_xdp_cpp_dummy"], NEEDED_OUT))
+        self.assertEqual(problems, ["XDP symbol defined: rocketnet_xdp_cpp_dummy"])
 
     def test_one_stray_import_fails_absent(self):
         problems = check.absent_problems(*check.classify(COMPILED_OUT + ["                 U bpf_map_update_elem"], NEEDED_OUT))

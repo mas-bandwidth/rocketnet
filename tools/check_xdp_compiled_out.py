@@ -9,8 +9,10 @@ target, no libbpf or libxdp, or ROCKETNET_XDP=OFF): the archive defines no XDP
 transport, netlink gateway or embedded program symbol, references no libbpf or
 libxdp function, and the shared library does not link libbpf or libxdp. The
 only xdp names left are the registry row's refusal (rocketnet_xdp_transport,
-its operations table and its xdp_disabled_ functions) and the public
-rocketnet_forbid_xdp_commit, a no-op there.
+its operations table and its xdp_disabled_ functions), the public
+rocketnet_forbid_xdp_commit, a no-op there, and the placeholder int each
+guarded-out source defines (rocketnet_server_socket_linux_cpp_dummy,
+rocketnet_gateway_netlink_linux_cpp_dummy).
 
 --present is the build with XDP, the reversed witness: the transport, the
 gateway, the embedded program and the libbpf and libxdp links are all there.
@@ -25,8 +27,10 @@ import sys
 # BPF object (demangled names, any binding)
 XDP_DEFINED = re.compile(r"(xdp|gateway_netlink|rocketnet_server_socket_)", re.I)
 
-# what a build without XDP keeps: the registry row's refusal and the public no-op
-ALLOWED_DEFINED = re.compile(r"^(rocketnet_xdp_transport|xdp_operations|xdp_disabled_\w+|rocketnet_forbid_xdp_commit)\b")
+# what a build without XDP keeps: the registry row's refusal, the public no-op,
+# and the one int every platform file guarded out defines so its translation
+# unit is not empty (rocketnet_<file>_cpp_dummy)
+ALLOWED_DEFINED = re.compile(r"^(rocketnet_xdp_transport|xdp_operations|xdp_disabled_\w+|rocketnet_forbid_xdp_commit|rocketnet_\w+_linux_cpp_dummy)\b")
 
 # a reference into libbpf or libxdp
 XDP_IMPORT = re.compile(r"^(bpf_|libbpf_|btf_|xsk_|libxdp_|xdp_program__)")
