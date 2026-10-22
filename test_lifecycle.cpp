@@ -574,6 +574,12 @@ static void make_valid_token( uint8_t * token )
     signed_fields.ipv4_address[1] = 0;
     signed_fields.ipv4_address[2] = 0;
     signed_fields.ipv4_address[3] = 1;
+    // a real port: the client connects its socket to the server's address
+    // (109b9341, the client trusts only the server), and macOS refuses a
+    // connect to port 0 (EADDRNOTAVAIL), so a zero port ended the create with
+    // the ladder exhausted. Nothing listens there; the create never waits
+    signed_fields.ipv4_address[4] = (uint8_t) ( 40000 & 0xFF );
+    signed_fields.ipv4_address[5] = (uint8_t) ( 40000 >> 8 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
     private_fields.client_id = 1;
     private_fields.protocol_id = 1;
