@@ -57,11 +57,17 @@ The two `latency ... frames` lines give each direction's min, mean and max.
 Clients run their frames before the server's, so the server reads a message in
 the frame it was sent (0) and a client reads its snapshot in the next frame
 (1): that is the delay of running in one process, and `extra frame(s)` is what
-the frame order adds on top. With `--wrong-order`, `send_packets` runs before
-this frame's messages are queued, so they wait a frame: the lines read 1 and 2
-and `latency: 1 extra frame(s) (wrong order)`. `PASS` means every client stayed
-connected, every event arrived, and the extra latency is 0 in the correct order
-and at least 1 in the wrong one.
+the frame order adds on top, read from the client->server mean. Server->client
+also passes the client's receive handoff: the client's receive worker publishes
+a buffer each poll that finds data, each update takes the oldest, and with one
+of the three buffers held by the update a batch waits behind at most two
+others, so a snapshot can take up to two more frames (max 3, mean between 1
+and 3). With `--wrong-order`, `send_packets` runs before this frame's messages
+are queued, so they wait a frame: client->server reads 1 and
+`latency: 1 extra frame(s) (wrong order)`. `PASS` means every client stayed
+connected, every event arrived, the extra latency is 0 in the correct order
+and at least 1 in the wrong one, and no snapshot took more than 1 + extra + 2
+frames.
 
 ## Public calls it uses
 

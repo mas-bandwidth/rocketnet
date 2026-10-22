@@ -35,6 +35,7 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 
 #define FRAME_DT ( 1.0 / 60.0 )
 #define BUDGET_US 100.0
+#define HANDOFF_FRAMES 2                                    // updates the client's receive handoff can add (see the latency check)
 #define BINS 10000                                          // 0.1 us bins up to 1 ms, then one overflow bin
 
 #define MESSAGE_BYTES 12   // the frame it was queued in (uint32), and a position (two floats)
@@ -217,18 +218,26 @@ int main( int argc, char ** argv )
 
     // clients run their frames before the server's, so the server reads a
     // client's message the frame it was sent (0) and a client reads its
-    // snapshot the next frame (1): the extra latency is what the order adds
+    // snapshot the next frame (1): the extra latency is what the order adds.
+    // Client to server has no handoff (the client sends in its call, the
+    // server's update reads), so its mean is the order alone. Server to client
+    // adds the client's receive handoff: its worker publishes a buffer per
+    // poll that finds data and each update takes the oldest, and of its three
+    // buffers one is the update's, so a batch waits behind at most two others:
+    // up to HANDOFF_FRAMES more updates, given one worker poll (1 ms) between
+    // updates
     if ( to_server.count == 0 || to_client.count == 0 ) { printf( "FAIL: no messages measured\n" ); goto cleanup; }
     print_costs( "[end]", &costs[1], frames );
     printf( "client frame budget %s at p99 (informational, never a failure)\n", percentile( &costs[1], 0.99 ) <= BUDGET_US ? "held" : "exceeded" );
     printf( "latency client->server frames: min %u mean %.2f max %u\n", to_server.min, to_server.sum / to_server.count, to_server.max );
     printf( "latency server->client frames: min %u mean %.2f max %u\n", to_client.min, to_client.sum / to_client.count, to_client.max );
-    const double up = to_server.sum / to_server.count, down = to_client.sum / to_client.count - 1.0;   // less the snapshot's one frame
-    const int extra = (int) ( ( up > down ? up : down ) + 0.5 );
+    const int extra = (int) ( to_server.sum / to_server.count + 0.5 );
+    const uint32_t bound = 1 + (uint32_t) extra + HANDOFF_FRAMES;   // the snapshot's one frame, the order, the handoff
     printf( "latency: %d extra frame(s) (%s order)\n", extra, wrong_order ? "wrong" : "correct" );
 
     if ( events_received != events_sent ) printf( "FAIL: %llu of %llu events arrived\n", (unsigned long long) events_received, (unsigned long long) events_sent );
     else if ( wrong_order ? extra < 1 : extra != 0 ) printf( "FAIL: %d extra frame(s) in the %s order\n", extra, wrong_order ? "wrong" : "correct" );
+    else if ( to_client.max > bound ) printf( "FAIL: server->client max %u frames, past the bound of %u\n", to_client.max, bound );
     else result = 0;
 
 cleanup:
