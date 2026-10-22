@@ -437,6 +437,38 @@ int main( int argc, char ** argv )
         rocketnet_sleep( 0.001 );
     }
 
+    // A bound can fall during a handshake: the first connect, or a planned
+    // reconnect started in the last iterations. Finish it before the
+    // teardown, with bounded updates: the server refuses a disconnect from a
+    // client it has not yet connected (DISCONNECT_NOT_CONNECTED, its
+    // slot-state check), and a clean run must never be refused.
+
+    if ( client && !unplanned_disconnect_recorded && !connected )
+    {
+        const double handshake_deadline = rocketnet_time() + 5.0;
+        int client_state = rocketnet_client_transport_state( client );
+        while ( client_state >= 0 && client_state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && rocketnet_time() < handshake_deadline )
+        {
+            rocketnet_client_transport_update( client, rocketnet_time() );
+            rocketnet_server_transport_update( server, rocketnet_time() );
+            client_state = rocketnet_client_transport_state( client );
+            rocketnet_sleep( 0.001 );
+        }
+        if ( client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
+            connected = 1;
+            connects++;
+        }
+        else
+        {
+            soak_record_disconnect( disconnect_counts, client_state );
+            unplanned_disconnect_recorded = 1;
+            printf( "soak: the handshake in progress at the bound did not complete (%s, %d)\n",
+                    rocketnet_client_state_name( client_state ), client_state );
+            failures++;
+        }
+    }
+
     if ( !connects || !server_verified || !client_verified )
     {
         printf( "soak: insufficient coverage: require a connection and verified payloads in both directions\n" );
