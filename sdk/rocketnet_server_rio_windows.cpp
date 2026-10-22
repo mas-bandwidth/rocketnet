@@ -30,7 +30,12 @@
 // handoffs and stop); tla/RNRioDriver.tla for the slot and slice rules it
 // keeps. Each function that implements an action names it.
 
-#define ROCKETNET_RIO_SEND_FRAMES ( 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE )
+// Three send phases, as every other transport's send handoff has three
+// banks: one filling, and up to two with the worker. A flush hands the fill
+// phase only when the next phase is idle, so a busy worker delays sends by a
+// flush instead of refusing them.
+#define ROCKETNET_RIO_SEND_PHASES 3
+#define ROCKETNET_RIO_SEND_FRAMES ( ROCKETNET_RIO_SEND_PHASES * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 
 // regions destroy could not drain and so leaked rather than freed
@@ -67,10 +72,10 @@ struct rocketnet_server_rio_t
     // padded out explicitly), so the compiler inserts no alignment padding.
     // next is read by fill threads, which run only while the main thread is
     // outside send_packets.
-    alignas(64) std::atomic<int> next[2]{};
-    uint8_t next_padding[64 - 2 * sizeof( std::atomic<int> )];
+    alignas(64) std::atomic<int> next[ROCKETNET_RIO_SEND_PHASES]{};
+    uint8_t next_padding[64 - ROCKETNET_RIO_SEND_PHASES * sizeof( std::atomic<int> )];
     // posted sends of each phase not yet retired: the worker writes, pending reads
-    alignas(64) std::atomic<int> outstanding[2]{};
+    alignas(64) std::atomic<int> outstanding[ROCKETNET_RIO_SEND_PHASES]{};
 
     void * context;
     SOCKET socket = INVALID_SOCKET;
@@ -98,16 +103,15 @@ struct rocketnet_server_rio_t
     HANDLE notify = NULL;                       // auto-reset: RIONotify on either completion queue
     std::atomic<bool> exited{false};
 
-    // send, main side: the model's phase and owed. fill and switch_owed are
-    // read by fill threads, which run only while main is outside send_packets.
+    // send, main side: the model's phase. fill is read by fill threads, which
+    // run only while main is outside send_packets.
     std::atomic<int> fill{0};
-    std::atomic<bool> switch_owed{false};
     int * slot_bytes = NULL;                    // [ROCKETNET_RIO_SEND_FRAMES], zero for a free, reserved or aborted slot
 
     // send, under the mutex: the model's state and sready
-    int phase_state[2] = { ROCKETNET_RIO_PHASE_FILL, ROCKETNET_RIO_PHASE_IDLE };
-    int phase_count[2] = { 0, 0 };              // slots handed with the phase
-    int send_ready[2] = { 0, 0 };
+    int phase_state[ROCKETNET_RIO_SEND_PHASES] = { ROCKETNET_RIO_PHASE_FILL, ROCKETNET_RIO_PHASE_IDLE, ROCKETNET_RIO_PHASE_IDLE };
+    int phase_count[ROCKETNET_RIO_SEND_PHASES] = {};      // slots handed with the phase
+    int send_ready[ROCKETNET_RIO_SEND_PHASES] = {};
     int send_ready_head = 0;
     int send_ready_count = 0;
 
@@ -210,6 +214,15 @@ static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * dat
 static void rocketnet_rio_count( rocketnet_server_rio_t * rio, int counter, uint64_t amount = 1 )
 {
     rio->counters[counter].fetch_add( amount, std::memory_order_relaxed );
+}
+
+// posted sends not yet retired, every phase
+static int rocketnet_rio_outstanding_sends( rocketnet_server_rio_t * rio )
+{
+    int total = 0;
+    for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
+        total += rio->outstanding[p].load( std::memory_order_relaxed );
+    return total;
 }
 
 // a destination as the SOCKADDR_INET the socket's family needs: a dual
@@ -317,7 +330,7 @@ static int rocketnet_rio_frame_index( rocketnet_server_rio_t * rio, const uint8_
     const int index = (int) ( offset / stride );
     const int phase = rio->fill.load( std::memory_order_relaxed );
     const int slot = index - phase * ROCKETNET_RIO_SEND_QUEUE_SIZE;
-    if ( rio->switch_owed.load( std::memory_order_relaxed ) || slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE ||
+    if ( slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE ||
          slot >= rio->next[phase].load( std::memory_order_relaxed ) )
         return -1;
     return index;
@@ -368,7 +381,7 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
     const uint64_t context = (uint64_t) result->RequestContext;
     const int phase = rocketnet_rio_context_phase( context );
     const int slot = rocketnet_rio_context_index( context );
-    if ( rocketnet_rio_context_kind( context ) != ROCKETNET_RIO_CONTEXT_SEND || phase < 0 || phase > 1 ||
+    if ( rocketnet_rio_context_kind( context ) != ROCKETNET_RIO_CONTEXT_SEND || phase < 0 || phase >= ROCKETNET_RIO_SEND_PHASES ||
          slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE )
     {
         rocketnet_error( "rio transport: send completion with a foreign request context %llx", (unsigned long long) context );
@@ -456,8 +469,7 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
         if ( count == RIO_CORRUPT_CQ ) return false;
         rio->posted_receives.fetch_sub( (int) count, std::memory_order_relaxed );
     }
-    return rio->outstanding[0].load( std::memory_order_relaxed ) == 0 &&
-           rio->outstanding[1].load( std::memory_order_relaxed ) == 0 &&
+    return rocketnet_rio_outstanding_sends( rio ) == 0 &&
            rio->posted_receives.load( std::memory_order_relaxed ) == 0;
 }
 
@@ -565,8 +577,6 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     rio->next[0].store( 0, std::memory_order_relaxed );
     rio->next[1].store( 0, std::memory_order_relaxed );
-    rio->outstanding[0].store( 0, std::memory_order_relaxed );
-    rio->outstanding[1].store( 0, std::memory_order_relaxed );
 
     SOCKADDR_INET address;
     int address_bytes = 0;
@@ -671,11 +681,6 @@ failed:
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) ) return NULL;
-    if ( rio->switch_owed.load( std::memory_order_acquire ) )
-    {
-        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FULL );
-        return NULL;
-    }
     const int phase = rio->fill.load( std::memory_order_relaxed );
     const int slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
     // the lower bound too: a caller that stages forever without a flush
@@ -718,46 +723,41 @@ void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t p
 }
 
 // RNRioWorker SendPackets, main with fill threads joined. One try of the
-// mutex hands a finished fill phase to the worker and opens the other phase
-// only when the worker has returned it idle. A failed try, or a phase not
-// yet idle, keeps the switch owed: start_packet refuses until a later call
-// opens the other phase. Main never waits and makes no RIO call.
+// mutex hands a non-empty fill phase to the worker, only when the next phase
+// is idle (every send of it retired), and opens that phase to the fill
+// threads. A failed try or a next phase not yet idle keeps the fill phase
+// open: the fill threads keep appending and the next flush hands it. Main
+// never waits and makes no RIO call.
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) ) return;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    const bool owed = rio->switch_owed.load( std::memory_order_relaxed );
     int count = rio->next[phase].load( std::memory_order_relaxed );
-    if ( count < 0 || count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
-    const bool hand = !owed && count > 0;
-    if ( !hand && !owed ) return;              // nothing staged, nothing owed
+    if ( count <= 0 ) return;                  // nothing staged
+    if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
     if ( rio->test_try_fails ) return;
 #endif
     if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) ) return;
+    const int next = ( phase + 1 ) % ROCKETNET_RIO_SEND_PHASES;
+    const bool hand = rio->phase_state[next] == ROCKETNET_RIO_PHASE_IDLE;
     if ( hand )
     {
         rio->phase_state[phase] = ROCKETNET_RIO_PHASE_READY;
         rio->phase_count[phase] = count;
-        rio->send_ready[( rio->send_ready_head + rio->send_ready_count ) % 2] = phase;
+        rio->send_ready[( rio->send_ready_head + rio->send_ready_count ) % ROCKETNET_RIO_SEND_PHASES] = phase;
         rio->send_ready_count++;
+        rio->phase_state[next] = ROCKETNET_RIO_PHASE_FILL;
     }
-    const int other = 1 - phase;
-    const bool open = rio->phase_state[other] == ROCKETNET_RIO_PHASE_IDLE;
-    if ( open ) rio->phase_state[other] = ROCKETNET_RIO_PHASE_FILL;
     rocketnet_platform_mutex_release( &rio->mutex );
-    if ( open )
+    if ( !hand )
     {
-        rio->next[other].store( 0, std::memory_order_relaxed );
-        rio->fill.store( other, std::memory_order_relaxed );
-        rio->switch_owed.store( false, std::memory_order_release );
-    }
-    else
-    {
-        rio->switch_owed.store( true, std::memory_order_release );
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS );
+        return;
     }
-    if ( hand ) SetEvent( rio->wake );
+    rio->next[next].store( 0, std::memory_order_relaxed );
+    rio->fill.store( next, std::memory_order_relaxed );
+    SetEvent( rio->wake );
 }
 
 // RNRioWorker WPost and WCommit: every finished slot of a taken phase by
@@ -921,7 +921,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
     if ( rio->send_ready_count > 0 )
     {
         phase = rio->send_ready[rio->send_ready_head];
-        rio->send_ready_head = ( rio->send_ready_head + 1 ) % 2;
+        rio->send_ready_head = ( rio->send_ready_head + 1 ) % ROCKETNET_RIO_SEND_PHASES;
         rio->send_ready_count--;
         rio->phase_state[phase] = ROCKETNET_RIO_PHASE_POSTED;
         count = rio->phase_count[phase];
@@ -937,7 +937,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
 
     // WRetire: a refused commit is retried, then every send completion
     rocketnet_rio_commit( rio );
-    if ( rio->outstanding[0].load( std::memory_order_relaxed ) + rio->outstanding[1].load( std::memory_order_relaxed ) > 0 &&
+    if ( rocketnet_rio_outstanding_sends( rio ) > 0 &&
          rocketnet_rio_dequeue_send( rio ) > 0 )
         progress = true;
 
@@ -957,7 +957,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
         rio->fill_bank = rio->free_banks[--rio->free_count];
         published = true;
     }
-    for ( int p = 0; p < 2; ++p )
+    for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
         if ( rio->phase_state[p] == ROCKETNET_RIO_PHASE_POSTED && rio->outstanding[p].load( std::memory_order_relaxed ) == 0 )
             rio->phase_state[p] = ROCKETNET_RIO_PHASE_IDLE;
     rocketnet_platform_mutex_release( &rio->mutex );
@@ -973,7 +973,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
 // hint.
 static void rocketnet_rio_idle_wait( rocketnet_server_rio_t * rio )
 {
-    const bool sends = rio->outstanding[0].load( std::memory_order_relaxed ) + rio->outstanding[1].load( std::memory_order_relaxed ) > 0;
+    const bool sends = rocketnet_rio_outstanding_sends( rio ) > 0;
     if ( rio->banks[rio->fill_bank].num_packets < ROCKETNET_RIO_RECEIVES )
         rio->rio.RIONotify( rio->receive_cq );  // WSAEALREADY: an earlier notify is still armed
     if ( sends )
@@ -1328,25 +1328,36 @@ bool rocketnet_server_rio_test_worker_handoff()
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED].load() ==
              (uint64_t) ( ROCKETNET_RIO_RECEIVE_BANKS + 1 ) * ROCKETNET_RIO_RECEIVES;
 
-    // Send: the first flush hands phase 0 and opens idle phase 1.
+    // Send: each flush hands the fill phase and opens the next, idle phase.
     valid &= rocketnet_rio_test_stage( rio, 2 );
     rocketnet_server_rio_send_packets( rio );
-    valid &= rio->fill.load() == 1 && !rio->switch_owed.load() && rocketnet_rio_test_woken( rio );
-    // The second hands phase 1, but phase 0 is not yet idle: the switch is
-    // owed and the fill threads are refused.
+    valid &= rio->fill.load() == 1 && rocketnet_rio_test_woken( rio );
     valid &= rocketnet_rio_test_stage( rio, 3 );
     rocketnet_server_rio_send_packets( rio );
-    valid &= rio->fill.load() == 1 && rio->switch_owed.load() && !rocketnet_rio_test_stage( rio, 1 );
+    valid &= rio->fill.load() == 2 && rio->send_ready_count == 2;
+    // Phase 0, the next phase, is still the worker's: the flush keeps phase 2
+    // open and the fill threads keep appending to it, nothing refused.
+    valid &= rocketnet_rio_test_stage( rio, 1 );
+    rocketnet_server_rio_send_packets( rio );
+    valid &= rio->fill.load() == 2 && rio->next[2].load() == 1 &&
+             rio->counters[ROCKETNET_RIO_COUNTER_SEND_WAITS].load() == 1;
+    valid &= rocketnet_rio_test_stage( rio, 1 );
+    // A failed try keeps the fill phase too.
+    rio->test_try_fails = true;
+    rocketnet_server_rio_send_packets( rio );
+    rio->test_try_fails = false;
+    valid &= rio->fill.load() == 2 && rio->next[2].load() == 2;
     // The worker takes the oldest handed phase, 0, posts and commits it, and
-    // returns it idle once its completions are retired; phase 1 waits handed.
-    // The next flush opens phase 0 again.
+    // returns it idle once its completions are retired. Phase 1 waits handed.
     valid &= rocketnet_rio_worker_pass( rio ) && state.commits == 1 &&
              rio->phase_state[0] == ROCKETNET_RIO_PHASE_IDLE && rio->phase_state[1] == ROCKETNET_RIO_PHASE_READY;
+    // Now the flush hands phase 2 with both of its packets and opens phase 0.
     rocketnet_server_rio_send_packets( rio );
-    valid &= rio->fill.load() == 0 && !rio->switch_owed.load() && rocketnet_rio_test_stage( rio, 1 );
+    valid &= rio->fill.load() == 0 && rio->phase_count[2] == 2 && rocketnet_rio_test_stage( rio, 1 );
     valid &= rocketnet_rio_worker_pass( rio ) && state.commits == 2 && rio->phase_state[1] == ROCKETNET_RIO_PHASE_IDLE;
-    valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 5 && rio->outstanding[0].load() == 0 &&
-             rio->outstanding[1].load() == 0 && rio->phase_state[0] == ROCKETNET_RIO_PHASE_FILL;
+    valid &= rocketnet_rio_worker_pass( rio ) && state.commits == 3 && rio->phase_state[2] == ROCKETNET_RIO_PHASE_IDLE;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 7 && rocketnet_rio_outstanding_sends( rio ) == 0 &&
+             rio->phase_state[0] == ROCKETNET_RIO_PHASE_FILL && rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 0;
 
     rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
@@ -1368,8 +1379,7 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
 {
-    return rio->outstanding[0].load( std::memory_order_relaxed ) + rio->outstanding[1].load( std::memory_order_relaxed ) +
-           rio->posted_receives.load( std::memory_order_relaxed );
+    return rocketnet_rio_outstanding_sends( rio ) + rio->posted_receives.load( std::memory_order_relaxed );
 }
 
 #if defined(ROCKETNET_RIO_TESTS)
@@ -1388,8 +1398,10 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio )
 {
     rocketnet_platform_mutex_acquire( &rio->mutex );
-    const bool idle = rio->send_ready_count == 0 &&
-                      rio->phase_state[0] != ROCKETNET_RIO_PHASE_POSTED && rio->phase_state[1] != ROCKETNET_RIO_PHASE_POSTED;
+    const int phase = rio->fill.load( std::memory_order_relaxed );
+    bool idle = rio->send_ready_count == 0 && rio->next[phase].load( std::memory_order_relaxed ) == 0;
+    for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
+        idle = idle && rio->phase_state[p] != ROCKETNET_RIO_PHASE_POSTED;
     rocketnet_platform_mutex_release( &rio->mutex );
     return idle;
 }

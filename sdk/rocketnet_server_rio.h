@@ -21,11 +21,12 @@
 // main thread makes no RIO call and never waits: it exchanges bank indices
 // and phase states with the worker under one try of a short mutex.
 //
-// Send: two staging phases of ROCKETNET_RIO_SEND_QUEUE_SIZE frame slots.
+// Send: three staging phases of ROCKETNET_RIO_SEND_QUEUE_SIZE frame slots.
 // start_packet reserves the next slot of the fill phase with one atomic
-// fetch_add; send_packets (fill threads joined) hands a finished fill phase to
-// the worker and opens the other phase once the worker has returned it idle
-// (every send of it retired); until then start_packet refuses. Receive: every
+// fetch_add; send_packets (fill threads joined) hands the fill phase to the
+// worker and opens the next phase only when the worker has returned that
+// phase idle (every send of it retired); until then the fill phase stays
+// open and start_packet refuses only when it is full. Receive: every
 // slice is posted at create; the worker copies each completion into its fill
 // bank, re-posts the slice and publishes the bank onto a FIFO of ready banks;
 // receive_packets exposes the ready banks that fit the process view, valid
@@ -78,7 +79,7 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED,         // datagrams copied into a receive bank
     ROCKETNET_RIO_COUNTER_SEND_FULL,                // start_packet found the fill phase full
     ROCKETNET_RIO_COUNTER_SEND_FAILED,              // a refused post or a failed send completion
-    ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that left the switch owed: the other phase not yet idle
+    ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that kept the fill phase open: the next phase not yet idle
     ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
@@ -117,8 +118,9 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 // receive slices whose re-post was refused and that wait for the worker's
 // next pass to re-post them
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
-// no handed phase waits for the I/O worker and no posted phase has a send
-// outstanding (takes the transport mutex: test thread only)
+// nothing is staged in the fill phase, no handed phase waits for the I/O
+// worker and no posted phase has a send outstanding (takes the transport
+// mutex: the main test thread only)
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
 #endif
 
