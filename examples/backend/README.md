@@ -2,11 +2,12 @@
 
 A client connects to a RocketNet server with a connect token, and the game's
 backend makes it. These are two very simple backends that do it, the way
-yojimbo's matcher does for yojimbo: one in Go, one in C#. Each serves one
-endpoint:
+yojimbo's matcher does for yojimbo: one in Go, one in C#. Each serves a match
+endpoint and a server-registration endpoint:
 
 ```
 GET /match/{clientID}
+PUT /servers/{serverID}
 ```
 
 which returns a fresh connect token for that client as base64 text. The game
@@ -125,6 +126,10 @@ server public key receive the same validation used when writing a token.
 `GET /match/{clientID}` returns HTTP 503 while the registry is empty and
 chooses a registered server at random for each request.
 
+This small example leaves registration authentication to the title. A deployed
+backend must authenticate server registration or isolate that route on a
+trusted network so an untrusted caller cannot add or replace a server.
+
 4. The client, with a token from the backend:
 
 ```sh
@@ -183,8 +188,8 @@ cd examples/backend/csharp && dotnet run --project Tests
 
 The registry is intentionally the smallest useful form of Space Game's backend
 server map: a mutex protects entries keyed by server identity and a later
-registration replaces the prior value. The example omits Space Game's player,
-liveness and build metadata (`space` commit
+registration replaces the prior value. The example omits Space Game's
+`serverAuthorized` policy, player, liveness and build metadata (`space` commit
 `d8a65ce83b4704395f47ed44a246bb92de800f93`,
 `cmd/backend/backend.go`, `serverUpdateHandler`).
 

@@ -48,6 +48,9 @@ namespace RocketNet.Backend
                 throw new ArgumentException( "server id is empty or longer than 128 characters" );
             if ( addresses == null )
                 throw new ArgumentException( "addresses is required" );
+            foreach ( string? address in addresses )
+                if ( string.IsNullOrWhiteSpace( address ) )
+                    throw new ArgumentException( "addresses contains an empty address" );
             ConnectToken.WriteServerAddresses( new SignedConnectData(), addresses );
             byte[] publicKey = ( string.IsNullOrEmpty( publicKeyText ) ? null : BackendConfig.Base64( publicKeyText, ConnectToken.KeyBytes ) )
                 ?? throw new ArgumentException( "public_key is not the base64 of a 32 byte server public key" );

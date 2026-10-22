@@ -473,7 +473,7 @@ func main() {
 		return
 	}
 
-	requireServer := *mint != ""
+	requireServer := mintSet
 	config, err := readConfigMode(os.Getenv, requireServer)
 	if err != nil {
 		stderrLogger.Fatalf("error: %v", err)
@@ -482,7 +482,7 @@ func main() {
 		stderrLogger.Printf("WARNING: using the published development backend key. DEVELOPMENT ONLY: anyone can mint tokens for a server that accepts it. Set ROCKETNET_BACKEND_PRIVATE_KEY to deploy.")
 	}
 
-	if *mint != "" {
+	if mintSet {
 		clientID, err := strconv.ParseUint(*mint, 10, 64)
 		if err != nil {
 			stderrLogger.Fatalf("error: --mint takes a decimal client id, not %q", *mint)

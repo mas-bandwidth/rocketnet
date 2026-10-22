@@ -267,6 +267,10 @@ static class Tests
         catch ( ArgumentException ) { refused = true; }
         Check( refused, "invalid address refused" );
         refused = false;
+        try { registry.Register( "bad", new string[] { null! }, Convert.ToBase64String( keyA ) ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "null address refused" );
+        refused = false;
         try { registry.Register( "bad", addressA, "AAAA" ); }
         catch ( ArgumentException ) { refused = true; }
         Check( refused, "invalid public key refused" );
