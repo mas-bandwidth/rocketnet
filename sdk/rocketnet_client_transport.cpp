@@ -1356,6 +1356,10 @@ static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t
 
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
+    if ( client_transport && client_transport->client_io.diag_steps > 0 )
+        fprintf( stderr, "client_io_gap: port=%d steps=%llu max_step_gap=%.3f at=%.3f max_rx_gap=%.3f at=%.3f\n", client_transport->client_io.diag_port,
+            (unsigned long long) client_transport->client_io.diag_steps, client_transport->client_io.diag_max_step_gap, client_transport->client_io.diag_max_step_gap_at,
+            client_transport->client_io.diag_max_rx_gap, client_transport->client_io.diag_max_rx_gap_at );
     if ( !rocketnet_api_null_guard( client_transport ) )
         return;
     rocketnet_assert( rocketnet_client_transport_stopped( client_transport ) );

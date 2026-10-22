@@ -4,7 +4,6 @@
 */
 
 #pragma once
-#include <stdio.h>
 
 #ifndef ROCKETNET_CLIENT_IO_H
 #define ROCKETNET_CLIENT_IO_H
@@ -111,7 +110,7 @@ struct rocketnet_client_io_t
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
-    uint64_t diag_steps, diag_rings, diag_sent, diag_received, diag_full, diag_empty; double diag_last_rx, diag_last_ring, diag_next_summary; int diag_reported; int diag_port;
+    uint64_t diag_steps; double diag_last_step, diag_max_step_gap, diag_max_step_gap_at, diag_last_rx, diag_max_rx_gap, diag_max_rx_gap_at; int diag_port;
 };
 
 // RNClientIo initial; main thread. Takes the two ring views and the two
@@ -135,7 +134,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
         io->buffer[i]->num_packets = 0;
     }
     io->fill_slots = 0;
-    io->diag_steps = io->diag_rings = io->diag_sent = io->diag_received = io->diag_full = io->diag_empty = 0; io->diag_last_rx = 0.0; io->diag_last_ring = 0.0; io->diag_reported = 0; io->diag_next_summary = 0.0; io->diag_port = 0;
+    io->diag_steps = 0; io->diag_last_step = io->diag_max_step_gap = io->diag_max_step_gap_at = io->diag_last_rx = io->diag_max_rx_gap = io->diag_max_rx_gap_at = 0.0; io->diag_port = 0;
     io->time = time;
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
@@ -358,27 +357,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     const bool quitting = io->quit.load( std::memory_order_acquire );
 
     bool worked = false;
-    io->diag_steps++;
     {
         const double dnow = io->time( io->time_context );
-        if ( io->diag_last_rx == 0.0 ) io->diag_last_rx = dnow;
-        const double gap = dnow - io->diag_last_rx;
-        if ( ( gap > 2.0 && io->diag_reported == 0 ) || ( gap > 6.0 && io->diag_reported == 1 ) )
-        {
-            io->diag_reported++;
-            fprintf( stderr, "client_io_diag: t=%.3f port=%d gap=%.3f steps=%llu rings=%llu since_ring=%.3f sent=%llu received=%llu full=%llu empty=%llu fill_slots=%d fill=%d\n",
-                dnow, io->diag_port, gap, (unsigned long long) io->diag_steps, (unsigned long long) io->diag_rings, dnow - io->diag_last_ring,
-                (unsigned long long) io->diag_sent, (unsigned long long) io->diag_received, (unsigned long long) io->diag_full, (unsigned long long) io->diag_empty,
-                io->fill_slots, (int) io->receive.fill );
-            fflush( stderr );
-        }
-        if ( dnow >= io->diag_next_summary )
-        {
-            io->diag_next_summary = dnow + 2.0;
-            fprintf( stderr, "client_io_sum: t=%.3f port=%d steps=%llu rings=%llu received=%llu full=%llu since_rx=%.3f since_ring=%.3f\n",
-                dnow, io->diag_port, (unsigned long long) io->diag_steps, (unsigned long long) io->diag_rings, (unsigned long long) io->diag_received,
-                (unsigned long long) io->diag_full, gap, dnow - io->diag_last_ring );
-        }
+        if ( io->diag_steps > 0 && dnow - io->diag_last_step > io->diag_max_step_gap ) { io->diag_max_step_gap = dnow - io->diag_last_step; io->diag_max_step_gap_at = dnow; }
+        io->diag_last_step = dnow; io->diag_steps++;
     }
 
     // 1. RNClientIo IoSend / IoFinishRing: send a handed-off ring. Slot i is
@@ -387,7 +369,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     const int ring = rocketnet_client_send_rings_take( &io->rings );
     if ( ring >= 0 )
     {
-        io->diag_rings++; io->diag_last_ring = io->time( io->time_context );
         const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
         const uint64_t committed = io->rings.committed[ring];
         if ( io->transport->operations->send_batch )
@@ -498,7 +479,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                         packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
                         (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
                 (void) rocketnet_client_receive_handshake_io_receive( handshake );
-                io->diag_received++; io->diag_last_rx = now; io->diag_reported = 0;
+            if ( io->diag_last_rx > 0.0 && now - io->diag_last_rx > io->diag_max_rx_gap ) { io->diag_max_rx_gap = now - io->diag_last_rx; io->diag_max_rx_gap_at = now; } io->diag_last_rx = now;
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
                 buffer->receive_time[index] = now;
@@ -531,7 +512,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 break;
             }
             (void) rocketnet_client_receive_handshake_io_receive( handshake );
-            io->diag_received++; io->diag_last_rx = now; io->diag_reported = 0;
+            if ( io->diag_last_rx > 0.0 && now - io->diag_last_rx > io->diag_max_rx_gap ) { io->diag_max_rx_gap = now - io->diag_last_rx; io->diag_max_rx_gap_at = now; } io->diag_last_rx = now;
             const int index = buffer->num_packets;
             buffer->from[index] = from;
             buffer->receive_time[index] = now;
@@ -545,7 +526,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
-    if ( io->fill_slots >= ROCKETNET_NUM_CLIENT_PACKETS ) io->diag_full++;
     // 3. RNClientIo IoPublish / IoOwe: publish the filled buffer when a Free
     // one is there to fill next; otherwise store the publish as owed and keep
     // the batch while the buffer has room. A publish is worked.
