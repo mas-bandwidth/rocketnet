@@ -239,22 +239,18 @@ static uint16_t posix_local_port( rocketnet_platform_socket_t * socket )
     return ntohs( ( (struct sockaddr_in*) &storage )->sin_port );
 }
 
-// datagrams queued on a socket and not yet read. darwin counts them
-// (SO_NUMRCVPKT, zero-length ones included); elsewhere the count is unknown
-// and the caller's bounded update loop is the only wait.
-
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+// datagrams queued on a socket and not yet read: darwin counts them
+// (SO_NUMRCVPKT, zero-length ones included). Only the darwin create case
+// below asks.
 static int posix_queued_datagrams( rocketnet_platform_socket_t * socket )
 {
-#if defined(SO_NUMRCVPKT)
     int count = 0;
     socklen_t bytes = sizeof(count);
     posix_check( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &count, &bytes ) == 0 );
     return count;
-#else
-    (void) socket;
-    return -1;
-#endif
 }
+#endif
 
 // ---------------------------------------------------
 // a connected pair on one cell
