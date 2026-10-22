@@ -308,7 +308,8 @@ static void test_max_resend_delay_payload_reserve_without_acks()
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
-        const uint64_t budget = (uint64_t) budgets[side] * 125 * config.message_resend_delay_max_ms / 1000;
+        rocketnet_unit_check( config.message_resend_delay_max_ms > 0 );
+        const uint64_t budget = (uint64_t) budgets[side] * 125 * (uint64_t) config.message_resend_delay_max_ms / 1000;
         for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );
@@ -318,7 +319,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
                 const int bytes = budget - held < (uint64_t) payloads[p] ? (int) (budget - held) : payloads[p];
                 const uint32_t descriptor = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
                 rocketnet_unit_check( descriptor != RN_DESCRIPTOR_NONE );
-                held += bytes;
+                held += (uint64_t) bytes;
             }
             rocketnet_unit_check( !rn_region_exhausted( region ) );
         }
