@@ -71,7 +71,11 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 //
 // A case that creates io_uring servers (its name says io_uring or uring) runs
 // one at a time (SUITE_ONE_AT_A_TIME): each server pins its rings against
-// RLIMIT_MEMLOCK, summed per user across processes.
+// RLIMIT_MEMLOCK, summed per user across processes, and a destroyed ring's
+// pin is released after the destroy returns, so a create and destroy loop
+// pins about two servers. The connect and disconnect case holds its one
+// server for its whole run (76s on vision, longer than the rest together)
+// and runs beside them: a suite then pins at most that server and one case's.
 static int rocketnet_functional_test_group( const char * name )
 {
 #if defined(__APPLE__)
@@ -82,7 +86,8 @@ static int rocketnet_functional_test_group( const char * name )
     if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
         return 3;
 #endif
-    const int one_at_a_time = strstr( name, "uring" ) != NULL ? SUITE_ONE_AT_A_TIME : 0;
+    const bool uring = strstr( name, "uring" ) != NULL && strstr( name, "connect_disconnect" ) == NULL;
+    const int one_at_a_time = uring ? SUITE_ONE_AT_A_TIME : 0;
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2 | one_at_a_time;
     return rocketnet_posix_hard_killed_peer_test_group( name ) | one_at_a_time;
