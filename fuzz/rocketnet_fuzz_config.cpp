@@ -59,6 +59,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../test/portable_crt.h"
+
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition ) return;
@@ -277,8 +279,9 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
 static void fuzz_write_seed( const char * dir, const char * name, int table, int field, uint8_t mode, const char * value )
 {
     char path[1024];
-    snprintf( path, sizeof( path ), "%s/%s", dir, name );
-    FILE * file = fopen( path, "wb" );
+    if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+        abort(); // a truncated path would write some other file
+    FILE * file = rocketnet_test_fopen( path, "wb" );
     if ( !file )
         abort();
     const uint8_t head[3] = { (uint8_t) table, (uint8_t) field, mode };
@@ -366,9 +369,8 @@ static void fuzz_write_seeds( const char * dir, const char * from )
         const char * transport = rocketnet_transport_name( available[i] );
         if ( !transport )
             continue;
-        if ( ladder[0] != '\0' )
-            strncat( ladder, ",", sizeof( ladder ) - strlen( ladder ) - 1 );
-        strncat( ladder, transport, sizeof( ladder ) - strlen( ladder ) - 1 );
+        const size_t used = strlen( ladder );
+        snprintf( ladder + used, sizeof( ladder ) - used, "%s%s", ladder[0] != '\0' ? "," : "", transport );
     }
     fuzz_write_seed( dir, "server_transport_ladder_available", 1, transport_field, 2, ladder );
 
@@ -379,8 +381,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     for ( size_t c = 0; c < sizeof( committed ) / sizeof( committed[0] ); c++ )
     {
         char path[1024];
-        snprintf( path, sizeof( path ), "%s/%s", from, committed[c] );
-        FILE * file = fopen( path, "rb" );
+        if ( snprintf( path, sizeof( path ), "%s/%s", from, committed[c] ) >= (int) sizeof( path ) )
+            continue;
+        FILE * file = rocketnet_test_fopen( path, "rb" );
         if ( !file )
             continue;
         char value[1024];
@@ -432,9 +435,10 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
                                 "the defaults validate" );
     }
 
-    const char * seed_dir = getenv( "ROCKETNET_FUZZ_SEED_DIR" );
-    if ( seed_dir != NULL && seed_dir[0] != '\0' )
-        fuzz_write_seeds( seed_dir, getenv( "ROCKETNET_FUZZ_SEED_FROM" ) );
+    char seed_dir[1024];
+    char seed_from[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
+        fuzz_write_seeds( seed_dir, rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_FROM", seed_from, sizeof( seed_from ) ) ? seed_from : NULL );
     return 0;
 }
 
