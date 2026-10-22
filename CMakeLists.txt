@@ -821,6 +821,13 @@ if(ROCKETNET_BUILD_TOOLS)
     foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
+            # the pair harness calls __llvm_profile_reset_counters when a
+            # coverage build defines it (fuzz/rocketnet_fuzz_pair.h); the
+            # macOS linker refuses the weak undefined reference ELF allows
+            # unless it is named as resolved at run time
+            if(APPLE)
+                target_link_options(fuzz_replay_${harness} PRIVATE "LINKER:-U,___llvm_profile_reset_counters")
+            endif()
         else()
             add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
         endif()
