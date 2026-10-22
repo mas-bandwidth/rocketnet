@@ -2449,8 +2449,9 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
             continue;
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
-        // With no free replacement, keep the producer and its complete
-        // packets staged. The next call retries after worker recycle.
+        // tla/RNDriverSendStaging.tla Publish: with no free replacement, keep
+        // the producer and its complete packets staged. The next call retries
+        // after worker recycle (WorkerRetire).
         if ( socket->send_handoff.publish() )
         {
             const int replacement = socket->send_handoff.producer;
@@ -3206,7 +3207,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 }
 
                 // UMEM now owns every copied packet. Only after the final copy
-                // may this worker reset and return staging to the free ring.
+                // may this worker reset and return staging to the free ring
+                // (tla/RNDriverSendStaging.tla WorkerRetire).
                 if ( send_buffer->packet_start_index == num_packets )
                 {
                     send_buffer->num_packets.store( 0, std::memory_order_relaxed );

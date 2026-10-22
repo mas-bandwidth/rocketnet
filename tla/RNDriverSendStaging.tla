@@ -33,10 +33,12 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           MaxStaged,                \* the staging capacity, in frames
           MaxBurst,                 \* the most frames one disconnect seals
-          DisconnectAdvancesStaged  \* commit through disconnect advances staged
+          DisconnectAdvancesStaged, \* commit through disconnect advances staged
+          XdpBuffers                \* ROCKETNET_XDP_NUM_BUFFERS: physical XDP send buffers
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
 ASSUME MaxBurst \in 1..MaxFrames /\ DisconnectAdvancesStaged \in BOOLEAN
+ASSUME XdpBuffers \in Nat /\ XdpBuffers >= 2
 
 Frames == 1..MaxFrames
 
@@ -139,8 +141,13 @@ DisconnectClient ==
                 /\ UNCHANGED staged
         /\ UNCHANGED <<flushed, sent, dropped, reserved, tick>>
 
-\* XDP worker/publication submodel: two physical generations. Packet-slot
-\* exhaustion is separate; XdpStart represents a send with capacity left.
+\* XDP worker/publication submodel: rocketnet_xdp_buffer_exchange_t in
+\* sdk/rocketnet_server_socket_linux.cpp over XdpBuffers physical buffers.
+\* One buffer is always the producer; xdpQueue counts the published buffers
+\* not yet recycled (ready or claimed by the worker). claim moves a buffer
+\* from ready to claimed and changes neither count, so it is folded into
+\* WorkerRetire, which is recycle. Packet-slot exhaustion is separate;
+\* XdpStart represents a send with capacity left.
 XdpInit ==
     /\ xdpQueue = 0
     /\ xdpFilling = TRUE
@@ -164,16 +171,18 @@ XdpStart ==
     /\ xdpRanFlush' = FALSE
     /\ UNCHANGED <<xdpQueue, xdpFilling, xdpReadyBeforeFlush>>
 
-\* rocketnet_send_handoff_t::publish retains filling if no replacement is free.
+\* rocketnet_xdp_buffer_exchange_t::publish retains the producer if no
+\* replacement is free (free_count == XdpBuffers - 1 - xdpQueue == 0).
 \* rocketnet_server_transport_send_packets retries even when counters agree.
+\* The broken form publishes the producer itself when no replacement is free.
 PublishWith(retainProducer) ==
     /\ xdpRanFlush' = TRUE
-    /\ xdpReadyBeforeFlush' = (xdpStaged /\ xdpQueue = 0)
+    /\ xdpReadyBeforeFlush' = (xdpStaged /\ xdpQueue < XdpBuffers - 1)
     /\ IF xdpStaged /\ (xdpDirty \/ retainProducer)
-                    /\ xdpQueue < (IF retainProducer THEN 1 ELSE 2)
+                    /\ xdpQueue < (IF retainProducer THEN XdpBuffers - 1 ELSE XdpBuffers)
        THEN /\ xdpQueue' = xdpQueue + 1
             /\ xdpStaged' = FALSE
-            /\ xdpFilling' = (xdpQueue + 1 < 2)
+            /\ xdpFilling' = (xdpQueue + 1 < XdpBuffers)
        ELSE UNCHANGED <<xdpQueue, xdpStaged, xdpFilling>>
     /\ xdpCountersDiffer' = FALSE
     /\ xdpDirty' = FALSE
@@ -222,7 +231,7 @@ RetryFlushPublishes == (xdpRanFlush /\ xdpReadyBeforeFlush) => ~xdpStaged
 XdpStagedEventuallyPublished == xdpStaged ~> ~xdpStaged
 
 TypeOK ==
-    /\ xdpQueue \in 0..2
+    /\ xdpQueue \in 0..XdpBuffers
     /\ xdpFilling \in BOOLEAN
     /\ xdpStaged \in BOOLEAN
     /\ xdpDirty \in BOOLEAN
