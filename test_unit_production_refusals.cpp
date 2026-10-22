@@ -94,6 +94,7 @@ static void test_production_server_refuses_test_packet_filter()
         config.protocol_id = 1;
         memset( config.backend_public_key, 0x42, sizeof( config.backend_public_key ) );
         config.transport = "loopback";
+        config.max_clients = 2; // the refusal, not capacity: stay under the suite's RSS bound
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
@@ -115,6 +116,7 @@ static void test_production_server_refuses_test_packet_filter()
         memset( config.server_secret_key, 0x44, 32 );
         config.protocol_id = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.max_clients = 2;
         int status = -1;
         check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
