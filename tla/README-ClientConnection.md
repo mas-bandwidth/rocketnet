@@ -211,6 +211,17 @@ that reassembly state changes only while connected, on both sides.
 `ClientFragmentReceiveEarly`, the pre-fix acceptance in sending-connection-response
 (state 3), and must fail `FragmentOnlyWhenConnected`.
 
+**Payloads** are accepted only in state 4, as netcode.io's client: the server's
+first payloads can reach the client ahead of the keep-alive that connects it
+(the keep-alive lost, as `KindLoss = "firstkind"` does, or reordered behind
+them), and a payload delivered in state 3 let the application reply on a
+connection that could not yet send (the reply refused `SEND_NOT_CONNECTED`
+and lost). The action property `PayloadOnlyWhenConnected` states that a
+payload is accepted only while connected.
+`MCClientConnectionBrokenEarlyPayload.cfg` is its reversed witness: it adds
+`ClientRecvEarlyPayload`, the pre-fix acceptance in state 3, and must fail
+`PayloadOnlyWhenConnected`.
+
 `MCClientConnection.cfg` is the committed run: the hang check under "the first packet
 of every kind is dropped" (`KindLoss = "firstkind"`), the code's keep-alive behaviour,
 deadlines and timeouts off, payloads on, no disconnects, checking every safety property

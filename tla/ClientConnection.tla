@@ -333,12 +333,18 @@ ClientRecvDeniedKeepsKeys(p) ==
 \* rocketnet_client_open_session_packet then the per-type action: states 3
 \* and 4, the session keys, the replay window; an accepted packet refreshes
 \* the timeout; a keep-alive in 3 sets the index and connects; a disconnect
-\* is state 0 immediately. This action leaves the keys; set_state zeroes
-\* them, which KeysErasedWhenDown records
+\* is state 0 immediately. A payload is accepted only in 4, as netcode.io's
+\* client (rocketnet_client_session_state_accepts): the server's first
+\* payloads can reach the client ahead of the keep-alive that connects it,
+\* by loss or reorder of that keep-alive, and one delivered in 3 let the
+\* application reply on a connection that could not yet send. This action
+\* leaves the keys; set_state zeroes them, which KeysErasedWhenDown records
+SessionStateAccepts(t) == cstate = 4 \/ (cstate = 3 /\ t # "payload")
+
 ClientRecvSession(p) ==
     /\ p.type \in SessionTypes
     /\ S2C!Deliver(p)
-    /\ IF cstate \in {3, 4} /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
+    /\ IF SessionStateAccepts(p.type) /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
          THEN /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
               /\ cReasm' = IF p.type = "disconnect" THEN FALSE ELSE cReasm
               /\ CASE p.type = "keepalive"  -> cIndex' = TRUE /\ cstate' = 4
@@ -346,6 +352,17 @@ ClientRecvSession(p) ==
                    [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
          ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cReasm>>
     /\ UNCHANGED <<cHasCookie, cKeys, cEph>>
+    /\ UNCHANGED clientRecvUnchanged
+
+\* the pre-fix behaviour, kept only as the reversed witness's step: a
+\* payload accepted in sending-connection-response (state 3) as well.
+\* Not a disjunct of Next; SpecEarlyPayload below adds it.
+ClientRecvEarlyPayload(p) ==
+    /\ p.type = "payload"
+    /\ S2C!Deliver(p)
+    /\ cstate = 3 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
+    /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
+    /\ UNCHANGED <<cIndex, cstate, cReasm, cHasCookie, cKeys, cEph>>
     /\ UNCHANGED clientRecvUnchanged
 
 \* a fragment (type 9), modelled at the receive step itself: the sealed
@@ -662,6 +679,10 @@ SpecTyped == Init /\ [][Next]_vars /\ FairnessTyped
 \* the reversed witness's spec: Next plus the pre-fix early fragment
 SpecEarlyFragment == Init /\ [][Next \/ ClientFragmentReceiveEarly]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix early payload
+SpecEarlyPayload ==
+    Init /\ [][Next \/ (\E p \in SessionPackets : ClientRecvEarlyPayload(p))]_vars /\ Fairness
+
 \* the reversed witness's spec: Next plus the pre-fix denial that keeps keys
 SpecDeniedKeepsKeys ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvDeniedKeepsKeys(p))]_vars /\ Fairness
@@ -743,6 +764,13 @@ AcceptsSession(p) == S2C!Deliver(p) /\ p.id \notin cSeen /\ p.id \in cSeen'
 AcceptedUnderLiveKeys ==
     [][\A p \in SessionPackets :
          AcceptsSession(p) => (cstate \in {3, 4} /\ KeysOf(p) = cKeys)]_vars
+
+\* the application is handed a payload only while connected: a payload is
+\* accepted (its id enters the seen-set) only in state 4, so the reply the
+\* application sends to it can leave
+PayloadOnlyWhenConnected ==
+    [][\A p \in SessionPackets :
+         (p.type = "payload" /\ AcceptsSession(p)) => cstate = 4]_vars
 
 \* no receive sends (S:2178-2182)
 NoSendOnArrival ==
