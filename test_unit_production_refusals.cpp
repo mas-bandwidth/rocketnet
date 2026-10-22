@@ -22,6 +22,7 @@
 
 #if !ROCKETNET_DEV
 
+#include "test/unit_shutdown.h"
 #include "test/fake_client_driver.h"
 
 #include "rocketnet.h"
@@ -74,7 +75,7 @@ static int production_client_transport_create( const uint8_t * filter, const uin
     check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
     if ( transport )
     {
-        rocketnet_client_transport_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         check( fake->destroy_calls == 1 );
     }
     delete fake;
@@ -102,7 +103,7 @@ static void test_production_server_refuses_test_packet_filter()
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
         if ( server )
-            rocketnet_server_destroy( server );
+            rn_test_server_stop_and_destroy( server );
     }
 
     // the transport create
@@ -123,7 +124,7 @@ static void test_production_server_refuses_test_packet_filter()
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
         if ( server )
-            rocketnet_server_transport_destroy( server );
+            rn_test_server_transport_stop_and_destroy( server );
     }
 
     rocketnet_development_values_refused_test_enable( 0 );
@@ -151,7 +152,7 @@ static void test_production_client_refuses_test_packet_filter()
         check( client != NULL );
         check( status == ROCKETNET_STATUS_OK );
         if ( client )
-            rocketnet_client_destroy( client );
+            rn_test_client_stop_and_destroy( client );
     }
 
     // the transport create
