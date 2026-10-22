@@ -117,6 +117,10 @@ static void test_client_io_stop_hands_over_the_filling_ring()
     rocketnet_unit_check( fake.sent[2].data[0] == 0xB2 );
     rocketnet_unit_check( rocketnet_address_equal( &fake.sent[2].address, &to ) );
 
+    // a step after the exit sends nothing again
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( fake.num_sent == 3 );
+
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
 }
