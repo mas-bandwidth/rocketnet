@@ -156,7 +156,7 @@ static void test_server_half_open_session_packet_dropped_unopened()
 
     const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
-    check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->client_index == -1 );
+    check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->client_index == -1 );
 
     const struct { uint8_t type; int bytes; int received; int not_connected; int did_not_open; } rows[] =
     {
@@ -193,7 +193,7 @@ static void test_server_half_open_session_packet_dropped_unopened()
         // session window that has not moved
         check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == index );
         const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
-        check( mapping->client_index == -1 );
+        check( mapping->control->client_index == -1 );
         check( mapping->integrity_failures == 0 );
         check( mapping->replay_session.highest_opened == 0 );
     }
