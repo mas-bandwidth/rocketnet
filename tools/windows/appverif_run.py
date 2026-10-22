@@ -7,7 +7,10 @@ log to the verifier log file without a debugger (a stop ends the run with
 STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the
 verifier log of every process the run starts with that image name (one log per
 process: the suite runners start one child per case) to XML and disables
-verification for the image again on every exit path. It exits non-zero when the
+verification for the image again on every exit path. Verifier settings and logs
+are keyed by image name, machine wide, so the run verifies a copy of the
+executable beside it under a name of its own (verified_image_path) and removes
+the copy and its logs on exit. It exits non-zero when the
 executable fails, when no log is exported, or when any log holds a verifier
 stop, printing one line per stop with its layer, stop code and top frames.
 --xml FILE keeps the most recent log at FILE and the Nth log before it at FILE's
@@ -75,6 +78,18 @@ def top_frames(frames: list) -> list:
     api = [frames[start - 1]] if start > 0 else []
     callers = [frame for frame in frames[first_caller:] if frame_module(frame) not in SYSTEM_MODULES]
     return (api + callers)[:FRAMES_SHOWN]
+
+
+def verified_image_path(exe_path: Path, token: str) -> Path:
+    """The copy of exe_path a run verifies, beside it, under a name of its own.
+
+    Application Verifier keys its settings and logs by image name, machine
+    wide: while functional.exe is under verification every functional.exe on
+    the host (a CI leg, another worker's build) is verified too, its logs land
+    beside this run's, and its own -delete logs removes this run's. Beside the
+    original, the copy finds the same PDB and the same sibling executables.
+    """
+    return exe_path.with_name(f"{exe_path.stem}_appverif_{token}{exe_path.suffix}")
 
 
 def find_appverif() -> str:
@@ -199,14 +214,20 @@ def main() -> int:
     if not exe_path.is_file():
         print(f"appverif_run: executable not found: {exe_path}", file=sys.stderr)
         return 2
-    image_name = exe_path.name
-
     try:
         appverif = find_appverif()
     except FileNotFoundError as error:
         print(f"appverif_run: {error}", file=sys.stderr)
         return 2
     suppress_crash_dialogs()
+
+    verified_path = verified_image_path(exe_path, str(os.getpid()))
+    try:
+        shutil.copy2(exe_path, verified_path)
+    except OSError as error:
+        print(f"appverif_run: could not copy {exe_path} to {verified_path}: {error}", file=sys.stderr)
+        return 2
+    image_name = verified_path.name
 
     temp_dir = None
     if args.xml:
@@ -236,7 +257,7 @@ def main() -> int:
         start = time.monotonic()
         try:
             exit_code = subprocess.run(
-                [str(exe_path), *command[1:]], cwd=os.getcwd(), timeout=args.timeout
+                [str(verified_path), *command[1:]], cwd=os.getcwd(), timeout=args.timeout
             ).returncode
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -252,6 +273,7 @@ def main() -> int:
         print(f"appverif_run: {error}", file=sys.stderr)
         exit_code = exit_code if exit_code not in (None, 0) else 2
     finally:
+        appverif_call(appverif, ["-delete", "logs", "-for", image_name], check=False)
         appverif_call(appverif, ["-disable", "*", "-for", image_name], check=False)
         appverif_call(appverif, ["-delete", "settings", "-for", image_name], check=False)
         left = enabled_layers(appverif, image_name)
@@ -260,6 +282,10 @@ def main() -> int:
             print(f"appverif_run: {image_name} is still under verification: {', '.join(left)}", file=sys.stderr)
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
+        try:
+            verified_path.unlink()
+        except OSError as error:
+            print(f"appverif_run: could not remove {verified_path}: {error}", file=sys.stderr)
 
     for stop in stops:
         frames = " <- ".join(stop["frames"]) if stop["frames"] else "<no frames>"
