@@ -66,6 +66,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -109,6 +110,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -190,6 +192,7 @@ jobs:
     env:
       ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -294,6 +297,7 @@ jobs:
     if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -327,6 +331,7 @@ jobs:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -343,6 +348,17 @@ jobs:
 
       - name: Build Release
         run: cmake --build build --config Release --parallel 4
+
+      - name: Build Debug
+        # The Debug configuration of the same AddressSanitizer build is
+        # build-checked here. It links the debug CRT's runtime
+        # (clang_rt.asan_dynmd-x86_64.dll), which the build stages beside the
+        # executables, so the configuration stays buildable and its runtime
+        # stays beside it. The suites under it run on the Windows member:
+        # the per-case peak-RSS bound is a Release figure, and the Debug
+        # configuration's own figures under the sanitizer are not measured,
+        # so running them here would fail the bound instead of the code.
+        run: cmake --build build --config Debug --parallel 4
 
       - name: Run unit suite under ASan
         shell: bash
@@ -402,6 +418,7 @@ jobs:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
