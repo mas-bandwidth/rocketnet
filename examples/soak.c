@@ -7,7 +7,7 @@
     This is a stress demo and profiling harness, not a load claim.
     Usage: ./bin/example_soak [--clients 1000] [--seconds 3] [--seed 1]
                               [--transport loopback] [--out soak-results.tsv]
-                              [--pause] [--self-test-corrupt]
+                              [--pause] [--self-test-corrupt] [--arena-mib N]
 */
 
 #include "shutdown.h"
@@ -28,6 +28,9 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <windows.h>
 #else
 #include <pthread.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 #endif
 
 // Uses the message calls declared in sdk/rocketnet.h: start_message,
@@ -69,8 +72,8 @@ struct soak_alloc_t { uint64_t live_allocs, live_bytes, peak_bytes, steady_alloc
 static struct soak_alloc_t g_alloc;
 
 // Allocator callbacks also run on workers (including thread-shim cleanup).
-// This static lock allocates nothing and protects only telemetry, never the
-// allocator calls themselves. Every reader takes a consistent snapshot.
+// This static lock allocates nothing and protects arena metadata and telemetry.
+// Backing allocation/release happens outside SDK calls and outside this lock.
 #if defined(_WIN32)
 static SRWLOCK g_alloc_mutex = SRWLOCK_INIT;
 static void soak_alloc_lock( void ) { AcquireSRWLockExclusive( &g_alloc_mutex ); }
@@ -95,29 +98,83 @@ static struct soak_alloc_t soak_alloc_snapshot( void ) {
     return snapshot;
 }
 
+// The harness owns backing storage until every SDK object and worker is gone.
+// Rounded-capacity classes reuse returned blocks across reconnects. No SDK callback
+// calls the system allocator, including partial-create failure cleanup.
+#define SOAK_ARENA_CLASSES 1024
+struct soak_arena_block_t { size_t bytes; struct soak_arena_block_t * next; unsigned bucket, live; };
+struct soak_arena_class_t { size_t stride; struct soak_arena_block_t * free; };
+static struct {
+    void * allocation;
+    uint8_t * base;
+    size_t bytes, used;
+    struct soak_arena_class_t classes[SOAK_ARENA_CLASSES];
+} g_arena;
+
+static bool soak_arena_create( size_t bytes ) {
+    if ( bytes > SIZE_MAX - 63 || sizeof(struct soak_arena_block_t) > 64 ) return false;
+#if defined(__linux__)
+    // Reserve the bounded virtual arena without eagerly committing every page.
+    // Used SDK records fault in pages naturally; capacity is not a RAM claim.
+    g_arena.allocation = mmap(NULL, bytes + 63, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (g_arena.allocation == MAP_FAILED) { g_arena.allocation = NULL; return false; }
+#else
+    g_arena.allocation = malloc(bytes + 63);
+    if (!g_arena.allocation) return false;
+#endif
+    g_arena.base = (uint8_t *) (((uintptr_t)g_arena.allocation + 63) & ~(uintptr_t)63);
+    g_arena.bytes = bytes;
+    return true;
+}
+
 static void * soak_malloc( void * ctx, size_t bytes ) {
     (void) ctx;
-    uint8_t * raw = (uint8_t *) malloc( bytes + 64 );
-    if ( !raw ) return NULL;
-    *(uint64_t *) raw = (uint64_t) bytes;
+    if (bytes > SIZE_MAX - 127) return NULL;
+    const size_t stride = ((bytes ? bytes : 1) + 127) & ~(size_t)63;
     soak_alloc_lock();
+    unsigned bucket = (unsigned)((stride >> 6) * UINT64_C(11400714819323198485)) & (SOAK_ARENA_CLASSES - 1);
+    unsigned probes = 0;
+    while (g_arena.classes[bucket].stride && g_arena.classes[bucket].stride != stride && ++probes < SOAK_ARENA_CLASSES)
+        bucket = (bucket + 1) & (SOAK_ARENA_CLASSES - 1);
+    if (probes == SOAK_ARENA_CLASSES) { soak_alloc_unlock(); return NULL; }
+    struct soak_arena_class_t * cls = &g_arena.classes[bucket];
+    struct soak_arena_block_t * block = cls->free;
+    if (block) cls->free = block->next;
+    else {
+        if (stride > g_arena.bytes - g_arena.used) { soak_alloc_unlock(); return NULL; }
+        block = (struct soak_arena_block_t *)(g_arena.base + g_arena.used);
+        g_arena.used += stride;
+        cls->stride = stride;
+    }
+    block->bytes = bytes;
+    block->bucket = bucket;
+    block->live = 1;
+    block->next = NULL;
     g_alloc.live_allocs++;
-    g_alloc.live_bytes += (uint64_t) bytes;
-    if ( g_alloc.live_bytes > g_alloc.peak_bytes ) g_alloc.peak_bytes = g_alloc.live_bytes;
-    if ( g_alloc.steady ) g_alloc.steady_allocs++;
+    g_alloc.live_bytes += (uint64_t)bytes;
+    if (g_alloc.live_bytes > g_alloc.peak_bytes) g_alloc.peak_bytes = g_alloc.live_bytes;
+    if (g_alloc.steady) g_alloc.steady_allocs++;
     soak_alloc_unlock();
-    return raw + 64;
+    return (uint8_t *)block + 64;
 }
 
 static void soak_free( void * ctx, void * p ) {
     (void) ctx;
-    if ( !p ) return;
-    uint8_t * raw = (uint8_t *) p - 64;
+    if (!p) return;
     soak_alloc_lock();
+    const uintptr_t address = (uintptr_t)p;
+    const uintptr_t base = (uintptr_t)g_arena.base;
+    if (address < base + 64 || address - base >= g_arena.used || ((address - base) & 63)) abort();
+    struct soak_arena_block_t * block = (struct soak_arena_block_t *)((uint8_t *)p - 64);
+    if (!block->live || block->bucket >= SOAK_ARENA_CLASSES) abort();
     g_alloc.live_allocs--;
-    g_alloc.live_bytes -= *(uint64_t *) raw;
+    g_alloc.live_bytes -= block->bytes;
+    block->live = 0;
+    struct soak_arena_class_t * cls = &g_arena.classes[block->bucket];
+    block->next = cls->free;
+    cls->free = block;
     soak_alloc_unlock();
-    free( raw );
 }
 
 struct soak_peer_t {
@@ -237,13 +294,14 @@ static int cmp_double( const void * a, const void * b ) {
 
 int main( int argc, char ** argv ) {
     int num_clients = 1000, seconds = 3, exit_code = 1;
-    uint64_t seed = 1;
+    uint64_t seed = 1, arena_mib = 0;
     const char * transport_name = "loopback";
     const char * out_path = "soak-results.tsv";
     bool pause_start = false, self_test_corrupt = false, inited = false;
     for ( int i = 1; i < argc; i++ ) {
         if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc ) num_clients = atoi( argv[++i] );
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc ) seconds = atoi( argv[++i] );
+        else if ( strcmp( argv[i], "--arena-mib" ) == 0 && i + 1 < argc ) arena_mib = (uint64_t)strtoull(argv[++i], NULL, 10);
         else if ( strcmp( argv[i], "--seed" ) == 0 && i + 1 < argc ) seed = (uint64_t) strtoull( argv[++i], NULL, 10 );
         else if ( strcmp( argv[i], "--transport" ) == 0 && i + 1 < argc ) transport_name = argv[++i];
         else if ( strcmp( argv[i], "--out" ) == 0 && i + 1 < argc ) out_path = argv[++i];
@@ -269,6 +327,10 @@ int main( int argc, char ** argv ) {
     struct rocketnet_server_t * server = NULL;
     int * index_client = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
+    if (!arena_mib) arena_mib = 2048 + (uint64_t)num_clients * 128;
+    CHECK(arena_mib <= SIZE_MAX / (1024 * 1024));
+    CHECK(soak_arena_create((size_t)arena_mib * 1024 * 1024));
+    printf("allocator: preallocated arena bytes=%" PRIu64 " (capacity, not resident bytes)\n", (uint64_t)g_arena.bytes);
     CHECK( rocketnet_init( NULL, soak_malloc, soak_free ) == ROCKETNET_STATUS_OK );
     inited = true;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
@@ -544,6 +606,20 @@ int main( int argc, char ** argv ) {
 cleanup:
     if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
     if ( inited ) rocketnet_term();
+    const struct soak_alloc_t final_allocations = soak_alloc_snapshot();
+    if (final_allocations.live_allocs || final_allocations.live_bytes) {
+        printf("FAIL: arena still has live SDK allocations\n");
+        exit_code = 1;
+    } else if (g_arena.allocation) {
+        const double release_started = rocketnet_time();
+#if defined(__linux__)
+        if (munmap(g_arena.allocation, g_arena.bytes + 63) != 0) exit_code = 1;
+#else
+        free(g_arena.allocation);
+#endif
+        printf("allocator: backing_release_ms=%.3f high_water_bytes=%" PRIu64 "\n", (rocketnet_time() - release_started) * 1000.0, (uint64_t)g_arena.used);
+        g_arena.allocation = NULL;
+    }
     free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
     // PASS after the cleanup, so it stays the last line
     if ( exit_code == 0 )
