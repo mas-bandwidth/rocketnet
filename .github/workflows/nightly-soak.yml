@@ -148,6 +148,26 @@ jobs:
             echo "LOAD cell=xdp FAIL no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm"
             exit 1
           fi
+          # Size the guest from the plan: the xdp cell's server and its 1000
+          # clients share one process, so the guest must hold the plan's
+          # create-only total plus what connect/start and the shutdown wipe add
+          # on top. Measured at 830c5437: a 16G guest is OOM-killed
+          # (exit 137, anon-rss 15.9 GB) and a 24G guest is killed at the
+          # shutdown wipe, against a plan of 16.96 GiB; plan*3/2 + 2 GiB,
+          # rounded up to whole GiB (28G for the default profile), passes.
+          xdp_env="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1"
+          plan=$(env $xdp_env LOAD_PLAN_ONLY=1 ./bin/load 1000 60 | grep '^load_plan:' | tail -n 1) || true
+          echo "LOAD cell=xdp $plan"
+          case "$plan" in *verdict=PASS*) ;; *) echo "LOAD cell=xdp FAIL no PASS plan line from LOAD_PLAN_ONLY=1 ./bin/load 1000 60"; exit 1 ;; esac
+          plan_bytes=$(echo "$plan" | sed -E "s/.*total_public_required_bytes=([0-9]+).*/\1/")
+          gib=$((1024 * 1024 * 1024))
+          guest_gib=$(( (plan_bytes * 3 / 2 + 2 * gib + gib - 1) / gib ))
+          avail_kib=$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)
+          if [ $((avail_kib * 1024)) -lt $((guest_gib * gib)) ]; then
+            echo "LOAD cell=xdp FAIL runner has $((avail_kib / 1024)) MiB available, the guest needs ${guest_gib} GiB (plan total_public_required_bytes=$plan_bytes, sized plan*3/2+2GiB)"
+            exit 1
+          fi
+          echo "LOAD cell=xdp guest_memory=${guest_gib}G plan_bytes=$plan_bytes runner_available_mib=$((avail_kib / 1024))"
           mkdir -p build
           guest=$(mktemp -d "$PWD/build/load-xdp.XXXXXX")
           cat > "$guest/run.sh" <<'GUEST'
@@ -164,15 +184,22 @@ jobs:
           echo 200000 > /sys/class/net/rnxdpload0/gro_flush_timeout
           ip -n rnxdpload link set lo up
           ip -n rnxdpload link set rnxdpload1 up
-          env ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
+          timed=""
+          [ -x /usr/bin/time ] && timed="/usr/bin/time -v -o $1/xdp.time"
+          $timed env ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
               ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 \
               LOAD_SERVER_ADDRESS=10.77.3.1:40411 LOAD_CLIENT_NETNS=/var/run/netns/rnxdpload \
               ./bin/load 1000 60 > "$1/xdp.out" 2> "$1/xdp.err"
+          echo "guest load exit=$?"
+          grep -E 'Maximum resident|Elapsed' "$1/xdp.time" 2>/dev/null
+          grep -E '^(MemTotal|MemAvailable):' /proc/meminfo
+          echo "guest dmesg tail:"
+          dmesg | tail -n 50
           GUEST
-          timeout 300 vng --run "$vm_kernel" --memory 16G --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-            sudo sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || true
+          timeout 300 vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sudo sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the 300 s timeout)" >> "$guest/vm.log"
           line=$(grep '^load: connected' "$guest/xdp.out" 2>/dev/null | tail -n 1) || true
-          [ -n "$line" ] || tail -n 20 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
+          [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
           check_cell xdp xdp "$line"
 
   soak-macos:
