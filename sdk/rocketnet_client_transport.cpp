@@ -212,6 +212,12 @@ struct rocketnet_client_legacy_receive_state_t
     X( time_callback, double (*time_callback)( void * context ) ) /* the receive stamp clock, read once at create */ \
     X( link_simulator, struct rocketnet_network_simulator_t * link_simulator )                                       \
     X( link_simulator_from, rocketnet_address_t link_simulator_from )                                                \
+    X( link_simulator_mutex, rocketnet_platform_mutex_t link_simulator_mutex )                                        \
+    X( link_simulator_config_pending, bool link_simulator_config_pending )                                            \
+    X( link_simulator_latency_ms, int link_simulator_latency_ms )                                                    \
+    X( link_simulator_jitter_ms, int link_simulator_jitter_ms )                                                      \
+    X( link_simulator_loss_percent, int link_simulator_loss_percent )                                                \
+    X( link_simulator_duplicate_percent, int link_simulator_duplicate_percent )                                      \
     X( counters, struct rocketnet_counters_t counters )                                                              \
     X( protocol, struct rocketnet_client_protocol_t protocol )                                                       \
     X( client_stats, struct rocketnet_client_transport_stats_t client_stats )                                        \
@@ -396,12 +402,45 @@ static inline bool rocketnet_client_link_patterns( const rocketnet_client_transp
            ( transport->config.simulated_drop_every_nth != 0 || transport->config.simulated_reverse_window != 0 );
 }
 
-// The I/O ring core (hand-off and caller step) carries the sends and the
-// receives, unless the transport has a link simulator (any loss, latency, jitter,
-// duplicate or pattern field set), whose send and receive carry them instead.
+// The link simulator is active when any loss, latency, jitter, duplicate or
+// pattern field is nonzero. With all fields zero it is a pass-through that
+// neither adds latency nor copies, and the I/O ring core (hand-off and caller
+// step) carries the sends and receives exactly as a simulator-less transport.
+static inline bool rocketnet_client_link_active( const rocketnet_client_transport_t * transport )
+{
+    return transport->link_simulator &&
+           ( transport->config.simulated_loss_percent || transport->config.simulated_latency_ms ||
+             transport->config.simulated_jitter_ms || transport->config.simulated_duplicate_percent ||
+             transport->config.simulated_drop_every_nth || transport->config.simulated_reverse_window );
+}
+
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
-    return ( transport->io_thread || transport->step_in_update ) && !transport->link_simulator;
+    return ( transport->io_thread || transport->step_in_update ) && !rocketnet_client_link_active( transport );
+}
+
+// Live simulator reconfiguration: the caller's network_simulator call stores a
+// config record under the tiny mutex and marks it pending; the thread that owns
+// the simulator applies it here, outside the lock, before the next send. No
+// simulator work happens under the lock.
+static void rocketnet_client_link_apply_pending( rocketnet_client_transport_t * transport )
+{
+    if ( !transport->link_simulator || !transport->link_simulator_config_pending )
+        return;
+    int latency_ms;
+    int jitter_ms;
+    int loss_percent;
+    int duplicate_percent;
+    rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+    latency_ms = transport->link_simulator_latency_ms;
+    jitter_ms = transport->link_simulator_jitter_ms;
+    loss_percent = transport->link_simulator_loss_percent;
+    duplicate_percent = transport->link_simulator_duplicate_percent;
+    transport->link_simulator_config_pending = false;
+    rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+    rocketnet_network_simulator_config( transport->link_simulator,
+                                        latency_ms / 1000.0, jitter_ms / 1000.0,
+                                        (float) loss_percent, (float) duplicate_percent );
 }
 
 // Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
@@ -417,6 +456,12 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
                                         const uint8_t * packet_data, int packet_bytes )
 {
     if ( !transport->link_simulator )
+    {
+        transport->io.operations->send( transport->io.instance, to, packet_data, packet_bytes );
+        return;
+    }
+    rocketnet_client_link_apply_pending( transport );
+    if ( !rocketnet_client_link_active( transport ) )
     {
         transport->io.operations->send( transport->io.instance, to, packet_data, packet_bytes );
         return;
@@ -1181,9 +1226,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->bound_port = bind_address.port;
     client_transport->link_simulator_from = bind_address;
 
-    if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
-         config->simulated_drop_every_nth || config->simulated_reverse_window )
+    // A development build creates the link simulator for every connection,
+    // memory up front; all-zero settings are a pass-through that neither adds
+    // latency nor copies. A production library creates none and carries none
+    // of its memory (rocketnet_network_simulator_create is a stub returning
+    // NULL there, and the config walk already refuses nonzero simulated values).
+    if ( rocketnet_public_link_simulator_development() )
     {
         client_transport->link_simulator = rocketnet_network_simulator_create( context, 512, UINT64_C(0x434c49454e545349) );
         if ( !client_transport->link_simulator )
@@ -1193,11 +1241,25 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             rocketnet_client_transport_abort_create( client_transport );
             return NULL;
         }
+        if ( !rocketnet_platform_mutex_create( &client_transport->link_simulator_mutex ) )
+        {
+            if ( status )
+                *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
+            rocketnet_network_simulator_destroy( client_transport->link_simulator );
+            client_transport->link_simulator = NULL;
+            rocketnet_client_transport_abort_create( client_transport );
+            return NULL;
+        }
         rocketnet_network_simulator_config( client_transport->link_simulator,
                                             config->simulated_latency_ms / 1000.0,
                                             config->simulated_jitter_ms / 1000.0,
                                             (float) config->simulated_loss_percent,
                                             (float) config->simulated_duplicate_percent );
+        client_transport->link_simulator_latency_ms = config->simulated_latency_ms;
+        client_transport->link_simulator_jitter_ms = config->simulated_jitter_ms;
+        client_transport->link_simulator_loss_percent = config->simulated_loss_percent;
+        client_transport->link_simulator_duplicate_percent = config->simulated_duplicate_percent;
+        client_transport->link_simulator_config_pending = false;
         if ( !rocketnet_network_simulator_patterns( client_transport->link_simulator,
                                                     config->simulated_drop_every_nth,
                                                     config->simulated_reverse_window ) )
@@ -1227,7 +1289,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // tla/RNClientIo.tla (every RNClientIo action named here); any other
     // keeps the BASE path: per-packet sends on the main thread and a polling
     // receive worker that exchanges buffer ownership under a short mutex
-    client_transport->io_thread = !client_transport->link_simulator && rocketnet_client_transport_uses_io_thread( client_transport->io.operations );
+    // Threading is decided by the transport alone, never by the link simulator:
+    // a live simulator switch must not change the threading of a running
+    // connection, so the simulator runs on whichever thread sends today. When
+    // it is active, io_core routes sends through it on that thread.
+    client_transport->io_thread = rocketnet_client_transport_uses_io_thread( client_transport->io.operations );
 
     // the step-driven create (unit tests) runs no thread on either path
     client_transport->step_driven = step_driven_operations != NULL;
@@ -1422,7 +1488,10 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     rocketnet_client_transport_io_close( &client_transport->io );
 
     if ( client_transport->link_simulator )
+    {
         rocketnet_network_simulator_destroy( client_transport->link_simulator );
+        rocketnet_platform_mutex_destroy( &client_transport->link_simulator_mutex );
+    }
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
@@ -2685,10 +2754,11 @@ static void rocketnet_client_thread_function( void * data )
     rocketnet_client_transport_finish_stop( client_transport );
 }
 
-// The development network simulator call on a live transport: reconfigures
-// the link simulator when one is running (a client with a link simulator has
-// no network thread, so the caller's thread owns it); false when none runs,
-// and the settings then take effect at the next connect.
+// The development network simulator call on a live transport: applies at once.
+// A development connection always owns a link simulator, so this stores the new
+// settings as a config record under the tiny mutex and the thread that owns the
+// simulator applies them before its next send. No simulator work happens under
+// the lock.
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2699,7 +2769,13 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     client_transport->config.simulated_duplicate_percent = duplicate_percent;
     if ( !client_transport->link_simulator )
         return false;
-    rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
+    rocketnet_platform_mutex_acquire( &client_transport->link_simulator_mutex );
+    client_transport->link_simulator_latency_ms = latency_ms;
+    client_transport->link_simulator_jitter_ms = jitter_ms;
+    client_transport->link_simulator_loss_percent = packet_loss_percent;
+    client_transport->link_simulator_duplicate_percent = duplicate_percent;
+    client_transport->link_simulator_config_pending = true;
+    rocketnet_platform_mutex_release( &client_transport->link_simulator_mutex );
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
