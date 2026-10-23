@@ -1387,7 +1387,9 @@ struct rocketnet_receipt_t
 
 /// Each connection starts fresh.
 /// The last failure state remains until disconnect or the next connect.
-/// Connect opens a socket for the address family in the token.
+/// Connect opens a socket for the address family in the token. When the token
+/// names both families and the host can use both, the opening handshake races
+/// both and the connection commits to the family that answers first.
 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
