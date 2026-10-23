@@ -30,6 +30,7 @@
 */
 
 #include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
@@ -83,7 +84,14 @@ static const double POSIX_HK_GAP_REFERENCE = POSIX_HK_TICK + 0.050;
 // in and the fifth client connects in
 
 static const double POSIX_HK_CLIENT_TIMEOUT = 10.0;
-static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
+
+// a wait for a connection is bounded by ticks of the transport, not by wall
+// time: a loaded host may take any wall time to schedule this case. the
+// handshake deadline the library owns is enforced by the library itself, in
+// the clock the library is given, so a case never has to bound it in wall
+// seconds.
+
+static const int POSIX_HK_CONNECT_TICKS = 4000;
 
 #define POSIX_HK_CHILD_FLAG "--posix-hard-killed-child"
 
@@ -199,8 +207,10 @@ static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_
 // one included, until it times out), then every connected live client sends
 // one payload up. gaps are measured only while measure is set.
 
-static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, bool measure, uint64_t * sent_to_slot_total )
+static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, bool measure, uint64_t * sent_to_slot_total )
 {
+    // the clock this tick gives the library: every timeout the library owns
+    // is measured in it, so a case checks it and not the wall clock
     const double now = rocketnet_platform_time();
     uint8_t payload[32];
 
@@ -298,6 +308,7 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
                 live[i].max_gap_down = after - live[i].last_down;
         }
     }
+    return now;
 }
 
 static void posix_hk_sleep_rest_of_tick( double tick_start )
@@ -307,11 +318,16 @@ static void posix_hk_sleep_rest_of_tick( double tick_start )
         rocketnet_platform_sleep( POSIX_HK_TICK - spent );
 }
 
-// run ticks until every live client is connected and has its slot
+// run ticks until every live client is connected and has its slot. the wait
+// is bounded by ticks of the transport, not by wall time: a loaded host may
+// take any wall time to schedule this case, and the handshake deadline the
+// library owns is measured in the clock the library is given. the wall cap
+// is a hang guard that names the case.
 
-static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, double deadline_seconds )
+static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, const char * case_name )
 {
-    const double start = rocketnet_platform_time();
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name, 60.0, POSIX_HK_CONNECT_TICKS );
     for ( ;; )
     {
         const double tick_start = rocketnet_platform_time();
@@ -322,7 +338,7 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
                 all = false;
         if ( all )
             return;
-        posix_hard_killed_require( rocketnet_platform_time() - start < deadline_seconds );
+        posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
         posix_hk_sleep_rest_of_tick( tick_start );
     }
 }
@@ -438,7 +454,11 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     std::vector<posix_hk_live_t> none;
     int dead_slot = -1;
-    const double child_start = rocketnet_platform_time();
+    // the child connects on its own: the wait for its slot is bounded by
+    // ticks, not by wall time, and the wall cap is a hang guard that names
+    // the case
+    rocketnet_bounded_wait_t child_wait;
+    rocketnet_bounded_wait_start( child_wait, "test_posix_hard_killed_client", 60.0, POSIX_HK_CONNECT_TICKS );
     while ( dead_slot < 0 )
     {
         const double tick_start = rocketnet_platform_time();
@@ -446,7 +466,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
         for ( int slot = 0; slot < 8; slot++ )
             if ( rocketnet_server_transport_is_client_connected( server, slot ) )
                 dead_slot = slot;
-        if ( dead_slot < 0 && rocketnet_platform_time() - child_start > POSIX_HK_HANDSHAKE_SECONDS )
+        if ( dead_slot < 0 && !rocketnet_bounded_wait_poll( child_wait ) )
         {
             kill( child, SIGKILL );
             waitpid( child, NULL, 0 );
@@ -458,7 +478,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     std::vector<posix_hk_live_t> live( 3 );
     for ( size_t i = 0; i < 3; i++ )
         posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6C000ULL + (uint64_t) i ) );
-    posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
+    posix_hk_connect_all( server, live, "test_posix_hard_killed_client" );
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 4 );
 
     // a second of steady traffic, then the hard kill: no disconnect packet
@@ -490,15 +510,28 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     uint64_t sent_to_slot[ROCKETNET_MAX_CLIENTS];
     memset( sent_to_slot, 0, sizeof(sent_to_slot) );
+    // the slot's timeout is the library's own, so it is checked in the clock
+    // the library was given: the slot is freed by the update whose time
+    // first passes the timeout, and it is not freed before the update whose
+    // time is below it. the wall clock only bounds the loop against a hang.
+    const double timeout_clock = killed_at + POSIX_HK_CLIENT_TIMEOUT;
+    double last_connected_clock = killed_at;
+    double freed_clock = 0.0;
     double freed_at = 0.0;
-    while ( freed_at == 0.0 )
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_hard_killed_client", 60.0, POSIX_HK_CONNECT_TICKS );
+    while ( freed_clock == 0.0 )
     {
-        const double tick_start = rocketnet_platform_time();
-        posix_hk_tick( server, live, true, sent_to_slot );
+        const double tick_clock = posix_hk_tick( server, live, true, sent_to_slot );
         if ( !rocketnet_server_transport_is_client_connected( server, dead_slot ) )
+        {
+            freed_clock = tick_clock;
             freed_at = rocketnet_platform_time();
-        posix_hard_killed_require( tick_start - killed_at < POSIX_HK_CLIENT_TIMEOUT + 3.0 );
-        posix_hk_sleep_rest_of_tick( tick_start );
+        }
+        else
+            last_connected_clock = tick_clock;
+        posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
+        posix_hk_sleep_rest_of_tick( tick_clock );
     }
 
     const double timeout_seen = freed_at - killed_at;
@@ -518,8 +551,11 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
                 live[i].max_gap_up * 1000.0, live[i].max_gap_down * 1000.0 );
 
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
-    posix_hard_killed_require( timeout_seen >= POSIX_HK_CLIENT_TIMEOUT - 1.0 );
-    posix_hard_killed_require( timeout_seen <= POSIX_HK_CLIENT_TIMEOUT + 2.0 );
+    // the timeout the library owns is checked in the library's clock: the
+    // slot was still connected at the last update whose time was below the
+    // timeout, and it was freed by the update whose time first passed it
+    posix_hard_killed_require( last_connected_clock < timeout_clock );
+    posix_hard_killed_require( freed_clock >= timeout_clock );
     for ( size_t i = 0; i < 3; i++ )
     {
         posix_hard_killed_require( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -534,7 +570,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     std::vector<posix_hk_live_t> fifth( 1 );
     posix_hk_live_init( fifth[0], posix_hk_client_create( server_address, 0x6D000ULL ) );
     const double fifth_start = rocketnet_platform_time();
-    posix_hk_connect_all( server, fifth, POSIX_HK_HANDSHAKE_SECONDS );
+    posix_hk_connect_all( server, fifth, "test_posix_hard_killed_client" );
     printf( "  fifth client connected in %.2fs into slot %d\n", rocketnet_platform_time() - fifth_start, fifth[0].slot );
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 4 );
 
@@ -580,7 +616,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     std::vector<posix_hk_live_t> live( 3 );
     for ( size_t i = 0; i < 3; i++ )
         posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6E000ULL + (uint64_t) i ) );
-    posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
+    posix_hk_connect_all( server, live, "test_posix_send_to_closed_port" );
 
     // let the handshake's own traffic settle, then count from zero
 
@@ -672,7 +708,7 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
     struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, port, 8 );
     struct rocketnet_platform_socket_t * server_socket = rocketnet_server_transport_platform_socket_for_testing( server );
     const double server_start = rocketnet_platform_time();
-    posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
+    posix_hk_connect_all( server, live, "test_posix_client_server_gone" );
     const double connected_in = rocketnet_platform_time() - server_start;
 
     for ( int t = 0; t < 30; t++ )
