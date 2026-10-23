@@ -1,11 +1,15 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "test_unit_registry.h"
 #include "portable_crt.h"
+#include "unit_shutdown.h"
+#include "token_string.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_fragment.h"
 #include "../sdk/rocketnet_memory.h"
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <string>
 
 #define check rocketnet_unit_check
@@ -139,3 +143,92 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     check( message.max_message_bytes == 65536 );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_env_is_endpoint_scoped );
+
+static double message_limit_now = 1000.0;
+static double message_limit_clock( void * ) { return message_limit_now; }
+
+static void message_limit_pump( rocketnet_server_t * server, rocketnet_client_t * client )
+{
+    rocketnet_client_update( client, message_limit_now );
+    rocketnet_client_send_packets( client );
+    if ( rocketnet_server_running( server ) )
+    {
+        rocketnet_server_update( server, message_limit_now );
+        rocketnet_server_send_packets( server );
+    }
+    message_limit_now += 0.01;
+}
+
+static void test_public_message_limit_unreliable_up_to_max_message_bytes()
+{
+    rocketnet_quiet( 1 );
+    message_limit_now = 1000.0;
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x3C ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    const uint64_t protocol_id = 0x7A11C1C1E5EED001ULL;
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = protocol_id;
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( backend_public ) );
+    server_config.transport = "loopback";
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_test_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    client_config.transport = "loopback";
+    client_config.step_driven = true;
+    client_config.time_callback = message_limit_clock;
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
+    check( client != NULL );
+
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+    const char * addresses[] = { address };
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rn_test_server_token_string( backend_secret, server, protocol_id, addresses, 1, 42, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+    check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        message_limit_pump( server, client );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    const int payload = 20000;
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload );
+    check( out != NULL );
+    for ( int i = 0; i < payload; i++ )
+        out[i] = (uint8_t) i;
+    check( rocketnet_client_finish_message( client, payload ) != 0 );
+
+    bool received_whole = false;
+    for ( int tick = 0; tick < 800 && !received_whole; tick++ )
+    {
+        message_limit_pump( server, client );
+        const rocketnet_message_batch_t * batch;
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; i++ )
+            {
+                if ( batch->bytes[i] == payload )
+                {
+                    bool ok = true;
+                    for ( int j = 0; j < payload; j++ )
+                        if ( batch->data[i][j] != (uint8_t) j )
+                            ok = false;
+                    received_whole = ok;
+                }
+            }
+        }
+    }
+    check( received_whole );
+
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_public_message_limit_unreliable_up_to_max_message_bytes );

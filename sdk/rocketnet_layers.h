@@ -35,6 +35,15 @@ extern "C" {
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
+/// The transport's fragmentation capacity, derived from the limits: a
+/// deployment can never fragment a payload beyond the wire's 256-fragment
+/// ceiling, and the message tier refuses anything above its own maximum. An
+/// unreliable message is held to the smaller of max_message_bytes and this
+/// bound (the public header states the rule beside max_message_bytes).
+#define ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES \
+    ( ROCKETNET_MAX_MESSAGE_BYTES < ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ? \
+      ROCKETNET_MAX_MESSAGE_BYTES : ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
+
 /// The largest message one packet carries, written in place: the payload
 /// capacity less the one form byte.
 #define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 )
@@ -318,8 +327,6 @@ struct rocketnet_client_transport_config_t
 {
     /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
     uint8_t packet_filter[4];
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -757,8 +764,6 @@ struct rocketnet_server_transport_config_t
     int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
