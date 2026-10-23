@@ -14,7 +14,8 @@
 # signature before the overlay is created. The suite is compiled inside the
 # guest, so the toolchain matches the guest. Every compile carries
 # -ffp-contract=off (the CMake target floor, and the same flag on the
-# configure line).
+# configure line). Every case that fails is then replayed alone, three times,
+# in the same guest, each replay printing its own exit and seconds.
 #
 # What it does not cover: a physical big-endian machine, an attached xdp
 # data plane (the guest does not grant one; the pin test still asserts the
@@ -43,6 +44,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 180
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -189,17 +191,50 @@ jobs:
           uname -sn
           date -u
           rc=0
-          /usr/bin/time -f UNIT_SEC=%e ./bin/test
-          u=$?
+          /usr/bin/time -f UNIT_SEC=%e ./bin/test 2>&1 | tee unit.out
+          u=${PIPESTATUS[0]}
           echo UNIT_EXIT:$u
           [ "$u" -eq 0 ] || rc=$u
-          /usr/bin/time -f FUNC_AUTO_SEC=%e ./bin/functional
-          a=$?
+          /usr/bin/time -f FUNC_AUTO_SEC=%e ./bin/functional 2>&1 | tee func_auto.out
+          a=${PIPESTATUS[0]}
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
-          p=$?
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional 2>&1 | tee func_port.out
+          p=${PIPESTATUS[0]}
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p
+          # Every case that failed in this run is replayed alone, three times,
+          # on the quiet guest. A case that passes alone was timing under the
+          # other work on the host; a case that fails alone is a defect to fix
+          # at its cause. Each replay prints its own exit and seconds.
+          replay() {
+            label="$1"; bin="$2"; out="$3"; envs="$4"
+            names=$(sed -n 's/^check failed: \([a-z0-9_]*_[a-z0-9_]*\) .*/\1/p' "$out" | sort -u)
+            if [ -z "$names" ]; then
+              if grep -q '^check failed:' "$out"; then
+                echo "REPLAY_NO_CASE_NAME:$label a check failed with no case name in it; replay that case by hand"
+              fi
+              return 0
+            fi
+            for name in $names; do
+              if [ -x "./bin/$name" ]; then
+                target="./bin/$name"
+                args=""
+              else
+                target="$bin"
+                args="--run $name"
+              fi
+              i=1
+              while [ "$i" -le 3 ]; do
+                echo "REPLAY_BEGIN:$label:$name RUN:$i"
+                env $envs timeout --kill-after=60 900 /usr/bin/time -f "REPLAY_CASE:$name RUN:$i EXIT:%x SEC:%e" $target $args
+                echo "REPLAY_END:$label:$name RUN:$i"
+                i=$((i+1))
+              done
+            done
+          }
+          replay unit ./bin/test unit.out ""
+          replay func_auto ./bin/functional func_auto.out ""
+          replay func_port ./bin/functional func_port.out "ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable"
           exit $rc
           GUEST

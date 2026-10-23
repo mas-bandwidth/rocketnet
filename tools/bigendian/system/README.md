@@ -34,7 +34,31 @@ One TCG run at 4 vCPUs and 4G RAM:
 - `./bin/functional` on the auto ladder takes 149 seconds
 - `./bin/functional` with the portable transport pin takes 126 seconds
 
-The functional suite kills a single test at 120 seconds. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+The functional suite kills a single test at 120 seconds on a native Release host. The guest build sets `ROCKETNET_TEST_EMULATED`, so the same cap is scaled five times, to 600 seconds, by `tests/time_scale.h`; the Release workloads themselves are unchanged. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+
+## How a failed case is replayed
+
+The suites stop at the first failing case and print one line for it: `check failed: <case> <reason>`, where the reason is `exceeded <n>s`, `exit <n>` or `signal <n>`. The case name is the first word after `check failed: `. A case whose own check failed prints its message instead (`check failed: ( ... ), function ...`), and that line carries no case name.
+
+The nightly job replays every case it can name, alone, three times, in the same guest, right after the three suites. Each replay prints its own line:
+
+```
+REPLAY_BEGIN:func_auto:test_transport_control RUN:1
+REPLAY_CASE:test_transport_control RUN:1 EXIT:0 SEC:12.3
+REPLAY_END:func_auto:test_transport_control RUN:1
+```
+
+`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand.
+
+By hand, the same three replays are:
+
+```
+./bin/test --run <case>
+./bin/functional --run <case>
+ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional --run <case>
+```
+
+The suite's exec cases are their own binaries under `bin/` and take no argument: `./bin/test_serialize`, `./bin/test_transport_control`, `./bin/test_xdp`. The nightly job picks the binary by name, so the same rule holds there.
 
 ## How to run it by hand
 
