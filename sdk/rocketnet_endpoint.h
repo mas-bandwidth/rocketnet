@@ -206,7 +206,9 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
 void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
                              rn_delivery_t * out, int out_capacity, int * out_count, double now );
 
-// The receipts' LOSS sweep and the end of the update's receipt list.
+// The receipts' LOSS sweep, the end of the update's receipt list, and the
+// reliable timeout, which rn_endpoint_error then reports. Called once per
+// update for every connected endpoint, whether or not its write pass runs.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
 // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,

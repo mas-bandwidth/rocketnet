@@ -619,11 +619,14 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
 {
     // tla/RNEndpoint.tla Tick: the receipts' LOSS sweep (RNReceipts
-    // SweepLoss) and the end of this update's receipt list. The reliable
-    // timeout is checked where today's code checks it, in the write pass's
-    // resend walk (rn_ordered_write, 6.4 "Giving up").
+    // SweepLoss), the end of this update's receipt list, and the reliable
+    // timeout (6.4 "Giving up"). The timeout is checked here, every update,
+    // so a connection whose write pass never reaches its reliable phase (the
+    // transport's send capacity spent, packets_per_update reached) still
+    // ends RELIABLE_TIMEOUT; rn_endpoint_error reports it. The check is O(1).
     rn_window_ack_receipt_sweep( &endpoint->ordered.ack, now );
     rn_window_ack_receipt_end_update( &endpoint->ordered.ack );
+    rn_window_ack_check_timeout( &endpoint->ordered.ack, now );
 }
 
 void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now )

@@ -600,7 +600,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
         rn_message_connection_t * connection = &object->connections[i];
-        rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss
+        rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
     }
 
     // RNSlots TransportOpen then Admit: each payload through layer 2's reader
