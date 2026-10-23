@@ -8504,6 +8504,11 @@ extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
 extern void config_mismatch_over_loopback();
 extern void config_equal_over_lossy_loopback();
+extern void reliable_receive_full_ordered_gap_recovers();
+extern void reliable_receive_full_recovers_all_modes();
+extern void reliable_receive_full_partial_packet_recovers();
+extern void reliable_receive_full_recovers_client_to_server();
+extern void reliable_receive_full_recovers_server_to_client();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
@@ -9086,6 +9091,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ordered_small_and_large_interleaved", ordered_small_and_large_interleaved, NULL },
     { "test_loopback_transport_config_mismatch", config_mismatch_over_loopback, NULL },
     { "test_loopback_transport_config_equal_over_lossy", config_equal_over_lossy_loopback, NULL },
+    { "test_reliable_receive_full_ordered_gap_recovers", reliable_receive_full_ordered_gap_recovers, NULL },
+    { "test_reliable_receive_full_recovers_all_modes", reliable_receive_full_recovers_all_modes, NULL },
+    { "test_reliable_receive_full_partial_packet_recovers", reliable_receive_full_partial_packet_recovers, NULL },
+    { "test_reliable_receive_full_recovers_client_to_server", reliable_receive_full_recovers_client_to_server, NULL },
+    { "test_reliable_receive_full_recovers_server_to_client", reliable_receive_full_recovers_server_to_client, NULL },
     { "test_reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link, NULL },
     { "test_reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once, NULL },
     { "test_unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link, NULL },

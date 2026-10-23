@@ -504,16 +504,23 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     struct rocketnet_server_transport_stats_t sstats;
     rocketnet_client_transport_stats( pair.client, &cstats );
     rocketnet_server_transport_stats( pair.server, &sstats );
-    // Drain the final ACKs so receive totals match sends minus the simulator periodic drop.
-    pair.time += 0.005;
-    loopback_loss_reorder_clock = pair.time;
-    check( rn_message_object_update( server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rn_message_object_update( client, pair.time ) == ROCKETNET_UPDATE_OK );
-    rn_message_object_send_packets( server );
-    rn_message_object_send_packets( client );
+    // Message acceptance publishes ACK eligibility after transport update.
+    // Drain the finite ACK exchange instead of assuming one update suffices.
+    for ( int drain = 0; drain < 16; ++drain )
+    {
+        pair.time += 0.005;
+        loopback_loss_reorder_clock = pair.time;
+        check( rn_message_object_update( server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( rn_message_object_update( client, pair.time ) == ROCKETNET_UPDATE_OK );
+        rn_message_object_send_packets( server );
+        rn_message_object_send_packets( client );
+        rocketnet_client_transport_stats( pair.client, &cstats );
+        rocketnet_server_transport_stats( pair.server, &sstats );
+        if ( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 &&
+             cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 )
+            break;
+    }
 
-    rocketnet_client_transport_stats( pair.client, &cstats );
-    rocketnet_server_transport_stats( pair.server, &sstats );
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 );
 

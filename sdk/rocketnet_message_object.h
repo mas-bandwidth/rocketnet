@@ -55,6 +55,9 @@ struct rn_message_link_t
     // link leaves *client_index NULL.
     int (*payloads)( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
+    // Publish ACK eligibility only after successful message processing.
+    void (*accept_payload)( void * transport, int k );
+
     // the transport's acked packet ids of the last update (R1: the only ack).
     // The client's link leaves *client_index NULL.
     int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );

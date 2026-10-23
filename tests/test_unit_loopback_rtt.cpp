@@ -15,13 +15,15 @@
 // Each step updates both peers at times separated by LOOPBACK_RTT_DT. The
 // sender writes after both updates, the receiver consumes it on the next
 // step, and the receiver emits the ack on its next update and it reaches the sender on the
-// following step. Thus the sample bound is [dt, 3*dt] = [10, 30] ms; this follows
+// following step. Payload ACK eligibility is committed after message processing,
+// so the opposite update order may need one additional step. The sample bound
+// is [dt, 4*dt] = [10, 40] ms; this follows
 // from the test's update cadence,
 // not the transport's keep-alive rate (sdk/rocketnet_client_protocol.cpp:296,
 // sdk/rocketnet_server_protocol.cpp:1611).
 //
 // The link loses nothing. A delivered message must not be resent. The resend
-// delay is the adaptive resend delay, and the peer's ack arrives by 3*dt, so both update
+// delay is the adaptive resend delay, and the peer's ack arrives by 4*dt, so both update
 // orders assert zero resends.
 
 #include "unit_shutdown.h"
@@ -275,7 +277,7 @@ static void loopback_rtt_check( int side )
 
     // Every sample and its smoothed value follow the two-step loopback cadence.
     const double low = LOOPBACK_RTT_DT - 1e-9;
-    const double high = 3.0 * LOOPBACK_RTT_DT + 1e-9;
+    const double high = 4.0 * LOOPBACK_RTT_DT + 1e-9;
     rocketnet_unit_check( loopback_rtt_seam.samples > 0 );
     rocketnet_unit_check( loopback_rtt_seam.sample_min >= low );
     rocketnet_unit_check( loopback_rtt_seam.sample_max <= high );

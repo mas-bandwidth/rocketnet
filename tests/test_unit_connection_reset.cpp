@@ -176,8 +176,8 @@ static void test_connection_reset_inventory_covers_every_field()
     {
         if ( client_protocol_fields[i].reset ) reset_fields++; else keep_fields++;
     }
-    check( reset_fields == 33 );
-    check( keep_fields == 8 );
+    check( reset_fields == 34 );
+    check( keep_fields == 9 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
         encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),

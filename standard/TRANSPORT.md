@@ -3153,7 +3153,7 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence successfully opened from the peer | Any u32; zero denotes no opened session packet only after reconstruction |
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero denotes no acknowledgement-eligible session packet only after reconstruction |
 | range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
 | first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
 | gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
@@ -3162,13 +3162,13 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 The block length is the [t3 Constants and registries](#t3) (ack block minimum row) plus each declared range entry's gap and range-length fields. Bytes after that length belong to the packet type's
 data, when present. The range count maximum is pinned below.
 
-A sender MUST construct ranges from the opened session-sequence state it
+A sender MUST construct ranges from the acknowledgement-eligible session-sequence state it
 maintains for the peer. The first range ends at largest received, inclusive.
 Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
 
-The largest received field is the low 32 bits of the highest opened 64-bit
+The largest received field is the low 32 bits of the highest acknowledgement-eligible 64-bit
 session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
 with those low 32 bits that is nearest to its own highest sent session sequence;
 the higher value wins an equidistant tie. The receiver MUST evaluate every
@@ -3203,9 +3203,17 @@ marked as specified by [t14 Replay protection](#t14).
 <a id="t15.3"></a>
 ### t15.3. Building and processing
 
-A sender MUST build a block from the single session replay state defined in
-[t14 Replay protection](#t14), shared by all opened session packet types. It
-MUST list the newest received run first and may include older
+A sender MUST build a block from a separate acknowledgement-eligible history.
+The security replay window in [t14 Replay protection](#t14) still marks every
+successfully opened packet immediately; opening alone MUST NOT acknowledge it.
+A session packet becomes eligible after its acknowledgement block and type data
+pass validation. A type 5 payload delivered to a message layer MUST remain
+ineligible until that layer confirms successful processing of the whole payload.
+If receive storage is unavailable, the receiver MUST withhold that payload's
+acknowledgement. A retransmitted message uses a fresh packet sequence; the
+receiver MUST NOT undo security replay protection to permit a retry.
+The eligible history has the same bounded depth as the replay window. It
+MUST list the newest eligible run first and may include older
 runs while its range-count and packet-capacity limits permit. When capacity
 omits entries, it MUST drop the oldest entries first and MUST NOT emit a
 trailing gap without a received run. Every session packet MUST have room for
@@ -3224,8 +3232,8 @@ that assertion and MUST process an in-window sent sequence as acknowledged.
 <a id="t15.4"></a>
 ### t15.4. Elicitation and standalone acknowledgement
 
-All opened session packet types contribute to the receive state represented
-by a block. Acknowledgement debt is the number of accepted eliciting packets
+All session packet types can contribute to the eligible history represented
+by a block after the acceptance conditions in t15.3 hold. Acknowledgement debt is the number of accepted eliciting packets
 received since a session packet last carried a block. A receiver MUST add debt
 for each accepted connection keep-alive, connection payload, connection
 disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).

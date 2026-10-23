@@ -79,7 +79,8 @@ void control_standalone_ack_each_end()
         control_check( size > 0, "write payload" );
         rocketnet_channel_endpoint_send_control( &h.client_endpoint, packet, size );
     }
-    rocketnet_channel_endpoint_update( &h.server_endpoint, h.now );
+    // A payload becomes ACK-eligible only after message processing.
+    control_check( rocketnet_message_server_update( h.message_server, h.now ) == ROCKETNET_UPDATE_OK, "message update" );
 
     int ack_size = rocketnet_server_protocol_write_ack_if_due( &h.server, 0, h.now, packet );
     control_check( ack_size >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES, "standalone ack not due" );

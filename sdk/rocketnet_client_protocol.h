@@ -83,6 +83,8 @@ typedef void ( * rocketnet_client_retire_keys_t )( void * context );
     X( next_fragment_payload_id, uint64_t next_fragment_payload_id ) \
     X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake ) \
     X( replay_session, struct rocketnet_replay_protection_t replay_session ) \
+    X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
+    X( defer_payload_acks, int defer_payload_acks ) \
     X( integrity_failures, uint64_t integrity_failures ) \
     X( attempt_start_time, double attempt_start_time ) \
     X( last_send_time, double last_send_time ) \
@@ -262,5 +264,8 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
                                   uint8_t * out_packets,
                                   int * out_packet_count,
                                   int * out_packet_bytes );
+
+// Commit only after the message layer accepted the entire payload.
+void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence );
 
 #endif // #ifndef ROCKETNET_CLIENT_PROTOCOL_H

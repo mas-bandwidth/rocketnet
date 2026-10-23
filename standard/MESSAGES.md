@@ -80,6 +80,15 @@ implementation, stated here because RN-2 is the party that relies on it.
    reports a type 5 packet acknowledged, the peer's connection layer MUST have
    handed its payload to the peer's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
+   Successful message-layer processing is required before ACK publication.
+   If a reliable record cannot reserve receive storage, the receiver MUST leave
+   that record's number, ordering state and received bit uncommitted, withhold
+   the carrying packet's ACK, and keep the connection alive for retry. Records
+   already accepted from the packet remain retained or delivered; a retry MUST
+   deduplicate that prefix. Once capacity returns, a fresh-sequence retransmission
+   MUST be accepted normally. Existing reliable-message timeouts still apply.
+   Admission MUST reserve space for every held delivery an ordered record can
+   release, not only the record itself. Malformed records remain protocol errors.
 3. **A fragmented payload carries no delivery fact.** An acknowledgement of
    the fragments of a type 9 payload does not prove the payload was
    delivered. A message layer sender MUST NOT place a reliable record or a

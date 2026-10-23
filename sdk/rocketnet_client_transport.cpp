@@ -115,6 +115,7 @@ struct rocketnet_client_received_packets_t
     int receive_index;
     uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
     int packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
+    uint64_t sequence[ROCKETNET_NUM_CLIENT_PACKETS];
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
@@ -1496,6 +1497,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         const int index = received->num_packets;
         received->packet_data[index] = payload;
         received->packet_bytes[index] = payload_bytes;
+        received->sequence[index] = session_sequence;
         received->num_packets++;
     }
 
@@ -1511,6 +1513,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
             const int index = received->num_packets;
             received->packet_data[index] = reassembly->completed_payload;
             received->packet_bytes[index] = reassembly->completed_bytes;
+            received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
             received->num_packets++;
         }
         else
@@ -2703,3 +2706,15 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
+
+void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport )
+{
+    transport->protocol.defer_payload_acks = 1;
+}
+
+void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k )
+{
+    const rocketnet_client_received_packets_t * batch = &transport->received_packets;
+    if ( k >= 0 && k < batch->num_packets )
+        rocketnet_client_protocol_accept_payload( &transport->protocol, batch->sequence[k] );
+}
