@@ -91,7 +91,7 @@ BurstAccounted == sealed => due + held + wire + lost + received = Copies
 StopLeavesNothingStaged == phase = "stopped" => due + held = 0
 
 \* Requesting stop does no backend work; the queue is unchanged.
-StopDoesNotDrain == []((phase = "running" /\ phase' = "stopping") => UNCHANGED <<due, held, wire>>)
+StopDoesNotDrain == [][(phase = "running" /\ phase' = "stopping") => UNCHANGED <<due, held, wire>>]_vars
 
 \* A burst with any copy surviving the loss policy reaches the server.
 BurstArrives == (sealed /\ lost < Copies) ~> freed
