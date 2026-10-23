@@ -808,7 +808,21 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_client_disconnected( client ) );
     if ( !rocketnet_client_disconnected( client ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped and wait for the worker before freeing.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_client_destroy: the client is not disconnected; call rocketnet_client_disconnect and poll rocketnet_client_disconnected before destroy" );
+        rocketnet_client_disconnect( client );
+        while ( !rocketnet_client_disconnected( client ) )
+        {
+            struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
+            if ( transport )
+                rocketnet_client_transport_update( transport, 0.0 );
+            if ( !rocketnet_client_disconnected( client ) )
+                rocketnet_platform_sleep( 0.001 );
+        }
+    }
     rn_client_end_connection( client );
     // the header and the connection block after it hold the last
     // connection's message bytes: all of it is wiped, then freed or given
@@ -1684,7 +1698,21 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_server_stopped( server ) );
     if ( !rocketnet_server_stopped( server ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped and wait for the worker before freeing.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
+        rocketnet_server_stop( server );
+        while ( !rocketnet_server_stopped( server ) )
+        {
+            struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
+            if ( transport )
+                rocketnet_server_transport_update( transport, 0.0 );
+            if ( !rocketnet_server_stopped( server ) )
+                rocketnet_platform_sleep( 0.001 );
+        }
+    }
     rn_server_finish_stop( server );
     // the header, keys included, and the running block after it, which held
     // every connection's message bytes: all of it is wiped, then freed or
