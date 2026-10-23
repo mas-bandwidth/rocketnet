@@ -274,6 +274,12 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 //
 // A handle is the class in its top two bits and the chunk index below.
 
+// The free list is lazy (tla/RNLazyPool.tla): chunks [0, fresh) have been
+// taken at least once since the init and are free-listed or held; chunks
+// [fresh, num_chunks) were never taken, and neither their links nor their
+// bytes are written or read until they are. A take pops the free list, or
+// takes chunk fresh when the list is empty: the same order as a list threaded
+// through every chunk at init, without touching the class's pages.
 struct rn_store_class_t
 {
     uint8_t * data;
@@ -282,6 +288,7 @@ struct rn_store_class_t
     uint32_t num_chunks;
     uint32_t free_head;
     uint32_t free_count;
+    uint32_t fresh;
 };
 
 struct rn_send_store_t
@@ -362,8 +369,9 @@ struct rn_region_t
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 
-    uint32_t descriptors_free_head;
-    uint32_t descriptors_free;
+    uint32_t descriptors_free_head;     // the free list of descriptors taken before, RN_DESCRIPTOR_NONE when empty
+    uint32_t descriptors_free;          // queue less the descriptors in use
+    uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (tla/RNLazyPool.tla)
 
     uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
@@ -372,9 +380,10 @@ struct rn_region_t
 };
 
 // at connect: every table back to its empty state, every free list
-// threaded and the exhausted state cleared, in the region's own memory.
-// Allocates nothing. The ring's and the store's bytes are not cleared:
-// nothing reads them before writing them.
+// emptied (the descriptor pool and the store's classes are lazy,
+// tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
+// memory. Allocates nothing. The ring's, the store's and the pools' bytes
+// are not cleared: nothing reads them before writing them.
 void rn_region_carve( rn_region_t * region );
 
 // the slot's region when its connection ends and before the slot is reused

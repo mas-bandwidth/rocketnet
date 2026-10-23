@@ -254,7 +254,17 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         }
     }
 
-    memset( block, 0, (size_t) layout.arena );
+    // everything before the arena is state but the receive batch's two
+    // arrays (512 KB), which are written before they are read, below
+    // batch_count: they are never zeroed, so their pages are touched only by
+    // a batch that uses them
+    const size_t batch_begin = offsetof( rn_message_object_t, batch_connection );
+    const size_t batch_end = offsetof( rn_message_object_t, send_next_connection );
+    static_assert( offsetof( rn_message_object_t, batch_entry ) > offsetof( rn_message_object_t, batch_connection ) &&
+                   offsetof( rn_message_object_t, batch_entry ) < offsetof( rn_message_object_t, send_next_connection ),
+                   "the batch arrays are one span of the object" );
+    memset( block, 0, batch_begin );
+    memset( block + batch_end, 0, (size_t) layout.arena - batch_end );
 
     rn_message_object_t * object = (rn_message_object_t *) block;
     object->context = context;

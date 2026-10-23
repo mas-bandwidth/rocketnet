@@ -153,7 +153,18 @@ static void reset_walk_passes( bool passed, const char * failure )
 static void reset_field_holds( const char * structure, const char * member, const char * decision,
                                const void * value, const void * expected, size_t bytes )
 {
-    const bool holds = memcmp( value, expected, bytes ) == 0;
+    // Two RESET members are reset by their state, never their bytes: the ack
+    // history's record rings by its written bits (its state compares through
+    // rocketnet_ack_endpoint_state_equal), and the acked packet ids by
+    // num_acked, which is compared as its own member; the ids' bytes are
+    // unreachable below a zero count and are not state.
+    bool holds;
+    if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "ack" ) == 0 )
+        holds = rocketnet_ack_endpoint_state_equal( (const rocketnet_ack_endpoint_t *) value, (const rocketnet_ack_endpoint_t *) expected );
+    else if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "acked_packet_ids" ) == 0 )
+        holds = true;
+    else
+        holds = memcmp( value, expected, bytes ) == 0;
     if ( !holds )
     {
         printf( "reset %s field %s.%s does not hold after the reset\n", decision, structure, member );
@@ -806,7 +817,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
     check( f.server.acks->endpoints[a].stats_delta == fresh_ack.stats_delta );
-    check( memcmp( &f.server.acks->endpoints[a], &fresh_ack, sizeof(fresh_ack) ) == 0 );
+    check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof(fresh_slots) ) == 0 );
     check( f.server.reassembly->newest_completed[a] == 0 );

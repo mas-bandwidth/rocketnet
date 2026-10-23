@@ -2006,7 +2006,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
     void * allocation_context = server_socket->context;
     server_socket->~rocketnet_server_socket_t();
-    rocketnet_clear_and_free( allocation_context, server_socket, sizeof(rocketnet_server_socket_t) );
+    rocketnet_free( allocation_context, server_socket );
 }
 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )
