@@ -169,6 +169,10 @@ void rocketnet_test_server_receive_keeps_up_with_max_clients()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    // This measures the server's per-update drain against exactly one batch
+    // per client per frame. Explicitly step clients so worker scheduling does
+    // not turn that input into an asynchronous arrival-rate measurement.
+    client_config.step_driven = 1;
     client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
 
