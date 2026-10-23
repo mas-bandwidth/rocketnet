@@ -361,14 +361,20 @@ REGISTER_UNIT_TEST(test_server_stats_worker_reused_slot_rejects_old_publication)
 // values are never zeroed; an unmarked value is not state)
 static bool stats_delta_state_equal( const rocketnet_ack_stats_delta_t * a, const rocketnet_ack_stats_delta_t * b )
 {
-    if ( memcmp( a->sent_dirty, b->sent_dirty, sizeof(a->sent_dirty) ) != 0 ||
-         memcmp( a->received_dirty, b->received_dirty, sizeof(a->received_dirty) ) != 0 ||
-         memcmp( a->rtt_dirty, b->rtt_dirty, sizeof(a->rtt_dirty) ) != 0 ||
+    for (int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i)
+        if (a->sent_dirty.test(i) != b->sent_dirty.test(i)) return false;
+    for (int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i)
+        if (a->received_dirty.test(i) != b->received_dirty.test(i)) return false;
+    for (int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i)
+        if (a->rtt_dirty.test(i) != b->rtt_dirty.test(i)) return false;
+    if (a->sent_dirty.epoch != b->sent_dirty.epoch ||
+        a->received_dirty.epoch != b->received_dirty.epoch ||
+        a->rtt_dirty.epoch != b->rtt_dirty.epoch ||
          a->generation != b->generation || a->reset != b->reset ||
          a->values.highest_sent != b->values.highest_sent || a->values.highest_received != b->values.highest_received )
         return false;
     for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
-        if ( ( a->sent_dirty[i / 64] >> ( i % 64 ) ) & 1 )
+        if ( a->sent_dirty.test(i) )
         {
             const rocketnet_ack_stats_sent_t * x = &a->values.sent[i];
             const rocketnet_ack_stats_sent_t * y = &b->values.sent[i];
@@ -376,7 +382,7 @@ static bool stats_delta_state_equal( const rocketnet_ack_stats_delta_t * a, cons
                 return false;
         }
     for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
-        if ( ( a->received_dirty[i / 64] >> ( i % 64 ) ) & 1 )
+        if ( a->received_dirty.test(i) )
         {
             const rocketnet_ack_stats_received_t * x = &a->values.received[i];
             const rocketnet_ack_stats_received_t * y = &b->values.received[i];
@@ -384,7 +390,7 @@ static bool stats_delta_state_equal( const rocketnet_ack_stats_delta_t * a, cons
                 return false;
         }
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
-        if ( ( ( a->rtt_dirty[i / 64] >> ( i % 64 ) ) & 1 ) && a->values.rtt_history[i] != b->values.rtt_history[i] )
+        if ( ( a->rtt_dirty.test(i) ) && a->values.rtt_history[i] != b->values.rtt_history[i] )
             return false;
     return true;
 }
