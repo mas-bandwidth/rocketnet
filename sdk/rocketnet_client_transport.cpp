@@ -1448,19 +1448,9 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
     {
-        // Until the first valid cookie commits the attempt, the second
-        // family's address is a dialed server too (tla/ServerConnection.tla
-        // PickFamily, tla/ClientConnection.tla ClientRecvCookie).
-        rocketnet_address_t second;
-        const bool second_live = rocketnet_client_protocol_race_active( &client_transport->protocol ) &&
-                                 rocketnet_client_protocol_second_address( &client_transport->protocol, &second ) &&
-                                 rocketnet_address_equal( from, &second );
-        if ( !second_live )
-        {
-            if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
-                client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
-            return;
-        }
+        if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
+            client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
+        return;
     }
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
@@ -1872,22 +1862,6 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
 
         rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, packet, packet_bytes );
-
-        // The family race: while both families are in flight awaiting the
-        // first cookie answer, the same opening handshake packet also goes to
-        // the second family. The first valid cookie commits the attempt and
-        // from then on the connection request goes only to that family.
-        rocketnet_address_t second;
-        if ( rocketnet_client_protocol_race_active( &client_transport->protocol ) &&
-             rocketnet_client_protocol_second_address( &client_transport->protocol, &second ) )
-        {
-            client_transport->stats_frames[stats_index].packets_sent++;
-            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( second.type ) );
-            client_transport->client_stats.packets_sent++;
-            client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( second.type ) );
-            rocketnet_client_link_send( client_transport, &second, packet, packet_bytes );
-        }
-
         rocketnet_client_link_flush( client_transport );
     }
 

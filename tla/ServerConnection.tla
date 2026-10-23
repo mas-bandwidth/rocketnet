@@ -171,8 +171,6 @@ BothFamilies == {"ipv4", "ipv6"}
 CommitBeforeAnswer == FALSE
 Races(c) == BothFamilies \subseteq TokenFamilies /\ BothFamilies \subseteq ClientHost(c)
 RaceFamilies(c) == IF Races(c) THEN BothFamilies ELSE {PickFamily(c)}
-InFlight(c) == IF cFam[c] = "none" THEN RaceFamilies(c) ELSE {cFam[c]}
-ReachesServer(c)  == InFlight(c) \cap ServedFamilies # {}
 TokenAddressAdvertised(arrival, tokFams) ==
     CASE AddressMatch = "either" -> arrival \in tokFams /\ arrival \in ServedFamilies
       [] "ipv6" \in tokFams     -> ServedFamilies = {"ipv6"}
@@ -305,6 +303,12 @@ MapAddr(p) ==
 
 \* the family a request arrived on: the sending client's selected family.
 \* Addresses are unique (init and ClientMove), so the sender is one client.
+\* the families the client's requests go to (both until the race commits,
+\* then the committed one; one family when nothing races), and whether any
+\* of them reaches the server
+InFlight(c) == IF cFam[c] = "none" THEN RaceFamilies(c) ELSE {cFam[c]}
+ReachesServer(c)  == InFlight(c) \cap ServedFamilies # {}
+
 \* During the race a copy arrives on each served family in flight; the
 \* server's verdict is the same on either (the stateless cookie), so the
 \* model takes one.

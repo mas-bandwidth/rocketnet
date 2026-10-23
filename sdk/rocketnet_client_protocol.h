@@ -176,16 +176,6 @@ int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t
                                               int out_payload_capacity,
                                               int * out_payload_bytes );
 
-// The race's second-family server address (present only when the token names
-// both families and the selected address is IPv6), and whether both families
-// are still in flight awaiting the first valid cookie. The transport reads
-// these to send the opening handshake to both and to accept the second
-// family's answer until the first cookie commits the attempt.
-
-int rocketnet_client_protocol_second_address( const struct rocketnet_client_protocol_t * client,
-                                              struct rocketnet_address_t * address );
-int rocketnet_client_protocol_race_active( const struct rocketnet_client_protocol_t * client );
-
 // Builds a payload packet for the server, and stamps the send -- ordinary
 // traffic suppresses the client's own keep-alive. NOT "as on the server":
 // the server's rule splits on whether the client has acknowledged a

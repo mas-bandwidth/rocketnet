@@ -153,45 +153,6 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// The other family's server address for the opening-handshake race: present
-// only when the token names both families and the selected address is IPv6,
-// so the token's IPv4 address is the second destination. Returns 0 when the
-// attempt has one family, leaving address zeroed.
-
-int rocketnet_client_protocol_second_address( const struct rocketnet_client_protocol_t * client,
-                                              struct rocketnet_address_t * address )
-{
-    rocketnet_assert( client );
-    rocketnet_assert( address );
-
-    memset( address, 0, sizeof(*address) );
-    const uint8_t flags = client->signed_fields.address_flags;
-    if ( ( flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) == 0 || ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 )
-        return 0;
-    if ( client->server_address.type != ROCKETNET_ADDRESS_IPV6 )
-        return 0;
-
-    struct rocketnet_signed_connect_data_t only_ipv4 = client->signed_fields;
-    only_ipv4.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    rocketnet_client_protocol_pick_server_address( &only_ipv4, false, address );
-    return 1;
-}
-
-// Whether both families are still in flight awaiting the first valid cookie.
-// The first cookie moves the client out of requesting cookie, which commits
-// the attempt: from then on the connection request goes only to the family
-// that answered, and a late answer from the other family is dropped.
-
-int rocketnet_client_protocol_race_active( const struct rocketnet_client_protocol_t * client )
-{
-    if ( !client )
-        return 0;
-    const uint8_t flags = client->signed_fields.address_flags;
-    if ( ( flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) == 0 || ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 )
-        return 0;
-    return client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE;
-}
-
 // tla/ClientConnection.tla AppConnect
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
@@ -235,9 +196,8 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     }
 
     // the server address, IPv6 preferred when both families are present.
-    // when the token names both families the other address is the race's
-    // second destination; the transport selects again with the host's IPv6
-    // capability before it binds (rocketnet_client_transport_create_internal).
+    // the transport selects again with the host's IPv6 capability before it
+    // binds (rocketnet_client_transport_create_internal).
 
     rocketnet_client_protocol_pick_server_address( &client->signed_fields, true, &client->server_address );
 
@@ -436,21 +396,6 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
          client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
     {
         rocketnet_spam( "client ignored cookie. wrong state" );
-        counters[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE]++;
-        return 0;
-    }
-
-    // The family race commits on the first valid cookie. Once committed the
-    // connection request carries it, so a further cookie for a both-family
-    // token is the answer that lost the race (or a retransmission of the
-    // winner): it is dropped and counted rather than replacing the stored
-    // cookie.
-
-    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST &&
-         ( client->signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 &&
-         ( client->signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 )
-    {
-        rocketnet_spam( "client ignored cookie. late answer from the other family" );
         counters[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE]++;
         return 0;
     }
