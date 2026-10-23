@@ -8820,6 +8820,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 }
 
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+void rocketnet_test_darwin_send_epipe_no_signal();
+#endif
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
 void rocketnet_test_posix_client_drops_foreign_sources();
@@ -8976,6 +8979,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip, NULL },
 #endif
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
+#endif
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
