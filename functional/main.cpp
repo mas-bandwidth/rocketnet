@@ -10,6 +10,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#include "../tests/plan_rss.h"
 #include "../tests/suite_runner.h"
 #include "../tests/portable_crt.h"
 
@@ -46,7 +47,10 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    // the SDK's bytes are counted, so the process is held to its plan
+    // (tests/plan_rss.h): it reports that bound when the case passed with the
+    // counter still installed, and keeps the suite-wide bound otherwise
+    if ( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -54,6 +58,8 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
     const int result = rocketnet_functional_run_named( name );
+    if ( result == 0 && plan_rss_installed( rocketnet_malloc, rocketnet_free ) )
+        plan_rss_report();
     rocketnet_term();
     fflush( stdout );
     return result;
