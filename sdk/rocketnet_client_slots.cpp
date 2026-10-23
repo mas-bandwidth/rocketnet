@@ -101,7 +101,8 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     memset( slots->client_id, 0, sizeof(uint64_t) * (size_t) max_clients );
     memset( slots->connected, 0, sizeof(int) * (size_t) max_clients );
     memset( slots->confirmed, 0, sizeof(int) * (size_t) max_clients );
-    memset( slots->user_data, 0, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) max_clients );
+    // Assignment writes the entire user-data record before the slot is read.
+    // Unassigned records have no secret and do not need their pages touched.
 
     for ( int i = 0; i < max_clients; i++ )
         slots->mapping_index[i] = -1;
@@ -119,6 +120,13 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
 void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
 {
     rocketnet_assert( slots );
+    // A released slot was wiped at release. Only connected slots can still
+    // hold token secrets; never write unused records. num_connected is zero
+    // during partial-create cleanup, before connected[] has been initialized.
+    if ( slots->num_connected && slots->user_data && slots->connected )
+        for ( int i = 0; i < slots->max_clients; ++i )
+            if ( slots->connected[i] )
+                sodium_memzero( slots->user_data + (size_t) i * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
     rocketnet_free( slots->context, slots->bucket_head );
     rocketnet_free( slots->context, slots->next );
     rocketnet_free( slots->context, slots->client_id );
@@ -126,10 +134,6 @@ void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
     rocketnet_free( slots->context, slots->mapping_index );
     rocketnet_free( slots->context, slots->confirmed );
     rocketnet_free( slots->context, slots->free_stack );
-    // the connect tokens' user data can carry the game's secrets: wiped
-    // whole, which touches no new page (create zeroed it); tla/RNDestroyWipe.tla Destroy
-    if ( slots->user_data )
-        sodium_memzero( slots->user_data, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) slots->max_clients );
     rocketnet_free( slots->context, slots->user_data );
     rocketnet_free( slots->context, slots );
 }

@@ -917,3 +917,46 @@ REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_open );
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 
 #endif // #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+
+// Unassigned token-user-data storage has no secret to erase. Only live slots
+// are wiped at destroy; released slots were already wiped at release.
+static void test_secrets_wiped_slots_touch_only_live_user_data()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+    auto * slots = rocketnet_client_slots_create( NULL, 32 );
+    check( slots );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    const int first = rocketnet_client_slots_assign( slots, 1, 0, user_data );
+    const int second = rocketnet_client_slots_assign( slots, 2, 1, user_data );
+    check( first == 0 && second == 1 );
+    const uint8_t * data = rocketnet_client_slots_user_data( slots, first );
+    bool unused_untouched = true;
+    for ( size_t i = 2 * sizeof(user_data); i < 32 * sizeof(user_data); ++i )
+        unused_untouched &= data[i] == 0xC5;
+    rocketnet_client_slots_release( slots, first );
+    const bool released_wiped = secrets_wiped_all_zero( data, sizeof(user_data) );
+    std::map<void *, std::vector<uint8_t> > copies;
+    for ( auto it = sizes.begin(); it != sizes.end(); ++it )
+        copies[it->first].assign( (const uint8_t *)it->first, (const uint8_t *)it->first + it->second );
+    secrets_wiped_copies = &copies;
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_written_most = 0;
+    secrets_wiped_user_data_freed = 0;
+    secrets_wiped_user_data_armed = true;
+    rocketnet_client_slots_destroy( slots );
+    const size_t changed = secrets_wiped_written_most;
+    const int secrets_left = secrets_wiped_user_data_freed;
+    secrets_wiped_copies = NULL;
+    secrets_wiped_user_data_armed = false;
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    check( unused_untouched && released_wiped );
+    check( secrets_left == 0 );
+    check( changed > 0 && changed <= sizeof(user_data) );
+}
+REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );
