@@ -66,6 +66,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -109,6 +110,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -190,6 +192,7 @@ jobs:
     env:
       ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -294,6 +297,7 @@ jobs:
     if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -327,6 +331,7 @@ jobs:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -402,6 +407,7 @@ jobs:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
