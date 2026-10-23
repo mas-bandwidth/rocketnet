@@ -3233,7 +3233,7 @@ that assertion and MUST process an in-window sent sequence as acknowledged.
 ### t15.4. Elicitation and standalone acknowledgement
 
 All session packet types can contribute to the eligible history represented
-by a block after the acceptance conditions in t15.3 hold. Acknowledgement debt is the number of accepted eliciting packets
+by a block after the acceptance conditions in [t15.3 Building and processing](#t15.3) hold. Acknowledgement debt is the number of accepted eliciting packets
 received since a session packet last carried a block. A receiver MUST add debt
 for each accepted connection keep-alive, connection payload, connection
 disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).

@@ -80,7 +80,7 @@ implementation, stated here because RN-2 is the party that relies on it.
    reports a type 5 packet acknowledged, the peer's connection layer MUST have
    handed its payload to the peer's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
-   Successful message-layer processing is required before ACK publication.
+   The receiver MUST finish successful message-layer processing before ACK publication.
    If a reliable record cannot reserve receive storage, the receiver MUST leave
    that record's number, ordering state and received bit uncommitted, withhold
    the carrying packet's ACK, and keep the connection alive for retry. Records
