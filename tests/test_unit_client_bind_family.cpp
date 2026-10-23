@@ -173,7 +173,8 @@ static void bind_family_mint_both( uint8_t * token_data )
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6;
     const uint8_t ipv4_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, ipv4_address, 6 );
-    const uint8_t ipv6_address[18] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x40, 0x9c };
+    // eight little-endian groups and the port, as the token carries them
+    const uint8_t ipv6_address[18] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
     memcpy( signed_fields.ipv6_address, ipv6_address, 18 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
