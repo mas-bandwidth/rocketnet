@@ -70,15 +70,16 @@ available; production server auto selection prefers native transports. Follow [B
 
 ## Preview status
 
-The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) describe changes
-from preview-1 and the required migration steps. Preview-2 release testing is
-pending; [TESTING.md](TESTING.md) records qualification separately from
-historical results. The API remains provisional. Large-server frame time,
+The [preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) describe changes
+from preview-2. The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md)
+describe the migration from preview-1. [TESTING.md](TESTING.md) records
+qualification separately from historical results. The API remains provisional. Large-server frame time,
 memory use and transport qualification still need attention; see the
 [roadmap](ROADMAP.md).
 
 ## Documentation
 
+- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — changes since preview-2 and remaining limits.
 - [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits.
 - [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
 

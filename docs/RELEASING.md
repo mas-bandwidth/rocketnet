@@ -13,14 +13,14 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. For this preview, the full label is
-`"v1.0.0-preview-2"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.0-preview-3"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-2` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-2`. A final release has
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-3` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-3`. A final release has
 an empty prerelease string. There is no separate public prerelease macro.
 
 The `version-consistency` job in

@@ -44,7 +44,7 @@
     /// The SDK version as text. The release version string, or "dev" in a
     /// development build.
 
-    #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
+    #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-3"
 
     /// The major component of the SDK version. Development builds use 255.
 
