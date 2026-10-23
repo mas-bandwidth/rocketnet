@@ -444,10 +444,17 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time )
 {
-    // only the dialed server is listened to; everything else is junk
+    // only the dialed server is listened to; everything else is junk. while
+    // the family race is active the second family's address is a dialed
+    // server too, until the first cookie answer commits the attempt.
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
-        return;
+    {
+        const struct rocketnet_address_t * second = rocketnet_client_protocol_second_address( &client_transport->protocol );
+        if ( !( second && rocketnet_client_protocol_race_active( &client_transport->protocol ) &&
+                rocketnet_address_equal( from, second ) ) )
+            return;
+    }
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
@@ -654,6 +661,15 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address, packet, packet_bytes );
+
+        // The family race: while both families are in flight awaiting the
+        // first cookie answer, the same opening handshake packet also goes to
+        // the second family's address. The first valid cookie commits the
+        // attempt -- race_active clears -- and from then on the connection
+        // request goes only to the committed family.
+        const struct rocketnet_address_t * second = rocketnet_client_protocol_second_address( &client_transport->protocol );
+        if ( second && rocketnet_client_protocol_race_active( &client_transport->protocol ) )
+            client_transport->io.operations->send( client_transport->io.instance, second, packet, packet_bytes );
     }
 
     // one callback per update crossing: enough to observe every terminal,

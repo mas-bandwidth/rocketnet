@@ -172,25 +172,47 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
         return 0;
     }
 
-    // the server address: IPv6 preferred when both families are present.
-    // reachability belongs to the socket layer, which may override the pick.
+    // The server addresses: IPv6 is preferred when both families are present,
+    // and when the token names both the other family's address is kept as
+    // second_address so the transport can race the opening handshake to both
+    // and commit to whichever answers first. reachability belongs to the
+    // socket layer, which may override the pick.
 
     memset( &client->server_address, 0, sizeof(client->server_address) );
-    if ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+    memset( &client->second_address, 0, sizeof(client->second_address) );
+    client->race_active = 0;
+
+    const int has_v4 = ( flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0;
+    const int has_v6 = ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0;
+
+    struct rocketnet_address_t * primary = &client->server_address;
+    struct rocketnet_address_t * second = &client->second_address;
+
+    if ( has_v6 )
     {
-        client->server_address.type = ROCKETNET_ADDRESS_IPV6;
+        primary->type = ROCKETNET_ADDRESS_IPV6;
         const uint8_t * p = client->signed_fields.ipv6_address;
         for ( int i = 0; i < 8; i++ )
-            client->server_address.data.ipv6[i] = rocketnet_read_uint16( &p );
-        client->server_address.port = rocketnet_read_uint16( &p );
+            primary->data.ipv6[i] = rocketnet_read_uint16( &p );
+        primary->port = rocketnet_read_uint16( &p );
+        if ( has_v4 )
+        {
+            second->type = ROCKETNET_ADDRESS_IPV4;
+            const uint8_t * q = client->signed_fields.ipv4_address;
+            rocketnet_read_bytes( &q, second->data.ipv4, 4 );
+            second->port = rocketnet_read_uint16( &q );
+        }
     }
     else
     {
-        client->server_address.type = ROCKETNET_ADDRESS_IPV4;
+        primary->type = ROCKETNET_ADDRESS_IPV4;
         const uint8_t * p = client->signed_fields.ipv4_address;
-        rocketnet_read_bytes( &p, client->server_address.data.ipv4, 4 );
-        client->server_address.port = rocketnet_read_uint16( &p );
+        rocketnet_read_bytes( &p, primary->data.ipv4, 4 );
+        primary->port = rocketnet_read_uint16( &p );
     }
+
+    if ( second->type != 0 )
+        client->race_active = 1;
 
     // one salt and one ephemeral keypair per attempt, sequences at one and
     // never reset within it
@@ -409,6 +431,23 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     {
         rocketnet_spam( "client ignored cookie. salt does not match this attempt" );
         counters[ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH]++;
+        return 0;
+    }
+
+    // The family race commits on the first valid cookie. Once committed the
+    // connection request goes only to that family, and a late cookie from the
+    // other family -- the answer that lost the race -- is dropped and counted.
+    // A single-family attempt never races and keeps accepting retransmitted
+    // cookies in sending connection request exactly as before.
+
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE && client->race_active )
+        client->race_active = 0;
+
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST &&
+         client->second_address.type != 0 && !client->race_active )
+    {
+        rocketnet_spam( "client ignored cookie. late answer from the other family" );
+        counters[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE]++;
         return 0;
     }
 
@@ -1374,6 +1413,18 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
     rocketnet_spam( "client sent fragmented payload %u (%d bytes in %d fragments)", payload_id, payload_bytes, fragment_count );
 
     return fragment_count;
+}
+
+const struct rocketnet_address_t * rocketnet_client_protocol_second_address( const struct rocketnet_client_protocol_t * client )
+{
+    if ( !client || client->second_address.type == 0 )
+        return NULL;
+    return &client->second_address;
+}
+
+int rocketnet_client_protocol_race_active( const struct rocketnet_client_protocol_t * client )
+{
+    return client ? client->race_active : 0;
 }
 
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,

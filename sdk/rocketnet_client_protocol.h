@@ -44,6 +44,18 @@ struct rocketnet_client_protocol_t
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_address_t server_address;
 
+    // The family race. When the token names both families and the host can
+    // use both, the opening handshake (cookie request) goes to both addresses
+    // and the client commits to the first family that answers: second_address
+    // holds the non-primary server address (type zero when there is none),
+    // and race_active is 1 while both families are still in flight awaiting
+    // the first valid cookie. The first valid cookie commits the attempt --
+    // race_active drops to 0 and the connection request goes only to the
+    // committed family, whose address is server_address -- and a late cookie
+    // from the other family is dropped and counted.
+    struct rocketnet_address_t second_address;
+    int race_active;
+
     // this attempt: one salt, one ephemeral keypair, one sequence space per
     // phase, never reset within the attempt
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
@@ -156,6 +168,14 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      uint8_t * out_payload,
                                      int out_payload_capacity,
                                      int * out_payload_bytes );
+
+// The second family's server address, zeroed when the token names one family
+// or the host cannot use both; and whether the attempt is still racing both
+// families awaiting the first cookie answer. The transport reads these to
+// point a second socket at second_address and to stop racing on commit.
+
+const struct rocketnet_address_t * rocketnet_client_protocol_second_address( const struct rocketnet_client_protocol_t * client );
+int rocketnet_client_protocol_race_active( const struct rocketnet_client_protocol_t * client );
 
 // Builds a payload packet for the server, and stamps the send -- ordinary
 // traffic suppresses the client's own keep-alive. NOT "as on the server":
