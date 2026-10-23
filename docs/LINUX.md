@@ -309,15 +309,25 @@ CPU arithmetic assumes contiguous CPU IDs; sparse IDs need an explicit map.
 OS housekeeping on CPU 0 does not mean all kernel work can be eliminated
 from the application cores.
 
-**Build the NIC driver for the running kernel.** Space's Intel X710 uses
-`i40e`, built from [the driver source used by Space](https://github.com/mas-bandwidth/ethernet-linux-i40e).
-Capture the exact source revision and build/install steps before reinstalling.
-For Ubuntu 22.04 with the original kernel, use the GA `linux-generic` 5.15
-track and its matching `linux-headers-$(uname -r)` package. Rebuild/install
-the driver following its README, reboot, and verify `uname -r` and
-`ethtool -i <interface>`. A driver built for the previous OS/kernel is not
-the module for the new kernel. Driver zero-copy support on 5.15 still needs
-the hardware qualification below.
+**Choose an i40e driver with AF_XDP zero-copy support.** Space's Intel X710
+uses `i40e`, but the separately installed Intel driver and the driver shipped
+with Linux have different feature support. Intel's standalone 2.30.18 driver
+[explicitly disables AF_XDP zero-copy on Ubuntu and kernels 5.2 or newer](https://github.com/intel/ethernet-linux-i40e/blob/v2.30.18/src/i40e.h#L48-L55).
+[Space's driver fork](https://github.com/mas-bandwidth/ethernet-linux-i40e/blob/d6c70a9bc8bb537424661b680acfba52f188fae0/src/i40e.h#L50-L57)
+contains the same restriction. Rebuilding that source unchanged does not
+provide zero-copy on Ubuntu 22.04.
+
+Start qualification with Ubuntu's supplied `i40e` module on the GA
+`linux-generic` 5.15 track. The
+[Linux 5.15 implementation includes AF_XDP zero-copy](https://github.com/torvalds/linux/blob/v5.15/drivers/net/ethernet/intel/i40e/i40e_xsk.c).
+Verify `uname -r`, `ethtool -i <interface>`, and `modinfo -n i40e`; a separately
+installed module under `updates/` may override the distribution module.
+On kernels/tools exposing XDP feature queries, `sudo xdp-loader features
+<interface>` must report `NETDEV_XDP_ACT_XSK_ZEROCOPY: yes`. This query is not
+available on every older kernel, so its absence is not a capability verdict.
+In all cases, require a successful forced zero-copy bind and the kernel's
+`XDP_OPTIONS_ZEROCOPY` result on every queue. Native XDP attachment alone is
+not zero-copy proof. Physical-NIC qualification on 5.15 remains necessary.
 
 **Provision two NIC queues.** Before starting the server, run the existing
 provisioner with the actual interface name (Space currently uses `eno1`):
