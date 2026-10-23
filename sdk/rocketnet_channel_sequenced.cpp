@@ -20,6 +20,44 @@ static bool rn_sequenced_reliable_hold( uint32_t hold )
     return hold != RN_DESCRIPTOR_NONE && ( hold & RN_SEQUENCED_RELIABLE_HOLD ) != 0;
 }
 
+// The delivered-view list: exactly the holds with used==2, threaded
+// through each such hold's ordering (dead once its delivery is in the
+// table; no reader uses it while used==2). EndUpdate drains only this
+// list instead of scanning every hold. Model-preserving for
+// tla/RNChannel.tla EndUpdate: the cleared set is exactly
+// {i : sequenced_messages_held[i].used == 2} in both implementations,
+// and no other state changes; the list is auxiliary state the model
+// does not name (its batch/live expiry is unchanged).
+static void rn_sequenced_note_delivered( rn_region_t * region, uint32_t slot )
+{
+    rn_sequenced_hold_t * hold = &region->sequenced_messages_held[slot];
+    hold->ordering = region->sequenced_delivered_head;
+    region->sequenced_delivered_head = slot;
+    region->sequenced_delivered_count++;
+}
+
+static void rn_sequenced_forget_delivered( rn_region_t * region, uint32_t slot )
+{
+    if ( region->sequenced_messages_held[slot].used != 2 )
+        return;
+    uint32_t previous = RN_DESCRIPTOR_NONE;
+    uint32_t current = region->sequenced_delivered_head;
+    while ( current != RN_DESCRIPTOR_NONE && current != slot )
+    {
+        previous = current;
+        current = region->sequenced_messages_held[current].ordering;
+    }
+    if ( current != slot )
+        return;
+    const uint32_t next = region->sequenced_messages_held[slot].ordering;
+    if ( previous != RN_DESCRIPTOR_NONE )
+        region->sequenced_messages_held[previous].ordering = next;
+    else
+        region->sequenced_delivered_head = next;
+    if ( region->sequenced_delivered_count > 0 )
+        region->sequenced_delivered_count--;
+}
+
 static rn_receive_descriptor_t * rn_sequenced_descriptor( rn_channels_t * channels, const rocketnet_message_record_t * record, uint32_t * slot )
 {
     rn_region_t * region = channels->region;
@@ -53,7 +91,10 @@ static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_rece
             rn_sequenced_release_number( channels, (uint64_t) rx->pad + i );
     }
     else
+    {
+        rn_sequenced_forget_delivered( region, hold );
         region->sequenced_messages_held[hold].used = 0;
+    }
     rx->held_sequenced = RN_DESCRIPTOR_NONE;
 }
 
@@ -406,17 +447,29 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
         rn_sequenced_delivery( channels, channel, channels->region->sequenced_message_payloads[slot].data, (int) hold->bytes,
                                ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, RN_DESCRIPTOR_NONE );
         hold->used = 2; // delivered view stays live until RNChannel!EndUpdate
+        rn_sequenced_note_delivered( channels->region, slot );
     }
     return true;
 }
 
+// tla/RNChannel.tla EndUpdate
 void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
 {
-    if ( !channels )
+    if ( !channels || !channels->region )
         return;
-    // RNChannel!EndUpdate: only slots whose views expired return to the pool.
-    // The scan walks compact metadata without pulling payload cache lines in.
-    for ( uint32_t i = 0; i < channels->region->holds; i++ )
-        if ( channels->region->sequenced_messages_held[i].used == 2 )
-            channels->region->sequenced_messages_held[i].used = 0;
+    // RNChannel!EndUpdate: only slots whose views expired return to the
+    // pool. The delivered list holds exactly those slots (used==2), so
+    // this visits live views only; a connection with none is O(1).
+    rn_region_t * region = channels->region;
+    uint32_t slot = region->sequenced_delivered_head;
+    while ( slot != RN_DESCRIPTOR_NONE && slot < region->holds )
+    {
+        rn_sequenced_hold_t * hold = &region->sequenced_messages_held[slot];
+        const uint32_t next = hold->ordering;
+        if ( hold->used == 2 )
+            hold->used = 0;
+        slot = next;
+    }
+    region->sequenced_delivered_head = RN_DESCRIPTOR_NONE;
+    region->sequenced_delivered_count = 0;
 }

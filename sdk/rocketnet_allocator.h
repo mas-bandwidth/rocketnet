@@ -176,7 +176,7 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
 struct rn_sequenced_hold_t              // 16 hot bytes: metadata for the newest unreliable sequenced hold (7.3)
 {
     uint32_t bytes;
-    uint32_t ordering;
+    uint32_t ordering;                  // while used==1: the held ordering; while used==2: next delivered-view hold, or RN_DESCRIPTOR_NONE
     uint32_t sequencing;
     uint16_t channel;
     uint8_t used;
@@ -359,6 +359,8 @@ struct rn_region_t
     rn_delivery_t * deliveries;
     rn_sequenced_hold_t * sequenced_messages_held;
     rn_sequenced_payload_t * sequenced_message_payloads;
+    uint32_t sequenced_delivered_head;  // first hold whose delivered view is live (used==2), or RN_DESCRIPTOR_NONE; links via that hold's ordering
+    uint32_t sequenced_delivered_count; // holds with used==2: exactly the set EndUpdate clears, so it visits only live views
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 

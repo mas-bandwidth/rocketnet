@@ -503,6 +503,8 @@ void rn_region_carve( rn_region_t * region )
         hold->used = 0;
         hold->code = 0;
     }
+    region->sequenced_delivered_head = RN_DESCRIPTOR_NONE;
+    region->sequenced_delivered_count = 0;
     memset( region->receipts, 0, sizeof(rn_receipt_t) * region->receipt_entries );
 
     region->exhausted = 0;

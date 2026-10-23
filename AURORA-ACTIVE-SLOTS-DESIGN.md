@@ -19,6 +19,25 @@
   on studio.local; bench worst-case before/after still owed. No TLA change:
   no state machine changed (Observe still polls on any binding change;
   send rotation order and fairness unchanged).
+- Cut (2026-10-23): `rn_channels_end_update_sequenced` no longer scans
+  `region->holds` of every connection per update. Tracking: an intrusive
+  delivered-view list in `rn_region_t` (`sequenced_delivered_head/count`,
+  threaded through each live delivered hold's `ordering`, which is dead
+  while `used==2`), pushed where `used=2` is set in
+  `rn_channels_drain_sequenced` and drained at EndUpdate; `rn_region_carve`
+  (the reuse reset) clears head/count with the holds, so a reused slot
+  starts clean with no stale index and no whole-region reinit beyond
+  today's carve. Cleared set is exactly `{i : used==2}`, as before;
+  reliable-sequenced path untouched. Tests:
+  tests/test_unit_sequenced_delivered_views.cpp (view expiry across a
+  boundary, exact cleared set over churn, empty-list O(1) at holds=4096,
+  clean reset/reuse). Local Release unit + functional green on
+  studio.local; hulk worst-case before/after still owed (main). TLA:
+  model-preserving for `tla/RNChannel.tla` EndUpdate — the model does
+  not name the delivered list (auxiliary state); EndUpdate still expires
+  exactly the delivered batch/views and nothing else, so no model or
+  CASES/COVERAGE change; cited as `// tla/RNChannel.tla EndUpdate` in
+  sdk/rocketnet_channel_sequenced.cpp.
 
 ## 1. Walk inventory — every all-slot walk in server update/send paths
 
