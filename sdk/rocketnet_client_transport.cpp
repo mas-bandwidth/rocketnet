@@ -1259,9 +1259,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
-    // tla/RNClientIo.tla (every RNClientIo action named here); any other
-    // keeps the BASE path: per-packet sends on the main thread and a polling
-    // receive worker that exchanges buffer ownership under a short mutex
+    // tla/RNClientIo.tla. Built-in loopback uses the same core with bounded
+    // worker polling. Custom drivers without wait/wake keep BASE per-packet
+    // caller sends; the development simulator also keeps caller-owned frame
+    // work. Both exceptions retain the nonblocking receive ownership exchange.
     client_transport->io_thread = !client_transport->link_simulator &&
         ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
           ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );

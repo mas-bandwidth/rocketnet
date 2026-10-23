@@ -33,6 +33,11 @@ perform no backend work, and reconfiguration after stop is refused.
 Custom BASE drivers without wait/wake retain caller-thread per-packet sends;
 this compatibility path does not provide the built-in send offload guarantee.
 Built-in loopback uses the same I/O core and bounded worker-side idle polling.
+The optional development link simulator is also an explicit exception to the
+built-in worker-offload guarantee: while running, its frame work and backend
+sends remain caller-owned. Its shutdown drain transfers to the worker as
+described above. This exception is development-only and does not change the
+normal built-in transport handoff contract.
 
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
