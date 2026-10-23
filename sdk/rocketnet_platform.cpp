@@ -2659,6 +2659,18 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         return NULL;
     }
 
+    // Darwin UDP sends can return EPIPE and raise SIGPIPE. Keep the failure
+    // local to this socket so sendto and sendmsg_x report/count it instead
+    // of terminating the embedding application. Do not change its signal
+    // handlers or the disposition of unrelated sockets.
+    const int no_sigpipe = 1;
+    if ( setsockopt( socket->handle, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof( no_sigpipe ) ) != 0 )
+    {
+        rocketnet_error( "failed to suppress socket SIGPIPE" );
+        rocketnet_platform_socket_destroy( socket );
+        return NULL;
+    }
+
     // setup socket as dual stack ipv4/ipv6
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
