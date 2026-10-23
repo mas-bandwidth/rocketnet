@@ -175,7 +175,8 @@ static void test_send_room_query_public_api_client_and_server()
     // a refused argument: no room, as the start would refuse it
     check( !rocketnet_client_can_send_message( clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0 ) );
     check( !rocketnet_client_can_send_message( clients[0], ROCKETNET_MAX_CHANNELS, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) );
-    check( !rocketnet_client_can_send_message( clients[0], 0, (enum rocketnet_reliability_t) 99, bytes ) );
+    // a reliability outside the enum is asked at the object (mo_room_ask_reliabilities,
+    // -1 and 99): every value of the enum type is a reliability, so C++ cannot pass one here
 
     // an open start: the next start would be refused, so no room until finish
     uint8_t * open = rocketnet_client_start_message( clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
