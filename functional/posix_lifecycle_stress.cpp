@@ -568,6 +568,17 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
 
 #define POSIX_XDP_QUEUES 1
 
+// the UMEM an xdp cell's server takes outside the allocator: 0 on a build
+// without the xdp transport, which has no xdp cell that runs
+static uint64_t posix_xdp_umem_bytes()
+{
+#if defined(__linux__) && ROCKETNET_XDP
+    return rocketnet_xdp_umem_bytes( POSIX_XDP_QUEUES );
+#else
+    return 0;
+#endif
+}
+
 static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * cell, const char * address, int max_clients )
 {
     struct rocketnet_server_transport_config_t config;
@@ -589,7 +600,7 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     // the xdp server's UMEM is planned but taken outside the allocator
     // (tests/plan_rss.h): counted while the server lives
     if ( cell->xdp )
-        plan_rss_count_outside_allocator( rocketnet_xdp_umem_bytes( POSIX_XDP_QUEUES ) );
+        plan_rss_count_outside_allocator( posix_xdp_umem_bytes() );
     return server;
 }
 
@@ -597,7 +608,7 @@ static void posix_server_destroy( const posix_cell_t * cell, rocketnet_server_tr
 {
     rn_native_server_transport_stop_and_destroy( server );
     if ( cell->xdp )
-        plan_rss_uncount_outside_allocator( rocketnet_xdp_umem_bytes( POSIX_XDP_QUEUES ) );
+        plan_rss_uncount_outside_allocator( posix_xdp_umem_bytes() );
 }
 
 // the client's clock: the platform clock plus the send intervals skipped.
