@@ -33,7 +33,6 @@ static void receipt_fixture_init( receipt_fixture_t * f, int ring = 16 )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.max_message_receipts = ring;
-    config.packets_in_flight = 16;
     f->arena = rn_arena_create( NULL, &config, 1, &f->counters );
     rocketnet_unit_check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
@@ -134,8 +133,10 @@ static void test_unreliable_receipt_loss_on_sent_map_eviction()
     receipt_fixture_t f;
     receipt_fixture_init( &f );
     rn_window_ack_receipt_begin_update( &f.ack );
-    // The seventeenth live packet forces the first out of the P=16 sent map.
-    for ( uint32_t serial = 1; serial <= 17; serial++ )
+    // The (P+1)th live packet forces the first out of the P-entry sent map
+    // (the default P, the window W: the map holds no fewer than W entries).
+    const uint32_t P = f.region->packets;
+    for ( uint32_t serial = 1; serial <= P + 1; serial++ )
         rn_window_ack_commit_receipt_packet( &f.ack, 600 + serial, &serial, 1, 1.0 );
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );

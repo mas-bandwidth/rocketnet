@@ -100,6 +100,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendstore` | 1 | Existing committed control |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
+| `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 | `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
 | `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |

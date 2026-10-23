@@ -1104,7 +1104,7 @@ int main( int argc, char ** argv )
         server_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
         server_config.send_message_buffer_bytes = 12288;
         server_config.send_queue_messages = 16;
-        server_config.packets_in_flight = 16;
+        server_config.packets_in_flight = 64;          // at least the window
 
         client_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         client_config.max_fragmented_messages = 1;
@@ -1115,7 +1115,7 @@ int main( int argc, char ** argv )
         client_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
         client_config.send_message_buffer_bytes = 12288;
         client_config.send_queue_messages = 16;
-        client_config.packets_in_flight = 16;
+        client_config.packets_in_flight = 64;          // at least the window
     }
 
     const size_t client_public_required_bytes = rocketnet_client_required_memory( &client_config );

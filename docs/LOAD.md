@@ -167,7 +167,7 @@ share rate, population, transport and measurement scope.
 
 The light profile sets eight channels, a 64-message in-flight reliability
 window, 4096-byte receive buffers, a 1415-byte maximum message, 12288-byte send
-buffers, 16-message send queues, 16 packets in flight, and one 1416-byte
+buffers, 16-message send queues, 64 packets in flight (the window), and one 1416-byte
 transport fragment slot. Its 64-kbps per-client send budget is 25 times the
 2.56-kbps payload-only rate per direction at 1000 clients. At 1–100 clients,
 the 100-Hz schedule is 25.6 kbps of payload, leaving 2.5 times that rate.

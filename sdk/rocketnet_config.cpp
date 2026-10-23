@@ -251,6 +251,19 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
+    // The sent-packet map holds one entry per packet. W numbers can be in
+    // flight one to a packet, all sent inside one round trip, so a map
+    // smaller than W evicts entries whose acks are still on the way and the
+    // numbers they carried are resent (6.4, standard/MESSAGES.md m9.1;
+    // tla/RNSentMap.tla NoLiveEviction).
+    if ( config->packets_in_flight < W )
+    {
+        rocketnet_error( "message config packets_in_flight %d is below reliable_messages_in_flight %d", config->packets_in_flight, W );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return 0;
+    }
+
     // the store's large class must hold one maximal block whole (4, 14)
     const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, RN_STORE_LARGE );
     if ( large < (uint32_t) fragments )

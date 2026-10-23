@@ -46,11 +46,13 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
 // that many messages, on the server and every client the world creates
 static int lifecycle_queue_messages = 0;
 
-static void lifecycle_queue_config( int * reliable_messages_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
+static void lifecycle_queue_config( int * reliable_messages_in_flight, int * packets_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
 {
     if ( lifecycle_queue_messages == 0 )
         return;
     *reliable_messages_in_flight = lifecycle_queue_messages;
+    if ( *packets_in_flight < lifecycle_queue_messages )
+        *packets_in_flight = lifecycle_queue_messages;                  // the sent map holds the window
     *send_queue_messages = lifecycle_queue_messages;
     *send_message_buffer_bytes = lifecycle_queue_messages * 256;      // a send-store chunk per message, with room
 }
@@ -62,7 +64,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
-    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
+    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
 static void lifecycle_client_config( rocketnet_client_test_config_t * config )
@@ -71,7 +73,7 @@ static void lifecycle_client_config( rocketnet_client_test_config_t * config )
     config->transport = "loopback";
     config->step_driven = true;
     config->time_callback = lifecycle_clock;
-    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
+    lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
 // the token string sealed to the server's own key, naming 127.0.0.1:port

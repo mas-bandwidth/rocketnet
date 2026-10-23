@@ -1023,12 +1023,12 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6582272 );
-    check( layout.region_bytes == 6582272 );
-    check( rocketnet_message_connection_bytes( &config ) == 6582272 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6582272 );
+    check( layout.formula_bytes == 6680576 );
+    check( layout.region_bytes == 6680576 );
+    check( rocketnet_message_connection_bytes( &config ) == 6680576 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6680576 );
 
-    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 256, Du = 1024, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1169,7 +1169,7 @@ static void test_channels_allocator_validation()
     config.receive_message_buffer_bytes = 32768;
     config.send_message_buffer_bytes = 65536;
     config.send_queue_messages = 256;
-    config.packets_in_flight = 64;
+    config.packets_in_flight = 256;                 // at least W (the sent-map rule of 14)
     config.unreliable_messages_per_update = 128;
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
@@ -1192,7 +1192,7 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
     config.send_message_buffer_bytes = 12288;
     config.send_queue_messages = 16;
-    config.packets_in_flight = 16;
+    config.packets_in_flight = 64;                  // the window's 64: the sent map holds no fewer than W entries
     config.packets_per_update = 1;
     config.unreliable_messages_per_update = 1;
     config.sequenced_messages_held = 0;
@@ -1203,6 +1203,15 @@ static void test_channels_allocator_validation()
     config.reliable_message_timeout_ms = 1000;
     check( rocketnet_message_validate_config( &config ) == 1 );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
+
+    // the sent map holds at least the window (14): a map one entry short of W
+    // is refused, a map of W entries is taken
+
+    rocketnet_message_default_config( &config );
+    config.packets_in_flight = config.reliable_messages_in_flight - 1;
+    check( rocketnet_message_validate_config( &config ) == 0 );
+    config.packets_in_flight = config.reliable_messages_in_flight;
+    check( rocketnet_message_validate_config( &config ) == 1 );
 
     check( rocketnet_message_validate_config( NULL ) == 1 );       // NULL is the defaults
 }
@@ -1582,9 +1591,9 @@ static void test_channels_allocator_sizing()
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
     check( strstr( text, "48C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6582272" ) != NULL );
-    check( strstr( text, "formula bytes 6582272" ) != NULL );
-    check( strstr( text, "1000 connections 6582272000" ) != NULL );
+    check( strstr( text, "region bytes 6680576" ) != NULL );
+    check( strstr( text, "formula bytes 6680576" ) != NULL );
+    check( strstr( text, "1000 connections 6680576000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -3180,10 +3189,18 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 
 static void test_channels_window_eviction_keeps_numbers_resendable()
 {
+    // The map holds at least W entries (packets_in_flight >= reliable_messages_in_flight,
+    // tla/RNSentMap.tla), so W numbers sent one to a packet never evict one
+    // another. What the map does evict is a packet whose numbers have since been
+    // resent: here 20 numbers are written four times, a resend delay apart,
+    // and the fourth pass evicts the first pass's oldest 16 entries.
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.packets_in_flight = 16; // P = 16, 16P = 256
+    config.reliable_messages_in_flight = 64;
+    config.packets_in_flight = 64;                  // P = W = 64, 16P = 1024
+    config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     config.message_resend_delay_initial_ms = 200;
+    check( rocketnet_message_validate_config( &config ) == 1 );
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3197,7 +3214,6 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rn_window_ack_init( &ack, &send, region, &config );
 
     // Send 20 packets (packet_id 1..20, carrying n = 0..19) at t = 1.00.
-    // Packets 1..4 are evicted when packets 17..20 are committed.
     for ( uint32_t i = 0; i < 20; i++ )
     {
         uint64_t n = 0, p = 0;
@@ -3205,33 +3221,33 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
         check( n == i );
         rn_window_ack_commit_packet( &ack, (uint64_t) ( i + 1 ), &n, 1, 1.00 );
     }
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 0 );
 
-    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 4 );
-    check( rn_window_ack_entries_in_flight( &ack ) == 16 );
-    check( ack.resend_count == 20 );
-
-    // Evicted packet_ids 1..4 are no longer in sent_index.
-    for ( uint64_t id = 1; id <= 4; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.05 ) == 0 );
-
-    // Yet all 20 numbers remain in the resend FIFO and resend on resend delay at t = 1.25!
+    // Nothing is acked. Three resend passes at t = 1.25, 1.50 and 1.75 write
+    // packets 100..159; the third fills the map past 64 and evicts packets 1..16.
     uint64_t next_pkt = 100;
     uint64_t resent[32];
-    const uint32_t count = rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 32 );
-    check( count == 20 );
-    for ( uint32_t i = 0; i < 20; i++ )
-        check( resent[i] == i );
+    const double pass_time[3] = { 1.25, 1.50, 1.75 };
+    for ( int pass = 0; pass < 3; pass++ )
+    {
+        const uint32_t count = rn_window_ack_resend( &ack, pass_time[pass], &next_pkt, resent, 32 );
+        check( count == 20 );
+        for ( uint32_t i = 0; i < 20; i++ )
+            check( resent[i] == i );
+    }
+    check( next_pkt == 160 );
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 16 );
+    check( rn_window_ack_entries_in_flight( &ack ) == 64 );
+    check( ack.resend_count == 20 );
 
-    // Acking the last 16 resent packets (104..119) plus resending the first 4 (0..3)
-    // brings U all the way to 20.
-    for ( uint64_t id = 104; id < 120; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.30 ) == 1 );
-    check( send.U == 0 && ack.resend_count == 4 );
+    // Evicted packet_ids 1..4 are no longer in sent_index: a late ack of one is ignored.
+    for ( uint64_t id = 1; id <= 4; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.80 ) == 0 );
+    check( send.U == 0 );
 
-    const uint32_t count2 = rn_window_ack_resend( &ack, 1.65, &next_pkt, resent, 32 );
-    check( count2 == 4 );
-    for ( uint64_t id = 120; id < 124; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.70 ) == 1 );
+    // The numbers stayed resendable: acking the last pass (140..159) brings U to 20.
+    for ( uint64_t id = 140; id < 160; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.80 ) == 1 );
     check( send.U == 20 && send.U_prime == 20 && ack.resend_count == 0 );
 
     rn_arena_destroy( arena );
@@ -3519,7 +3535,7 @@ static void channels_lossy_soak_send_wire_packet( rocketnet_network_simulator_t 
 static void test_channels_window_lossy_soak_leg( float loss_percent )
 {
     const uint32_t W = 64;
-    const uint32_t P = 16;
+    const uint32_t P = 64;                          // at least W (the sent-map rule of 14)
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t B = 8 * F;
     const int total_messages = 140;
@@ -3610,8 +3626,8 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         // 2. Resend due numbers from the resend FIFO, one packet per tick: the
         //    per-update packet limit the writers keep (packets_per_update),
         //    so the packets written in one RTT stay under P and acks land on
-        //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
-        //    back-off an unbounded resend walk at P = 16 evicts every entry
+        //    live sent-map entries (standard/MESSAGES.md m9.1). With no
+        //    back-off an unbounded resend walk at a small P evicts every entry
         //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
         const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 1 );
@@ -3870,7 +3886,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     config.max_message_bytes = (int) ( 3 * F );
     config.send_message_buffer_bytes = 262144;
     config.send_queue_messages = 256;
-    config.packets_in_flight = 16;
+    config.packets_in_flight = 64;                  // at least W (the sent-map rule of 14)
     config.message_resend_delay_min_ms = 20;
     config.message_resend_delay_initial_ms = 50;
     config.message_resend_delay_max_ms = 400;
@@ -3955,9 +3971,9 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
 
         // 3. the product's write: its resend FIFO walk and its new numbers, one
         //    packet per tick, so the packets written in one RTT stay under P and
-        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
-        //    P"). With no back-off (6.4, RNResendTiming) a write of every due
-        //    number at P = 16 evicts each entry before its ack returns, and the
+        //    acks land on live sent-map entries (standard/MESSAGES.md m9.1).
+        //    With no back-off (6.4, RNResendTiming) a write of every due
+        //    number at a small P evicts each entry before its ack returns, and the
         //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
         //    (resent first next update, 6.4).
         const int written = rn_ordered_write( sender, now, pointers, 1 );

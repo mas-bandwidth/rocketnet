@@ -1518,8 +1518,8 @@ struct rocketnet_message_config_t
     int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 4194304
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
-    /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
-    int packets_in_flight;              // 16 .. 1 << 16; default 256
+    /** @brief Tracked unacknowledged packets; 64 through 1<<20 and at least reliable_messages_in_flight, default 1024. */
+    int packets_in_flight;              // 64 .. 1 << 20, >= reliable_messages_in_flight; default 1024
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
     int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
