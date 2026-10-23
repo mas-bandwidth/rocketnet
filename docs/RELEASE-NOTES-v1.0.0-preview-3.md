@@ -42,7 +42,7 @@ now:
 - accept server registration with `PUT /servers/{id}`, validated, and answer
   `GET /match/{clientID}` with a token for a random registered server, or
   HTTP 503 when none is registered;
-- link the production library and use their own packet filter.
+- link the selected library mode and use their own packet filter.
 
 The end-to-end functional harness generates fresh keys, registers a live server
 over HTTP, obtains a token from each backend and requires a production portable
