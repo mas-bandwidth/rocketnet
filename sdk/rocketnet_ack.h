@@ -161,12 +161,41 @@ struct rocketnet_ack_stats_history_t
 #define ROCKETNET_RECEIVED_STATS_DIRTY_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
 #define ROCKETNET_RTT_STATS_DIRTY_WORDS ( ( ROCKETNET_RTT_HISTORY_SIZE + 63 ) / 64 )
 
+// Only epoch metadata is initialized. Reset invalidates every old word in O(1)
+// without clearing bitmaps or history. A word is initialized lazily on write.
+// At the unreachable-in-practice 2^64 epoch boundary, reinitialize only tags
+// before epoch 1 can recur; otherwise stale epoch-1 words would become live.
+template <unsigned Words> struct rocketnet_stats_epoch_bits_t
+{
+    uint64_t epoch;
+    uint64_t tags[Words];
+    uint64_t bits[Words];
+    void initialize() { epoch = 1; for (unsigned i = 0; i < Words; ++i) tags[i] = 0; }
+    void invalidate() { if (epoch == UINT64_MAX) initialize(); else ++epoch; }
+    uint64_t word(int i) const { return tags[i] == epoch ? bits[i] : 0; }
+    bool test(int i) const { return (word(i / 64) & (1ull << (i % 64))) != 0; }
+    void set(int i) {
+        const int w = i / 64;
+        if (tags[w] != epoch) { bits[w] = 0; tags[w] = epoch; }
+        bits[w] |= 1ull << (i % 64);
+    }
+};
+
+struct rocketnet_ack_stats_validity_t
+{
+    rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent;
+    rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received;
+    rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt;
+    void initialize() { sent.initialize(); received.initialize(); rtt.initialize(); }
+    void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
+};
+
 struct rocketnet_ack_stats_delta_t
 {
     rocketnet_ack_stats_history_t values;
-    uint64_t sent_dirty[ROCKETNET_SENT_BITMAP_WORDS];
-    uint64_t received_dirty[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS];
-    uint64_t rtt_dirty[ROCKETNET_RTT_STATS_DIRTY_WORDS];
+    rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent_dirty;
+    rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received_dirty;
+    rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt_dirty;
     uint64_t generation;
     uint8_t reset;
 };
@@ -351,7 +380,8 @@ struct rocketnet_ack_stats_result_t
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
                                         rocketnet_ack_stats_result_t * result,
                                         const uint64_t * sent_written = NULL,
-                                        const uint64_t * received_written = NULL );
+                                        const uint64_t * received_written = NULL,
+                                        const rocketnet_ack_stats_validity_t * validity = NULL );
 
 // -----------------------------------------
 //                    the server's acks
