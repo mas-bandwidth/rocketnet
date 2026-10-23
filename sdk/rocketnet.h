@@ -473,7 +473,13 @@ enum rocketnet_disconnect_reason_t
 
     /// The server disconnected the client, stopped, or was destroyed.
 
-    ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED             = -5
+    ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED             = -5,
+
+    /// The application called update while a message delivered on this
+    /// connection was still in the receive queue: it did not loop
+    /// receive_messages until NULL. API misuse.
+
+    ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED            = -6
 };
 
 
@@ -486,6 +492,12 @@ enum rocketnet_disconnect_reason_t
 
 enum rocketnet_client_state_t
 {
+    /// The application called update while a message delivered on the
+    /// connection was still in the receive queue: it did not loop
+    /// rocketnet_client_receive_messages until NULL. API misuse.
+
+    ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED             = -13,
+
     /// The connection's message memory had no room for a message it must not
     /// drop.
 
@@ -1513,6 +1525,12 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 
 /// Processes incoming messages and connection timeouts at the supplied time.
 /// Read the client state and stats after updating.
+///
+/// Every message delivered by the previous update must already be taken:
+/// loop rocketnet_client_receive_messages until it returns NULL before the
+/// next update. A message still in the receive queue at update is API
+/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
+/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
@@ -1585,6 +1603,8 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 
 /// Returns the next batch of messages from the server.
 /// Each message has client_index 0. Keep calling until NULL is returned.
+/// The application must take every message before the next update, or the
+/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
@@ -1704,6 +1724,13 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 /// Processes incoming messages and connection timeouts for every client.
 /// Read the client slot queries and stats after updating.
+///
+/// Every message delivered by the previous update must already be taken:
+/// loop rocketnet_server_receive_messages until it returns NULL before the
+/// next update. A message still in the receive queue at update is API
+/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
+/// sending client's slot is disconnected with
+/// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
@@ -1810,6 +1837,9 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// Returns the next batch of messages from all clients.
 /// Each message names its sender in client_index.
 /// Keep calling until NULL is returned. Returns NULL while stopped.
+/// The application must take every message before the next update, or each
+/// client with a message left is disconnected with
+/// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 

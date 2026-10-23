@@ -50,6 +50,7 @@ static inline int rocketnet_disconnect_reason_standard_code( int reason )
         case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:          return 4;
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return 5;
         case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return 6;
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:      return 7;
         default:                                                    return 0;
     }
 }
