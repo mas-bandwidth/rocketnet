@@ -214,10 +214,16 @@ int main( void )
         CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
         CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status ) == NULL );
         CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+        // required_memory runs create's config check, so it refuses the same
+        // defaults with 0
+        CHECK( rocketnet_client_required_memory( NULL ) == 0 );
+        CHECK( rocketnet_server_required_memory( NULL ) == 0 );
         rocketnet_quiet( false );
 #endif
+#if ROCKETNET_DEV
         CHECK( rocketnet_client_required_memory( NULL ) > 0 );
         CHECK( rocketnet_server_required_memory( NULL ) > 0 );
+#endif
 
         struct rocketnet_client_config_t zeroed_client;
         struct rocketnet_server_config_t zeroed_server;
