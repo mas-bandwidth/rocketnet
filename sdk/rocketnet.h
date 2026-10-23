@@ -1413,9 +1413,10 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 
 static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
 {
+    enum rocketnet_status_t status;
     if ( !config )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    const enum rocketnet_status_t status = rocketnet_client_default_config( config );
+    status = rocketnet_client_default_config( config );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
@@ -1713,9 +1714,10 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 
 static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
 {
+    enum rocketnet_status_t status;
     if ( !config )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    const enum rocketnet_status_t status = rocketnet_server_default_config( config );
+    status = rocketnet_server_default_config( config );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
