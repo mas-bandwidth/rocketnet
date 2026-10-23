@@ -130,27 +130,68 @@ static int live_link_client_receive( struct live_link_pair_t * pair )
     return rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) );
 }
 
+// The server's payload list and the client's delivery cursor both hold one
+// update's worth: a payload delivered in an earlier update is gone by the
+// next one. So the count is taken after every step and summed, and the
+// client's cursor is drained at every step, which is also what the API asks
+// of an application (take every message before the next update).
+
+static int live_link_server_payloads_seen( struct live_link_pair_t * pair, int steps )
+{
+    int seen = 0;
+    for ( int i = 0; i < steps; i++ )
+    {
+        live_link_pair_step( pair, 0.01 );
+        seen += live_link_server_payload_count( pair );
+    }
+    return seen;
+}
+
+static int live_link_client_bytes_seen( struct live_link_pair_t * pair, int steps )
+{
+    int seen = 0;
+    for ( int i = 0; i < steps; i++ )
+    {
+        live_link_pair_step( pair, 0.01 );
+        int bytes = live_link_client_receive( pair );
+        while ( bytes > 0 )
+        {
+            seen += bytes;
+            bytes = live_link_client_receive( pair );
+        }
+    }
+    return seen;
+}
+
 static void test_public_link_simulator_applies_to_live_connection()
 {
     struct live_link_pair_t pair;
     check( live_link_pair_setup( &pair ) );
     check( live_link_pair_connect( &pair ) );
 
+    struct rocketnet_client_transport_stats_t before;
+    struct rocketnet_client_transport_stats_t after;
+    rocketnet_client_transport_stats( pair.client, &before );
+
+    // the setting applies to the live connection at once: the packet the
+    // client sends after the call leaves the client and never reaches the
+    // server
     check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 100, 0 ) );
     uint8_t payload[4] = { 1, 2, 3, 4 };
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
-    for ( int i = 0; i < 20; i++ )
-        live_link_pair_step( &pair, 0.01 );
-    check( live_link_server_payload_count( &pair ) == 0 );
+    check( live_link_server_payloads_seen( &pair, 20 ) == 0 );
+    rocketnet_client_transport_stats( pair.client, &after );
+    check( after.packets_sent > before.packets_sent );
 
+    // the connection is still up: the loss applies to the packets, not to the
+    // connection
     check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
 
+    // and the setting comes back off: the next packet is delivered
     check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 0, 0 ) );
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
-    for ( int i = 0; i < 20; i++ )
-        live_link_pair_step( &pair, 0.01 );
-    check( live_link_server_payload_count( &pair ) > 0 );
+    check( live_link_server_payloads_seen( &pair, 20 ) > 0 );
 
     live_link_pair_teardown( &pair );
 }
@@ -161,18 +202,24 @@ static void test_public_link_simulator_server_applies_to_live_start()
     check( live_link_pair_setup( &pair ) );
     check( live_link_pair_connect( &pair ) );
 
+    struct rocketnet_server_transport_stats_t before;
+    struct rocketnet_server_transport_stats_t after;
+    rocketnet_server_transport_stats( pair.server, &before );
+
+    // the setting applies to the running server at once: the packet the
+    // server sends after the call leaves the server and never reaches the
+    // client
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 100, 0 ) );
     uint8_t payload[4] = { 5, 6, 7, 8 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
-    for ( int i = 0; i < 20; i++ )
-        live_link_pair_step( &pair, 0.01 );
-    check( live_link_client_receive( &pair ) == 0 );
+    check( live_link_client_bytes_seen( &pair, 20 ) == 0 );
+    rocketnet_server_transport_stats( pair.server, &after );
+    check( after.packets_sent > before.packets_sent );
 
+    // and the setting comes back off: the next packet is delivered
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
-    for ( int i = 0; i < 20; i++ )
-        live_link_pair_step( &pair, 0.01 );
-    check( live_link_client_receive( &pair ) > 0 );
+    check( live_link_client_bytes_seen( &pair, 20 ) > 0 );
 
     live_link_pair_teardown( &pair );
 }
