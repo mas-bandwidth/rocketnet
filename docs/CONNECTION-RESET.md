@@ -100,7 +100,7 @@ observes the transport connection-id change.
 The client and encryption mapping reset `accepted_session` independently of
 `replay_session`. ACK eligibility never survives connection reuse. The client
 keeps `defer_payload_acks`, because message-layer ACK admission is a transport
-binding policy, not state learned from the previous peer.
+binding policy, not state learned from the previous remote endpoint.
 
 ## Reset state without clearing bulk storage
 
