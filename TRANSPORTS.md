@@ -121,8 +121,9 @@ the create log line names each feature as yes or no.
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
-  and by RIO: each runs one completion worker, so a client's datagrams are
-  not reordered by several workers dequeuing one completion port.
+  and by RIO: IOCP runs one completion worker plus one send worker and RIO one
+  I/O worker, so a client's datagrams are not reordered by several workers
+  dequeuing one completion port.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
