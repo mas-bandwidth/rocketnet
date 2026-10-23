@@ -111,6 +111,7 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
+    memset( &connection->unreliable_build, 0, sizeof(connection->unreliable_build) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
     memset( connection->hot->cursors, 0,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );
