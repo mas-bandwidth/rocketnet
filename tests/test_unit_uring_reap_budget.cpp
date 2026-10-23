@@ -342,8 +342,13 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 
 static void test_io_uring_transport_reap_destroy_after_saturation()
 {
+    // the guard covers four send budgets and, in a build whose receive budget
+    // is the larger (ROCKETNET_MAX_CLIENTS above 1280: 16 per client), the
+    // first receive call's budget twice over
+    const int64_t send_guard = 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET;
+    const int64_t receive_guard = 2 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET;
     struct rocketnet_server_uring_test_source_t source;
-    struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET, &source );
+    struct uring_fake_t * fake = uring_fake_create( send_guard > receive_guard ? send_guard : receive_guard, &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring );
