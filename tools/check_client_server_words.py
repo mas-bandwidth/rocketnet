@@ -30,11 +30,6 @@ FILES_ALLOWED = {
         "the published preview-2 record; its owner rewords it separately",
     "docs/QUALIFICATION-v1.0.0-preview-2.md":
         "the published preview-2 record; its owner rewords it separately",
-    # TEMPORARY: measured TLC records are never edited by hand (tla/README.md).
-    # The next tlacheck run over the stale groups rewrites this row with the
-    # renamed invariant; remove this entry in that change.
-    "tla/RUNS.tsv":
-        "measured TLC records, rewritten only by a tlacheck run",
 }
 
 # Spans inside a line that hold the word as part of an outside name, with the
