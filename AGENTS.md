@@ -303,8 +303,8 @@ configured families refuses start with
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
 
 Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
-`receive_message_buffer_bytes = 262144`, `max_message_bytes = 262144`,
-`send_message_buffer_bytes = 800000`, `send_queue_messages = 1024`,
+`receive_message_buffer_bytes = 1048576`, `max_message_bytes = 1048576`,
+`send_message_buffer_bytes = 4194304`, `send_queue_messages = 1024`,
 `packets_in_flight = 256`, `unreliable_messages_per_update = 1024`,
 `sequenced_messages_held = 16`, `max_message_receipts = 256`,
 `reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server

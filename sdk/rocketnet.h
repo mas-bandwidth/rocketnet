@@ -1089,19 +1089,19 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES sets the reassembly
     /// buffer. Both ends must match. It must be a multiple of 16 from 4096 ..
-    /// 1048576. Default is 262144.
+    /// 1048576. Default is 1048576.
 
     int receive_message_buffer_bytes;
 
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 1048576.
 
     int max_message_bytes;
 
     /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes.
-    /// Range is 12288 .. 268435456. Default is 800000.
+    /// Range is 12288 .. 268435456. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1259,19 +1259,19 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES sets the reassembly
     /// buffer. Both ends must match. It must be a multiple of 16 from 4096 ..
-    /// 1048576. Default is 262144.
+    /// 1048576. Default is 1048576.
 
     int receive_message_buffer_bytes;
 
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 1048576.
 
     int max_message_bytes;
 
     /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes
-    /// per client. Range is 12288 .. 268435456. Default is 800000.
+    /// per client. Range is 12288 .. 268435456. Default is 4194304.
 
     int send_message_buffer_bytes;
 
