@@ -220,6 +220,8 @@ struct rocketnet_server_stats_slot_t
     rocketnet_ack_stats_delta_t deltas[2];
     rocketnet_ack_stats_history_t history;       // worker-owned
     uint64_t history_generation;
+    uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
+    uint64_t received_written[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS];
 };
 
 typedef rocketnet_ack_stats_result_t rocketnet_server_stats_result_t;
@@ -403,24 +405,35 @@ static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot
     rocketnet_ack_stats_history_t * history = &slot->history;
     if ( input->reset || slot->history_generation != input->generation )
     {
-        memset(history, 0, sizeof(*history));
+        // Validity owns initialization: an unwritten ring record is never read.
+        // Reset only the compact masks and RTT samples, not 156 KB of history
+        // for every connection that first publishes a stats batch.
+        memset(slot->sent_written, 0, sizeof(slot->sent_written));
+        memset(slot->received_written, 0, sizeof(slot->received_written));
+        memset(history->rtt_history, 0, sizeof(history->rtt_history));
         slot->history_generation = input->generation;
     }
     history->highest_sent = input->values.highest_sent;
     history->highest_received = input->values.highest_received;
     for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
         if ( input->sent_dirty[i / 64] & (1ull << (i % 64)) )
+        {
             history->sent[i] = input->values.sent[i];
+            slot->sent_written[i / 64] |= 1ull << (i % 64);
+        }
     for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
         if ( input->received_dirty[i / 64] & (1ull << (i % 64)) )
+        {
             history->received[i] = input->values.received[i];
+            slot->received_written[i / 64] |= 1ull << (i % 64);
+        }
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
         if ( input->rtt_dirty[i / 64] & (1ull << (i % 64)) )
             history->rtt_history[i] = input->values.rtt_history[i];
 
     // Read the worker-owned compact history directly. No scratch reset or
     // full-ring copy, and no calculation under the exchange mutex.
-    rocketnet_ack_stats_history_compute(history, output);
+    rocketnet_ack_stats_history_compute(history, output, slot->sent_written, slot->received_written);
 }
 
 static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t * worker )

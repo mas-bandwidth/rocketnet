@@ -24,6 +24,11 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 
 // Uses the message calls declared in sdk/rocketnet.h: start_message,
 // finish_message, receive_messages (one batch, no release call) and
@@ -63,15 +68,44 @@ static FILE * soak_fopen( const char * path, const char * mode ) {
 struct soak_alloc_t { uint64_t live_allocs, live_bytes, peak_bytes, steady_allocs; bool steady; };
 static struct soak_alloc_t g_alloc;
 
+// Allocator callbacks also run on workers (including thread-shim cleanup).
+// This static lock allocates nothing and protects only telemetry, never the
+// allocator calls themselves. Every reader takes a consistent snapshot.
+#if defined(_WIN32)
+static SRWLOCK g_alloc_mutex = SRWLOCK_INIT;
+static void soak_alloc_lock( void ) { AcquireSRWLockExclusive( &g_alloc_mutex ); }
+static void soak_alloc_unlock( void ) { ReleaseSRWLockExclusive( &g_alloc_mutex ); }
+#else
+static pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void soak_alloc_lock( void ) { if ( pthread_mutex_lock( &g_alloc_mutex ) != 0 ) abort(); }
+static void soak_alloc_unlock( void ) { if ( pthread_mutex_unlock( &g_alloc_mutex ) != 0 ) abort(); }
+#endif
+
+static void soak_alloc_set_steady( bool steady ) {
+    soak_alloc_lock();
+    g_alloc.steady = steady;
+    soak_alloc_unlock();
+}
+
+static struct soak_alloc_t soak_alloc_snapshot( void ) {
+    struct soak_alloc_t snapshot;
+    soak_alloc_lock();
+    snapshot = g_alloc;
+    soak_alloc_unlock();
+    return snapshot;
+}
+
 static void * soak_malloc( void * ctx, size_t bytes ) {
     (void) ctx;
     uint8_t * raw = (uint8_t *) malloc( bytes + 64 );
     if ( !raw ) return NULL;
     *(uint64_t *) raw = (uint64_t) bytes;
+    soak_alloc_lock();
     g_alloc.live_allocs++;
     g_alloc.live_bytes += (uint64_t) bytes;
     if ( g_alloc.live_bytes > g_alloc.peak_bytes ) g_alloc.peak_bytes = g_alloc.live_bytes;
     if ( g_alloc.steady ) g_alloc.steady_allocs++;
+    soak_alloc_unlock();
     return raw + 64;
 }
 
@@ -79,8 +113,10 @@ static void soak_free( void * ctx, void * p ) {
     (void) ctx;
     if ( !p ) return;
     uint8_t * raw = (uint8_t *) p - 64;
+    soak_alloc_lock();
     g_alloc.live_allocs--;
     g_alloc.live_bytes -= *(uint64_t *) raw;
+    soak_alloc_unlock();
     free( raw );
 }
 
@@ -324,7 +360,7 @@ int main( int argc, char ** argv ) {
     CHECK( index_client != NULL );
     for ( int c = 0; c < num_clients; c++ )
         index_client[rocketnet_client_index( clients[c] )] = c;
-    g_alloc.steady = true;
+    soak_alloc_set_steady( true );
     const int soak_ticks = seconds * 60, drain_ticks = 90, stride = num_clients > 25 ? ( num_clients / 25 ) : 1;
     uint64_t sent_rel = 0, recv_rel = 0, sent_seq = 0, recv_seq = 0, corrupt = 0, gaps = 0;
     bool injected = false;
@@ -421,7 +457,7 @@ int main( int argc, char ** argv ) {
         // under a millisecond)
         else rocketnet_sleep( 0.001 );
     }
-    g_alloc.steady = false;
+    soak_alloc_set_steady( false );
     uint64_t acked_total = 0;
     for ( int c = 0; c < num_clients; c++ ) {
         acked_total += c2s[c].acked_events + s2c[c].acked_events;
@@ -477,7 +513,8 @@ int main( int argc, char ** argv ) {
     rocketnet_term(); inited = false;
     // destroy never needs more memory than the run did (Linux: VmHWM)
     CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
-    CHECK( g_alloc.live_allocs == 0 && g_alloc.live_bytes == 0 );
+    const struct soak_alloc_t allocation_stats = soak_alloc_snapshot();
+    CHECK( allocation_stats.live_allocs == 0 && allocation_stats.live_bytes == 0 );
     qsort( srv_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     qsort( cli_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     double srv_p50 = srv_us[soak_ticks / 2], srv_p99 = srv_us[( soak_ticks * 99 ) / 100], srv_max = srv_us[soak_ticks - 1];
@@ -488,9 +525,9 @@ int main( int argc, char ** argv ) {
                                "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",
                                "client_per_peer_us_p50", "client_per_peer_us_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
                                "server_create_ms", "server_start_ms", "clients_create_ms", "clients_destroy_ms", "server_stop_ms", "server_destroy_ms", "running_peak_rss", "shutdown_peak_rss" };
-    double m_vals[] = { (double) sent_rel, (double) recv_rel, (double) acked_total, (double) sent_seq, (double) recv_seq, (double) corrupt, (double) gaps, (double) g_alloc.peak_bytes,
+    double m_vals[] = { (double) sent_rel, (double) recv_rel, (double) acked_total, (double) sent_seq, (double) recv_seq, (double) corrupt, (double) gaps, (double) allocation_stats.peak_bytes,
                         srv_p50, srv_p99, srv_max, cli_p50, cli_p99, cli_max, cli_p50 / num_clients, cli_p99 / num_clients,
-                        (double) srv_pkts_tx / seconds, (double) srv_pkts_rx / seconds, (double) srv_bytes_tx / seconds, (double) srv_bytes_rx / seconds, (double) g_alloc.steady_allocs / soak_ticks,
+                        (double) srv_pkts_tx / seconds, (double) srv_pkts_rx / seconds, (double) srv_bytes_tx / seconds, (double) srv_bytes_rx / seconds, (double) allocation_stats.steady_allocs / soak_ticks,
                         g_life.server_create_ms, g_life.server_start_ms, g_life.clients_create_ms, g_life.clients_destroy_ms, g_life.server_stop_ms, g_life.server_destroy_ms,
                         (double) g_life.running_peak_rss, (double) g_life.shutdown_peak_rss };
     fprintf( fp, "clients\tseconds\tseed\ttransport\tbuild\tmetric\tvalue\n" );
@@ -501,7 +538,7 @@ int main( int argc, char ** argv ) {
     printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_peer_p50=%.2fus cli_peer_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\n",
             num_clients, seconds, seed, transport_name, recv_rel, sent_rel, recv_seq, sent_seq,
             srv_p50, srv_p99, cli_p50 / num_clients, cli_p99 / num_clients,
-            (double) g_alloc.steady_allocs / soak_ticks, g_alloc.peak_bytes );
+            (double) allocation_stats.steady_allocs / soak_ticks, allocation_stats.peak_bytes );
     exit_code = 0;
 
 cleanup:
