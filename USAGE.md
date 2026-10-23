@@ -503,6 +503,43 @@ own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. The send bu
 never the queue. A reliable message waits for budget and is never dropped; an
 unreliable message over budget is dropped and counted.
 
+### Asking whether there is room
+
+`rocketnet_client_can_send_message( client, channel, reliability, max_bytes )`
+and `rocketnet_server_can_send_message( server, client_index, channel,
+reliability, max_bytes )` answer whether a start message with the same
+arguments would be given room now: `true` or `false`. They use the same
+decision start message uses, so a `true` answer is a start that gets its
+pointer. A `false` answer means the start would not: the connection's message
+memory is full, or the start would be dropped or refused (not CONNECTED, a
+message already open, a bad argument). The query does not soften the rule
+above: a start after a `false` still ends the connection with
+`MESSAGE_MEMORY_EXHAUSTED`. Ask, and hold the message back until room returns
+as the peer acknowledges messages.
+
+The query changes no state, counts nothing, allocates nothing and runs in
+constant time. Only start message and update take room, so a `true` answer
+holds until the next of either. Each server client slot has its own message
+memory; a server index outside `0 .. max_clients - 1` is misuse and answers
+`false`. A `false` may be pessimistic for an unreliable message that fits in
+one packet, which start can write straight into a free packet without taking
+message memory.
+
+```c
+#include "rocketnet.h"
+
+bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
+{
+    if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        return false;                       /* hold it: sending now would end the connection */
+
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+    for ( int i = 0; i < bytes; i++ )
+        out[i] = state[i];
+    return rocketnet_client_finish_message( client, bytes ) != 0;
+}
+```
+
 ### Not every refused start spends a sequence number
 
 A client start refused for a full send ring, arena or lease table spends its

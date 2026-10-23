@@ -257,6 +257,15 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
     }
 }
 
+bool rn_send_store_fits( const rn_send_store_t * store, int bytes )
+{
+    rocketnet_assert( store );
+    if ( bytes <= 0 )
+        return false;
+    // the smallest class that fits, and only that class, holds the block whole
+    return store->classes[rn_send_store_class_for( bytes )].free_count >= rn_send_store_chunks_needed( bytes );
+}
+
     // tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
@@ -269,7 +278,7 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     rn_store_class_t * cls = &store->classes[c];
 
     // all or none (CHANNELS section 4): a block the class cannot hold whole takes nothing
-    if ( cls->free_count < needed )
+    if ( !rn_send_store_fits( store, bytes ) )
         return RN_CHUNK_NONE;
 
     uint32_t first = RN_LINK_END;
@@ -553,6 +562,57 @@ int rn_connection_memory_decide( const rn_region_t * region )
     return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
+int rn_region_send_fit_store( const rn_region_t * region, int bytes )
+{
+    // tla/RNConnectionMemory.tla, Use's guard: the decision rn_region_send_alloc
+    // acts on, read alone by the room query
+    rocketnet_assert( region );
+
+    // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
+    if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
+        return RN_SEND_FIT_REFUSED;
+
+    // sticky exhaustion: once exhausted, every send is refused until reset
+    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
+    if ( region->exhausted )
+        return RN_SEND_FIT_EXHAUSTED;
+
+    if ( region->descriptors_free == 0 )
+        return RN_SEND_FIT_QUEUE_FULL;
+
+    if ( !rn_send_store_fits( &region->store, bytes ) )
+        return RN_SEND_FIT_STORE_FULL;
+
+    return RN_SEND_FIT_OK;
+}
+
+// A refused allocation's effects, by its decision. Exhaustion is a counted
+// refusal, never growth (R1, 4), and nothing is taken from either pool when
+// one of them refuses. It is also the end of the connection: the region is
+// exhausted (tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
+// the next decision. A send refused while the region stays exhausted is
+// counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names this refusal,
+// on every refused send, not just at the transition to exhausted.
+static void rn_region_send_refuse( rn_region_t * region, int fit )
+{
+    switch ( fit )
+    {
+        case RN_SEND_FIT_EXHAUSTED:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+            break;
+        case RN_SEND_FIT_QUEUE_FULL:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+            rn_region_exhaust( region );
+            break;
+        case RN_SEND_FIT_STORE_FULL:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+            rn_region_exhaust( region );
+            break;
+        default:
+            break;                                              // RN_SEND_FIT_REFUSED: the caller's to count
+    }
+}
+
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
@@ -561,39 +621,15 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
     // again), Kick (disconnect) and Reuse (reset).
     rocketnet_assert( region );
 
-    // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
-    if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
-        return RN_DESCRIPTOR_NONE;
-
-    // sticky exhaustion: once exhausted, every send is refused until reset
-    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted).
-    // The refusal is counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names
-    // this refusal, on every refused send, not just at the transition to exhausted.
-    if ( region->exhausted )
+    const int fit = rn_region_send_fit_store( region, bytes );
+    if ( fit != RN_SEND_FIT_OK )
     {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
-        return RN_DESCRIPTOR_NONE;
-    }
-
-    // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
-    // taken from either pool when one of them refuses. It is also the end of
-    // the connection: the region is exhausted (tla/RNConnectionMemory.tla,
-    // Exhaust) and its owner kicks it on the next decision.
-
-    if ( region->descriptors_free == 0 )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-        rn_region_exhaust( region );
+        rn_region_send_refuse( region, fit );
         return RN_DESCRIPTOR_NONE;
     }
 
     const uint32_t chunk = rn_send_store_alloc( &region->store, bytes );
-    if ( chunk == RN_CHUNK_NONE )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-        rn_region_exhaust( region );
-        return RN_DESCRIPTOR_NONE;
-    }
+    rocketnet_assert( chunk != RN_CHUNK_NONE );                 // the decision found its chunks
 
     const uint32_t d = region->descriptors_free_head;
     rocketnet_assert( d < region->queue );
@@ -728,40 +764,58 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     descriptor->span_next = RN_DESCRIPTOR_NONE;
 }
 
+int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start )
+{
+    // tla/RNConnectionMemory.tla, UseSpan's guard: the decision
+    // rn_region_send_alloc_span acts on, read alone by the room query
+    rocketnet_assert( region );
+
+    if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
+        return RN_SEND_FIT_REFUSED;
+
+    // sticky exhaustion, the same guard as rn_region_send_fit_store: Use (and
+    // UseSpan) in tla/RNConnectionMemory.tla require ~exhausted, so an
+    // exhausted region takes no span until rn_region_reset, even when acks
+    // have returned room
+    if ( region->exhausted )
+        return RN_SEND_FIT_EXHAUSTED;
+
+    if ( region->descriptors_free == 0 )
+        return RN_SEND_FIT_QUEUE_FULL;
+
+    uint32_t start = 0;
+    if ( !rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start ) )
+        return RN_SEND_FIT_STORE_FULL;
+
+    if ( out_start )
+        *out_start = start;
+    return RN_SEND_FIT_OK;
+}
+
+int rn_region_send_fit( const rn_region_t * region, int bytes )
+{
+    return rn_region_send_is_span( bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes );
+}
+
+uint32_t rn_region_send_take( rn_region_t * region, int bytes )
+{
+    return rn_region_send_is_span( bytes ) ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
+}
+
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
     // is tla/RNRing.tla's PlaceSingle on the sender's side
     rocketnet_assert( region );
 
-    if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
-        return RN_DESCRIPTOR_NONE;
-
-    // sticky exhaustion, the same guard as rn_region_send_alloc: Use (and
-    // UseSpan) in tla/RNConnectionMemory.tla require ~exhausted, so an
-    // exhausted region takes no span until rn_region_reset, even when acks
-    // have returned room; every refused send counts MESSAGE_MEMORY_EXHAUSTED
-    if ( region->exhausted )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
-        return RN_DESCRIPTOR_NONE;
-    }
-
-    if ( region->descriptors_free == 0 )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-        rn_region_exhaust( region );
-        return RN_DESCRIPTOR_NONE;
-    }
-
-    const uint64_t len16 = rn_span_round16( (uint64_t) bytes );
     uint32_t start = 0;
-    if ( !rn_span_place( region, len16, &start ) )
+    const int fit = rn_region_send_fit_span( region, bytes, &start );
+    if ( fit != RN_SEND_FIT_OK )
     {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-        rn_region_exhaust( region );
+        rn_region_send_refuse( region, fit );
         return RN_DESCRIPTOR_NONE;
     }
+    const uint64_t len16 = rn_span_round16( (uint64_t) bytes );
 
     const uint32_t d = region->descriptors_free_head;
     rocketnet_assert( d < region->queue );
@@ -976,22 +1030,18 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
     rocketnet_assert( region );
     uint64_t free_room = 0;
     uint64_t pool = 0;
-    int fits = 0;
     if ( bytes >= 1 && (uint32_t) bytes <= region->max_message_bytes )
     {
-        if ( bytes >= (int) RN_SPAN_MIN_BYTES )
+        if ( rn_region_send_is_span( bytes ) )
         {
             free_room = region->span_bytes - rn_span_used( region );
             pool = region->span_bytes;
-            uint32_t start = 0;
-            fits = rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start );
         }
         else
         {
             const rn_store_class_t * cls = &region->store.classes[rn_send_store_class_for( bytes )];
             free_room = (uint64_t) cls->free_count * cls->chunk_bytes;
             pool = (uint64_t) cls->num_chunks * cls->chunk_bytes;
-            fits = cls->free_count >= rn_send_store_chunks_needed( bytes );
         }
     }
     if ( free_bytes )
@@ -1000,7 +1050,7 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
         *pool_bytes = pool;
     if ( free_messages )
         *free_messages = region->descriptors_free;
-    return fits && region->descriptors_free > 0 && !region->exhausted;
+    return rn_region_send_fit( region, bytes ) == RN_SEND_FIT_OK;      // the allocation's own decision
 }
 
 int rn_region_send_room_watch( rn_region_t * region )

@@ -220,20 +220,27 @@ uint32_t rn_channels_enabled_codes( const struct rn_channels_t * channels )
     return channels ? channels->enabled_codes : 0;
 }
 
-int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t channel )
+int rn_channels_send_allowed( const struct rn_channels_t * channels, int type, uint32_t channel )
 {
     if ( !channels || type < 0 || type >= ROCKETNET_CHANNEL_NUM_TYPES || channel >= channels->num_channels )
         return ROCKETNET_CHANNEL_SEND_BAD_ARGUMENT;
 
     if ( ( channels->enabled_types & ( 1u << type ) ) == 0 )
-    {
-        // 7.5: a send with a reliability outside the mask is refused and
-        // counted, never queued.
-        rn_channels_count( channels->region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED );
         return ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED;
-    }
 
     return ROCKETNET_CHANNEL_SEND_OK;
+}
+
+int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t channel )
+{
+    const int result = rn_channels_send_allowed( channels, type, channel );
+
+    // 7.5: a send with a reliability outside the mask is refused and
+    // counted, never queued.
+    if ( result == ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED )
+        rn_channels_count( channels->region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED );
+
+    return result;
 }
 
 // tla/RNChannel.tla Enqueue
@@ -879,7 +886,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
         return NULL;
 
     // the room is the region's, one descriptor and its bytes; no room exhausts it
-    const uint32_t d = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, (int) bytes ) : rn_region_send_alloc( region, (int) bytes );
+    const uint32_t d = rn_region_send_take( region, (int) bytes );
     if ( d == RN_DESCRIPTOR_NONE )
         return NULL;
 

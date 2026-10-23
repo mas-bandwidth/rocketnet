@@ -133,6 +133,11 @@ uint32_t rn_channels_enabled_codes( const struct rn_channels_t * channels );
 
 int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t channel );
 
+// The same decision, counted nowhere: what rn_channels_send_check returns,
+// for the room query (rn_endpoint_send_room), which changes no state.
+
+int rn_channels_send_allowed( const struct rn_channels_t * channels, int type, uint32_t channel );
+
 // RNChannel!Enqueue, the ordered half: ordering = ordered_write++, then
 // sequenced_write = 0. The reset runs although no sequenced type is enabled,
 // so enabling one changes no ordered trace (7.1).

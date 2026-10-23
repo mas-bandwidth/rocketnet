@@ -248,6 +248,11 @@ void rn_message_object_send_packets( struct rn_message_object_t * object );
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
+
+// The room query: true when rn_message_object_start with these arguments, now,
+// would be given its room; false when it would be dropped or refused, or would
+// find no room and end the connection (R5). Pure, O(1), allocates nothing.
+bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
 
