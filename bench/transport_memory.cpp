@@ -152,6 +152,7 @@ int main(int argc, char ** argv)
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
         "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
+        transport, config.max_clients, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, config.max_fragmented_messages,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,

@@ -3778,8 +3778,8 @@ void rocketnet_test_public_client_server_queries()
 
 void rocketnet_test_config_precedence()
 {
-    // DEFAULT < STRUCT < ENV, observed through the one config field with a
-    // public query: max_payload_bytes
+    // the transport's payload capacity is a constant now, so the removed
+    // field's env name is inert: nothing displaces anything
 
     struct rocketnet_test_env_guard_t payload_guard;
     rocketnet_test_env_clear( &payload_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
@@ -3796,20 +3796,13 @@ void rocketnet_test_config_precedence()
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
-    // struct displaces default
-
-    config.max_payload_bytes = 18000;
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // env displaces struct
+    // the removed field's env name moves nothing: the transport's payload
+    // capacity is a constant, not a configured one
 
     setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     rocketnet_test_env_restore( &payload_guard );

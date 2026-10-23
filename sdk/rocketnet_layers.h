@@ -35,15 +35,6 @@ extern "C" {
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
-/// The transport's fragmentation capacity, derived from the limits: a
-/// deployment can never fragment a payload beyond the wire's 256-fragment
-/// ceiling, and the message tier refuses anything above its own maximum. An
-/// unreliable message is held to the smaller of max_message_bytes and this
-/// bound (the public header states the rule beside max_message_bytes).
-#define ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES \
-    ( ROCKETNET_MAX_MESSAGE_BYTES < ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ? \
-      ROCKETNET_MAX_MESSAGE_BYTES : ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
-
 /// The largest message one packet carries, written in place: the payload
 /// capacity less the one form byte.
 #define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 )

@@ -84,7 +84,7 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     check( after.reassembly_bytes == before.reassembly_bytes );
     check( after.send_arena_bytes == before.send_arena_bytes );
     check( after.total_bytes == before.total_bytes );
-    const int payload = transport.max_payload_bytes ? transport.max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     check( payload == 16384 );
     check( rocketnet_reassembly_memory_allowed_delivered( 1000, 8, payload,
         rocketnet_server_reassembly_delivered_capacity( 1000, 8 ), rocketnet_server_reassembly_delivered_bytes( 1000, 8, payload ) ) );
@@ -133,10 +133,10 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     uint32_t kbps = 0;
     check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     check( message.max_message_bytes == 131072 );
-    check( !client_transport.max_payload_bytes || client_transport.max_payload_bytes == 16384 );
+    check( !client_transport.max_fragmented_messages || client_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
     check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     check( message.max_message_bytes == 65536 );
-    check( !server_transport.max_payload_bytes || server_transport.max_payload_bytes == 16384 );
+    check( !server_transport.max_fragmented_messages || server_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
     client_env.set( "131072junk" );
     check( !rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
@@ -163,6 +163,25 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
 {
     rocketnet_quiet( 1 );
     message_limit_now = 1000.0;
+
+    // one size field: neither public config carries a second payload limit,
+    // and the transport's fragmentation capacity is a derived constant
+
+#ifdef ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES
+    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES == 361728 );
+#else
+    check( false );                              // the transport's fragmentation capacity is a define
+#endif
+    int num_client_fields = 0;
+    const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
+    check( num_client_fields > 0 );
+    for ( int i = 0; i < num_client_fields; i++ )
+        check( strcmp( client_fields[i].name, "max_payload_bytes" ) != 0 );
+    int num_server_fields = 0;
+    const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
+    check( num_server_fields > 0 );
+    for ( int i = 0; i < num_server_fields; i++ )
+        check( strcmp( server_fields[i].name, "max_payload_bytes" ) != 0 );
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     uint8_t seed[32];

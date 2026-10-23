@@ -109,7 +109,6 @@ static long rocketnet_transport_control_rss_bound_mb()
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
         config.max_clients = clients;
-        config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         config.max_fragmented_messages = 1;
         rocketnet_server_memory_plan_t plan;
         if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )

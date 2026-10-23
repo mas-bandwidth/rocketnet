@@ -176,7 +176,7 @@ static rocketnet_server_socket_process_packets_t * receive(void * p)
     return &f->received;
 }
 
-static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES)
+static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, int clients, bool staged)
 {
     f->staged = staged;
     rocketnet_server_transport_config_t config;
@@ -421,7 +421,7 @@ static void test_single_frame_arena()
     {
         auto * f = new control_fixture_t(); f->capacity = 1;
         rocketnet_server_transport_io_operations_t operations;
-        auto * server = make_server(f, &operations, 1, staged != 0, 5000);
+        auto * server = make_server(f, &operations, 1, staged != 0);
         checked_seals = 0; check_arena_copy = true;
         for (int attempt = 0; attempt < 2; ++attempt)
         {

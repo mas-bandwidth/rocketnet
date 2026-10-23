@@ -3521,7 +3521,7 @@ int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transp
     if ( !rocketnet_api_null_guard( server_transport ) )
         return 0;
     rocketnet_assert( server_transport );
-    return ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
+    return server_transport->max_payload_bytes;
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )

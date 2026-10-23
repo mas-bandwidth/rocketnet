@@ -20,6 +20,14 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_fragment.h"
+
+// The public fragmentation capacity and the wire's fragment ceiling are one
+// number: the public header derives it from the payload capacity, the wire
+// derives it from the fragment stride.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES ==
+    ( ROCKETNET_MAX_MESSAGE_BYTES < ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ?
+      ROCKETNET_MAX_MESSAGE_BYTES : ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ),
+    "the public fragmentation capacity and the fragment ceiling agree" );
 #include "rocketnet_base64.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"

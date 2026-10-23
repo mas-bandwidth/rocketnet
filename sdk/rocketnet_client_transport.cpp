@@ -2304,9 +2304,10 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
 
 int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t * client_transport )
 {
-    if ( !client_transport )
+    if ( !rocketnet_api_null_guard( client_transport ) )
         return 0;
-    return ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
+    rocketnet_assert( client_transport );
+    return client_transport->max_payload_bytes;
 }
 
 // the batch the copying cursor above walks, exposed whole: by count and

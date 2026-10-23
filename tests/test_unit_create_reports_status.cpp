@@ -361,7 +361,6 @@ static void test_create_reports_status_config_refusals()
     // geometry creates.
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.max_fragmented_messages = 256;
-    client_config.max_payload_bytes = 305408;
     status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );
     check( budget_client != NULL );

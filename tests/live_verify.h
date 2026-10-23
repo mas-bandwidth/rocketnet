@@ -38,13 +38,18 @@
 #define ROCKETNET_LIVE_UNRELIABLE_LIMIT         1411u      // 1415 - 1 - 3, codes 0 and 5 single record
 #define ROCKETNET_LIVE_SLOTS                    32u
 
+// The transport's default payload capacity (the SDK's
+// ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, internal to the library): the live
+// schedule's payload bound, now that the field is gone.
+
 // The limits the schedule is computed against (section 4, "The modes'
 // maxima"), and the run seed of the bucket rule.
+#define ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES 16384
+
 typedef struct rocketnet_live_config_t
 {
     uint32_t seed;
     uint32_t max_message_bytes;         // the message config's, default 262,144
-    uint32_t max_payload_bytes;         // the sender transport's, default 16,384
 } rocketnet_live_config_t;
 
 // The named results of a check (section 3, "What the checker records").
@@ -115,7 +120,7 @@ static inline uint32_t rocketnet_live_mode_max( const rocketnet_live_config_t * 
     {
         uint32_t m = ROCKETNET_LIVE_MAX_RECORD_BYTES;
         if ( mmb < m ) m = mmb;
-        const uint32_t payload = config->max_payload_bytes > ROCKETNET_LIVE_CODE1_OVERHEAD ? config->max_payload_bytes - ROCKETNET_LIVE_CODE1_OVERHEAD : 1u;
+        const uint32_t payload = ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES > ROCKETNET_LIVE_CODE1_OVERHEAD ? ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - ROCKETNET_LIVE_CODE1_OVERHEAD : 1u;
         if ( payload < m ) m = payload;
         return m;
     }
@@ -188,7 +193,7 @@ static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * con
             rocketnet_live_boundary_add( list, &n, full, m );
             rocketnet_live_boundary_add( list, &n, full + 1, m );
         }
-        const int64_t payload_max = (int64_t) config->max_payload_bytes - o;
+        const int64_t payload_max = (int64_t) ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - o;
         rocketnet_live_boundary_add( list, &n, payload_max - 1, m );
         rocketnet_live_boundary_add( list, &n, payload_max, m );
         rocketnet_live_boundary_add( list, &n, payload_max + 1, m );
