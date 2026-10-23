@@ -74,6 +74,13 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 // measures wall time is not measured against the rest of the suite. The live
 // message matrix holds a wall-clock pass bound (functional/live_matrix.cpp), so
 // it is a group of its own, after every other case.
+//
+// The nightly tier on macOS (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1):
+// the hard-killed client cells on the portable server, each of which waits
+// out the real 10 s token timeout, and the connect/disconnect x1000 pairs
+// other than msgx/msgx. The msgx cells of each stay on every commit, as does
+// the msgx/msgx pair of destroy-under-traffic, whose case runs the other three
+// pairs only in the nightly tier (functional/posix_lifecycle_stress.cpp).
 static int rocketnet_functional_test_group( const char * name )
 {
 #if defined(__APPLE__)
@@ -83,6 +90,14 @@ static int rocketnet_functional_test_group( const char * name )
     // flood and every assertion intact, but run it apart from those cases.
     if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
         return 3;
+    static const char * const nightly[] = {
+        "test_posix_hard_killed_client_portable_",
+        "test_posix_connect_disconnect_1000_portable_",
+        "test_posix_connect_disconnect_1000_msgx_portable",
+    };
+    for ( const char * prefix : nightly )
+        if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
+            return rocketnet_posix_hard_killed_peer_test_group( name ) | SUITE_GROUP_NIGHTLY;
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;

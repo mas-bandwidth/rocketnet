@@ -18,6 +18,8 @@
     is held to that instead. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
     the slowest cases and the peak resident sets after the results.
+    ROCKETNET_TEST_NIGHTLY=1 adds the nightly tier: the cases group_of marks
+    with SUITE_GROUP_NIGHTLY, which a per-commit run leaves out.
 */
 
 #pragma once
@@ -65,6 +67,18 @@ extern char **environ;
 // overrides it with a positive value. A case process that reports its plan's
 // bound (tests/plan_rss.h) is held to that instead.
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+
+// group_of's flag for a case of the nightly tier: the case runs, in the group
+// the rest of the value names, only under ROCKETNET_TEST_NIGHTLY=1. The cases
+// moved there each wait out a real protocol timeout or repeat a transport
+// pair whose every assertion a per-commit case of the same name keeps.
+#define SUITE_GROUP_NIGHTLY 0x100
+
+inline bool suite_nightly()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
+}
 
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
@@ -453,12 +467,20 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // or moved as a whole string: under MemorySanitizer the prebuilt
     // libstdc++ copies a short (SSO) string without telling the shadow, so a
     // copied name reads as uninitialised (tools/run_msan.sh).
+    // A registered case group_of marks SUITE_GROUP_NIGHTLY is not collected
+    // outside the nightly tier.
     const size_t first = pending.size();
-    const int num_registered = count();
+    const bool nightly = suite_nightly();
+    int num_registered = 0;
+    for ( int i = 0; i < count(); i++ )
+        if ( nightly || !group_of || ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) == 0 )
+            num_registered++;
     pending.resize( first + (size_t) num_registered + (size_t) nexecs );
-    for ( int i = 0; i < num_registered; i++ )
+    for ( int i = 0, kept = 0; i < count(); i++ )
     {
-        suite_case & item = pending[first + (size_t) i];
+        if ( !nightly && group_of && ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) != 0 )
+            continue;
+        suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
         item.group = 0;
     }
@@ -497,7 +519,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // own group, so a group runs in parallel within itself and alone. Within
     // a group the cases run in layer order (suite_layer_of).
     for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+        pending[i].group = group_of ? ( group_of( pending[i].name.c_str() ) & ~SUITE_GROUP_NIGHTLY ) : 0;
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
         if ( a.group != b.group )
             return a.group < b.group;

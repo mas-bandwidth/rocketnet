@@ -1122,6 +1122,23 @@ static void posix_sender_thread( posix_sender_t * sender )
         rocketnet_client_transport_send_packet( sender->client, payload, (int) sizeof( payload ) );
 }
 
+// the macOS nightly tier (functional/main.cpp, ROCKETNET_TEST_NIGHTLY=1):
+// destroy-under-traffic is one case over the four macOS pairs, and on every
+// commit it runs the msgx/msgx pair alone, with every assertion; the nightly
+// tier runs all four
+static bool posix_destroy_under_traffic_cell_runs( const posix_cell_t * cell )
+{
+#if defined(__APPLE__)
+    const char * nightly = getenv( "ROCKETNET_TEST_NIGHTLY" );
+    if ( nightly && strcmp( nightly, "1" ) == 0 )
+        return true;
+    return strcmp( cell->server_transport_io, "msgx" ) == 0 && strcmp( cell->client_transport_io, "msgx" ) == 0;
+#else
+    (void) cell;
+    return true;
+#endif
+}
+
 void rocketnet_test_posix_destroy_under_traffic_100()
 {
     const char * case_name = "test_posix_destroy_under_traffic_100";
@@ -1132,7 +1149,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
     for ( int cell_index = 0; cell_index < posix_cell_count; cell_index++ )
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
-        if ( !posix_cell_runs( case_name, cell ) )
+        if ( !posix_cell_runs( case_name, cell ) || !posix_destroy_under_traffic_cell_runs( cell ) )
             continue;
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
