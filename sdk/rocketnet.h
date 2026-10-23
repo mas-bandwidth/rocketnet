@@ -1011,6 +1011,9 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// field except callbacks and config_bytes names its environment variable.
 /// Overrides are logged with the displaced value. Invalid values refuse
 /// create. Values are not clamped. Empty variables are ignored and logged.
+/// Create reads the environment once, before it validates the config and
+/// sizes memory; connect and start use that resolved config and never read
+/// the environment again.
 ///
 /// Integers use decimal. Byte arrays use base64 with exactly the field's
 /// length. Strings are used as-is.

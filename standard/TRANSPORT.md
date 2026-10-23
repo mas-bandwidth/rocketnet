@@ -197,6 +197,12 @@ of both configurations:
 5. An endpoint MUST refuse to create, with an error naming the field, when any
    field holds a value outside its valid range, from the struct or from the
    environment alike. It MUST NOT clamp or otherwise correct a value.
+6. An endpoint MUST resolve its configuration completely, every field through
+   rule 2, once at create, before it validates the configuration and before
+   it sizes any memory from it. It MUST keep that one resolved configuration
+   for its lifetime: client connect and server start MUST NOT read the
+   environment again, so a variable changed after create has no effect on
+   that endpoint.
 
 The fields of the connection layer. A Value of `none` is a field with no
 numeric default: a key the deployment sets, or a bytes field whose unset

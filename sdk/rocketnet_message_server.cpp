@@ -1296,10 +1296,37 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
     return rocketnet_message_server_create_ex( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, NULL, 0 );
 }
 
+// resolved_memory_budget NULL: the transport create reads the environment
+// (rocketnet_message_server_create_ex); set: transport_config is already
+// resolved and start reads nothing (rocketnet_message_server_create_resolved)
+static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
+                                                                     const struct rocketnet_server_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
+                                                                     const uint64_t * resolved_memory_budget );
+
 struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited )
+{
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, NULL );
+}
+
+struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( void * context, const char * address,
+                                                                              const struct rocketnet_server_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
+                                                                              uint64_t memory_budget_bytes )
+{
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, &memory_budget_bytes );
+}
+
+static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
+                                                                     const struct rocketnet_server_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
+                                                                     const uint64_t * resolved_memory_budget )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -1341,7 +1368,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
+    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ?
+        rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status ) :
+        rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
     if ( !transport )
         return NULL;
 
