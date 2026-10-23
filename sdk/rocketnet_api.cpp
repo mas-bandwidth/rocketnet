@@ -888,6 +888,7 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
         case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION;
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH;
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED;
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:      return ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED;
         default:                                                    return ROCKETNET_CLIENT_STATE_DISCONNECTED;
     }
 }
@@ -897,6 +898,7 @@ const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 {
     switch ( (int) state )
     {
+        case ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED:           return "MESSAGE_NOT_RECEIVED";
         case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:       return "MESSAGE_MEMORY_EXHAUSTED";
         case ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH:                return "CONFIG_MISMATCH";
         case ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION:             return "PROTOCOL_VIOLATION";
@@ -929,6 +931,7 @@ const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_
         case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:        return "RELIABLE_TIMED_OUT";
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return "MESSAGE_MEMORY_EXHAUSTED";
         case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return "SERVER_DISCONNECTED";
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:      return "MESSAGE_NOT_RECEIVED";
         default:                                                    return "UNKNOWN";
     }
 }

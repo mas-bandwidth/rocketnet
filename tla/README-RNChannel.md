@@ -60,6 +60,7 @@ not a claim that every message has a permanently allocated payload buffer.
 | `OpenPacket`, `received`, `live`, `chunks` | Transport replay suppression, per-number duplicate suppression, ring claims and indexed chunk placement, §§6.3, 8.3; restates RNWindow `OpenPacket`. |
 | `DeliverMessage`, `trace` | Whole-message and per-channel ordering gate; reset sequenced receive watermark, §§7.2, 8.3. |
 | `FixBatch`, `SendAck`, `EndUpdate` | Drain all ready messages before publishing ACKs; keep returned payloads live until the next update, §6.3 P6. |
+| `Take`, `taken`, `notReceived`, `misused`, `deliveredCount` | The application receives a prefix of the update's queue (`Take`, only with `AppMayLeave`). `EndUpdate` moves what was taken into `trace`; a delivery never taken ends the connection as misuse and is counted once in `notReceived` (standard/MESSAGES.md m1.6, `rn_message_object_update`'s `MESSAGE_NOT_RECEIVED`). A misused connection takes no further step. Without `AppMayLeave` the application takes the whole queue, the documented contract, and the state space is unchanged. |
 | `ReceiveAck` | Translate packet IDs into all reliable references; unknown/evicted packet IDs do nothing, §6.2; restates RNWindow `ReceiveAck`. |
 | `DropUnreliableForBudget`, `uDropped` | A bounded code-0 budget-drop option, counted separately from transport loss; no reliable number or resend, §§9.1–9.3 and R6. |
 | `waitedForRoom`, `roomReturned` | Ghost observation of a large message queued without room and a later transport ACK that returns room. |
@@ -90,6 +91,19 @@ This is not a relational two-execution equivalence theorem, nor a proof of
 future sequenced delivery semantics. A missing reset has a real failing probe
 transition despite the enabled wire types remaining only code 0 and
 RELIABLE_ORDERED.
+
+`NoSilentDrop` checks that every delivery made is in `trace`, still in this
+update's queue, or counted in `notReceived`: a delivery the application never
+took is never dropped silently. `NotReceivedEndsConnection` checks that a
+nonzero count always ends the connection. Both run in
+`MCRNChannelNotReceived.cfg`, where the application may take any prefix of
+each update's queue, together with the ordering, whole-message, placement and
+bound invariants: a misuse end leaves each channel's trace a prefix of what
+was sent. `MCRNChannelBrokenSilentDrop.cfg` is the update before
+standard/MESSAGES.md m1.6 (`BrokenSilentDrop`): the untaken deliveries are
+dropped, nothing is counted and the connection carries on, and TLC finds the
+`NoSilentDrop` violation. The heavier controls keep `AppMayLeave` FALSE so
+their state spaces and budgets are those measured before `Take` existed.
 
 `EveryOrderedMessageDelivered` requires the complete finite accepted workload
 to reach the application. `NoHeadOfLineDeadlock` checks the observed
@@ -139,6 +153,8 @@ the expected invariant (exit 12) or temporal property (exit 13) failed.
 | `MCRNChannelBrokenPartialChunk.cfg` | 75,941 | 27,679 | 2.020 | invariant: `WholeMessagesOnly` |
 | `MCRNChannelBrokenChunkBlocksSmall.cfg` | 180,027 | 63,169 | 33.430 | temporal: `NoHeadOfLineDeadlock` |
 | `MCRNChannelBrokenNoSequencedReset.cfg` | 18 | 15 | 0.679 | invariant: `OrderedTraceUnchangedBySequenced` |
+| `MCRNChannelNotReceived.cfg` | 21,199 | 8,630 | 1.578 | pass (safety, application may leave deliveries; measured 2026-10-23) |
+| `MCRNChannelBrokenSilentDrop.cfg` | 866 | 388 | 0.848 | invariant: `NoSilentDrop` (measured 2026-10-23) |
 
 The normal case uses W=2. The safety and out-of-order cases use W=4 so a
 complete large message can overtake the missing first small message; W=2
