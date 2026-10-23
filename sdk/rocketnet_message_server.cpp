@@ -529,6 +529,30 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         result = ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED;
     }
 
+    // RNChannel EndUpdate, the misuse end (standard/MESSAGES.md m1.6): every
+    // delivery of the last update is handed to the application before this
+    // one. The transport acked each one already, so a delivery still waiting
+    // here would be lost with the sender told it arrived. It is the
+    // application's error, handled like a send with no room: counted, an
+    // assert in a debug build, and that connection ends with
+    // MESSAGE_NOT_RECEIVED. Nothing is dropped silently.
+    for ( int i = 0; i < object->num_connections; i++ )
+    {
+        if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
+            continue;                                   // a kicked connection's deliveries were never offered
+        rn_message_connection_t * connection = &object->connections[i];
+        const uint32_t deliveries = connection->ordered.channels.deliveries;
+        uint32_t waiting = 0;
+        for ( uint32_t k = 0; k < deliveries; k++ )
+            waiting += connection->hot->views[k] == RN_MESSAGE_VIEW_WAITING ? 1u : 0u;
+        if ( waiting == 0 )
+            continue;
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED, waiting );
+        rocketnet_error( "message update with %u delivered message(s) not received on connection %d: loop receive_messages until NULL before update", waiting, i );
+        rocketnet_assert( waiting == 0 && "every delivered message is received before the next update" );
+        rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
+    }
+
     rn_message_object_close_in_place( object );
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, false );
