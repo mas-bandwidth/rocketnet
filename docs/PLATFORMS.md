@@ -134,6 +134,29 @@ new support claim:
 - `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label, and
   its fuzz-macos job on `self-hosted, macOS, ARM64, rocketnet-macos`.
 
+## The Windows verification runs
+
+The table above is the support claim. The table below is not: it records the
+Windows Debug, AddressSanitizer and Application Verifier runs, which are made
+on the native Windows member (`self-hosted, Windows, X64, rocketnet-windows`),
+one run at a time, and are owed to the current API whenever the source moves
+under them. A row that says "not made" is a row that was not run, not a row
+that passed. `BUILDING.md` names the commands.
+
+| Group | Configuration | Runs | Result | Date |
+| --- | --- | --- | --- | --- |
+| Debug | Debug | `test.exe`, `test_lifecycle.exe`, `test_iocp.exe`, `functional.exe` (no pin, `ROCKETNET_SERVER_TRANSPORT=iocp`, `ROCKETNET_SERVER_TRANSPORT=rio`) | not made | 2026-10-24 |
+| AddressSanitizer | Release | the same six runs | not made | 2026-10-24 |
+| AddressSanitizer | Debug | the same six runs | not made | 2026-10-24 |
+| Application Verifier | Debug | `test_iocp.exe`, `test_lifecycle.exe`, `functional.exe` (no pin, `iocp`, `rio`) | not made | 2026-10-24 |
+
+The 2026-10-24 rows were recorded on Linux, where no native Windows member is
+reachable: the runs themselves were not made there. The Linux Release gate
+(`./bin/test` and `./bin/functional`) was run there and was green. The nightly
+Windows AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) runs the
+Release group every night; the Debug AddressSanitizer configuration is
+build-checked there and its suites are owed to the member.
+
 ## Checking the table
 
 From the repository root:
