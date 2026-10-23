@@ -9,7 +9,7 @@
 
 #include "test_unit_registry.h"
 
-#include "tools/load_split_schedule.h"
+#include "../tools/load_split_schedule.h"
 
 #include <stdint.h>
 

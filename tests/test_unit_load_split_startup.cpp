@@ -8,7 +8,7 @@
 
 #include "test_unit_registry.h"
 
-#include "tools/load_split_startup.h"
+#include "../tools/load_split_startup.h"
 
 #define check rocketnet_unit_check
 
