@@ -448,6 +448,26 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
                                                                     ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
 }
 
+// every delivery is received before the next update (standard/MESSAGES.md
+// m1.6: one left waiting ends the connection). A scenario that does not read
+// its deliveries itself drains them here.
+
+static void reset_loopback_drain_client( rocketnet_message_client_t * client )
+{
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    while ( rocketnet_message_client_receive( client, NULL, &data, &bytes ) )
+        rocketnet_message_client_release( client, data );
+}
+
+static void reset_loopback_drain_server( rocketnet_message_server_t * server )
+{
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    while ( rocketnet_message_server_receive( server, NULL, NULL, &data, &bytes ) )
+        rocketnet_message_server_release( server, data );
+}
+
 static void reset_loopback_step( reset_loopback_t * f )
 {
     f->now += 0.01;
@@ -539,11 +559,13 @@ static void reset_loopback_slot_reuse_scenario()
     check( rocketnet_message_server_send( f.server, a_slot, 1,
         ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, fragment, sizeof(fragment) ) != 0 );
     reset_loopback_step( &f );
+    reset_loopback_drain_client( f.clients[0] );
     rocketnet_server_transport_poison_slot_for_test( rocketnet_message_server_transport( f.server ), a_slot );
 
     rn_message_object_kick( &f.server->object, a_slot, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( rocketnet_message_server_disconnect_reason( f.server, a_slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     reset_loopback_step( &f );
+    reset_loopback_drain_client( f.clients[0] );
     check( !rocketnet_message_server_client_connected( f.server, a_slot ) );
     reset_loopback_step( &f );
     check( rocketnet_message_client_state( f.clients[0] ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
@@ -735,7 +757,11 @@ static void reset_loopback_server_sweep_timeout_scenario()
     check( rocketnet_message_client_send( f.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
     check( rocketnet_message_server_send( f.server, a_slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
     for ( int i = 0; i < 40; i++ )
+    {
         reset_loopback_step( &f );
+        reset_loopback_drain_server( f.server );
+        reset_loopback_drain_client( f.clients[0] );
+    }
 
     // the client goes silent: only the server runs from here
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );

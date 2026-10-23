@@ -378,9 +378,12 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
 static void capture_pair_pump( capture_pair_t * pair )
 {
     capture_now = pair->time;
+    // every delivery is received before the next update (standard/MESSAGES.md m1.6)
     rocketnet_client_update( pair->client, pair->time );
+    while ( rocketnet_client_receive_messages( pair->client ) != NULL ) {}
     rocketnet_client_send_packets( pair->client );
     rocketnet_server_update( pair->server, pair->time );
+    while ( rocketnet_server_receive_messages( pair->server ) != NULL ) {}
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }

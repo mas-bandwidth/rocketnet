@@ -949,7 +949,15 @@
     /* RocketNet never sends either, and in XDP mode no kernel socket */ \
     /* listens on the port. REFUSAL. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION: Counts datagrams to the server address and port that the kernel prefilter dropped because IPv4 options or IPv6 extension headers sat in front of UDP. Unit: occurrences. Class: refusal; family: none. */ \
-    X( XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, REFUSAL, NONE ) \
+    \
+    /* Messages delivered in an update and never handed to the */ \
+    /* application before the next update: API misuse, which ends the */ \
+    /* connection with ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED */ \
+    /* (standard/MESSAGES.md m1.6). REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED: Counts messages delivered in an update that the application never took with receive before the next update; the connection then ends with MESSAGE_NOT_RECEIVED. Unit: messages. Class: refusal; family: none. */ \
+    X( MESSAGE_NOT_RECEIVED, REFUSAL, NONE )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.
