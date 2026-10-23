@@ -1,23 +1,10 @@
 --------------------------- MODULE RNClientLinkStop ---------------------------
 (***************************************************************************)
-(* The client's disconnect burst through the development link simulator  *)
-(* and transport stop (sdk/rocketnet_client_transport.cpp).               *)
-(*                                                                         *)
-(* With a link simulator the burst is not sent by the receive worker: the *)
-(* disconnect (rocketnet_client_transport_disconnect) applies the loss    *)
-(* policy to each copy and stages the rest in the simulator's queue, which *)
-(* only the caller's thread drains, in a running update                   *)
-(* (rocketnet_client_link_drain).  The public disconnect requests stop    *)
-(* right after (rocketnet_client_disconnect), and an update once stop is  *)
-(* requested only finishes the stop; it never drains again.  Shutdown     *)
-(* updates hold the clock fixed (the wait helpers pass 1000.0), so a copy *)
-(* whose latency has not elapsed never comes due after stop either.       *)
-(*                                                                         *)
-(* Stop therefore sends every staged copy, due or held                    *)
-(* (rocketnet_client_link_drain_at_stop).  Defect restores what the code *)
-(* did before: "nodrain" (stop sends nothing; the soak's mass-disconnect  *)
-(* timeout) or "dueonly" (stop drains at the caller's clock, leaving held *)
-(* copies).  Both must break StopLeavesNothingStaged and BurstArrives.    *)
+(* The caller stages the disconnect burst in the development simulator.   *)
+(* Stop only publishes quit and transfers the queue to the worker.        *)
+(* WorkerComplete drains every surviving copy, including held latency,    *)
+(* before publishing stopped. Explicit step-driven tests run the same     *)
+(* completion action. Defect restores a missing or due-only drain.        *)
 (***************************************************************************)
 EXTENDS Naturals
 
@@ -64,21 +51,20 @@ Drain ==
     /\ due' = due - 1 /\ wire' = wire + 1
     /\ UNCHANGED <<phase, sealed, held, lost, received, freed>>
 
-\* rocketnet_client_transport_stop, the legacy branch the link simulator
-\* forces: rocketnet_client_link_drain_at_stop, then quit.
+\* The caller publishes quit without draining or invoking the backend.
 Stop ==
     /\ phase = "running" /\ sealed
     /\ phase' = "stopping"
+    /\ UNCHANGED <<sealed, due, held, wire, lost, received, freed>>
+
+\* The worker acquires quit, drains the transferred queue, then completes.
+WorkerComplete ==
+    /\ phase = "stopping"
+    /\ phase' = "stopped"
     /\ CASE Defect = "nodrain" -> UNCHANGED <<due, held, wire>>
          [] Defect = "dueonly" -> due' = 0 /\ wire' = wire + due /\ UNCHANGED held
          [] OTHER              -> due' = 0 /\ held' = 0 /\ wire' = wire + due + held
     /\ UNCHANGED <<sealed, lost, received, freed>>
-
-\* The worker finishes the stop (rocketnet_client_transport_finish_stop).
-WorkerComplete ==
-    /\ phase = "stopping"
-    /\ phase' = "stopped"
-    /\ UNCHANGED <<sealed, due, held, wire, lost, received, freed>>
 
 \* The server reads a copy and frees the slot (the first one does it).
 ServerReceive ==
@@ -101,9 +87,11 @@ TypeOK ==
 \* Every copy is staged, on the wire, lost or read: none vanishes.
 BurstAccounted == sealed => due + held + wire + lost + received = Copies
 
-\* Once stop is requested nothing drains the simulator again, so nothing may
-\* be left in it.
-StopLeavesNothingStaged == phase # "running" => due + held = 0
+\* Completion, not the request, guarantees the transferred queue is empty.
+StopLeavesNothingStaged == phase = "stopped" => due + held = 0
+
+\* Requesting stop does no backend work; the queue is unchanged.
+StopDoesNotDrain == []((phase = "running" /\ phase' = "stopping") => UNCHANGED <<due, held, wire>>)
 
 \* A burst with any copy surviving the loss policy reaches the server.
 BurstArrives == (sealed /\ lost < Copies) ~> freed

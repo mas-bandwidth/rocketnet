@@ -142,8 +142,9 @@ struct alignas(64) rocketnet_client_stats_frame_t
 // The BASE receive worker owns fill, update owns the buffers it exposes, and
 // only indices cross the mutex. READY buffers are immutable; FREE buffers may
 // be claimed by the worker. Update exposes the oldest READY buffers that fit
-// its packet budget, processes them in order and returns them FREE within the
-// same update. Buffers beyond that budget stay READY for a later update.
+// its packet budget and processes them in order. Contended returns remain
+// caller-owned until a later update can publish them FREE without waiting.
+// Buffers beyond the packet budget stay READY for a later update.
 // Packet data is never copied or cleared while holding the mutex.
 struct rocketnet_client_legacy_receive_state_t
 {
@@ -154,6 +155,12 @@ struct rocketnet_client_legacy_receive_state_t
     int free[3] = { 0, 1, 2 };
     int free_head = 0;
     int free_count = 3;
+    // Only the caller touches these until it publishes the indices FREE.
+    int returned[3] = {};
+    int returned_count = 0;
+#if ROCKETNET_TEST_SEAMS
+    unsigned test_busy_mask = 0;
+#endif
 };
 
 /*
@@ -462,12 +469,13 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
         transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
 }
 
-// Stop sends everything the link simulator still holds, the disconnect burst
-// included. The caller's thread owns the simulator and only a running update
-// drains it; once stop is requested no update drains it again, and shutdown
-// updates hold the clock fixed, so a held packet would never come due. The
+// Shutdown completion sends everything the link simulator still holds, the
+// disconnect burst included. Stop publishes quit with release, transferring
+// the simulator from the caller to the worker; no running update can touch it
+// afterward. Step-driven transports do this in their explicit shutdown step.
+// Shutdown holds the clock fixed, so a held packet would never come due. The
 // loss and duplicate policy already ran at send; what remains leaves now,
-// ahead of its latency (tla/RNClientLinkStop.tla StopDrains).
+// ahead of its latency (tla/RNClientLinkStop.tla WorkerComplete).
 static void rocketnet_client_link_drain_at_stop( rocketnet_client_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -1392,9 +1400,9 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
     else
     {
-        rocketnet_client_link_drain_at_stop( client_transport );
         client_transport->quit.store( true, std::memory_order_release );
-        if ( ( !client_transport->thread && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
+        if ( ( !client_transport->thread && !client_transport->link_simulator &&
+               !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
             client_transport->stopped.store( true, std::memory_order_release );
     }
 }
@@ -1423,6 +1431,7 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_transport_flush_disconnect( client_transport );
+    rocketnet_client_link_drain_at_stop( client_transport );
     client_transport->stopped.store( true, std::memory_order_release );
 }
 
@@ -1675,19 +1684,39 @@ static void rocketnet_client_legacy_push( int * queue, int head, int * count, in
     ++*count;
 }
 
-// Take the oldest READY buffers that fit the packet budget in one short mutex
-// hold. Only indices move; a READY buffer is immutable, so reading its count
-// here is a load of a published int. The first is always taken; a later one
-// only while the update's receive batch (ROCKETNET_NUM_CLIENT_PACKETS) can
-// still hold its datagrams, the rest staying READY, in order, for the next
-// update. Returns the number of buffers exposed into exposed[].
+// Try once at each caller handoff. Unit tests can refuse either phase without
+// starting a competing thread or depending on scheduler timing.
+static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
+{
+#if ROCKETNET_TEST_SEAMS
+    if ( client_transport->receive_buffer_index.test_busy_mask & phase )
+        return false;
+#else
+    (void) phase;
+#endif
+    return rocketnet_platform_mutex_try_acquire( &client_transport->mutex );
+}
 
+// Called with the mutex held. The counts were cleared while the caller still
+// owned the buffers; publishing their indices is the only ownership transfer.
+static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_receive_state_t * state )
+{
+    for ( int i = 0; i < state->returned_count; ++i )
+        rocketnet_client_legacy_push( state->free, state->free_head, &state->free_count, state->returned[i] );
+    state->returned_count = 0;
+}
+
+// Take the oldest READY buffers that fit the packet budget. If the worker
+// owns the mutex, leave everything in place and continue this update without
+// receiving. Returning previously processed buffers precedes taking new ones.
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
 {
+    if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
+        return 0;
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
+    rocketnet_client_legacy_publish_returns( state );
     int num_exposed = 0;
     int num_packets = 0;
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
     while ( state->ready_count > 0 )
     {
         const int packets = client_transport->receive_buffer[state->ready[state->ready_head]].num_packets;
@@ -1700,20 +1729,22 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
     return num_exposed;
 }
 
-// The exposed buffers are processed and still
-// main-owned, so they are cleared without the mutex, then go back FREE in one
-// short hold, ready for the worker before the next update.
-
+// Keep processed buffers caller-owned if the worker has the mutex. They are
+// neither READY nor FREE, so neither side can process or overwrite them again.
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
 {
     if ( num_exposed == 0 )
         return;
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
+    rocketnet_assert( state->returned_count == 0 );
     for ( int i = 0; i < num_exposed; i++ )
+    {
         client_transport->receive_buffer[exposed[i]].num_packets = 0;
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
-    for ( int i = 0; i < num_exposed; i++ )
-        rocketnet_client_legacy_push( state->free, state->free_head, &state->free_count, exposed[i] );
+        state->returned[state->returned_count++] = exposed[i];
+    }
+    if ( !rocketnet_client_legacy_try_acquire( client_transport, 2 ) )
+        return;
+    rocketnet_client_legacy_publish_returns( state );
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
@@ -2637,7 +2668,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         rocketnet_platform_mutex_release( &client_transport->mutex );
 
         // All three buffers can be FILL or READY between updates (update
-        // returns what it exposes within the same update). Leave unread
+        // may defer returning processed buffers). Leave unread
         // datagrams in the transport until update frees one; never
         // overwrite a buffer that another phase still owns.
         if ( fill < 0 )
@@ -2711,6 +2742,12 @@ void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport
     rocketnet_client_receive_packets( client_transport, &time );
 }
 
+void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t * client_transport, unsigned mask )
+{
+    rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread && mask <= 3 );
+    client_transport->receive_buffer_index.test_busy_mask = mask;
+}
+
 // The step-driven fixture has no concurrent worker. Expose ownership so its
 // regression can check backpressure and buffer reuse without depending on
 // scheduler timing or private layout offsets.
@@ -2743,9 +2780,8 @@ static void rocketnet_client_thread_function( void * data )
 }
 
 // The development network simulator call on a live transport: reconfigures
-// the link simulator when one is running (a client with a link simulator has
-// no network thread, so the caller's thread owns it); false when none runs,
-// and the settings then take effect at the next connect.
+// the link simulator while the caller still owns it. Stop transfers ownership
+// to the worker; a stopped transport cannot be reconfigured.
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2754,7 +2790,7 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     client_transport->config.simulated_jitter_ms = jitter_ms;
     client_transport->config.simulated_loss_percent = packet_loss_percent;
     client_transport->config.simulated_duplicate_percent = duplicate_percent;
-    if ( !client_transport->link_simulator )
+    if ( !client_transport->link_simulator || client_transport->stop_requested )
         return false;
     rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
     return true;
