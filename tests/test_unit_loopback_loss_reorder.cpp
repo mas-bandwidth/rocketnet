@@ -257,12 +257,12 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
 // simulator latency adds two connected steps (24 without it, 26 with it).
-// Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE and
-// XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION counters.
+// Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
+// XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED counters.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x89dabedbd8736947 ), UINT64_C( 0x9dc522e6abf6c8e5 ), 24 };
+    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x3a4ca14352981827 ), UINT64_C( 0xd20b6fbd00ad1785 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xcd0e353ff7cf0187 ), UINT64_C( 0x9dc522e6abf6c8e5 ), 26 };
+    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xb0ecc9f17b293867 ), UINT64_C( 0xd20b6fbd00ad1785 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
@@ -504,16 +504,23 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     struct rocketnet_server_transport_stats_t sstats;
     rocketnet_client_transport_stats( pair.client, &cstats );
     rocketnet_server_transport_stats( pair.server, &sstats );
-    // Drain the final ACKs so receive totals match sends minus the simulator periodic drop.
-    pair.time += 0.005;
-    loopback_loss_reorder_clock = pair.time;
-    check( rn_message_object_update( server, pair.time ) == ROCKETNET_UPDATE_OK );
-    check( rn_message_object_update( client, pair.time ) == ROCKETNET_UPDATE_OK );
-    rn_message_object_send_packets( server );
-    rn_message_object_send_packets( client );
+    // Message acceptance publishes ACK eligibility after transport update.
+    // Drain the finite ACK exchange instead of assuming one update suffices.
+    for ( int drain = 0; drain < 16; ++drain )
+    {
+        pair.time += 0.005;
+        loopback_loss_reorder_clock = pair.time;
+        check( rn_message_object_update( server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( rn_message_object_update( client, pair.time ) == ROCKETNET_UPDATE_OK );
+        rn_message_object_send_packets( server );
+        rn_message_object_send_packets( client );
+        rocketnet_client_transport_stats( pair.client, &cstats );
+        rocketnet_server_transport_stats( pair.server, &sstats );
+        if ( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 &&
+             cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 )
+            break;
+    }
 
-    rocketnet_client_transport_stats( pair.client, &cstats );
-    rocketnet_server_transport_stats( pair.server, &sstats );
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 );
 

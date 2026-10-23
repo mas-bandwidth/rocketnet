@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
+#include "rocketnet_memory.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -82,11 +83,23 @@ static void rocketnet_client_integrity_failure( struct rocketnet_client_protocol
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 }
 
+void rocketnet_client_protocol_zero_state( struct rocketnet_client_protocol_t * client )
+{
+    typedef rocketnet_client_protocol_t T;
+    const rocketnet_span_t skip[] =
+    {
+        { offsetof( T, ack ) + offsetof( rocketnet_ack_endpoint_t, sent ), sizeof( rocketnet_ack_endpoint_t ) - offsetof( rocketnet_ack_endpoint_t, sent ) },
+        { offsetof( T, acked_packet_ids ), sizeof( ( (T *) 0 )->acked_packet_ids ) },
+    };
+    static_assert( offsetof( T, acked_packet_ids ) > offsetof( T, ack ), "the skipped spans are in their order in the struct" );
+    rocketnet_zero_except( client, sizeof( T ), skip, (int) ( sizeof( skip ) / sizeof( skip[0] ) ) );
+}
+
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
 {
     rocketnet_assert( client );
     rocketnet_assert( counters );
-    memset( client, 0, sizeof(*client) );
+    rocketnet_client_protocol_zero_state( client );
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = 10.0;
@@ -272,7 +285,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - type_data_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
 
@@ -873,6 +886,9 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
         client->rtt_session_sampled = 1;
     }
 
+    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+        rocketnet_replay_advance( &client->accepted_session, sequence );
+
     rocketnet_ack_endpoint_record_received( &client->ack, sequence, packet_bytes, current_time );
 
     rocketnet_ack_endpoint_process_block( &client->ack, &block, current_time,
@@ -880,7 +896,8 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
                                           &counters[ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE],
                                           &counters[ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL] );
 
-    if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET )
+    if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET &&
+         ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET ) )
         client->ack.ack_debt++;
 
     *out_type_data_offset = block_bytes;
@@ -1119,6 +1136,8 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
 
     memcpy( out_payload, opened + type_data_offset, (size_t) type_data_bytes );
     *out_payload_bytes = type_data_bytes;
+    if ( !client->defer_payload_acks )
+        rocketnet_client_protocol_accept_payload( client, client->received_session_sequence );
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED]++;
     rocketnet_spam( "client received payload (%d bytes)", type_data_bytes );
@@ -1411,7 +1430,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &client->replay_session );
+    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &client->accepted_session );
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
@@ -1452,7 +1471,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
     uint64_t sequence = client->send_sequence_session;
@@ -1542,7 +1561,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
 
     rocketnet_write_fragment_header( plaintext + block_bytes, payload_id, fragment_index, fragment_count );
     memcpy( plaintext + block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES, fragment_data, (size_t) fragment_bytes );
@@ -1657,4 +1676,13 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     else
         rocketnet_client_connection_reset( client );
+}
+
+void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence )
+{
+    if ( !sequence || client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+         rocketnet_replay_already_received( &client->accepted_session, sequence ) )
+        return;
+    rocketnet_replay_advance( &client->accepted_session, sequence );
+    client->ack.ack_debt++;
 }

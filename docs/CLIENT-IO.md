@@ -67,3 +67,12 @@ seam), then checks completion. Checking alone never drives the backend. A game
 using the normal threaded mode keeps its event loop running while it polls.
 Keep the allocator context, callback context, and transport memory alive through
 completion and synchronous destroy; requesting stop does not transfer ownership.
+
+The development client link simulator belongs to the caller during normal
+updates. Stop publishes the quit request and transfers its queue to the worker;
+the worker drains surviving packets, including delayed disconnect copies,
+before publishing stopped. Stop itself does not send. Explicit step-driven
+transports perform this drain in their shutdown step. Simulator reconfiguration
+is refused after stop. `test_client_simulator_stop_defers_backend_send` and
+`test_client_legacy_receive_defers_contended_handoffs` exercise these boundaries
+without threads, sleeps, or wall-clock deadlines.

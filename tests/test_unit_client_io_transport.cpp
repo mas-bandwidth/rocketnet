@@ -19,6 +19,7 @@
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_config.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -342,3 +343,47 @@ static void test_client_io_update_exposes_published_batch()
 }
 
 REGISTER_UNIT_TEST( test_client_io_update_exposes_published_batch );
+
+// Stop must not run backend sends, including packets waiting in the link
+// simulator. The fake worker remains paused until explicitly stepped below.
+static void test_client_simulator_stop_defers_backend_send()
+{
+    rocketnet_public_link_simulator_test_development( 1 );
+    auto * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_io_transport_token( token );
+    rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_io_transport_time;
+    config.simulated_latency_ms = 500;
+    auto * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config,
+        clock.now, &rocketnet_fake_client_operations_base, fake );
+    check( transport );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( fake->send_calls == 0 ); // cookie request still held by latency
+    rocketnet_client_transport_stop( transport );
+    check( fake->send_calls == 0 );
+    check( !rocketnet_client_transport_network_simulator( transport, 0, 0, 100, 0 ) );
+    for ( int i = 0; i < 16; ++i )
+    {
+        rocketnet_client_transport_stop( transport );
+        check( !rocketnet_client_transport_stopped( transport ) );
+        check( fake->send_calls == 0 && fake->destroy_calls == 0 );
+    }
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( rocketnet_client_transport_stopped( transport ) );
+    check( fake->send_calls == 1 );
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( fake->send_calls == 1 );
+    rocketnet_client_transport_destroy( transport );
+    check( fake->destroy_calls == 1 );
+    delete fake;
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_client_simulator_stop_defers_backend_send );
+
+// Busy expose/return, repeated contention and exact packet recovery are
+// covered above by test_client_legacy_receive_handoff_and_backpressure with
+// the unified handoff's permanently producer-owned buffer.
+

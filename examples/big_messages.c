@@ -62,7 +62,7 @@ int main( void )
     memcpy( server_config.backend_public_key, dev_backend_public_key, sizeof( server_config.backend_public_key ) );
     server_config.max_clients = 1;
     server_config.transport = "loopback";
-    // the defaults (262144) already hold 200 KB; set both ends' limits here so
+    // the 1 MiB defaults already hold 200 KB; set both ends' limits here so
     // the example states the size it needs rather than relying on that default
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_message_buffer_bytes = LIMIT_BYTES;

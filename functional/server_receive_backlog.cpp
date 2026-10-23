@@ -100,7 +100,7 @@ static const int server_receive_backlog_max_clients = 48;
 
 static long rocketnet_server_receive_backlog_rss_bound_mb()
 {
-    const char * name = "test_server_receive_keeps_up_with_max_clients";
+    const char * name = "test_server_async_delivery_with_max_clients";
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = server_receive_backlog_max_clients;
@@ -122,9 +122,9 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
     return bound;
 }
 
-SUITE_CASE_RSS_BOUND( test_server_receive_keeps_up_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_async_delivery_with_max_clients, rocketnet_server_receive_backlog_rss_bound_mb );
 
-void rocketnet_test_server_receive_keeps_up_with_max_clients()
+void rocketnet_test_server_async_delivery_with_max_clients()
 {
     server_receive_backlog_env_t server_env( "ROCKETNET_SERVER_TRANSPORT" );
     server_receive_backlog_env_t client_env( "ROCKETNET_CLIENT_TRANSPORT" );

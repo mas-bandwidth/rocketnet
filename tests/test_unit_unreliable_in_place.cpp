@@ -425,29 +425,20 @@ static void ip_send_in_place( ip_pair_t * pair, bool from_server, int mode, int 
 {
     ip_end_t * e = from_server ? &pair->net->server : &pair->net->client;
     const size_t handed_before = e->handed.size();
-    const size_t finished_before = e->finished.size();
     uint8_t * p = from_server ? rocketnet_message_server_start( pair->server, 0, channel, mode, bytes )
                               : rocketnet_message_client_start( pair->client, channel, mode, bytes );
     check( p != NULL );
-    check( e->handed.size() == handed_before + 1 );                       // start took one frame from the transport
-    check( ip_inside( p, bytes, e->handed.back() ) );                      // and the pointer is inside it
-    if ( mode == ROCKETNET_RELIABILITY_UNRELIABLE )
-    {
-        check( p == e->handed.back().address );                            // SINGLE: the payload root itself
-        check( ( (uintptr_t) p & 15 ) == 0 );
-    }
+    check( e->handed.size() == handed_before || e->handed.size() == handed_before + 1 );
+    check( !e->handed.empty() && ip_inside( p, bytes, e->handed.back() ) );
     ip_fill( p, id, bytes );
     const uint32_t serial = from_server ? rocketnet_message_server_finish( pair->server, 0, bytes )
                                         : rocketnet_message_client_finish( pair->client, bytes );
     check( serial != 0 );
-    check( e->finished.size() == finished_before + 1 );                   // finish finished that frame, at once
-    const ip_buffer_t & sent = e->finished.back();
-    check( sent.address == e->handed.back().address );                    // the same buffer: identity
-    check( ip_inside( p, bytes, sent ) );                                  // the written bytes lie in the sent range
+    // finish commits the record in the same frame; sealing waits for full/flush.
     uint8_t expected[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     ip_fill( expected, id, bytes );
-    const ip_packet_t & wire = e->sent.back();
-    check( memcmp( wire.data.data() + ( p - sent.address ), expected, (size_t) bytes ) == 0 );
+    check( memcmp( p, expected, (size_t) bytes ) == 0 );
+
 }
 
 static bool ip_got( const std::vector<ip_received_t> & got, int channel, uint32_t id, int bytes )
@@ -479,6 +470,8 @@ static void test_unreliable_fit_is_written_in_the_packet()
             const int bytes = m == 1 ? 1400 : 200 + m;                     // a sequenced one at the frame's edge
             ip_send_in_place( &pair, from_server, ip_modes[m], 2, bytes, (uint32_t) ( 10 * side + m ) );
         }
+        if ( from_server ) rocketnet_message_server_send_packets( pair.server );
+        else rocketnet_message_client_send_packets( pair.client );
         ip_step( &pair, &server_got, &client_got );
         const std::vector<ip_received_t> & got = from_server ? client_got : server_got;
         check( got.size() == 3 );
@@ -591,7 +584,7 @@ static void test_mixed_in_place_and_queued_respect_packet_cap()
     // 1 in-place unreliable packet + 2 queued reliable packets in one update:
     // at most packets_per_update (2) packets reach the fake transport.
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 100, 90 );
-    check( client->finished.size() == finished_before + 1 );
+    check( client->finished.size() == finished_before ); // completed record awaits packet flush
 
     uint8_t reliable_a[1400], reliable_b[1400];
     ip_fill( reliable_a, 91, (int) sizeof( reliable_a ) );
@@ -710,9 +703,8 @@ static void test_reliable_not_starved_by_in_place()
         if ( ip_carries( client->sent[i], reliable, (int) sizeof( reliable ) ) )
             reliable_out = true;
     check( reliable_out );
-    // the first went in place; the second would have taken the last packet,
-    // so it fell back to the queue
-    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before + 1 );
+    // Both small records share one frame, leaving the last packet for reliable work.
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before );
 
     // nothing is lost: the queued unreliable goes in the next update (an
     // UNRELIABLE message is delivered on channel 0)
@@ -766,9 +758,15 @@ static void test_in_place_unreliable_keeps_acks_and_order()
         check( rocketnet_message_client_send( pair.client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
     }
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 2, 120, 300 );
-    check( client->acks_due.empty() );                                     // every ack due rode the first in-place packet
+    rocketnet_message_client_send_packets( pair.client );
+    check( client->acks_due.empty() );                                     // every ack due rode a sealed packet
     for ( size_t i = 0; i < due.size(); i++ )
-        check( std::find( client->sent.back().acks.begin(), client->sent.back().acks.end(), due[i] ) != client->sent.back().acks.end() );
+    {
+        bool found = false;
+        for ( const ip_packet_t & packet : client->sent )
+            found |= std::find( packet.acks.begin(), packet.acks.end(), due[i] ) != packet.acks.end();
+        check( found );
+    }
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 3, 120, 301 );
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 2, 120, 302 );
     ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 3, 120, 303 );
@@ -909,10 +907,12 @@ static void test_unreliable_fit_in_place_every_transport()
             const int staged = e->outgoing_count;
             check( ( from_server ? rocketnet_message_server_finish( h.message_server, h.client_slot, bytes )
                                  : rocketnet_message_client_finish( h.message_client, bytes ) ) != 0 );
-            check( e->pending_frame == -1 && e->outgoing_count == staged + 1 );   // that frame, sealed in place and staged
-            check( staged == slot );
+            check( e->pending_frame == slot && e->outgoing_count == staged ); // committed records retain the open frame
         }
 
+        if ( from_server ) rocketnet_message_server_send_packets( h.message_server );
+        else rocketnet_message_client_send_packets( h.message_client );
+        check( e->pending_frame == -1 );
         uint8_t expected[128];
         int found = 0;
         for ( int i = 0; i < 60 && found < 3; i++ )
@@ -1019,7 +1019,10 @@ static void test_start_past_packet_allowance_falls_back_to_the_region()
 
     // the allowance: cap in-place packets, nothing reliable due
     for ( int i = 0; i < cap; i++ )
+    {
         ip_send_in_place( &pair, false, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 64, 300 + (uint32_t) i );
+        rocketnet_message_client_send_packets( pair.client ); // spend a packet, not merely append a record
+    }
     const size_t finished_spent = client->finished.size();
     check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before );
 
@@ -1050,6 +1053,102 @@ static void test_start_past_packet_allowance_falls_back_to_the_region()
     check( rocketnet_message_client_disconnect_reason( pair.client ) == ROCKETNET_DISCONNECT_REASON_NONE );
     ip_pair_teardown( &pair );
 }
+
+
+// Abort and short finish must reuse the uncommitted suffix without moving the
+// committed prefix. Verify the final frame identity as well as delivery.
+static void test_unreliable_packing_abort_and_short_finish()
+{
+    for ( int side = 0; side < 2; ++side )
+    {
+        ip_pair_t pair;
+        ip_pair_setup( &pair );
+        ip_step( &pair, NULL, NULL );
+        ip_step( &pair, NULL, NULL );
+        const bool server = side != 0;
+        ip_end_t * end = server ? &pair.net->server : &pair.net->client;
+        auto start = [&]( int n ) { return server ? rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, n ) : rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, n ); };
+        auto finish = [&]( int n ) { return server ? rocketnet_message_server_finish( pair.server, 0, n ) : rocketnet_message_client_finish( pair.client, n ); };
+        auto abort = [&]() { if ( server ) rocketnet_message_server_abort( pair.server, 0 ); else rocketnet_message_client_abort( pair.client ); };
+        const uint64_t copies = rn_message_payload_copy_count();
+        const size_t frames = end->finished.size();
+        uint8_t * first = start( 128 );
+        check( first ); ip_fill( first, 1, 7 ); check( finish( 7 ) );
+        uint8_t * suffix = start( 200 );
+        check( suffix == first + 7 + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES );
+        memset( suffix, 0xee, 200 ); abort();
+        uint8_t * second = start( 100 );
+        check( second == suffix ); ip_fill( second, 2, 11 ); check( finish( 11 ) );
+        uint8_t * bad = start( 8 );
+        check( bad ); memset( bad, 0xdd, 8 ); check( finish( 9 ) == 0 );
+        uint8_t * third = start( 8 );
+        check( third == bad ); ip_fill( third, 3, 8 ); check( finish( 8 ) );
+        if ( server ) rocketnet_message_server_send_packets( pair.server );
+        else rocketnet_message_client_send_packets( pair.client );
+        check( end->finished.size() == frames + 1 );
+        check( ip_inside( first, 7, end->finished.back() ) );
+        check( ip_inside( second, 11, end->finished.back() ) );
+        check( ip_inside( third, 8, end->finished.back() ) );
+        check( end->finished.back().bytes == 7 + 11 + 8 + 3 * ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
+        check( rn_message_payload_copy_count() == copies );
+        std::vector<ip_received_t> got_server, got_client;
+        for ( int i = 0; i < 3; ++i ) ip_step( &pair, &got_server, &got_client );
+        const auto & got = server ? got_client : got_server;
+        check( got.size() == 3 );
+        check( ip_got( got, 0, 1, 7 ) && ip_got( got, 0, 2, 11 ) && ip_got( got, 0, 3, 8 ) );
+        // An empty reservation and a committed frame both release on teardown.
+        check( start( 32 ) ); abort();
+        for ( bool used : end->used ) check( !used );
+        ip_send_in_place( &pair, server, ROCKETNET_RELIABILITY_UNRELIABLE, 0, 32, 4 );
+        if ( server ) { rocketnet_message_server_destroy( pair.server ); pair.server = NULL; }
+        else { rocketnet_message_client_destroy( pair.client ); pair.client = NULL; }
+        for ( bool used : end->used ) check( !used );
+        ip_pair_teardown( &pair );
+    }
+}
+
+static void test_unreliable_packing_receipt_boundary()
+{
+    ip_pair_t pair;
+    ip_pair_setup( &pair );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );
+    const size_t frames = pair.net->client.finished.size();
+    uint32_t serials[33];
+    const uint64_t copies = rn_message_payload_copy_count();
+    for ( int i = 0; i < 33; ++i )
+    {
+        uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 4 );
+        check( p ); ip_fill( p, (uint32_t) i, 4 );
+        serials[i] = rocketnet_message_client_finish( pair.client, 4 ); check( serials[i] );
+    }
+    rocketnet_message_client_send_packets( pair.client );
+    check( pair.net->client.finished.size() == frames + 3 ); // bounded receipt map: 16 + 16 + 1
+    check( rn_message_payload_copy_count() == copies );
+    std::vector<ip_received_t> got;
+    bool seen[33] = {};
+    int count = 0;
+    for ( int step = 0; step < 10; ++step )
+    {
+        ip_step( &pair, &got, NULL );
+        rocketnet_message_receipt_t receipts[64];
+        const int n = rocketnet_message_client_receipts( pair.client, receipts, 64 );
+        for ( int j = 0; j < n; ++j )
+        {
+            int match = -1;
+            for ( int i = 0; i < 33; ++i ) if ( receipts[j].serial == serials[i] ) match = i;
+            check( match >= 0 && !seen[match] );
+            check( receipts[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            seen[match] = true; ++count;
+        }
+    }
+    check( got.size() == 33 && count == 33 );
+    for ( int i = 0; i < 33; ++i ) check( ip_got( got, 0, (uint32_t) i, 4 ) );
+    ip_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_unreliable_packing_abort_and_short_finish );
+REGISTER_UNIT_TEST( test_unreliable_packing_receipt_boundary );
 
 REGISTER_UNIT_TEST( test_unreliable_fit_is_written_in_the_packet );
 REGISTER_UNIT_TEST( test_unreliable_fit_in_place_every_transport );

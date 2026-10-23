@@ -9,7 +9,15 @@ static rocketnet_ack_endpoint_t * stats_endpoint()
 {
     auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof(rocketnet_ack_endpoint_t) );
     rocketnet_unit_check( endpoint );
+    // the rings zeroed and every record marked written: the tests write
+    // records straight into the rings, and the projection below reads all of
+    // them, so each starts as the empty record (sequence 0) that a reset's
+    // written bits stand for
+    memset( (void *) endpoint, 0, sizeof(rocketnet_ack_endpoint_t) );
     rocketnet_ack_endpoint_reset( endpoint );
+    memset( endpoint->sent_written, 0xFF, sizeof(endpoint->sent_written) );
+    memset( endpoint->received_written, 0xFF, sizeof(endpoint->received_written) );
+    memset( endpoint->aggregates_written, 0xFF, sizeof(endpoint->aggregates_written) );
     return endpoint;
 }
 
@@ -40,8 +48,12 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
     history->highest_sent = endpoint->highest_sequence;
     history->highest_received = endpoint->highest_received_sequence;
     memcpy(history->rtt_history, endpoint->rtt_history, sizeof(history->rtt_history));
+    // a record the endpoint has not written since its reset is the empty
+    // record, as its written bits say: the projection leaves it zero
     for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
     {
+        if ( !( ( endpoint->sent_written[i / 64] >> ( i % 64 ) ) & 1 ) )
+            continue;
         history->sent[i].sequence = endpoint->sent[i].sequence;
         history->sent[i].send_time = endpoint->sent[i].send_time;
         history->sent[i].wire_bytes = endpoint->sent[i].wire_bytes;
@@ -49,6 +61,8 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
     }
     for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
     {
+        if ( !( ( endpoint->received_written[i / 64] >> ( i % 64 ) ) & 1 ) )
+            continue;
         history->received[i].sequence = endpoint->received[i].sequence;
         history->received[i].receive_time = endpoint->received[i].receive_time;
         history->received[i].wire_bytes = endpoint->received[i].wire_bytes;

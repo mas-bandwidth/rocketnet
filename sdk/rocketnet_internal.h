@@ -100,6 +100,14 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
 struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
 
+// The secret bytes of an object, as spans of its allocation (offset, bytes):
+// what destroy must leave zero when it frees the allocation, and the only
+// bytes it may write. Each returns the span count, at most max. For the
+// destroy tests, which see the allocation only in the allocator's free.
+int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+
 #ifdef __cplusplus
 }
 #endif
@@ -549,9 +557,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
     INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
-    INT_FIELD( receive_message_buffer_bytes,     262144,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
-    INT_FIELD( send_message_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
+    INT_FIELD( receive_message_buffer_bytes,    1048576,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
+    INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
+    INT_FIELD( send_message_buffer_bytes,     4194304,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
     INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \

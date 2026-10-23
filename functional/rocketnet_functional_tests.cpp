@@ -3681,6 +3681,9 @@ void rocketnet_test_public_client_server_queries()
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        while ( rocketnet_server_receive_messages( server ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( client ) != NULL ) {}
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
@@ -8510,6 +8513,11 @@ extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
 extern void config_mismatch_over_loopback();
 extern void config_equal_over_lossy_loopback();
+extern void reliable_receive_full_ordered_gap_recovers();
+extern void reliable_receive_full_recovers_all_modes();
+extern void reliable_receive_full_partial_packet_recovers();
+extern void reliable_receive_full_recovers_client_to_server();
+extern void reliable_receive_full_recovers_server_to_client();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
@@ -8519,13 +8527,15 @@ extern void control_disconnect_burst_each_end();
 extern void control_standalone_ack_each_end();
 extern void control_fragment_packets_each_end();
 extern void control_denied_when_server_full();
+extern void default_one_mib_messages_all_modes();
+extern void unreliable_small_messages_pack_in_place();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
-extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+extern void rocketnet_test_server_async_delivery_with_max_clients();
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
@@ -8826,6 +8836,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 }
 
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+void rocketnet_test_darwin_send_epipe_no_signal();
+#endif
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
 void rocketnet_test_posix_client_drops_foreign_sources();
@@ -8893,7 +8906,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
-    { "test_server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients, NULL },
+    { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
@@ -8982,6 +8995,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip, NULL },
 #endif
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
+#endif
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
@@ -9086,6 +9102,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ordered_small_and_large_interleaved", ordered_small_and_large_interleaved, NULL },
     { "test_loopback_transport_config_mismatch", config_mismatch_over_loopback, NULL },
     { "test_loopback_transport_config_equal_over_lossy", config_equal_over_lossy_loopback, NULL },
+    { "test_reliable_receive_full_ordered_gap_recovers", reliable_receive_full_ordered_gap_recovers, NULL },
+    { "test_reliable_receive_full_recovers_all_modes", reliable_receive_full_recovers_all_modes, NULL },
+    { "test_reliable_receive_full_partial_packet_recovers", reliable_receive_full_partial_packet_recovers, NULL },
+    { "test_reliable_receive_full_recovers_client_to_server", reliable_receive_full_recovers_client_to_server, NULL },
+    { "test_reliable_receive_full_recovers_server_to_client", reliable_receive_full_recovers_server_to_client, NULL },
     { "test_reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link, NULL },
     { "test_reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once, NULL },
     { "test_unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link, NULL },
@@ -9095,6 +9116,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_control_standalone_ack_each_end", control_standalone_ack_each_end, NULL },
     { "test_control_fragment_packets_each_end", control_fragment_packets_each_end, NULL },
     { "test_control_denied_when_server_full", control_denied_when_server_full, NULL },
+    { "test_default_one_mib_messages_all_modes", default_one_mib_messages_all_modes, NULL },
+    { "test_unreliable_small_messages_pack_in_place", unreliable_small_messages_pack_in_place, NULL },
     { "test_unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted, NULL },
     { "test_reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full, NULL },
     { "test_resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links, NULL },

@@ -8,7 +8,7 @@ in-memory `loopback` transport, so it needs no socket and no network.
 ## What it shows
 
 1. Set `max_message_bytes` and `receive_message_buffer_bytes` on both ends to 256 KB.
-   The defaults (262144) already hold 200 KB; the example sets them explicitly.
+   The 1 MiB defaults already hold 200 KB; this example uses a smaller explicit profile.
 2. Configure the development backend public key with
    `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`; server create generates the server key.
    Read its public key and bound address after start, then create an opaque

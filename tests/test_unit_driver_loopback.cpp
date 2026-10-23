@@ -1210,6 +1210,53 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     printf( "test_loopback_transport_server_batch_drops_packet_larger_than_stride\n" );
 }
 
+// This fake starts with a known completed input queue. It tests the server's
+// bounded drain independently of any asynchronous client's send completion.
+struct server_queued_budget_t { int remaining; };
+static int server_queued_budget_receive( void * context, rocketnet_address_t * from,
+    uint8_t * data, int stride, int * bytes, int capacity )
+{
+    auto * queue = (server_queued_budget_t *) context;
+    const int count = queue->remaining < capacity ? queue->remaining : capacity;
+    for ( int i = 0; i < count; ++i )
+    {
+        memset( &from[i], 0, sizeof(from[i]) );
+        from[i].type = ROCKETNET_ADDRESS_IPV4;
+        from[i].data.ipv4[0] = 127;
+        from[i].data.ipv4[3] = 1;
+        from[i].port = 40000;
+        data[size_t(i) * size_t(stride)] = 0;
+        bytes[i] = 1;
+    }
+    queue->remaining -= count;
+    return count;
+}
+
+static void test_server_drains_completed_queue_to_budget()
+{
+    auto * server = shape_junk_server_create();
+    const int budget = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    server_queued_budget_t queue = { budget + 17 };
+    rocketnet_server_transport_io_operations_t operations = {};
+    operations.destroy = wt_staged_destroy;
+    operations.stop = wt_staged_stop;
+    operations.stopped = wt_staged_stopped;
+    operations.send_batch = wt_staged_send_batch;
+    operations.receive_batch = server_queued_budget_receive;
+    server->io.instance = &queue;
+    server->io.operations = &operations;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( queue.remaining == 17 );
+    rocketnet_unit_check( server->server_stats.packets_received == uint64_t(budget) );
+    rocketnet_server_transport_update( server, 1000.1 );
+    rocketnet_unit_check( queue.remaining == 0 );
+    rocketnet_unit_check( server->server_stats.packets_received == uint64_t(budget + 17) );
+    rocketnet_server_transport_update( server, 1000.2 );
+    rocketnet_unit_check( server->server_stats.packets_received == uint64_t(budget + 17) );
+    rn_test_server_transport_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
+
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
