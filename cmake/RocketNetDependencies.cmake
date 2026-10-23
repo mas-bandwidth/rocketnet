@@ -31,28 +31,45 @@ if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
             "configure with -DROCKETNET_USE_SYSTEM_SODIUM=OFF to build the vendored 1.0.22.")
     endif()
 endif()
-# libbpf and libxdp for the XDP server transport: optional when building
-# (absent, CMakeLists.txt compiles XDP out), required when the installed
-# package was built with XDP (ROCKETNET_XDP_REQUIRED, set by the config).
+# New distributions keep AF_XDP in libxdp. Ubuntu 22.04 keeps it in
+# libbpf 0.5 (bpf/xsk.h) and has no libxdp package. Installed packages must
+# resolve the same provider they were built with, even if both are present.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
-    foreach(dependency Bpf Xdp)
-        if(NOT TARGET RocketNet::${dependency})
-            string(TOLOWER "${dependency}" name)
-            if(ROCKETNET_XDP_REQUIRED)
-                find_library(ROCKETNET_${dependency}_LIBRARY NAMES ${name} REQUIRED)
-                find_path(ROCKETNET_${dependency}_INCLUDE_DIR NAMES ${name}/lib${name}.h REQUIRED)
-            else()
-                find_library(ROCKETNET_${dependency}_LIBRARY NAMES ${name})
-                find_path(ROCKETNET_${dependency}_INCLUDE_DIR NAMES ${name}/lib${name}.h)
-            endif()
-            if(ROCKETNET_${dependency}_LIBRARY AND ROCKETNET_${dependency}_INCLUDE_DIR)
-                add_library(RocketNet::${dependency} UNKNOWN IMPORTED)
-                set_target_properties(RocketNet::${dependency} PROPERTIES
-                    IMPORTED_LOCATION "${ROCKETNET_${dependency}_LIBRARY}"
-                    INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_${dependency}_INCLUDE_DIR}")
-            endif()
+    if(NOT TARGET RocketNet::Bpf)
+        find_library(ROCKETNET_Bpf_LIBRARY NAMES bpf)
+        find_path(ROCKETNET_Bpf_INCLUDE_DIR NAMES bpf/libbpf.h)
+        if(ROCKETNET_Bpf_LIBRARY AND ROCKETNET_Bpf_INCLUDE_DIR)
+            add_library(RocketNet::Bpf UNKNOWN IMPORTED)
+            set_target_properties(RocketNet::Bpf PROPERTIES
+                IMPORTED_LOCATION "${ROCKETNET_Bpf_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Bpf_INCLUDE_DIR}")
         endif()
-    endforeach()
+    endif()
+    if(NOT TARGET RocketNet::Xdp)
+        if(NOT ROCKETNET_XDP_LEGACY_LIBBPF)
+            find_library(ROCKETNET_Xdp_LIBRARY NAMES xdp)
+            find_path(ROCKETNET_Xdp_INCLUDE_DIR NAMES xdp/libxdp.h)
+        endif()
+        if(NOT ROCKETNET_XDP_LEGACY_LIBBPF AND ROCKETNET_Xdp_LIBRARY AND ROCKETNET_Xdp_INCLUDE_DIR)
+            add_library(RocketNet::Xdp UNKNOWN IMPORTED)
+            set_target_properties(RocketNet::Xdp PROPERTIES
+                IMPORTED_LOCATION "${ROCKETNET_Xdp_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Xdp_INCLUDE_DIR}")
+            set(ROCKETNET_XDP_LEGACY_LIBBPF OFF)
+        elseif(TARGET RocketNet::Bpf AND
+               (NOT ROCKETNET_XDP_REQUIRED OR ROCKETNET_XDP_LEGACY_LIBBPF) AND
+               EXISTS "${ROCKETNET_Bpf_INCLUDE_DIR}/bpf/xsk.h")
+            add_library(RocketNet::Xdp INTERFACE IMPORTED)
+            set_target_properties(RocketNet::Xdp PROPERTIES
+                INTERFACE_LINK_LIBRARIES RocketNet::Bpf
+                INTERFACE_COMPILE_DEFINITIONS ROCKETNET_XDP_LEGACY_LIBBPF=1)
+            set(ROCKETNET_XDP_LEGACY_LIBBPF ON)
+            message(STATUS "XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)")
+        endif()
+    endif()
+    if(ROCKETNET_XDP_REQUIRED AND (NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp))
+        message(FATAL_ERROR "RocketNet requires the XDP provider used to build it (legacy libbpf=${ROCKETNET_XDP_LEGACY_LIBBPF})")
+    endif()
 endif()
 # liburing for the io_uring server transport: optional when building (absent,
 # the transport compiles to a create that refuses), required when the installed

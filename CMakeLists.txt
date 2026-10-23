@@ -206,8 +206,8 @@ set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
 #
 # The build is tolerant: ROCKETNET_XDP=ON builds XDP only where a clang with
-# the BPF target, libbpf and libxdp are all found (libbpf and libxdp are
-# optional here, cmake/RocketNetDependencies.cmake). Short of any of them
+# the BPF target and an AF_XDP provider are found (libbpf plus libxdp, or
+# legacy libbpf with bpf/xsk.h; cmake/RocketNetDependencies.cmake). Without them
 # ROCKETNET_XDP turns OFF for this build, exactly as if configured OFF: no
 # embedded program, no XDP code in the library, no libbpf or libxdp link, and
 # a transport list naming xdp refuses it with TRANSPORT_NOT_BUILT.
@@ -229,13 +229,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(STATUS "XDP off: no clang with the BPF target was found, so XDP is compiled out of this build")
         set(ROCKETNET_XDP OFF)
     elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
-        message(STATUS "XDP off: libbpf or libxdp was not found, so XDP is compiled out of this build")
+        message(STATUS "XDP off: libbpf or AF_XDP headers/library were not found, so XDP is compiled out of this build")
         set(ROCKETNET_XDP OFF)
     endif()
 endif()
 # One value for every target in the tree: the library, the unit suite, the
 # functional suite and the tools agree on whether the XDP transport exists.
 add_compile_definitions($<$<PLATFORM_ID:Linux>:ROCKETNET_XDP=$<BOOL:${ROCKETNET_XDP}>>)
+add_compile_definitions($<$<PLATFORM_ID:Linux>:ROCKETNET_XDP_LEGACY_LIBBPF=$<BOOL:${ROCKETNET_XDP_LEGACY_LIBBPF}>>)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     find_program(ROCKETNET_XXD xxd REQUIRED)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
@@ -754,6 +755,13 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
         rocketnet_warning_floor(test_xdp)
+        if(ROCKETNET_XDP_LEGACY_LIBBPF)
+            add_executable(test_xdp_compat tests/test_xdp_compat.cpp)
+            target_include_directories(test_xdp_compat PRIVATE sdk "${ROCKETNET_Bpf_INCLUDE_DIR}")
+            target_compile_definitions(test_xdp_compat PRIVATE ROCKETNET_XDP_LEGACY_LIBBPF=1)
+            target_compile_features(test_xdp_compat PRIVATE cxx_std_11)
+            rocketnet_warning_floor(test_xdp_compat)
+        endif()
         # test_xdp_filter loads server_xdp.o, the object the library embeds
         # (cmake/EmbedXdp.cmake), and runs crafted frames through it with
         # BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to run).
@@ -769,7 +777,7 @@ if(ROCKETNET_BUILD_TESTS)
                 "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
             target_include_directories(test_xdp_filter PRIVATE sdk)
             target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
-            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
+            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf RocketNet::Xdp)
             rocketnet_warning_floor(test_xdp_filter)
         else()
             # The configure message above explains why the object is absent.

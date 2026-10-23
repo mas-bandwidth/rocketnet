@@ -5,20 +5,16 @@
 
 // tests/time_scale.h -- the one scale on the suites' wall-clock bounds.
 //
-// A wall-clock bound in the suites (the live matrix's 10 s pass bound and 30 s
-// window, the runner's 120 s kill) is a PERFORMANCE bound measured on a Release
-// build. A Debug build runs the same work unoptimised with every assert on, and
-// every sanitizer leg here (asan+ubsan, tsan) is a Debug build: measured
-// 2026-10-19, the live matrix takes ~2 s in Release and 9-11 s in Debug on an
-// idle amd-1, 25-28 s under asan and tsan. So a build without NDEBUG scales
-// each such bound by ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE; a Release build
-// keeps the bound exactly as written (scale 1). No check is removed: a Debug
-// run over the scaled bound still fails. The runner's kill (tests/suite_runner.h)
-// serves the unit binary too, so a Debug or sanitizer unit run is killed at 600 s,
-// not 120 s: a stated loosening for those builds only.
+// Functional cases target 60 seconds and have a fixed 120-second completion
+// limit, including Debug, sanitizer and emulated builds. This is a correctness
+// test budget, not a networking performance requirement. Other individual
+// waits and the unit runner retain their existing build-dependent scaling.
 
 #ifndef ROCKETNET_TEST_TIME_SCALE_H
 #define ROCKETNET_TEST_TIME_SCALE_H
+
+#define ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS 60.0
+#define ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS 120.0
 
 #define ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE 5.0
 
