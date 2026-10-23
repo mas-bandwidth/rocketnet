@@ -1242,11 +1242,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
-    // Statistics must cover every slot even when the driver's send pool is
-    // exhausted. Their six-update schedule is independent of send progress.
-    for ( int i = 0; i < max_clients; i++ )
-        if ( ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) ) == ( acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) )
-            rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
+    // Per-client statistics are maintained incrementally as acks and receives
+    // land (rocketnet_ack.cpp), so they are always current and cost nothing
+    // per idle slot; no per-update sweep remains.
 
     const int first_client = server_transport->maintenance_next_client;
     for ( int offset = 0; offset < max_clients; offset++ )

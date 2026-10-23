@@ -1124,9 +1124,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stats( struct rocketnet_se
 // Per-client connection quality, per slot: rtt and jitter in milliseconds,
 // packet loss as the percentage of this end's sent packets never
 // acknowledged, and the trailing bandwidth sent, received and acknowledged.
-// Fed by the ack blocks every session packet carries; recomputed round-robin,
-// a sixth of the slots per update, every slot covered, so the per-update
-// cost is flat at any client count.
+// Fed by the ack blocks every session packet carries; the numbers are kept
+// current incrementally as acks and receives land, so the published value is
+// exact and costs nothing per idle slot.
 
 struct rocketnet_server_transport_client_stats_t
 {

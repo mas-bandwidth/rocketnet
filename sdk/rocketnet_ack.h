@@ -129,9 +129,9 @@ struct rocketnet_ack_endpoint_t
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
-    // published per-connection statistics, recomputed by update_stats --
-    // amortized round-robin across slots on the server, every update on the
-    // client. rtt and jitter in milliseconds, loss as a percentage.
+    // published per-connection statistics, maintained incrementally from the
+    // running aggregates as acks and receives land, so they are always
+    // current. rtt and jitter in milliseconds, loss as a percentage.
     float rtt;
     float jitter;
     float packet_loss;
@@ -161,6 +161,41 @@ struct rocketnet_ack_endpoint_t
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
     struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
+
+    // Running aggregates that make the published statistics always current:
+    // maintained in O(1) per acked or received packet instead of recomputed
+    // from the full histories on a round-robin schedule, so the numbers cost
+    // nothing per idle slot. A sent record contributes while its sequence
+    // lies in the older half of the retained sent window
+    // [sent_base, sent_base + HALF - 1]; a received record likewise for the
+    // received window. Because sequences are allocated in time order, the
+    // earliest/latest send time in a window is at its lowest/highest present
+    // sequence, so the time spans used by the bandwidth rates are read
+    // straight from the present-sequence bounds.
+
+    uint64_t sent_base;                     // low edge of the retained older half
+    int      s_cnt;                         // present sent records in the window
+    int      s_unacked;                     // of those, not yet acknowledged
+    uint64_t s_bytes;
+    uint64_t s_acked_bytes;
+    uint64_t s_lowseq;                      // lowest present sent sequence in window
+    uint64_t s_highseq;                     // highest present sent sequence in window
+    uint64_t a_lowseq;                      // lowest acknowledged sent sequence in window
+    uint64_t a_highseq;                     // highest acknowledged sent sequence in window
+    int      have_s_time;                   // a present recorded exists for the sent spans
+    int      have_a_time;                   // an acknowledged record exists for the acked spans
+
+    uint64_t recv_base;                     // low edge of the received older half
+    int      r_cnt;
+    uint64_t r_bytes;
+    uint64_t r_lowseq;
+    uint64_t r_highseq;
+    int      have_r_time;
+
+    float    rtt_min_pos;                   // minimum positive rtt sample, milliseconds
+    double   rtt_raw_sum;                   // sum of samples >= 0, for jitter
+    int      rtt_count;                     // count of samples >= 0
+    int      rtt_reconciled;                // rtt aggregates mirror the history
 };
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
