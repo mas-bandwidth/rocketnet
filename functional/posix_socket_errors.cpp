@@ -693,6 +693,54 @@ static const char * posix_msgx_pump()
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#include <signal.h>
+#include <pthread.h>
+
+// A real kernel EPIPE must be counted as a failed datagram, never delivered
+// to the embedding application's SIGPIPE handler. Block only this test
+// thread's signal while checking both send paths, without changing the
+// process-wide signal disposition or substituting the errno seam.
+void rocketnet_test_darwin_send_epipe_no_signal()
+{
+    sigset_t blocked, previous, pending;
+    sigemptyset( &blocked );
+    sigaddset( &blocked, SIGPIPE );
+    posix_check( pthread_sigmask( SIG_BLOCK, &blocked, &previous ) == 0 );
+    posix_check( sigpending( &pending ) == 0 );
+    posix_check( !sigismember( &pending, SIGPIPE ) );
+    for ( int ipv6 = 0; ipv6 < 2; ++ipv6 )
+    {
+        for ( int batch = 0; batch < 2; ++batch )
+        {
+            rocketnet_address_t address;
+            posix_check( rocketnet_address_parse( &address, ipv6 ? "[::1]:0" : "127.0.0.1:0" ) );
+            rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump(
+                NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 65536, 65536,
+                batch ? "msgx" : "portable" );
+            posix_check( socket != NULL );
+            posix_check( strcmp( rocketnet_platform_socket_pump( socket ), batch ? "msgx" : "portable" ) == 0 );
+            posix_check( rocketnet_platform_socket_connect( socket, &address ) );
+            posix_check( shutdown( socket->handle, SHUT_WR ) == 0 );
+            const uint8_t data = 42;
+            if ( batch )
+            {
+                const rocketnet_platform_send_t send = { &address, &data, 1 };
+                rocketnet_platform_socket_send_packets( socket, &send, 1 );
+            }
+            else
+                rocketnet_platform_socket_send_packet( socket, &address, &data, 1 );
+            posix_check( socket->send_failures > 0 );
+            posix_check( sigpending( &pending ) == 0 );
+            posix_check( !sigismember( &pending, SIGPIPE ) );
+            printf( "  ipv%d %s: EPIPE counted, no SIGPIPE\n", ipv6 ? 6 : 4, batch ? "msgx" : "portable" );
+            rocketnet_platform_socket_destroy( socket );
+        }
+    }
+    posix_check( pthread_sigmask( SIG_SETMASK, &previous, NULL ) == 0 );
+}
+#endif
+
 void rocketnet_test_posix_server_receive_weather()
 {
     // the server cells: portable, msgx, and msgx forced portable
