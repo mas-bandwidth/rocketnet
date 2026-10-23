@@ -41,6 +41,7 @@
 #define WINDOWS_CONNRESET_GAP_REFERENCE ( WINDOWS_CONNRESET_TICK + 0.050 )
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
 #define WINDOWS_CONNRESET_PAYLOAD_BYTES 32
+#define WINDOWS_CONNRESET_MEASURED_PACKETS 100
 // packets a server sends each client per tick in the hard-killed case: a
 // tick's game state split across a few packets, so the dead client draws
 // several ICMP reports per tick, as a game server's traffic does
@@ -113,19 +114,67 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
     return client;
 }
 
-static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received )
+// Return 1 for a new measured identity, 0 for a delayed warmup payload, and
+// -1 for malformed, duplicate, or not-yet-issued measured traffic.
+static int windows_connreset_record_payload( const uint8_t * payload, int bytes, uint32_t epoch, uint64_t expected, uint8_t * seen )
+{
+    if ( bytes != WINDOWS_CONNRESET_PAYLOAD_BYTES ) return -1;
+    uint32_t sequence = 0, received_epoch = 0;
+    memcpy( &sequence, payload, sizeof( sequence ) );
+    memcpy( &received_epoch, payload + sizeof( sequence ), sizeof( received_epoch ) );
+    if ( received_epoch == 0 ) return 0;
+    if ( received_epoch != epoch || sequence == 0 || sequence > expected || sequence > WINDOWS_CONNRESET_MEASURED_PACKETS ) return -1;
+    if ( seen[sequence - 1] ) return -1;
+    seen[sequence - 1] = 1;
+    return 1;
+}
+
+// Exercise delayed warmup, reordering, duplicate and premature receipts
+// independently of native scheduling before using this oracle on real traffic.
+static void windows_connreset_check_accounting()
+{
+    uint8_t payload[WINDOWS_CONNRESET_PAYLOAD_BYTES] = {};
+    uint8_t seen[WINDOWS_CONNRESET_MEASURED_PACKETS] = {};
+    uint32_t sequence = 2, epoch = 0;
+    memcpy( payload, &sequence, sizeof( sequence ) );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 0, seen ) == 0 );
+    epoch = 1;
+    memcpy( payload + sizeof( sequence ), &epoch, sizeof( epoch ) );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 1, seen ) == -1 );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 2, seen ) == 1 );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 2, seen ) == -1 );
+    sequence = 1;
+    memcpy( payload, &sequence, sizeof( sequence ) );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ) - 1, 1, 2, seen ) == -1 );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 2, seen ) == 1 );
+    epoch = 0;
+    memcpy( payload + sizeof( sequence ), &epoch, sizeof( epoch ) );
+    windows_connreset_require( windows_connreset_record_payload( payload, sizeof( payload ), 1, 2, seen ) == 0 );
+}
+
+static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received,
+                                          uint32_t epoch = 0, uint64_t expected = 0, uint8_t * seen = NULL )
 {
     rocketnet_client_transport_update( client, now );
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-    while ( rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) > 0 )
+    int payload_bytes = 0;
+    while ( ( payload_bytes = rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) ) > 0 )
     {
-        if ( received )
+        const int accepted = seen ? windows_connreset_record_payload( payload, payload_bytes, epoch, expected, seen ) : 1;
+        windows_connreset_require( accepted >= 0 );
+        if ( received && accepted )
             ( *received )++;
     }
     if ( send && rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         memset( payload, 0, WINDOWS_CONNRESET_PAYLOAD_BYTES );
+        if ( epoch )
+        {
+            windows_connreset_require( sent && *sent < WINDOWS_CONNRESET_MEASURED_PACKETS );
+            sequence = (uint32_t) *sent + 1;
+        }
         memcpy( payload, &sequence, sizeof( sequence ) );
+        memcpy( payload + sizeof( sequence ), &epoch, sizeof( epoch ) );
         rocketnet_client_transport_send_packet( client, payload, WINDOWS_CONNRESET_PAYLOAD_BYTES );
         if ( sent )
             ( *sent )++;
@@ -330,6 +379,9 @@ struct windows_connreset_session_t
     uint64_t server_received[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t server_sent[WINDOWS_CONNRESET_LIVE_CLIENTS];
     bool measuring;
+    uint32_t payload_epoch;
+    uint8_t client_seen[WINDOWS_CONNRESET_LIVE_CLIENTS][WINDOWS_CONNRESET_MEASURED_PACKETS];
+    uint8_t server_seen[WINDOWS_CONNRESET_LIVE_CLIENTS][WINDOWS_CONNRESET_MEASURED_PACKETS];
     double max_gap;
     int child_index;
     uint32_t sequence;
@@ -354,17 +406,25 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
     session->sequence++;
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
         windows_connreset_client_tick( session->live[i], now, session->sequence, true,
-                                       &session->client_sent[i], &session->client_received[i] );
+                                       &session->client_sent[i], &session->client_received[i], session->payload_epoch,
+                                       session->server_sent[i], session->payload_epoch ? session->client_seen[i] : NULL );
     rocketnet_server_transport_update( session->server, now );
     const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
     for ( int i = 0; i < num_payloads; i++ )
     {
         int client_index = -1;
         int payload_bytes = 0;
-        rocketnet_server_transport_payload( session->server, i, &client_index, &payload_bytes );
+        const uint8_t * received_payload = rocketnet_server_transport_payload( session->server, i, &client_index, &payload_bytes );
         const int slot = windows_connreset_live_slot( session, client_index );
         if ( slot < 0 )
             continue;
+        if ( session->payload_epoch )
+        {
+            const int accepted = windows_connreset_record_payload( received_payload, payload_bytes, session->payload_epoch,
+                                                                   session->client_sent[slot], session->server_seen[slot] );
+            windows_connreset_require( accepted >= 0 );
+            if ( !accepted ) continue;
+        }
         session->server_received[slot]++;
         if ( session->measuring )
         {
@@ -383,6 +443,10 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
         const int slot = windows_connreset_live_slot( session, client_index );
         for ( int j = 0; j < sends_per_client; j++ )
         {
+            const uint32_t sequence = slot >= 0 ? (uint32_t) session->server_sent[slot] + 1 : 0;
+            windows_connreset_require( !session->payload_epoch || slot < 0 || sequence <= WINDOWS_CONNRESET_MEASURED_PACKETS );
+            memcpy( payload, &sequence, sizeof( sequence ) );
+            memcpy( payload + sizeof( sequence ), &session->payload_epoch, sizeof( session->payload_epoch ) );
             rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
             if ( slot >= 0 )
                 session->server_sent[slot]++;
@@ -559,17 +623,23 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
     {
         const double now = rocketnet_platform_time();
         for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
-            windows_connreset_client_tick( session->live[i], now, 0, false, NULL, &session->client_received[i] );
+            windows_connreset_client_tick( session->live[i], now, 0, false, NULL, &session->client_received[i],
+                                           session->payload_epoch, session->server_sent[i], session->payload_epoch ? session->client_seen[i] : NULL );
         rocketnet_server_transport_update( session->server, now );
         const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
         for ( int j = 0; j < num_payloads; j++ )
         {
             int client_index = -1;
             int payload_bytes = 0;
-            rocketnet_server_transport_payload( session->server, j, &client_index, &payload_bytes );
+            const uint8_t * payload = rocketnet_server_transport_payload( session->server, j, &client_index, &payload_bytes );
             const int slot = windows_connreset_live_slot( session, client_index );
             if ( slot >= 0 )
-                session->server_received[slot]++;
+            {
+                const int accepted = session->payload_epoch ? windows_connreset_record_payload( payload, payload_bytes, session->payload_epoch,
+                                     session->client_sent[slot], session->server_seen[slot] ) : 1;
+                windows_connreset_require( accepted >= 0 );
+                if ( accepted ) session->server_received[slot]++;
+            }
         }
         rocketnet_server_transport_send_packets( session->server );
         if ( until_delivered )
@@ -592,15 +662,17 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
 // side sent is received, exactly
 static void windows_connreset_send_to_closed_port( const windows_connreset_transport_t * transport )
 {
+    windows_connreset_check_accounting();
     const uint64_t resets_before = rocketnet_platform_receive_resets();
     windows_connreset_session_t session;
     windows_connreset_session_start( &session, transport );
     windows_connreset_child_kill( &session.child );
 
-    // counts start here, on a link drained quiet: nothing sent before is
-    // still in flight
-    session.measuring = false;
-    windows_connreset_drain( &session, 0.25 );
+    // Warmup may still be in flight. A new payload epoch and per-direction
+    // identities distinguish every measured arrival from that older traffic.
+    // Send counts describe issued payloads, not synchronous completion; the
+    // bounded drain below waits for their distinct identities to be observed.
+    session.payload_epoch = 1;
     session.measuring = true;
     const double restart = rocketnet_platform_time();
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
@@ -613,7 +685,7 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     }
     int dead_sends = 0;
     double next = rocketnet_platform_time();
-    while ( dead_sends < 1000 )
+    while ( dead_sends < WINDOWS_CONNRESET_MEASURED_PACKETS * 10 )
     {
         // the per-tick send to every connected slot is one, plus nine extra
         windows_connreset_tick( &session, 1, 9 );
