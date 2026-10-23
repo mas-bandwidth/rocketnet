@@ -206,6 +206,9 @@ static void test_public_receipts_report_available_on_both_ends()
     for ( int tick = 0; tick < 400 && !( client_checked && server_checked ); tick++ )
     {
         lifecycle_pump( &world );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        while ( rocketnet_client_receive_messages( client ) != NULL ) {}
+        while ( rocketnet_server_receive_messages( world.server ) != NULL ) {}
         for ( int side = 0; side < 2; side++ )
         {
             if ( side == 0 ? client_checked : server_checked )
