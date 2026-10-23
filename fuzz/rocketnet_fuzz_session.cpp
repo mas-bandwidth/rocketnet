@@ -49,7 +49,7 @@
 //   11 silence: [ticks] steps with nothing delivered
 
 #include "rocketnet_fuzz_pair.h"
-#include "../dst_checks.h"
+#include "../tests/dst_checks.h"
 
 #include <filesystem>
 #include <string>

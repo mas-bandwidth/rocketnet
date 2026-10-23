@@ -247,8 +247,9 @@ namespace RocketNet.Backend
         public ulong ExpireSeconds = 30;
         public int TimeoutSeconds = 10;
         public bool DevelopmentKey = true;
+        public bool ServerConfigured;
 
-        static byte[]? Base64( string text, int bytes )
+        internal static byte[]? Base64( string text, int bytes )
         {
             byte[] buffer = new byte[bytes + 3];
             return Convert.TryFromBase64String( text, buffer, out int written ) && written == bytes ? buffer.AsSpan( 0, bytes ).ToArray() : null;
@@ -257,7 +258,7 @@ namespace RocketNet.Backend
         // reads the config from the environment through getenv, so tests pass
         // a dictionary; throws ArgumentException naming the variable
 
-        public static BackendConfig Read( Func<string, string?> getenv )
+        public static BackendConfig Read( Func<string, string?> getenv, bool requireServer = true )
         {
             ArgumentNullException.ThrowIfNull( getenv );
             BackendConfig config = new BackendConfig();
@@ -291,22 +292,32 @@ namespace RocketNet.Backend
                 config.ProtocolId = protocolId;
             }
 
-            text = getenv( "ROCKETNET_BACKEND_SERVER_ADDRESSES" );
-            if ( !string.IsNullOrEmpty( text ) )
-                config.ServerAddresses = text.Split( ',' );
-            try
-            {
-                ConnectToken.WriteServerAddresses( new SignedConnectData(), config.ServerAddresses );
-            }
-            catch ( ArgumentException e )
-            {
-                throw new ArgumentException( $"ROCKETNET_BACKEND_SERVER_ADDRESSES: {e.Message}", e );
-            }
+            string? addressesText = getenv( "ROCKETNET_BACKEND_SERVER_ADDRESSES" );
+            if ( !string.IsNullOrEmpty( addressesText ) )
+                config.ServerAddresses = addressesText.Split( ',' );
 
             // each server makes its own keypair at create; the backend needs its public half
             text = getenv( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY" );
-            config.ServerPublicKey = ( string.IsNullOrEmpty( text ) ? null : Base64( text, ConnectToken.KeyBytes ) )
-                ?? throw new ArgumentException( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)" );
+            if ( string.IsNullOrEmpty( text ) )
+            {
+                if ( requireServer || !string.IsNullOrEmpty( addressesText ) )
+                    throw new ArgumentException( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)" );
+                config.ServerAddresses = Array.Empty<string>();
+            }
+            else
+            {
+                config.ServerPublicKey = Base64( text, ConnectToken.KeyBytes )
+                    ?? throw new ArgumentException( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)" );
+                try
+                {
+                    ConnectToken.WriteServerAddresses( new SignedConnectData(), config.ServerAddresses );
+                }
+                catch ( ArgumentException e )
+                {
+                    throw new ArgumentException( $"ROCKETNET_BACKEND_SERVER_ADDRESSES: {e.Message}", e );
+                }
+                config.ServerConfigured = true;
+            }
 
             text = getenv( "ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS" );
             if ( !string.IsNullOrEmpty( text ) )
@@ -324,6 +335,22 @@ namespace RocketNet.Backend
             }
 
             return config;
+        }
+
+        public BackendConfig ForServer( RegisteredServer server )
+        {
+            return new BackendConfig
+            {
+                Port = Port,
+                BackendPrivateKey = BackendPrivateKey,
+                ProtocolId = ProtocolId,
+                ServerAddresses = server.Addresses,
+                ServerPublicKey = server.PublicKey,
+                ExpireSeconds = ExpireSeconds,
+                TimeoutSeconds = TimeoutSeconds,
+                DevelopmentKey = DevelopmentKey,
+                ServerConfigured = true,
+            };
         }
     }
 }

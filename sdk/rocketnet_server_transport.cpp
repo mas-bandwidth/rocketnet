@@ -1365,17 +1365,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         return NULL;
     }
 
-    // A production pin of the development-only portable server must refuse.
-    // The shared fleet-list parser normally skips an unavailable name and
-    // replaces an all-skipped list with auto, which would silently start a
-    // different server for this explicit single-transport request.
-    if ( rocketnet_server_portable_pin_refused( config->transport ) )
-    {
-        if ( status ) *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
-        rocketnet_error( "portable server transport is unavailable in production builds" );
-        return NULL;
-    }
-
     // the transport candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
@@ -2075,13 +2064,16 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 
 // the development seam the ICMP-error functional cases read the live pump
 // and the socket through (TRANSPORTS.md, ICMP errors): the portable and msgx
-// transports' instance is the platform socket itself
+// transports' instance is the portable_server_t, which owns the socket; read
+// as the socket itself, the pump was whatever bytes the owner held there
+
+struct rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE || server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
-        return (struct rocketnet_platform_socket_t*) server_transport->io.instance;
+        return rocketnet_portable_server_test_socket( server_transport->io.instance );
     return NULL;
 }
 
@@ -2269,7 +2261,7 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
 // Historical pure fixture only; the production path below submits immutable
-// snapshots to the worker and applies them on a later update.
+// copies of the stats to the worker and applies them on a later update.
 int rocketnet_server_transport_test_update_client_stats( const rocketnet_client_slots_t * slots,
                                                         rocketnet_server_acks_t * acks )
 {
@@ -3248,6 +3240,12 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
 }
 
 // tla/RNDriverSendStaging.tla SendPackets
+// the staged transports whose flush can leave work behind for a later call
+static bool rocketnet_server_transport_reflushes( int transport )
+{
+    return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
+}
+
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -3271,10 +3269,14 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         server_transport->stats_pending_bytes_sent = 0;
 
         // RNDriverSendStaging.Publish: XDP may retain the producer
-        // generation while its worker owns the other buffer. Re-flush even
-        // without a new commit so worker retirement cannot strand that work.
+        // generation while its worker owns the other buffer, gso retains its
+        // producer when the try-publish meets the TX worker on the handoff
+        // lock or a full FIFO, and io_uring keeps its index while sends wait
+        // for their CQEs. Re-flush even without a new commit, so the next
+        // send boundary retries that work rather than the next update. Each
+        // native flush is non-blocking: a try-publish or a bounded reap.
 
-        if ( server_transport->transport == ROCKETNET_TRANSPORT_XDP ||
+        if ( rocketnet_server_transport_reflushes( server_transport->transport ) ||
              server_transport->send_staged != server_transport->send_flushed )
         {
             server_transport->send_flushed = server_transport->send_staged;
@@ -3598,6 +3600,38 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     }
 }
 
+#if ROCKETNET_DEV
+// The transport's half of the delivery capture (rocketnet_layers.h): plain
+// copies of the slot's mapping and ack endpoint, on the main thread outside
+// update/fill. A slot with no connected client or no mapping leaves the
+// capture untouched, so it reads as not connected.
+void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    if ( !protocol->acks || client_index < 0 || client_index >= protocol->acks->max_clients )
+        return;
+    if ( !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
+        return;
+    const int mapping_index = rocketnet_client_slots_mapping_index( protocol->client_slots, client_index );
+    if ( mapping_index < 0 )
+        return;
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
+    const struct rocketnet_ack_endpoint_t * endpoint = &protocol->acks->endpoints[client_index];
+    capture->connected = 1;
+    capture->server_mapping_known = 1;
+    capture->server_slot = client_index;
+    rocketnet_address_to_string( rocketnet_encryption_map_address( protocol->encryption_map, mapping_index ), capture->remote_endpoint );
+    capture->last_receive_age_seconds = mapping->control && mapping->control->last_receive_time > 0.0 ?
+                                        server_transport->time - mapping->control->last_receive_time : -1.0;
+    capture->highest_received_sequence = mapping->replay_session.highest_opened;
+    capture->highest_sent_sequence = mapping->send_sequence_session > 0 ? mapping->send_sequence_session - 1 : 0;
+    capture->largest_acked_sequence = endpoint->largest_acked_sequence;
+    capture->keep_alive_acked = endpoint->keep_alive_acked ? 1 : 0;
+}
+#endif // #if ROCKETNET_DEV
+
 #endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) && !defined(ROCKETNET_CONFORMANCE_DEFAULTS_ONLY)
@@ -3608,7 +3642,7 @@ static void rocketnet_server_transport_test_count_flush( void * context )
     ++*(int*)context;
 }
 
-int rocketnet_server_transport_test_xdp_reflush()
+int rocketnet_server_transport_test_reflush( int transport_kind )
 {
     void * storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_transport_t) );
     if ( !storage ) return -1;
@@ -3626,7 +3660,7 @@ int rocketnet_server_transport_test_xdp_reflush()
     operations.flush = rocketnet_server_transport_test_count_flush;
     transport->io.operations = &operations;
     transport->io.instance = &flushes;
-    transport->transport = ROCKETNET_TRANSPORT_XDP;
+    transport->transport = transport_kind;
     transport->send_staged = 1;
     rocketnet_server_transport_send_packets( transport );
     rocketnet_server_transport_send_packets( transport );
@@ -3634,6 +3668,11 @@ int rocketnet_server_transport_test_xdp_reflush()
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
     return flushes;
+}
+
+int rocketnet_server_transport_test_xdp_reflush()
+{
+    return rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP );
 }
 
 // A staged send must close the simulator's partial reverse window at the

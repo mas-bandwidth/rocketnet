@@ -1,10 +1,14 @@
-; RocketNet v1.0.0-preview-1 testing plan. TESTING.md is rendered from this
+; RocketNet v1.0.0-preview-1 testing record and v1.0.0-preview-2 qualification
+; status. TESTING.md is rendered from this
 ; file by tools/roadmap/render.py (make testing); make testing-check fails when
 ; the committed page is not what this renders. This file is the whole plan:
-; every test RocketNet runs for v1.0.0-preview-1, and the long runs that come
-; with the final deliverable, so none of them is lost.
+; the exact-head preview-2 release gates, the preview-1 baseline, and the long
+; runs that remain, so none of them is lost. A preview-1 green cell is
+; historical evidence only; it is never promoted to preview-2 green without a
+; receipt that names the exact tested head, platform and test tier.
 ;
-; Five tables. "Tests per platform" holds the tests that apply to every
+; Six tables. "Preview-2 exact-head qualification" holds the current release
+; gates. "Tests per platform" holds the tests that apply to every
 ; platform, and "Platform-specific tests" each test that applies to only some,
 ; one row per platform it applies to. "Tests per transport" holds the tests
 ; that apply to every transport, and "Transport-specific tests" each test that
@@ -33,20 +37,39 @@
 ; floating-point floor check; the Windows build was red. 4529ca2d landed the
 ; unit and functional suites green on Linux, macOS and Windows; the ci.yml run
 ; at b12fb5a1 had not finished when this was rechecked.
-(:title "RocketNet v1.0.0-preview-1 testing"
+; Preview-2 release source is pinned at
+; a76d641ad64768e239528cd1c6bfdf37a0caaa41 on 2026-10-22. The runtime
+; inputs are identical to ba09993b; green rows name either an exact receipt or
+; the original tested commit plus a source-input comparison to this release.
+(:title "RocketNet v1.0.0-preview-2 testing"
  :all-cells-apply t
  :tables-only t
  :rows-name-source t
  :owed "a long run (soak, load, repeat, 1000 clients) that comes with the final deliverable."
- :text ("Every test RocketNet runs for v1.0.0-preview-1, and the long runs that come with the final deliverable, by platform, by transport and release-wide. ✅ is green at this release; ❌ is red, or not yet green, at this release; planned for the final deliverable is a run that comes with the final deliverable. Each table's complete row is the share of ✅ among that table's own cells.")
+ :text ("Preview-2 manual qualification is recorded first. The remaining tables preserve the preview-1 baseline and do not describe current preview-2 status. ✅ in a historical table means green for preview-1; ❌ in the preview-2 table records an accepted known issue deferred to preview-3. Each preview-2 green names the exact tested head, platform and tier; when a receipt carries by input equivalence, it also names the release comparison.")
  :areas
- ((:id "platforms"
-   :title "Tests per platform"
-   :text "The tests that apply to every platform: one row per test, one column per platform."
+ ((:id "preview-2-qualification"
+   :title "Preview-2 exact-head qualification"
+   :text "The release uses the bounded manual qualification recorded in docs/QUALIFICATION-v1.0.0-preview-2.md. A receipt names the tested head, platform and tier; input-equivalent evidence retains its literal tested head. Red rows are published preview-2 limits deferred to preview-3."
+   :label "release gate"
+   :columns release
+   :rows
+   ((:feature "Reviewed runtime source pin a76d641ad64768e239528cd1c6bfdf37a0caaa41 and qualification index recorded" :cells (y) :source "docs/QUALIFICATION-v1.0.0-preview-2.md and preview-2 input audit" :evidence ((status "The recorded source tree is e08ea47a349b96a755312360e516ffe93ed8e526. Runtime inputs are identical to tested ba09993b; the later changes are workflow and documentation only")))
+    (:feature "Unit tier at the tested preview-2 heads and named platforms" :cells (y) :source "docs/QUALIFICATION-v1.0.0-preview-2.md" :evidence ((status "The manual qualification index records the accepted unit receipts and their tested heads")))
+    (:feature "Functional tier at the tested preview-2 heads and named platforms" :cells (n) :source "docs/QUALIFICATION-v1.0.0-preview-2.md and preview-2 qualification ledger" :pending ((status "Accepted preview-3 work: macOS Debug reproduced a socket receive-short condition under system-wide packet-drop pressure, and the big-endian full-system fixture has an endian mismatch plus emulation completion timeouts. The exact ba09993b channel sweep passed 60000 runs with zero failures")))
+    (:feature "Sanitizer and soak tiers at their recorded preview-2 heads and named execution platforms" :cells (n) :source "Preview-2 qualification ledger and input audit" :pending ((status "Accepted preview-3 work. The full unit and functional leak suite passed at exact 415e796d; the SDK, build configuration and sanitizer support inputs are unchanged at the release source, while later functional-oracle changes retain their own validation. Input-equivalent threaded TSan and sanitized-soak jobs passed at c9db35ff. The c9 full soak completed its portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell; the full soak is incomplete. Remaining platform fuzz rows are deferred")))
+    (:feature "Required TLA cases for the release model inputs" :cells (y) :source "Preview-2 TLC qualification audit and input audit" :evidence ((status "The TLA tree is identical at b4c0a109 and runtime source a76d641a. All 287 required cases across 44 groups passed with pinned tool checksums and unchanged input hashes. Eighteen of 21 separate bench cases remain explicit bounded-timeout debt")))
+    (:feature "Dedicated-server load qualification at recorded preview-2 heads, named platforms and allocated-host tiers" :cells (n) :source "docs/LOAD_SPLIT.md and tools/check_split_load.py" :pending ((status "Partial input-equivalent evidence: at 415e796d, whose SDK and load-harness inputs are identical at runtime source a76d641a, AF_XDP copy-mode, portable, GSO and io_uring Linux servers with a Linux portable client passed non-timing correctness at 1, 10, 100, 500 and 1000 clients for 60 seconds per rung. On exact ba09993b, the Windows portable client passed all five portable-server rungs, but its AF_XDP 1000-client rung failed after reliable timeouts; macOS rows and the remaining Windows rows are deferred")))
+    (:feature "Server update and send p99 at or below 100 microseconds at 1000 clients" :cells (n) :source "tools/check_split_load.py" :pending ((status "Accepted preview-3 work. With a Linux portable client at 1000 clients, the upper-bound p99 was 2282 microseconds for AF_XDP copy mode, 935 for portable, 1146 for GSO and 1846 for io_uring. With a Windows portable client, the portable-server value was 1223 microseconds. These timing misses are reported separately from the non-timing correctness passes")))
+    (:feature "Windows native-server LAN qualification on a provisioned 10 GbE NIC" :cells (n) :source "Preview-2 qualification ledger" :pending ((status "Server LAN qualification is deferred until a provisioned 10 GbE NIC is available after raw UDP drops on the current Windows 1 GbE path. Same-host and client coverage do not qualify the Windows server LAN path")))
+    (:feature "AF_XDP live qualification identifies copy or zero-copy mode" :cells (y) :source "docs/LOAD_SPLIT.md and tools/check_split_load.py" :evidence ((status "Linux: 415e796d, with SDK and load-harness inputs identical at runtime source a76d641a, ran live AF_XDP in copy mode at 1, 10, 100, 500 and 1000 clients for 60 seconds per rung; non-timing correctness passed and XDP detached after every rung. This does not qualify zero-copy mode")))))
+  (:id "platforms"
+   :title "Historical preview-1 baseline: tests per platform"
+   :text "Preview-1 tests that apply to every platform: one row per test, one column per platform. These green cells are not preview-2 qualification."
    :label "test"
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "Unit suite (./bin/test)" :cells (y y y) :source "test.cpp and test_unit_*.cpp (./bin/test)" :evidence "Windows: the unit and functional suites green on Windows, landed 4529ca2d; macOS: ./bin/test exits 0 at b12fb5a1 in a Release build on macOS arm64; Linux: ./bin/test exits 0 at 330e951e in a Release build on Linux x86_64, the ASan and UBSan unit job of CI run 39514217665 at 330e951e passes, and the suites green on Linux, landed 4529ca2d")
+   ((:feature "Unit suite (./bin/test)" :cells (y y y) :source "tests/test.cpp and tests/test_unit_*.cpp (./bin/test)" :evidence "Windows: the unit and functional suites green on Windows, landed 4529ca2d; macOS: ./bin/test exits 0 at b12fb5a1 in a Release build on macOS arm64; Linux: ./bin/test exits 0 at 330e951e in a Release build on Linux x86_64, the ASan and UBSan unit job of CI run 39514217665 at 330e951e passes, and the suites green on Linux, landed 4529ca2d")
     (:feature "Functional suite (./bin/functional)" :cells (y y y) :source "functional/ (./bin/functional)" :evidence "Windows: functional.exe green on Windows, landed 4529ca2d (the Windows build fixed by ab931336 and f86850f0); macOS: all 142 of 142 named functional cases exit 0 at b0a8a2e3 (sdk/rocketnet.h identical to v1.0.0-preview-1) in a Release build on macOS arm64, test_transport_dual_stack_ipv4_client among them, each case run as its own process with ./bin/functional --run; the full suite takes about 6 m 38 s, so it runs outside CI's 120 second limit (a known issue); Linux: ./bin/functional green on Linux, landed 4529ca2d (test_transport_control.cpp fixed by f86850f0)")
     (:feature "Functional suite repeated, zero flakes" :cells (o o o) :source "functional/ (./bin/functional, repeated)" :pending ((Windows "planned for the final deliverable: 20 of 20 runs") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
     (:feature "Transport matrix, every cell fifty times" :cells (o o o) :source "tools/check_transport_matrix.py" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable") (Linux "planned for the final deliverable")))
@@ -54,10 +77,10 @@
     (:feature "Leaks (LSan, the leaks tool, App Verifier's leak layer)" :cells (y p o) :source "nightly-leaks.yml, tools/lsan.supp" :evidence ((Windows "App Verifier with the Leak layer, 0 stops on test_lifecycle, test_iocp and functional per transport, 7457d35b")) :pending ((macOS "planned for the final deliverable: the leaks tool") (Linux "planned for the final deliverable: the full functional LSan matrix; the LSan unit suite is green, 1452058c")))
     (:feature "libFuzzer (corpus replay and fuzz runs; clang-cl on Windows)" :cells (p y y) :source "fuzz/, fuzz-nightly.yml" :evidence "macOS: fuzz-macos run by hand green, landed e7fba514; Linux: fuzz-smoke and fuzz-smoke-ndebug green, 32c4ff08, and fuzz-nightly.yml's fuzz job green, 381203ba" :pending ((Windows "planned for the final deliverable")))
     (:feature "Toolchain matrix (MSVC, clang-cl and ARM64 on Windows; Xcode universal arm64 and x86_64 on macOS; gcc and clang on Linux)" :cells (y y y) :source "CMakeLists.txt" :evidence "Windows: clang-cl build passes test.exe and functional.exe, ARM64 cross build, 836cb427; macOS: both slices built, the x86_64 slice's suites under Rosetta 2, ./bin/test from the Xcode generator's build, 879d31f4; Linux: gcc and clang, Debug and Release, ./bin/test and ./bin/functional, landed b83cb5b8")
-    (:feature "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)" :cells (p y y) :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "macOS: descriptor and thread counts flat per case, landed 2773d0da; Linux: every case 5 runs in a row, xdp in a guest, 8a68c102" :pending ((Windows "planned for the final deliverable")))
+    (:feature "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)" :cells (p y y) :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "macOS: descriptor and thread counts flat per case, landed 2773d0da; Linux: every case 5 runs in a row, xdp in a guest, 8a68c102" :pending ((Windows "planned for the final deliverable")))
     (:feature "Hard-killed peer never stalls receive" :cells (p y p) :source "functional/posix_hard_killed_peer.cpp" :evidence "macOS: a SIGKILLed client per transport, landed 443ea520" :pending ((Windows "planned for the final deliverable") (Linux "planned for the final deliverable")))
     (:feature "Socket error paths (oversize, runt, garbage, zero-length, failed sends)" :cells (p y y) :source "functional/posix_socket_errors.cpp" :evidence "macOS: 7ea06926, 20 of 20; Linux: ce98ebd1, 20 of 20, xdp cells in a guest" :pending ((Windows "planned for the final deliverable")))
-    (:feature "Network thread priority" :cells (y y y) :source "test_unit_thread_priority.cpp, functional/thread_priority_timing.cpp" :evidence "Windows, macOS and Linux: test_unit_thread_priority cases run by name in ./bin/test on each, 92e729dd")
+    (:feature "Network thread priority" :cells (y y y) :source "tests/test_unit_thread_priority.cpp, functional/thread_priority_timing.cpp" :evidence "Windows, macOS and Linux: test_unit_thread_priority cases run by name in ./bin/test on each, 92e729dd")
     (:feature "Examples (run_examples.py)" :cells (n n n) :source "examples/, nightly-examples.yml" :pending ((Windows "not yet run at 330e951e; example_soak is red here too") (macOS "not yet run at 330e951e; example_soak is red here too") (Linux "tools/run_examples.py at 330e951e in a Release build on Linux x86_64: nine examples pass and example_soak fails (see Example soak)")))
     (:feature "Example soak (example_soak)" :cells (n n n) :source "examples/soak.c" :pending ((Windows "example_soak fails at the check that the server has no connected clients after the disconnect pass, Debug and Release; a known issue") (macOS "example_soak fails at the check that the server has no connected clients after the disconnect pass, Debug and Release; a known issue") (Linux "example_soak fails at the check that the server has no connected clients after the disconnect pass (examples/soak.c line 336) at 330e951e in a Release build on Linux x86_64; a known issue")))
     (:feature "1000 clients, load harness" :cells (o o y) :source "load.c (./bin/load)" :evidence "Linux: ./bin/load 1000 60 passes all five criteria three times on portable, gso, gso plain and io_uring, once on xdp in a guest, 33f45ea9" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable")))
@@ -67,29 +90,29 @@
     (:feature "Nightlies (every nightly job's steps green on this branch)" :cells (p o o) :source ".github/workflows/nightly*.yml, fuzz-nightly.yml" :pending ((Windows "planned for the final deliverable") (macOS "planned for the final deliverable: for nightly-soak; fuzz, examples and frame budget ran by hand in landed e7fba514") (Linux "planned for the final deliverable: for nightly-soak; fuzz, frame budget, channel seeds and leaks green, 381203ba")))
     (:feature "CI (ci.yml, every step green on this branch)" :cells (n n n) :source ".github/workflows/ci.yml" :pending ((Windows "no ci.yml run has finished at b12fb5a1; the last finished run, 39514217665 at 330e951e, was red on Windows") (macOS "no ci.yml run has finished at b12fb5a1") (Linux "no ci.yml run has finished at b12fb5a1; in CI run 39514217665 at 330e951e the Debug and Release legs stop at the floating-point floor check, and the functional sanitizer, tsan lifecycle, conformance, platform selftest and big-endian jobs are red")))))
   (:id "platform-specific"
-   :title "Platform-specific tests"
-   :text "The tests that apply to only some platforms: one row per platform a test applies to."
+   :title "Historical preview-1 baseline: platform-specific tests"
+   :text "Preview-1 tests that apply to only some platforms: one row per platform a test applies to. These green cells are not preview-2 qualification."
    :label "test"
    :specific t
    :columns ("Windows" "macOS" "Linux")
    :rows
-   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell y :source "functional/windows_connreset.cpp, test_iocp.cpp" :evidence "Windows: landed as 561142df; the test_*_transport_windows_connreset_* cases in functional.exe, green on Windows in landed 4529ca2d")
+   ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell y :source "functional/windows_connreset.cpp, tests/test_iocp.cpp" :evidence "Windows: landed as 561142df; the test_*_transport_windows_connreset_* cases in functional.exe, green on Windows in landed 4529ca2d")
     (:feature "Application Verifier" :on Windows :cell y :source "the CI workflows" :evidence "Windows: 0 verifier stops, 7457d35b")
     (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell y :source "functional/macos_client_timing.cpp" :evidence "macOS: functional/macos_client_timing.cpp, a2c4ac1f; test_macos_client_timing_background_thread_qos removed in f679cf20; the remaining cases measure macOS scheduling and are a known issue, to be removed or rewritten")
     (:feature "MemorySanitizer (msan.yml)" :on Linux :cell y :source ".github/workflows/msan.yml, tools/msan_known.txt" :evidence "Linux: msan.yml run 39514217624 at 330e951e passes")
     (:feature "Big-endian system build and suites" :on Linux :cell p :source ".github/workflows/nightly-bigendian-system.yml, tools/bigendian/" :pending "planned for the final deliverable")
     (:feature "Live XDP test (an XDP server, a client on every test machine)" :on Linux :cell p :source "docs/LIVE-XDP.md, tla/MCRNLiveFleetRun.cfg" :pending "planned for the final deliverable: after v1.0.0-preview-1")))
   (:id "transports"
-   :title "Tests per transport"
-   :text ("The tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them." "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
+   :title "Historical preview-1 baseline: tests per transport"
+   :text ("Preview-1 tests that apply to every transport: one row per test, one column per transport, in the order the automatic ladder ranks them. These green cells are not preview-2 qualification." "xdp, gso and io_uring build on Linux, msgx on macOS, iocp and rio on Windows, and portable and loopback on all three; a portable or loopback cell is ✅ only when it is green on all three.")
    :label "test"
    :columns transports
    :rows
    ((:feature "Transport family matrix (IPv4, IPv6 and dual stack, each transport pinned)" :cells (y p y y p p p p) :source "functional/live_matrix.cpp, tools/check_transport_matrix.py, ci.yml matrix step" :evidence "xdp: xdp_max_size_both_ways_ipv4 and _ipv6 in a guest, cce78fab; gso and io_uring: the matrix step's gso and io_uring cells green, 32c4ff08" :pending ((msgx "planned for the final deliverable") (portable "planned for the final deliverable: Linux is green, e73c2177") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable: Linux: no landed change names the loopback cell")))
     (:feature "Every matrix cell fifty times, zero flakes" :cells (o o o o o o o o) :source "tools/check_transport_matrix.py" :pending ((xdp "planned for the final deliverable") (msgx "planned for the final deliverable") (gso "planned for the final deliverable") (io_uring "planned for the final deliverable") (portable "planned for the final deliverable") (iocp "planned for the final deliverable") (rio "planned for the final deliverable") (loopback "planned for the final deliverable")))))
   (:id "transport-specific"
-   :title "Transport-specific tests"
-   :text "The tests that apply to only some transports: one row per transport a test applies to. None of these runs on loopback, the in-process transport; Application Verifier runs only on Windows."
+   :title "Historical preview-1 baseline: transport-specific tests"
+   :text "Preview-1 tests that apply to only some transports: one row per transport a test applies to. These green cells are not preview-2 qualification. None of these runs on loopback, the in-process transport; Application Verifier runs only on Windows."
    :label "test"
    :specific t
    :columns transports
@@ -115,13 +138,13 @@
     (:feature "Socket error paths" :on portable :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable: macOS and Linux are green, 7ea06926 and ce98ebd1")
     (:feature "Socket error paths" :on iocp :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable")
     (:feature "Socket error paths" :on rio :cell p :source "functional/posix_socket_errors.cpp" :pending "planned for the final deliverable")
-    (:feature "Lifecycle stress" :on xdp :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "xdp: in a guest, 8a68c102")
-    (:feature "Lifecycle stress" :on msgx :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "msgx: msgx and msgx forced portable, landed 2773d0da")
-    (:feature "Lifecycle stress" :on gso :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "gso: 120 of 120 over 5 runs, 8a68c102")
-    (:feature "Lifecycle stress" :on io_uring :cell y :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "io_uring: 8a68c102")
-    (:feature "Lifecycle stress" :on portable :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable: macOS and Linux are green, landed 2773d0da and 8a68c102")
-    (:feature "Lifecycle stress" :on iocp :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
-    (:feature "Lifecycle stress" :on rio :cell p :source "test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
+    (:feature "Lifecycle stress" :on xdp :cell y :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "xdp: in a guest, 8a68c102")
+    (:feature "Lifecycle stress" :on msgx :cell y :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "msgx: msgx and msgx forced portable, landed 2773d0da")
+    (:feature "Lifecycle stress" :on gso :cell y :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "gso: 120 of 120 over 5 runs, 8a68c102")
+    (:feature "Lifecycle stress" :on io_uring :cell y :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :evidence "io_uring: 8a68c102")
+    (:feature "Lifecycle stress" :on portable :cell p :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable: macOS and Linux are green, landed 2773d0da and 8a68c102")
+    (:feature "Lifecycle stress" :on iocp :cell p :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
+    (:feature "Lifecycle stress" :on rio :cell p :source "tests/test_lifecycle.cpp, functional/posix_lifecycle_stress.cpp" :pending "planned for the final deliverable")
     (:feature "Soak under impairment, flat resources" :on xdp :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
     (:feature "Soak under impairment, flat resources" :on msgx :cell y :source "soak.c, soak_sim.cpp" :evidence "msgx: msgx and msgx degraded, impaired and clean, df775cf1")
     (:feature "Soak under impairment, flat resources" :on gso :cell o :source "soak.c, soak_sim.cpp" :pending "planned for the final deliverable")
@@ -161,14 +184,14 @@
     (:feature "Application Verifier" :on iocp :cell y :source "the CI workflows" :evidence "iocp: 0 verifier stops, 7457d35b")
     (:feature "Application Verifier" :on rio :cell y :source "the CI workflows" :evidence "rio: 0 verifier stops, 7457d35b")))
   (:id "release"
-   :title "Release-wide tests"
-   :text "The tests that are neither per platform nor per transport: model checks, proofs, reviews and checks of the code as a whole."
+   :title "Release-wide test inventory and historical preview-1 results"
+   :text "Tests that are neither per platform nor per transport: model checks, proofs, reviews and checks of the code as a whole. New planned rows inventory post-preview-1 work; old green rows are preview-1 history. Neither qualifies preview-2 without the exact-head receipt in the first table."
    :label "test"
    :columns release
    :rows
-   ((:feature "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" :cells (p) :source "test_unit_send_budget.cpp, tla/MCRNSendBudget.cfg" :pending ((status "planned for the final deliverable")))
+   ((:feature "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" :cells (p) :source "tests/test_unit_send_budget.cpp, tla/MCRNSendBudget.cfg" :pending ((status "planned for the final deliverable")))
     (:feature "Security pass: per-client resource exhaustion disconnects the client" :cells (p) :source "SECURITY.md, tla/MCRNSecurityTables*.cfg" :pending ((status "planned for the final deliverable")))
-    (:feature "Receipt loss reported after its own deadline" :cells (p) :source "test_unit_channel_receipts.cpp, tla/MCRNReceipts.cfg" :pending ((status "planned for the final deliverable")))
+    (:feature "Receipt loss reported after its own deadline" :cells (p) :source "tests/test_unit_channel_receipts.cpp, tla/MCRNReceipts.cfg" :pending ((status "planned for the final deliverable")))
     (:feature "Source format in the netcode style (clang-format check)" :cells (p) :source "tools/format/" :pending ((status "planned for the final deliverable")))
     (:feature "TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models)" :cells (p) :source "tla/CASES.tsv, tla/COVERAGE.tsv, tools/check_tla_coverage.py" :pending ((status "planned for the final deliverable")))
     (:feature "TLA+ model check: link (19 required)" :cells (p) :source "tla/CASES.tsv group link; tla/MCLink.tla, tla/MCLinkPatterns.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
@@ -198,8 +221,13 @@
     (:feature "TLA+ model check: rnclientio (8 required)" :cells (p) :source "tla/CASES.tsv group rnclientio; tla/MCRNClientIo.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnendpoint (5 required, 2 bench)" :cells (p) :source "tla/CASES.tsv group rnendpoint; tla/MCRNEndpoint.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base; the bench-gated configs run by hand on a bench, not in tlc.yml")))
     (:feature "TLA+ model check: rnxdpreplay (3 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreplay; tla/MCRNXdpReplay.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
-    (:feature "TLA+ model check: rnxdpreceivering (2 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreceivering; tla/MCRNXdpReceiveRing.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnxdpreceivering (3 required)" :cells (p) :source "tla/CASES.tsv group rnxdpreceivering; tla/MCRNXdpReceiveRing.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnriodriver (4 required)" :cells (p) :source "tla/CASES.tsv group rnriodriver; tla/MCRNRioDriver.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
+    (:feature "TLA+ model check: rnrioworker (8 required)" :cells (p) :source "tla/CASES.tsv group rnrioworker; tla/MCRNRioWorker.tla; tla/RUNS.tsv; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: all eight cases have current PASS witness records in tla/RUNS.tsv, but no exact-head preview-2 release receipt, so this is not a preview-2 green cell")))
+    (:feature "TLA+ model check: rnclientlinkstop (3 required)" :cells (p) :source "tla/CASES.tsv group rnclientlinkstop; tla/MCRNClientLinkStop.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: rnportablerx (6 required)" :cells (p) :source "tla/CASES.tsv group rnportablerx; tla/MCRNPortableRx.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: shutdownownership (14 required)" :cells (p) :source "tla/CASES.tsv group shutdownownership; tla/MCRNClientIoShutdown.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
+    (:feature "TLA+ model check: splitstart (4 required)" :cells (p) :source "tla/CASES.tsv group splitstart; tla/MCSplitStart.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: no exact-head preview-2 receipt yet")))
     (:feature "TLA+ model check: rnflows (2 required)" :cells (p) :source "tla/CASES.tsv group rnflows; tla/MCRNFlows.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnclientiodecrypt (5 required)" :cells (p) :source "tla/CASES.tsv group rnclientiodecrypt; tla/MCRNClientIoDecrypt.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))
     (:feature "TLA+ model check: rnlivefleetrun (3 required)" :cells (p) :source "tla/CASES.tsv group rnlivefleetrun; tla/MCRNLiveFleetRun.tla; .github/workflows/tlc.yml" :pending ((status "planned for the final deliverable: tlc.yml (TLC records) run 39491507653 at 443ea520 queued, not finished; last green TLC records run 38950854663 is at 0b1f91c4, not this base")))

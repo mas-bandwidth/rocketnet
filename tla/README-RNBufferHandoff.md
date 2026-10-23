@@ -10,7 +10,7 @@ waits on a level-triggered wake.
 | direction | producer | consumer | MaxReady | code |
 |---|---|---|---|---|
 | send | game thread (payload rings) | I/O thread | 2 | `rocketnet_client_io_hand_off`, `rocketnet_client_io_step`, `rocketnet_client_io_stop` |
-| receive | I/O thread (datagrams) | update | 1 | `rocketnet_client_io_step`, `rocketnet_client_io_expose`, `rocketnet_client_io_return`; BASE: `rocketnet_client_receive_packets`, `rocketnet_client_update_expose_legacy_receive` |
+| receive | I/O thread (datagrams) | update | 1 | `rocketnet_client_io_step`, `rocketnet_client_io_expose`, `rocketnet_client_io_return` |
 
 The instance is three buffers of two items and five items. Both controls pass
 with every rule on (send 7,464 states, 3,920 distinct; receive 10,792 states,
@@ -69,3 +69,41 @@ TLC's, checked against the code by hand.
   before the quit store, and the exit branch of `rocketnet_client_io_step`
   sends it; `test_client_io_stop_hands_over_the_filling_ring` checks all three
   rings arrive in order.
+
+## BASE batched update refinement
+
+`RNBufferHandoffBase.tla` models BASE separately because update may own several
+buffers at once. `MCRNBufferHandoffBase.cfg` checks four buffers (`MaxReady=N-1`),
+a producer that always owns one buffer, and the maximal oldest READY prefix
+that fits a 1024-packet update. Each model item represents 256 packets, with
+two items per buffer and five produced items. This finite quotient includes
+multiple buffers drained in one update and a queued buffer that exceeds the
+remaining budget; it does not enumerate all possible packet counts.
+
+`Expose` returns any deferred cleared buffers and takes the maximal fitting
+prefix under the mutex. `Process` reads and clears outside the main mutex.
+`ReleaseOnly` returns the batch without taking another buffer. A failed
+`MainTry` advances directly to the end of the update, retaining ownership;
+the next successful expose releases those deferred buffers. Producer writes
+and publication may interleave between these phases. The model checks safety,
+including FIFO delivery, stable consumer views, exact ownership, empty free
+buffers, the budget, maximal draining and absence of a main wait state. It
+makes no fairness or bounded-latency claim about eventual successful try-locks.
+The existing threaded receive model retains its wake/liveness checks.
+
+The `rnbufferhandoffbase` records use the same pinned runner and TLC JAR as CI.
+Reversed controls restore one defect each: `BaseBrokenSingleTake` leaves a
+second fitting READY buffer behind (`MaximalDrain`); `BaseBrokenBudget` takes
+three buffers containing five items, exceeding 1024 (`BudgetBound`);
+`BaseBrokenDeferred` forgets a consumer-owned buffer when its return try-lock
+fails (`OneOwner`). Each must produce the named invariant counterexample.
+
+Measured on Linux with the CI-pinned runner `0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a`:
+control 3,211 generated / 1,825 distinct states; all ten invariants pass.
+The single-take witness is 9 states (buffer 1 remains READY after buffer 0
+was taken with only 256 packets charged). The budget witness is 14 states
+(three buffers, 1,280 packets). The deferred-return witness is 10 states
+(buffer 0 was consumed, the worker holds the mutex, and forgetting the held
+index leaves that buffer ownerless). Logs are retained on the allocated
+Linux bench under `~/p3-stella-handoff/tlc-base-3/`; measured records are in
+`RUNS.tsv`. `tlacheck groups --stale` returned `[]` after integration.

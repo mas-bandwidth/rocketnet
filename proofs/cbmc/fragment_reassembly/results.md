@@ -73,14 +73,26 @@ other check in CBMC_FLAGS has an ESBMC counterpart in the list above.
 
 ## Results
 
-The gate ran on a 16-core Linux bench, with ESBMC 8.5.0 and Bitwuzla 0.9.0
-(Z3 4.13.3 for the header harness).
+The gate ran on a 16-core Linux bench (hetzner2, 2026-10-22), with ESBMC
+8.5.0: Boolector for the process and sizing harnesses, Z3 4.13.3 for the
+header harness. The whole target took 70 s, with a peak resident set of
+256 MiB, inside the 16 GB limit.
 
 | harness | properties | unwind | bound proved | time |
 |---|---|---|---|---|
-| harness_header_and_plan | 81 of 81 | 16 | full: every 6-byte header, every `int` payload size | 17 s |
-| harness_process_fragment | 562 of 562 | 33, memset 64 | fragments at the full bound; `max_payload_bytes` 1..40 only, below every deployed maximum (at least 1416); one connection, one slot | 31 s |
-| harness_memory_sizing | 50 of 50 | 16 | every argument the transports pass, not every `int` | 6 s |
+| harness_header_and_plan | 87 of 87 | 16 | full: every 6-byte header, every `int` payload size | 16 s |
+| harness_process_fragment | 568 of 568 | 33, memset 64 | fragments at the full bound; `max_payload_bytes` 1..40 only, below every deployed maximum (at least 1416); one connection, one slot | 47 s |
+| harness_memory_sizing | 56 of 56 | 16 | every argument the transports pass, not every `int` | 7 s |
+
+Until c613a6a8 the process and sizing harnesses ran on Bitwuzla 0.9.0 (31 s
+and 6 s). That commit set `ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES` to 1413
+(it was 1433). It changed no proof logic or unwind, but the harness sizes
+track that macro, so its effective fragment and arena bound decreased with
+the constant. From that commit on, Bitwuzla runs out of the 16 GB limit on
+both (the sizing harness grew past 100 GB with no limit), and Boolector
+proves both.
+The reversed witness below (the arena one byte short) still fails under
+Boolector.
 
 No property failed in any harness. No defect was found at BASE.
 
@@ -107,11 +119,11 @@ object.
 One connection and one slot. Inputs:
 
 - The fragment is an object of exactly `type_data_bytes` symbolic bytes,
-  with `type_data_bytes` symbolic in 0..1440: from empty to one byte past
-  the largest the reader accepts (6 + 1433). Every payload id, index byte
+  with `type_data_bytes` symbolic in 0..1420: from empty to one byte past
+  the largest the reader accepts (6 + 1413). Every payload id, index byte
   and count byte is symbolic.
 - `max_payload_bytes` is symbolic in 1..40.
-- The slot's arena is `max_payload_bytes + 1433` bytes, as create sizes
+- The slot's arena is `max_payload_bytes + 1413` bytes, as create sizes
   it.
 - The delivered mirror is a symbolic size, from one payload up to its
   ceiling, with a symbolic part already used and up to 64 completions
@@ -199,14 +211,14 @@ bounds are the largest that finished inside a 16 GB address-space limit.
   Payload bytes are copied opaquely: no branch or index depends on a payload
   byte, so bytes beyond a small window add no new case to the region, index
   and refusal arithmetic the harness checks. The fragment itself is proved at
-  its full size (1433 bytes). Full-size payload bounds exhaust the solver's
+  its full size (1413 bytes). Full-size payload bounds exhaust the solver's
   memory (below), so the largest bound that finishes is the one proved.
 - **harness_process_fragment at `max_payload_bytes` up to
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
   deployed range starts at `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` (1416), so no
   deployed payload maximum is inside the proved bound. What limits the run
   is the payload maximum, not the fragment size: fragments at the full
-  1433 bytes prove in under a minute at `max_payload_bytes` up to 24.
+  1413 bytes prove in under a minute at `max_payload_bytes` up to 24.
   Measured on a 64-core bench:
   - Bitwuzla, no memory limit: grew to 76 GB, killed after 415 s.
   - Bitwuzla, 14-16 GB limit: out of memory at every bound from 48 up. At

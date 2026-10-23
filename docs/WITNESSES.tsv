@@ -44,8 +44,8 @@ standard_line	rule	tla_invariant	code_function	test	tier
 2749	The handshake deadline MUST NOT be the token's	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_check_deadlines	sdk/rocketnet_tests.cpp:test_client_timeout_paths	unit
 2779	implementation MUST document the ratio it chose	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_decay	-	none
 2884	an implementation MUST document its capacity and	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_create	-	none
-2904	connection has closed MAY connect again until it expires	OneTokenOneLiveConnection	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_connection_response	test_unit_token_churn.cpp:server_admits_a_token_again_after_its_connection_closes	unit
-2908	deployment SHOULD mint tokens that expire 30	-	sdk/rocketnet_connect_token.cpp:rocketnet_create_dev_connect_token	test_unit_token_churn.cpp:server_rejects_an_expired_token_before_any_crypto	unit
+2904	connection has closed MAY connect again until it expires	OneTokenOneLiveConnection	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_connection_response	tests/test_unit_token_churn.cpp:server_admits_a_token_again_after_its_connection_closes	unit
+2908	deployment SHOULD mint tokens that expire 30	-	sdk/rocketnet_connect_token.cpp:rocketnet_create_dev_connect_token	tests/test_unit_token_churn.cpp:server_rejects_an_expired_token_before_any_crypto	unit
 2924	MUST NOT treat that as sufficient	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
 2952	its token MUST stay usable for the	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_check	-	none
 2918	traffic MUST NOT suppress it	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_write_keep_alive_if_due	sdk/rocketnet_tests.cpp:test_server_keep_alive_pacing	unit

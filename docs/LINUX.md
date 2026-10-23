@@ -72,11 +72,10 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc:7` |
 | `gso` | 20 | 0 | `sdk/rocketnet_drivers.inc:6` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc:11` |
-| `portable` | development: 30; production: unavailable | 30 | `sdk/rocketnet_drivers.inc:5` |
+| `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc:5` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc:10` |
 
-The production Linux server `auto` order is **xdp → gso → io_uring**;
-development builds add **portable** last. A build without liburing omits
+The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits
 `io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md:18-23`, `sdk/rocketnet_driver.h:13`). The Linux client has one
@@ -121,8 +120,7 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
 - A one-element list is a pin: that transport or a loud failure, never a fall.
-- A production server pin of `portable` returns `INVALID_TRANSPORT_LIST` at
-  public create or low-level start, before the all-skipped auto rule.
+- A server pin of `portable` is available in both development and production.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`
@@ -222,8 +220,12 @@ stay in the completion queue for a later call and are counted
   will not grant the memory. Measured with
   `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
   on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB;
-  on kernel 6.8 they create at 64 KiB. The usual default soft limit of
-  8192 KiB covers 32 queues on 7.0 (section 10).
+  on kernel 6.8 they create at 64 KiB. These are single-server measurements.
+  On kernel 7.0, io_uring charges locked pages across processes of the same
+  user and checks that total against the creating process's limit
+  ([kernel accounting](https://github.com/torvalds/linux/blob/v7.0/io_uring/rsrc.c#L36-L52)).
+  A limit that works for one server can therefore refuse concurrent servers
+  with `ENOMEM`; size it for the account's concurrent rings, with headroom.
 
 The create line is
 `io_uring transport: <n> queue reuseport group on port <p>, 4096 entry ring, 4096 receive buffers per queue`
@@ -394,8 +396,16 @@ under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 
 **Locked memory.** `portable` and `gso` need no memlock headroom: the section
 10 commands create 1000-client servers of each under `ulimit -l 64`.
-`io_uring` needs some, kernel-dependent (section 5); keep `ulimit -l` at
-8192 KiB or more. `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
+`io_uring` needs some, kernel-dependent (section 5). An 8192 KiB limit covers
+the single-server measurements in section 10, but is not a concurrency budget.
+Check the running process's soft and hard limits in `/proc/<pid>/limits`, and
+budget for all io_uring servers running under that user. For systemd services,
+`LimitMEMLOCK=` controls this limit. A user service cannot raise its hard limit
+above the user manager's; configure `user@<uid>.service` when that inherited
+limit is too small. See [systemd's resource-limit documentation](https://www.freedesktop.org/software/systemd/man/systemd.exec.html#Process%20Properties).
+Apply a user-manager restart only during a maintenance window: it stops the
+user's other services too. Preserve an existing higher limit.
+`xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
 `server could not setrlimit` if it cannot (`BUILDING.md:407-408`,
 `sdk/rocketnet_server_socket_linux.cpp:1605-1614`); as root on a host that
 succeeds.

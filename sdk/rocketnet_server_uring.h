@@ -138,6 +138,8 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
 // so the kernel completes each with a failed CQE.
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error );
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
+// main thread: no staged slot waiting and no send without its CQE.
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
 #endif
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)

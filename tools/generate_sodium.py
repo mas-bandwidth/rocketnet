@@ -52,6 +52,27 @@ BASELINE_ADAPTATIONS = {
          '# if defined(__GNUC__) && !defined(__clang__)\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n('),
     ],
 }
+# MemorySanitizer adaptations (sodium/README.md, "MemorySanitizer"). Two
+# baseline writes reach memory through calls MSan cannot see: the raw
+# syscall(SYS_getrandom) fill and libc's explicit_bzero wipe (the build's
+# HAVE_EXPLICIT_BZERO on Linux). Both leave the written bytes poisoned, so
+# every value derived from a random fill or read after a wipe is reported.
+# Under MSan only, each write is followed by __msan_unpoison of exactly the
+# bytes it wrote; every other build preprocesses the macro to nothing.
+SANITIZER_ADAPTATIONS = {
+    'sodium.c': [
+        ('void\nsodium_memzero(void *const pnt, const size_t len)\n{\n',
+         '#if defined(__has_feature)\n# if __has_feature(memory_sanitizer)\n#  include <sanitizer/msan_interface.h>\n'
+         '#  define SODIUM_MSAN_UNPOISON(p, n) __msan_unpoison((p), (n))\n# endif\n#endif\n'
+         '#ifndef SODIUM_MSAN_UNPOISON\n# define SODIUM_MSAN_UNPOISON(p, n) ((void) 0)\n#endif\n\n'
+         'void\nsodium_memzero(void *const pnt, const size_t len)\n{\n'),
+        ('    explicit_bzero(pnt, len);\n',
+         '    explicit_bzero(pnt, len);\n    SODIUM_MSAN_UNPOISON(pnt, len);\n'),
+        ('    } while (readnb < 0 && (errno == EINTR || errno == EAGAIN));\n\n    return (readnb == (int) size) - 1;\n',
+         '    } while (readnb < 0 && (errno == EINTR || errno == EAGAIN));\n    if (readnb > 0) {\n'
+         '        SODIUM_MSAN_UNPOISON(buf, (size_t) readnb);\n    }\n\n    return (readnb == (int) size) - 1;\n'),
+    ],
+}
 UPSTREAM_ADAPTATIONS = {
     'crypto_core/ed25519/ref10/ed25519_ref10.c': [
         # -Wunused-function: the subset never converts a point to precomp.
@@ -241,6 +262,10 @@ UPSTREAM_CONVERSIONS = {
         (None, r'BLAKE2B_COMPRESS_V1\(a, b, block, S->t\[0\], S->t\[1\], S->f\[0\], S->f\[1\]\)',
          'BLAKE2B_COMPRESS_V1(a, b, block, (int64_t) S->t[0], (int64_t) S->t[1], (int64_t) S->f[0], (int64_t) S->f[1])', 1),
     ],
+    'crypto_scalarmult/curve25519/ref10/x25519_ref10.c': [
+        # One bit of the clamped scalar byte: the promoted int is 0 or 1.
+        ('crypto_scalarmult_curve25519_ref10(', r'^(\s+)b = (t\[pos / 8\] >> \(pos & 7\));$', r'\1b = (unsigned int) (\2);', 1),
+    ],
     'crypto_stream/salsa20/stream_salsa20.c': [
         (None, r'^#if HAVE_AMD64_ASM$', '#if defined(HAVE_AMD64_ASM) && HAVE_AMD64_ASM', 1),
     ],
@@ -361,6 +386,8 @@ def main():
     for path, rules in UPSTREAM_CONVERSIONS.items():
         files[path] = convert(files[path], rules, path)
     for name, replacements in BASELINE_ADAPTATIONS.items():
+        baseline[name] = adapt(baseline[name], replacements, name)
+    for name, replacements in SANITIZER_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
     for name, rules in BASELINE_CONVERSIONS.items():
         baseline[name] = convert(baseline[name], rules, name)

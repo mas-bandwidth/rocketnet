@@ -73,6 +73,59 @@ its clients. These deadlines fail visibly on late setup. After connection,
 the server sends 32-byte run-ID-bound ARM, waits up to 10 seconds for all
 ACKs, sends GO and waits up to 10 seconds for all GO ACKs, then sends RUN.
 RUN shares the reliable-ordered channel with later server-to-client data.
+A client answers ARM and GO only once it reports CONNECTED: its transport
+hands payloads from before then, and a send before CONNECTED is dropped, so
+an ARM that arrives in that window is answered at the first update after it
+connects (`tools/load_split_startup.h`, `tools/test_load_split_startup.c`).
+Every start message is reliable ordered: a lost packet is the SDK's resend
+and costs delay inside these windows, never the message. The server is the
+one authority on the start windows. A client shard waits for ARM, GO and RUN
+against one deadline from its own connection: the server's 10-second
+population window, both 10-second start windows, and one client
+`reliable_message_timeout_ms` for RUN itself
+(`tools/load_split_barrier.h`, modelled in `tla/SplitStart.tla`). Shards
+finish setup at different times, and the first to connect waits for the
+last; its own clock never cuts short a start the server would complete.
+Either role ends the wait at once when a client it still waits for
+disconnects. A start that does not complete prints one `split_start_failure:`
+line naming the role, the shard's first client and count, the phase
+(`connect`, `arm`, `go` or `run`), the reason (`timed_out` or
+`disconnected`) and the number of clients still owed, followed by up to 32
+`split_start_waiting:` lines, one per owed client, with that client's state
+and packet counters.
+
+Both roles also keep a delivery capture (`tools/load_split_capture.h`, read
+through the development library's capture in `sdk/rocketnet_layers.h`; no
+public API). Once a second each connection is sampled: packets sent and
+received, its resends where the side keeps them per connection (clients
+only), the age of its last accepted receive, the highest session sequence
+received, sent and acknowledged, the reliable window (unacknowledged
+numbers, the resend queue and the age of the oldest), the RTT estimate and
+the send budget. RUN is marked when the server queues it, with the first
+sequence any packet sent after it can carry, and when each client receives
+it. On the server a largest acknowledged sequence at or past the mark prints
+`acked_past_run=yes`: the client acknowledged a packet sent after RUN was
+queued (RUN's own or a later one). `reliable_unacked` is the total outstanding
+ordered window; a nonzero count cannot identify RUN specifically. Client
+lines print `acked_past_run=na`. Server lines also retain `server_slot` and
+`remote_endpoint` (numeric address and UDP port) from the connected mapping,
+so a logical client can be correlated after its slot has been reset. These
+fields are marked unavailable on client lines and never-connected entries.
+XDP queue assignment and ring drops still require the per-XSK OS evidence.
+A connection found ended between two samples prints its last connected
+sample at once as a `split_capture:` line with `why=kick` (the SDK resets the
+slot when it ends it), followed by its own counters on a client shard and
+the side's totals. The server stops sampling in its confirmation grace,
+where confirmed shards disconnect on purpose. A connection that ends less
+than a second after it connected is never sampled connected and prints only
+`end_never`. At the end of the
+run every connection prints one `split_capture:` line (`why=end` live,
+`end_ended` or `end_never`), then `split_counter:` lines: a named set of
+delivery and refusal counters always, every other counter when nonzero,
+and, on a client shard, each client's nonzero named counters from its last
+connected sample. The merger ignores both prefixes. Detailed output is
+synchronous: the first detected kick predates that output, but printing may
+affect the timing of subsequent disconnects in the same run.
 Clients begin their own full monotonic traffic window after receiving RUN;
 machine UTC clocks are only reported for correlation, never used to shorten
 the duration. Each role then runs exactly the requested traffic duration and

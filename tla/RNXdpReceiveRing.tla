@@ -13,6 +13,20 @@
 (* bytes, never a frame, and the application drains it under the receive  *)
 (* mutex, which the worker holds for the whole pass.                       *)
 (*                                                                         *)
+(* The fill ring is the kernel's too: fq is its entries from the consumer  *)
+(* index the kernel has published to the producer index.  The kernel       *)
+(* reads it through a cached batch (xskq_cons_peek_addr_unchecked,         *)
+(* net/xdp/xsk_queue.h): kcache is the batch it peeked, kused the entries  *)
+(* of the batch it has taken, and it publishes its consumer only when the  *)
+(* batch is used up.  A taken entry keeps its slot until then, so the      *)
+(* user's free slots are FillSize - Len(fq) (libxdp's                      *)
+(* xsk_ring_prod__reserve), and the flush fits only in those.  The server  *)
+(* sizes the ring at twice its receive frames (ROCKETNET_XDP_FILL_RING_SIZE*)
+(* in rocketnet_constants.h); with exactly the frames, the worker cannot   *)
+(* hand a frame back until the kernel ends its batch, and the kernel then  *)
+(* finds the ring empty and drops the packet (hulk 2026-10-22, "rx fill    *)
+(* ring empty" on the one queue all of one host's clients hash to).        *)
+(*                                                                         *)
 (* The ring is the kernel's view: ring is the sequence of descriptors      *)
 (* from the consumer index to the producer index.  ahead is the user's     *)
 (* cached consumer minus the consumer: the descriptors peeked and neither  *)
@@ -23,9 +37,9 @@
 (* of a pass gives back descriptors that were never read.                  *)
 (*                                                                         *)
 (* Left out: the pending return's capacity (the peek is bounded by it and  *)
-(* it is ROCKETNET_XDP_RECV_QUEUE_SIZE, more than the frames, so it never  *)
-(* binds), the order the kernel takes fill frames in, packet contents and  *)
-(* the frame codec's drops (a dropped frame is still taken and returned).  *)
+(* it is ROCKETNET_XDP_RECV_QUEUE_SIZE, no fewer than the frames, so it    *)
+(* never binds), packet contents and the frame codec's drops (a dropped    *)
+(* frame is still taken and returned).                                     *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -33,12 +47,14 @@ CONSTANTS
     Frames,       \* the UMEM receive frames
     RingSize,     \* the RX ring's entries
     PeekMax,      \* the most descriptors one peek asks for
-    StageCap      \* the staging buffer's packets (ROCKETNET_XDP_RECV_QUEUE_SIZE)
+    StageCap,     \* the staging buffer's packets (ROCKETNET_XDP_RECV_QUEUE_SIZE)
+    FillSize      \* the fill ring's entries (ROCKETNET_XDP_FILL_RING_SIZE)
 
 ASSUME /\ Frames # {}
        /\ RingSize \in Nat \ {0}
        /\ PeekMax \in Nat \ {0}
        /\ StageCap \in Nat \ {0}
+       /\ FillSize \in Nat /\ FillSize >= Cardinality(Frames)
 
 (***************************************************************************)
 (* Rule switch, overridden by the reversed witness.                        *)
@@ -48,7 +64,9 @@ ASSUME /\ Frames # {}
 CancelUnconsumed == TRUE
 
 VARIABLES
-    fill,      \* the frames in the fill ring (kernel, free)
+    fq,        \* the fill ring's entries, published consumer to producer
+    kcache,    \* the entries at the front of fq the kernel's batch peeked
+    kused,     \* the entries of that batch the kernel has taken
     ring,      \* the RX ring's descriptors, consumer to producer (kernel view)
     ahead,     \* cached consumer - consumer (user)
     phase,     \* "idle" or "taking" (the worker holds the receive mutex)
@@ -59,14 +77,25 @@ VARIABLES
     staged,    \* the packets in the staging buffer (copies, not frames)
     took       \* ghost: the current pass has taken a descriptor
 
-vars == <<fill, ring, ahead, phase, start, peeked, taken, pending, staged, took>>
+vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
 Min(a, b) == IF a <= b THEN a ELSE b
 
+(* The frames of a set in some order: the order the flush writes them.     *)
+SetSeq(S) == CHOOSE s \in [1..Cardinality(S) -> S] : Range(s) = S
+
+(* The fill ring's frames the kernel has not taken.                        *)
+Fill == {fq[i] : i \in kused + 1..Len(fq)}
+
+(* The flush fits: libxdp's reservation of every pending frame or none.    *)
+FlushFits == Len(fq) + Cardinality(pending) <= FillSize
+
 TypeOK ==
-    /\ fill \subseteq Frames
+    /\ fq \in Seq(Frames) /\ Len(fq) <= FillSize
+    /\ kcache \in 0..Len(fq)
+    /\ kused \in 0..kcache
     /\ ring \in Seq(Frames) /\ Len(ring) <= RingSize
     /\ ahead \in 0..RingSize
     /\ phase \in {"idle", "taking"}
@@ -78,7 +107,9 @@ TypeOK ==
     /\ took \in BOOLEAN
 
 Init ==
-    /\ fill = Frames
+    /\ fq = SetSeq(Frames)
+    /\ kcache = 0
+    /\ kused = 0
     /\ ring = <<>>
     /\ ahead = 0
     /\ phase = "idle"
@@ -89,14 +120,27 @@ Init ==
     /\ staged = 0
     /\ took = FALSE
 
-(* KernelReceive(f): a packet lands in fill frame f, posted to the RX ring *)
-(* while the ring has a free entry as the kernel sees it.                  *)
-KernelReceive(f) ==
-    /\ f \in fill
+(* KernelReceive: a packet lands in the next frame of the kernel's batch,  *)
+(* posted to the RX ring while the ring has a free entry as the kernel     *)
+(* sees it.  The fill ring slot stays the kernel's until it publishes.     *)
+KernelReceive ==
+    /\ kused < kcache
     /\ Len(ring) < RingSize
-    /\ fill' = fill \ {f}
-    /\ ring' = Append(ring, f)
-    /\ UNCHANGED <<ahead, phase, start, peeked, taken, pending, staged, took>>
+    /\ kused' = kused + 1
+    /\ ring' = Append(ring, fq[kused + 1])
+    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took>>
+
+(* KernelRefresh: a packet finds the batch used up.  The kernel publishes  *)
+(* its consumer (the taken entries' slots go back to the user) and peeks   *)
+(* what the producer shows now.  If that is nothing, the packet is         *)
+(* dropped: "rx fill ring empty".                                          *)
+KernelRefresh ==
+    /\ kused = kcache
+    /\ kused > 0 \/ Len(fq) > kcache
+    /\ fq' = SubSeq(fq, kused + 1, Len(fq))
+    /\ kused' = 0
+    /\ kcache' = Len(fq) - kused
+    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax;    *)
 (* the worker takes the receive mutex.  A peek of zero is no step.         *)
@@ -109,7 +153,7 @@ Peek ==
     /\ peeked' = n
     /\ taken' = 0
     /\ phase' = "taking"
-    /\ UNCHANGED <<fill, ring, pending, staged, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took>>
 
 (* Take: the staging buffer has room; read descriptor start + taken + 1    *)
 (* (rx_desc at the peek's index + i) and hold its frame.                   *)
@@ -121,11 +165,13 @@ Take ==
     /\ taken' = taken + 1
     /\ staged' = staged + 1
     /\ took' = TRUE
-    /\ UNCHANGED <<fill, ring, ahead, phase, start, peeked>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked>>
 
 (* Finish: every peeked descriptor taken, or the staging buffer full.      *)
 (* Cancel the rest (CancelUnconsumed), release the mutex, release the      *)
 (* taken count: the consumer advances over the first taken descriptors.    *)
+(* Then the pass flushes its pending return into the fill ring, all of it  *)
+(* if it fits, else none (a zero reservation keeps every frame).           *)
 Finish ==
     LET back == IF CancelUnconsumed THEN peeked - taken ELSE 0 IN
     /\ phase = "taking"
@@ -137,26 +183,32 @@ Finish ==
     /\ peeked' = 0
     /\ taken' = 0
     /\ took' = FALSE
-    /\ UNCHANGED <<fill, pending, staged>>
+    /\ IF FlushFits
+          THEN /\ fq' = fq \o SetSeq(pending)
+               /\ pending' = {}
+          ELSE UNCHANGED <<fq, pending>>
+    /\ UNCHANGED <<kcache, kused, staged>>
 
-(* Refill: the pending return's all-or-zero flush into the fill ring; a    *)
+(* Refill: the flush again at the top of the worker's next pass; a         *)
 (* reservation of zero is this step not yet taken.                         *)
 Refill ==
     /\ phase = "idle"
     /\ pending # {}
-    /\ fill' = fill \cup pending
+    /\ FlushFits
+    /\ fq' = fq \o SetSeq(pending)
     /\ pending' = {}
-    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, staged, took>>
+    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took>>
 
 (* Drain: the application takes the staging buffer, under the mutex.       *)
 Drain ==
     /\ phase = "idle"
     /\ staged > 0
     /\ staged' = 0
-    /\ UNCHANGED <<fill, ring, ahead, phase, start, peeked, taken, pending, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, took>>
 
 Next ==
-    \/ \E f \in Frames : KernelReceive(f)
+    \/ KernelReceive
+    \/ KernelRefresh
     \/ Peek
     \/ Take
     \/ Finish
@@ -171,30 +223,43 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next) /\ SF_vars(Drain)
 (* Invariants.                                                             *)
 (***************************************************************************)
 
-(* The RX ring's descriptors the current pass has not taken: a taken      *)
+(* The RX ring's descriptors the current pass has not taken: a taken       *)
 (* descriptor stays in the kernel's ring until the release, and its frame  *)
 (* is already the worker's.                                                *)
 Untaken == {i \in 1..Len(ring) : i \notin start + 1..start + taken}
 InRing == {ring[i] : i \in Untaken}
 
-(* Every frame is in exactly one of the fill ring, the RX ring (untaken)   *)
-(* or the worker's hands (the staging buffer holds copies), once each.     *)
+(* Every frame is in exactly one of the fill ring (untaken), the RX ring   *)
+(* (untaken) or the worker's hands (the staging buffer holds copies),      *)
+(* once each.                                                              *)
 FrameConservation ==
     /\ Cardinality(Untaken) = Cardinality(InRing)
-    /\ fill \cap InRing = {}
-    /\ fill \cap pending = {}
+    /\ Len(fq) - kused = Cardinality(Fill)
+    /\ Fill \cap InRing = {}
+    /\ Fill \cap pending = {}
     /\ InRing \cap pending = {}
-    /\ fill \cup InRing \cup pending = Frames
+    /\ Fill \cup InRing \cup pending = Frames
 
 (* Between passes the cached consumer is the consumer: every peeked        *)
 (* descriptor was released or cancelled.                                   *)
 ConsumerNotBehind == phase = "idle" => ahead = 0
 
+(* Between passes the worker holds no frame: every flush fits, because the *)
+(* ring has a slot for each frame beyond the kernel's unpublished batch.   *)
+PendingReturnedEachPass == phase = "idle" => pending = {}
+
+(* The kernel finds the fill ring empty (no entry it has not taken, so a   *)
+(* refresh peeks nothing) only while no frame is free: none is waiting in  *)
+(* the worker's hands between passes to go back.                           *)
+FillEmpty == kused = Len(fq)
+
+FillNeverEmptyWhileFramesFree == FillEmpty => ~(phase = "idle" /\ pending # {})
+
 (***************************************************************************)
 (* Liveness: receive never stalls while frames are free.  Whenever a frame *)
 (* is in the fill ring or the RX ring, a pass eventually takes one.        *)
 (***************************************************************************)
-FramesFree == fill # {} \/ ring # <<>>
+FramesFree == Fill # {} \/ ring # <<>>
 
 ReceiveNeverStalls == FramesFree ~> took
 =============================================================================

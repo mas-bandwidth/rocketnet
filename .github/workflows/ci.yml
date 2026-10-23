@@ -70,7 +70,8 @@
 #                           abort paths, each against its own negative
 #                           control -- once per OS, on the Release build,
 #                           because neither is a build-type story
-#   tsan                    the threaded transport, in two parallel legs
+#   tsan                    the loopback soak and the lifecycle harness; the
+#                           threaded transports run nightly (nightly.yml)
 #   sodium-pinned           the system-sodium integration mode against a
 #                           content-verified 1.0.20 reference
 #
@@ -968,7 +969,7 @@ jobs:
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
   # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
-  # in test/connect_token_vectors.json from its fixed inputs and compare byte for
+  # in tests/connect_token_vectors.json from its fixed inputs and compare byte for
   # byte, so a change to the token format that the vectors record and the
   # backends do not follow goes red here. No sockets and no real time, so no C
   # build: each leg is a toolchain and seconds of tests, its own job with NO
@@ -1625,6 +1626,15 @@ jobs:
   # same ./bin/soak 20000 count, still per commit, still no suppressions file.
   # Each leg builds only the targets it runs, which is also why the second
   # build is not the full 16s.
+  #
+  # THE THREADED-TRANSPORT LEG MOVED TO nightly.yml (2026-10-22), unchanged:
+  # the unit and functional suites under tsan, halt_on_error=1, no
+  # suppressions. On the fleet's 16-core runner hosts it measured 345-454s
+  # against this file's 3-minute law, and its live message matrix case (a
+  # 50s tsan wall-clock bound, 35s alone) failed on the machine, not the
+  # code, when the suite ran beside it. Per commit, tsan runs the loopback
+  # soak and the lifecycle harness below; each night it runs the threaded
+  # transports.
 
   tsan:
     name: tsan (${{ matrix.leg }})
@@ -1633,7 +1643,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [threaded transport, loopback soak]
+        leg: [loopback soak]
     steps:
 
       - uses: actions/checkout@v4
@@ -1671,25 +1681,9 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
-      - name: Build the suite
-        if: matrix.leg == 'threaded transport'
-        run: cmake --build build --target test functional --parallel
-
       - name: Build the soak and the lifecycle harness
         if: matrix.leg == 'loopback soak'
         run: cmake --build build --target soak test_lifecycle --parallel
-
-      - name: Run the unit suite under tsan
-        if: matrix.leg == 'threaded transport'
-        env:
-          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: setarch "$(uname -m)" -R ./bin/test
-
-      - name: Run the functional suite under tsan
-        if: matrix.leg == 'threaded transport'
-        env:
-          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: setarch "$(uname -m)" -R ./bin/functional
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
         if: matrix.leg == 'loopback soak'

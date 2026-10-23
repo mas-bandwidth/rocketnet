@@ -347,8 +347,19 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         return -1;
     }
 
+    // the queue that discovers an ephemeral port binds before it joins a
+    // reuseport group: bound with SO_REUSEPORT, an ephemeral bind may be
+    // given a port another reuseport group of the same user already holds,
+    // and the kernel then shares that port's datagrams between the two
+    // servers (measured on amd-1: 4 shared ports in 50 x 64 reuseport
+    // ephemeral binds, none when the first socket binds without it). Bound
+    // first, it takes a port no socket holds, and SO_REUSEPORT set after the
+    // bind lets this server's other queues join it.
+
+    const bool discovers_port = *bound_port == 0 && bind_address->port == 0;
+
     int one = 1;
-    if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( !discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
         rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
@@ -414,6 +425,13 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
     {
         rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        close( fd );
+        return -1;
+    }
+
+    if ( discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    {
+        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -874,6 +892,15 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
 {
     rocketnet_assert( uring );
     uring->test_fail_sends = count > 0 ? count : 0;
+}
+
+// main thread only: true when no staged slot waits and no send is without
+// its CQE (RNUringDriver ResetIndex has run), so the send counters are final
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    return uring->sends_pending == 0 && uring->send_submitted == 0 &&
+           uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
 }
 
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
@@ -1686,6 +1713,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 #endif
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)

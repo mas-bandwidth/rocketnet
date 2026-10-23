@@ -42,7 +42,10 @@ Two I/O shapes preserve the existing implementations:
 
 - **Buffered:** the transport supplies its common control, payload and receive
   buffers. `send_batch` and `receive_batch` borrow that storage only for the call.
-  This is the portable/msgx shape. It does not require a backend-owned pool.
+  This is the portable/msgx shape. The current server backend copies sends into
+  bounded TX banks for its transmit worker and receives into bounded RX banks
+  on its receive worker; the borrowed interface does not transfer the caller's
+  buffers to either worker.
 - **Staged:** the transport supplies frame storage and a complete receive batch.
   XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
@@ -169,11 +172,13 @@ same stop/stopped/destroy order. Keep backend and callback contexts alive throug
 destroy. A stuck operation leaves completion false; timeout is never permission
 to reclaim or detach memory that an operation still owns.
 
-Clients use create/destroy/send/receive callbacks. The existing transport
-receive thread and buffers remain shared infrastructure. Receive can run
-concurrently with sends; both calls borrow their buffers synchronously. Destroy
-runs after that thread has joined and must release any additional backend-owned
-work. Client fast-path I/O is not required by this interface.
+Clients use create/destroy/send/receive callbacks. A transport that supplies
+wait and wake callbacks uses the bounded client I/O core: one background thread
+receives and sends batched datagrams through owned handoff rings while the frame
+thread advances protocol state. A backend without those callbacks uses the base
+path: one polling receive worker exchanges receive buffers under a short mutex,
+and sends run synchronously on the frame thread. Destroy runs only after stop
+completion, joins that one client thread, and releases backend-owned work.
 
 ## ICMP errors
 
@@ -208,10 +213,12 @@ and `:3573`):
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
-| GSO (Linux) | one worker per queue (`sdk/rocketnet_server_gso_linux.cpp:769`) | `SCHED_RR`, minimum priority, after each create |
+| GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | one worker per completion thread (`sdk/rocketnet_server_iocp_windows.cpp:568`) | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
-| io_uring, RIO, portable socket | none | nothing |
+| IOCP (Windows) | one worker per completion thread plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
+| portable/msgx socket | one receive worker and one transmit worker | nothing |
+| io_uring | none | nothing |
 
 Every server also runs one background stats worker. It uses a socket-free wake
 and does not receive the network-thread priority override described above.
@@ -244,7 +251,7 @@ registration is compiled into the SDK; this is not a dynamic plugin ABI.
 Backend symbols are not public C exports. Per-transport settings and resource
 validation belong in the factory; the public transport configuration is unchanged.
 
-`test/driver_extension` is an executable example: an external row and backend
+`tests/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
 the public transport API. `tools/check_driver_extension.py build` builds and
 runs it independently. `test_transport` checks registry ordering, factory refusal,
@@ -258,14 +265,19 @@ Dispatch measurements and their limits are recorded in
 ## The RIO server transport
 
 `rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
-is a Windows staged server transport with one registered memory region, polled
-send and receive completion queues, deferred sends committed once per flush,
-and two send phases so a phase stays owned until its sends complete. It uses no
-worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
+is a Windows staged server transport with one registered memory region and one
+I/O worker that polls the send and receive completion queues. The frame thread
+hands deferred sends to one of three phases; a phase stays worker-owned until
+its sends complete, and four receive banks cross the same bounded ownership seam.
+Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
-dropped-overflow receives, failed receive reposts, and RIO commit calls. Its send phase swap and one-bank receive limit are implemented in `rocketnet_server_rio_send_packets` and `rocketnet_server_rio_receive_packets` in `sdk/rocketnet_server_rio_windows.cpp`; its receive banks are modelled in `tla/RNRioDriver.tla`.
+dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
+three send phases and four receive banks are implemented in
+`rocketnet_rio_worker_pass` and `rocketnet_server_rio_receive_packets` in
+`sdk/rocketnet_server_rio_windows.cpp`; their ownership is modelled in
+`tla/RNRioWorker.tla`.
 
 ## Windows connection reset
 
@@ -322,7 +334,7 @@ and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
 `io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
 probes once that the kernel accepts the ring, the opcodes and the provided
-buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30)
+buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
 Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
@@ -503,9 +515,9 @@ or later) is not used.
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
-compiles `test/xdp_host/server_xdp_host.c`, which includes
+compiles `tests/xdp_host/server_xdp_host.c`, which includes
 `server_xdp/server_xdp.c` unchanged, with the BPF build's defines
-(`-D__linux__ -D__BPF__ -ffreestanding`) and `test/xdp_host/` first on that
+(`-D__linux__ -D__BPF__ -ffreestanding`) and `tests/xdp_host/` first on that
 one target's include path. That directory is a shim: minimal `linux/*.h` and
 `bpf/bpf_helpers.h` with only the types, constants and map macros the filter
 uses. `struct xdp_md` carries `data` and `data_end` as `unsigned long` so they

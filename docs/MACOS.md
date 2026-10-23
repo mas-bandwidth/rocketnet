@@ -93,11 +93,11 @@ only in a development build. In production, `msgx` is the macOS server
 transport; portable remains
 available to clients if `msgx` refuses. The `loopback` row is pin-only, an
 in-memory transport for tests (the `LOOPBACK` registry entry). The backends
-share `portable_client_operations`, but use distinct server operation tables:
-`portable_server_operations` stages sends into owned TX banks and a worker,
-while `msgx_server_operations` calls the platform socket's batch operations.
-On macOS those platform calls use the Darwin `sendmsg_x` and `recvmsg_x` pump.
-These definitions are in `sdk/rocketnet_driver_builtin.cpp` and
+share `portable_client_operations`; their server operation tables use the same
+bounded RX/TX bank implementation and select the socket pump by transport name
+at create. On macOS, msgx uses the Darwin `sendmsg_x` and `recvmsg_x` pump and
+portable uses the per-packet fallback. These definitions are in
+`sdk/rocketnet_driver_builtin.cpp` and
 `sdk/rocketnet_platform.cpp`.
 
 **msgx** is the darwin batch pump over `sendmsg_x` and `recvmsg_x`
@@ -130,11 +130,13 @@ pump, so a paused socket reads as `portable`.
 **portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and
 `rocketnet_platform_socket_receive_packet` in the macOS section of
-`sdk/rocketnet_platform.cpp`). For the portable server, the caller copies
-borrowed, sealed send frames into one of three owned TX banks outside the lock;
-a try-lock publishes bank indices to the send worker, which makes the
-per-packet send calls. Receive syscalls and shared protocol work remain on the caller.
-This does not change the `msgx` pump or portable client path.
+`sdk/rocketnet_platform.cpp`). Both macOS server transports run one transmit
+worker and one receive worker. The caller copies borrowed, sealed send frames
+into one of three owned TX banks outside the lock; a try-lock publishes bank
+indices to the transmit worker. The receive worker reads datagrams into three
+owned RX banks and publishes them to the caller, which copies their packets and
+performs shared protocol work. The workers use the selected msgx or portable
+socket pump; the client path is separate.
 
 ### Pinning a transport
 
@@ -199,7 +201,7 @@ thread is a plain `pthread_create` with default attributes
 thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
 (`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
 through `rocketnet_platform_network_thread_priority`).
-That is the only thing the library sets on its macOS network threads: no QoS
+That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
 no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
@@ -212,6 +214,12 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_restore_priority` in `sdk/rocketnet_frame_sync.cpp`);
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
+
+Each msgx or portable server has two socket workers, one for
+receive and one for transmit. They use default `pthread_create` attributes and
+do not receive the client thread's `SCHED_RR` priority request. Every server
+also has the separate background stats worker described in [BUILDING.md,
+"Pre-allocation server resource plans"](../BUILDING.md#pre-allocation-server-resource-plans).
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging
@@ -359,7 +367,7 @@ on (`DevToolsSecurity -status` prints its state; enabling it needs an
 administrator), or a logged-in desktop session that answers the authorization
 prompt. Without it, `run` waits on that prompt; over ssh nobody can answer it.
 With access, the unit and functional suites each run one case in-process under
-the debugger, through `--run <case>` (`test/suite_runner.h`, `suite_main`):
+the debugger, through `--run <case>` (`tests/suite_runner.h`, `suite_main`):
 
 ```sh
 lldb -- ./bin/functional --run test_loopback_transport_udp
@@ -428,7 +436,7 @@ How to read them:
 
 - `./bin/test` prints each unit case's name, then `*** ALL TESTS PASSED ***`;
   it opens no socket. A case over 120 seconds is killed and the suite fails
-  (`test/suite_runner.h`; Debug scales the limit).
+  (`tests/suite_runner.h`; Debug scales the limit).
 - `./bin/functional` opens real sockets on loopback. With no pin set
   `test_transport_env_pin_is_honoured` is not in the suite; under the portable pin
   it prints `test_transport_env_pin_is_honoured`, which is what CI greps for

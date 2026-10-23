@@ -36,7 +36,11 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 // test's thread.
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
-#define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.001   // a guard, never a cadence
+// The idle wait's timeout. The I/O thread wakes on its socket or its wake
+// (tla/RNClientIo.tla IoWake needs no timeout); this only bounds a lost wake,
+// so an idle client wakes at most 20 times a second. At 1 ms, 1000 clients on
+// one host woke 340,000 times a second and starved threads for seconds.
+#define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.05    // a guard, never a cadence
 
 // The receive buffers: the I/O thread fills one, one waits ready, update
 // holds one (the triple buffer of tla/RNBufferHandoff.tla, MaxReady 1).
@@ -661,7 +665,16 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 inline void rocketnet_client_io_thread_function( void * data )
 {
     rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
-    while ( rocketnet_client_io_step( io, true ) != ROCKETNET_CLIENT_IO_EXITED ) {}
+    while ( true )
+    {
+        const int result = rocketnet_client_io_step( io, true );
+        if ( result == ROCKETNET_CLIENT_IO_EXITED )
+            break;
+        // Built-in loopback has no native wait object. Keep its bounded idle
+        // polling on the worker; the caller still exchanges only indices.
+        if ( result == ROCKETNET_CLIENT_IO_IDLE && !io->transport->operations->wait )
+            rocketnet_platform_sleep( 0.001 );
+    }
 }
 
 // The transport's wiring of this core (sdk/rocketnet_client_transport.cpp);

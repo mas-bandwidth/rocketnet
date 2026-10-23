@@ -125,7 +125,7 @@ void unreliable_receipts_over_lossy_link()
     receipt_check( client_acked + client_lost == messages && server_acked + server_lost == messages );
     receipt_check( h.resends == resends_at_connect );
     receipt_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    receipt_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    receipt_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -154,6 +154,16 @@ void promoted_receipts_over_lossy_reliable_blocks()
     }
 
     const double started = h.now;
+    // Exercise the promoted reliable-block resend path deterministically.
+    // Random loss alone can spare every message packet for a seed, so drop one
+    // packet from the client's first flight and deliver the rest.
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_PASS );
+    receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+    receipt_check( h.held_count > 0 );
+    for ( int i = 1; i < h.held_count; i++ )
+        receipt_check( rocketnet_channel_harness_deliver_held( &h, &i, 1 ) == 1 );
+    rocketnet_channel_harness_clear_held( &h );
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
     for ( int step = 0; step < 60 * 30; step++ )
     {
         receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
@@ -207,6 +217,6 @@ void promoted_receipts_over_lossy_reliable_blocks()
             (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     receipt_check( h.resends > 0 );
     receipt_check( rocketnet_channel_harness_overflows( &h ) == 0 );
-    receipt_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
+    receipt_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }

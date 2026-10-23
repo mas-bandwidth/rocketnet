@@ -86,6 +86,20 @@ None changes cryptographic arithmetic; `test_sodium` and the oracle check
 below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 "-Wlong-long"` lines in its public headers are kept as written.
 
+## MemorySanitizer
+
+Two baseline writes reach memory through calls MemorySanitizer cannot see:
+the raw `syscall(SYS_getrandom)` fill in `_randombytes_linux_getrandom`, and
+libc's `explicit_bzero` in `sodium_memzero` (the build defines
+`HAVE_EXPLICIT_BZERO` on Linux). Both left the written bytes poisoned, so
+every value derived from a random fill, or read after a wipe, was reported by
+the MSan gate (`tools/run_msan.sh`). The generator's `SANITIZER_ADAPTATIONS`
+follow each write with `SODIUM_MSAN_UNPOISON` of exactly the bytes it wrote
+(the bytes `getrandom` returned, the whole wiped range). The macro is
+`__msan_unpoison` only when the compiler reports
+`__has_feature(memory_sanitizer)`, and `((void) 0)` in every other build, so
+no production build changes.
+
 ## Reproduce
 
 From the repository root:

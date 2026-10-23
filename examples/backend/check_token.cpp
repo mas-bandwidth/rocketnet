@@ -5,7 +5,8 @@
     backend_check_token: the C library's own token checks, run on one token
     a backend minted. Reads the base64 token from stdin and processes it as a
     server does, in the standard's order: decode, verify the signature over
-    the signed connect data against the development backend public key, open
+    the signed connect data against the supplied backend public key (or the
+    development public key when omitted), open
     the sealed private block with the development server keypair, and check
     the inner protocol id and expire agree with the signed ones. Then checks
     the fields against the expected values on the command line:
@@ -13,9 +14,10 @@
         backend_check_token <client id> <protocol id> < token.txt
 
     The backend must be run with ROCKETNET_BACKEND_SERVER_PUBLIC_KEY set to
-    the development server public key, and no ROCKETNET_BACKEND_PRIVATE_KEY,
-    for its tokens to open here. tools/run_backend_examples.py runs it on a
-    token from each backend. This is a test of the backends, not an example:
+    the development server public key for its tokens to open here. Supply the
+    matching backend public key as the optional third argument when minting
+    with a generated signing key. tools/run_backend_examples.py runs it on a
+    token from each backend. This is a functional test of the backends:
     it uses the library's internal headers, which a game never includes.
 */
 
@@ -31,9 +33,9 @@
 
 int main( int argc, char ** argv )
 {
-    if ( argc != 3 )
+    if ( argc != 3 && argc != 4 )
     {
-        printf( "usage: backend_check_token <client id> <protocol id> < token.txt\n" );
+        printf( "usage: backend_check_token <client id> <protocol id> [backend public key base64] < token.txt\n" );
         return 1;
     }
     const uint64_t expected_client_id = strtoull( argv[1], NULL, 0 );
@@ -47,9 +49,14 @@ int main( int argc, char ** argv )
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     CHECK( rocketnet_base64_decode_data( text, token, sizeof( token ) ) == ROCKETNET_CONNECT_TOKEN_BYTES );
 
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    memcpy( backend_public_key, rocketnet_dev_backend_public_key, sizeof( backend_public_key ) );
+    if ( argc == 4 )
+        CHECK( rocketnet_base64_decode_data( argv[3], backend_public_key, sizeof( backend_public_key ) ) == ROCKETNET_BACKEND_PUBLIC_KEY_BYTES );
+
     struct rocketnet_connect_token_t parts;
     rocketnet_read_connect_token( &parts, token );
-    CHECK( rocketnet_verify_signed_connect_data( parts.signed_connect_data, parts.signature, rocketnet_dev_backend_public_key ) );
+    CHECK( rocketnet_verify_signed_connect_data( parts.signed_connect_data, parts.signature, backend_public_key ) );
 
     struct rocketnet_signed_connect_data_t signed_fields;
     rocketnet_read_signed_connect_data( &signed_fields, parts.signed_connect_data );

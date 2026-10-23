@@ -71,7 +71,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
         unreliable_budget_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ), "no later delivery" );
     }
     unreliable_budget_check( h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == dropped, "drop count stable" );
-    unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "no allocations after create" );
+    unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "no allocations after create" );
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -130,6 +130,6 @@ void reliable_delivered_when_unreliable_budget_full()
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         unreliable_budget_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ), "no later delivery" );
     }
-    unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocation_snapshot, "no allocations after create" );
+    unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "no allocations after create" );
     rocketnet_channel_harness_destroy( &h );
 }

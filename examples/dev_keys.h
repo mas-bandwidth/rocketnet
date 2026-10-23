@@ -18,4 +18,8 @@
 /// server's config share.
 #define EXAMPLE_PROTOCOL_ID 0x52434b544e455431ULL
 
+// The backend examples' non-secret title filter, distinct from the SDK's
+// development filter. It must match at both endpoints in either build mode.
+#define EXAMPLE_BACKEND_PACKET_FILTER { 0x52, 0x4e, 0x42, 0x45 }
+
 #endif // #ifndef ROCKETNET_EXAMPLES_DEV_KEYS_H

@@ -1959,6 +1959,73 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
     return stats;
 }
 
+#if ROCKETNET_DEV
+
+// -----------------------------------------
+//                  delivery capture (dev only)
+// -----------------------------------------
+
+// One connection's delivery state, read for diagnosis by the load tools
+// (load_split.c, tools/load_split_capture.h). Development builds only: the
+// production library has neither the structs' readers nor their symbols, and
+// nothing here is public API. Read on the main thread outside update/fill;
+// every value is a plain copy of state the SDK already keeps, and a read
+// changes nothing. An empty slot, a disconnected client or a NULL argument
+// reads as all zeros with connected 0.
+//
+// Sequences are transport session sequences: received is the highest the
+// replay window has opened from the other end, sent is the highest this end
+// has sealed, acked is the highest of this end's sends the other end has
+// acknowledged. Ages are seconds at each layer's last update, on that layer's
+// own clock (a client transport's clock starts at its first update; the
+// message layer reads game time); -1 means never or none. The reliable fields
+// are the ordered path's window (docs/CHANNELS.md 6.2, 6.4): unacked =
+// next - U, and the oldest unacknowledged age is that of U's first send.
+
+struct rocketnet_delivery_capture_t
+{
+    int connected;
+    int server_mapping_known;              // server slot and remote endpoint are populated
+    int server_slot;
+    char remote_endpoint[ROCKETNET_MAX_ADDRESS_STRING_LENGTH]; // numeric address and UDP port
+    int keep_alive_acked;                   // the other end has acknowledged one of this end's keep-alives
+    double last_receive_age_seconds;        // since the last accepted session packet; -1 never
+    uint64_t highest_received_sequence;
+    uint64_t highest_sent_sequence;
+    uint64_t largest_acked_sequence;
+    uint64_t reliable_unacked;              // message numbers sent and not yet acknowledged
+    uint64_t reliable_resend_queued;        // numbers linked in the resend FIFOs
+    double reliable_oldest_unacked_age_seconds;    // since U's first send; -1 when nothing is outstanding
+    double srtt_seconds;
+    double resend_delay_seconds;
+    int window_stalled;                     // the sender's window is full
+    int budget_reliable_waiting;            // this update a reliable item did not fit the send budget
+    double budget_tokens;                   // bytes the send budget allows now; 0 when uncapped
+};
+
+// One server slot. client_index is the public slot index.
+void rocketnet_server_delivery_capture( struct rocketnet_server_t * server, int client_index, struct rocketnet_delivery_capture_t * capture );
+
+// The client's current connection.
+void rocketnet_client_delivery_capture( struct rocketnet_client_t * client, struct rocketnet_delivery_capture_t * capture );
+
+// The transport and message counter blocks behind a public server or client,
+// NULL when it holds none. Read through rocketnet_counter_value.
+const struct rocketnet_counters_t * rocketnet_server_transport_counter_block( struct rocketnet_server_t * server );
+const struct rocketnet_counters_t * rocketnet_server_message_counter_block( struct rocketnet_server_t * server );
+const struct rocketnet_counters_t * rocketnet_client_transport_counter_block( struct rocketnet_client_t * client );
+const struct rocketnet_counters_t * rocketnet_client_message_counter_block( struct rocketnet_client_t * client );
+
+// The layers' halves of the reads above: the transports fill the connection,
+// sequence and receive fields, the message objects the reliable and budget
+// fields. Each writes only its own fields.
+void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_delivery_capture_t * capture );
+void rocketnet_client_transport_delivery_capture( struct rocketnet_client_transport_t * client_transport, struct rocketnet_delivery_capture_t * capture );
+void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_delivery_capture_t * capture );
+void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture );
+
+#endif // #if ROCKETNET_DEV
+
 #ifdef __cplusplus
 }
 #endif

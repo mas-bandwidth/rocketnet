@@ -172,6 +172,16 @@ _sodium_dummy_symbol_to_prevent_memzero_lto(void *const  pnt,
 #endif
 /* LCOV_EXCL_STOP */
 
+#if defined(__has_feature)
+# if __has_feature(memory_sanitizer)
+#  include <sanitizer/msan_interface.h>
+#  define SODIUM_MSAN_UNPOISON(p, n) __msan_unpoison((p), (n))
+# endif
+#endif
+#ifndef SODIUM_MSAN_UNPOISON
+# define SODIUM_MSAN_UNPOISON(p, n) ((void) 0)
+#endif
+
 void
 sodium_memzero(void *const pnt, const size_t len)
 {
@@ -183,6 +193,7 @@ sodium_memzero(void *const pnt, const size_t len)
     }
 #elif defined(HAVE_EXPLICIT_BZERO)
     explicit_bzero(pnt, len);
+    SODIUM_MSAN_UNPOISON(pnt, len);
 #elif defined(HAVE_EXPLICIT_MEMSET)
     explicit_memset(pnt, 0, len);
 #elif defined(HAVE_WEAK_SYMBOLS) && HAVE_WEAK_SYMBOLS
@@ -1587,6 +1598,9 @@ _randombytes_linux_getrandom(void * const buf, const size_t size)
     do {
         readnb = (int) getrandom(buf, size, 0);
     } while (readnb < 0 && (errno == EINTR || errno == EAGAIN));
+    if (readnb > 0) {
+        SODIUM_MSAN_UNPOISON(buf, (size_t) readnb);
+    }
 
     return (readnb == (int) size) - 1;
 }
@@ -24187,7 +24201,7 @@ crypto_scalarmult_curve25519_ref10(unsigned char *q,
 
     swap = 0;
     for (pos = 254; pos >= 0; --pos) {
-        b = t[pos / 8] >> (pos & 7);
+        b = (unsigned int) (t[pos / 8] >> (pos & 7));
         b &= 1;
         swap ^= b;
         fe25519_cswap(x2, x3, swap);

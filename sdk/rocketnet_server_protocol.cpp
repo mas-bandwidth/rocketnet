@@ -369,10 +369,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
 
-        // a token created more than the 5-second skew allowance after the
+        // a token created more than the 30-second skew allowance after the
         // server's clock is refused, always: there is no maximum lifetime.
         // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
-        if ( token_create_timestamp > current_timestamp && token_create_timestamp - current_timestamp > 5 )
+        if ( token_create_timestamp > current_timestamp &&
+             token_create_timestamp - current_timestamp > ROCKETNET_TOKEN_CREATION_SKEW_SECONDS )
         {
             rocketnet_debug( "server ignored connection request. connect token created in future" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;

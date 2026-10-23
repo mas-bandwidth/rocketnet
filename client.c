@@ -14,13 +14,13 @@
     writes a sample result file without any socket, for the merge to read.
 */
 
-#include "test/native_shutdown.h"
+#include "tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_counters.h"
-#include "test/live_verify.h"
-#include "test/portable_crt.h"
+#include "tests/live_verify.h"
+#include "tests/portable_crt.h"
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>

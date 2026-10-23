@@ -1,138 +1,23 @@
 # tools/msan_known.txt: the known MemorySanitizer findings for the portable
 # unit suite. A finding is the top frame of one MemorySanitizer warning, in
 # the form the gate prints: function and source location, with a binary-only
-# frame written as `(bin/test)` (the offset slides when the suite changes) and
-# a libstdc++ frame written under `include/c++/` (the gcc version is not part
-# of the finding). A warning whose top frame is absent here fails
+# frame written as `(bin/test)` and a C++ library frame written under
+# `include/c++/`. A warning whose top frame is absent here fails
 # `bash tools/run_msan.sh`. The gate passes when the run is clean or every
-# finding is listed. Origin traces from a Linux x86_64 bench with clang 21
-# -fsanitize=memory -fsanitize-memory-track-origins=2 follow each finding.
+# finding is listed.
 #
-# Recorded against the portable unit suite at this tree. The reads are in the
-# vendored sodium constant-time primitives, in the random helpers that read a
-# sodium fill before the shadow says it is initialised, in a test memcmp of an
-# uninitialised buffer, and in a libstdc++ tree copy of a node allocated by
-# the suite's own operator new (uninstrumented as far as the shadow is
-# concerned).
-
-rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14971:9
-# origin: Uninitialized value was stored to memory at
-# origin: rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14960:14
-# origin: rocketnet_sodium_crypto_scalarmult_curve25519_ref10_base sodium/sodium.c:24277:5
-# origin: rocketnet_sodium_crypto_scalarmult_curve25519_base sodium/sodium.c:24513:12
-# origin: rocketnet_sodium_crypto_box_curve25519xsalsa20poly1305_keypair sodium/sodium.c:8997:12
-# origin: rocketnet_sodium_crypto_box_keypair sodium/sodium.c:7086:12
-# origin: rocketnet_sodium_crypto_box_seal sodium/sodium.c:8460:9
-# origin: rocketnet_write_connect_token(rocketnet_signed_connect_data_t const*, rocketnet_connect_token_private_t const*, unsigned char const*, unsigned char*) sdk/rocketnet_connect_token.cpp:87:10
-
-memcmp (bin/test)
-# origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
-# origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
-
-rocketnet_random_float sdk/rocketnet.cpp:576:5
-# origin: Uninitialized value was stored to memory at
-# origin: rocketnet_random_float sdk/rocketnet.cpp:575:12
-# origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:1047:23
-# origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:12956:9
-# origin: rocketnet_unit_worker(char const*) test.cpp:86:18
-# origin: suite_main(int, char**, int (*)(char const*), int (*)(), char const* (*)(int), suite_exec const*, int, char const**, int, bool) test/suite_runner.h:178:16
-# origin: main test.cpp:178:12
-# origin: (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a600)
-
-load64_be sodium/sodium.h:1464:5
-# origin: Uninitialized value was stored to memory at
-# origin: load64_be sodium/sodium.h:1463:7
-# origin: be64dec_vect sodium/sodium.c:21865:18
-# origin: SHA512_Transform sodium/sodium.c:21928:5
-# origin: SHA512_Pad sodium/sodium.c:22001:5
-# origin: rocketnet_sodium_crypto_hash_sha512_final sodium/sodium.c:22074:5
-# origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
-# origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
-
-rocketnet_random_uint32 sdk/rocketnet.cpp:590:5
-# origin: Uninitialized value was created by an allocation of 'value' in the stack frame
-# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:588:5
-
-std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
-# origin: Uninitialized value was created by a heap allocation
-# origin: operator new(unsigned long) (bin/test)
-# origin: std::__new_allocator<std::_Rb_tree_node<unsigned long>>::allocate(unsigned long, void const*) include/c++/bits/new_allocator.h:151:27
-# origin: std::allocator_traits<std::allocator<std::_Rb_tree_node<unsigned long>>>::allocate(std::allocator<std::_Rb_tree_node<unsigned long>>&, unsigned long) include/c++/bits/alloc_traits.h:614:20
-# origin: std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_get_node() include/c++/bits/stl_tree.h:1170:9
-# origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_create_node<unsigned long const&>(unsigned long const&) include/c++/bits/stl_tree.h:1253:22
-# origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node::operator()<unsigned long const&>(unsigned long const&) const include/c++/bits/stl_tree.h:1136:18
-# origin: std::_Rb_tree_iterator<unsigned long> std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_insert_<unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2481:4
-
-std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:1901:10
-posix_spawn (bin/test)
-
-
-# Clang 18/21 on the current libstdc++: these ten reports trace to
-# uninstrumented std::string/std::set operations or the suite custom new.
-# Exact-head hulk origin traces are retained in the repair report.
-xdp_host_read_file[abi:cxx11](char const*) test_unit_xdp_filter_host.cpp:934:19
-counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:441:19
-counters_find(char const*) test_unit_counter_classes.cpp:306:14
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
-ctv_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_connect_token_vectors.cpp:314:19
-ctv_unhex(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned char*, int) test_unit_connect_token_vectors.cpp:219:18
-test_vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:430:19
-test_vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:432:5
-std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
-std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:782:9
-
-# The CI runner's GCC 15 libstdc++ moves those same three tree navigation
-# reads to these source lines. CI run 38935877797 retains each full origin:
-# suite operator new -> std::allocator_traits -> _M_get_node -> _M_create_node
-# -> _Alloc_node -> _M_insert_. No SDK storage is in the origin.
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
-std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
-std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
-
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
-
-# Recorded with clang 18.1.8 (the fleet runner's clang) and clang 21.1.8 on
-# vision at the tree that first built and ran this gate end to end
-# (rowan/fix-asan-msan). Each is one of the blind spots above, traced to its
-# origin with origin_history_size=0:
+# The list is empty: the gate runs clean with clang 18.1.3 and 21.1.8. The
+# findings it used to hold were blind spots, each fixed at its cause:
 #
-# getrandom by raw syscall. The vendored sodium fills random bytes with
-# syscall(SYS_getrandom) (sodium/sodium.c, randombytes_linux_getrandom), which
-# MSan cannot see, so every value derived from a random fill stays poisoned.
-# The clang 18 lines of the two sodium entries recorded above with clang 21,
-# and the handshake key schedule hashing the server's random session nonce
-# (rocketnet_server_process_opened_request -> rocketnet_derive_handshake_keys
-# -> crypto_generichash; reached by
-# test_claim_released_after_small_order_refusal).
-rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14954:9
-# origin: rocketnet_sodium_crypto_box_keypair sodium/sodium.c:7086:12
-# origin: rocketnet_test_dev_keys_refused_in_release() sdk/rocketnet_tests.cpp:6744:5
-load64_be sodium/sodium.h:1457:5
-# origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28840:5
-rocketnet_sodium_blake2b_final sodium/sodium.c:21104:5
-# origin: rocketnet_derive_key sdk/rocketnet_keys.cpp:35:5 <- rocketnet_derive_handshake_keys <- rocketnet_server_process_opened_request (session_nonce from randombytes_buf)
-
-# explicit_bzero. The sodium build defines HAVE_EXPLICIT_BZERO
-# (CMakeLists.txt), so sodium_memzero calls libc explicit_bzero, which MSan
-# does not intercept (checked on both compilers: a buffer read after
-# explicit_bzero is reported). The config decode staging is wiped that way
-# and then copied by the secret-wipe hook; bytes the base64 decode never
-# wrote stay poisoned although they are zero.
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:14
-secrets_wiped_all_zero(unsigned char const*, int) test_unit_secrets_wiped.cpp:66:23
-# origin: secrets_wiped_staging_seen test_unit_secrets_wiped.cpp:489:5 <- rocketnet_config_apply_env_value sdk/rocketnet_config.cpp:583:13
-
-# A whole-block scan. test_secrets_wiped_arena_destroy_in_block counts the
-# planted message across every byte of the caller block it handed the arena,
-# including bytes the arena never wrote (origin: the test's own malloc).
-secrets_wiped_pattern_count(unsigned char const*, unsigned long) test_unit_secrets_wiped.cpp:200:37
-# origin: malloc <- test_secrets_wiped_arena_destroy_in_block() test_unit_secrets_wiped.cpp:454:33
-
-# Uninstrumented libstdc++ tree navigation (the class above): the counting
-# allocator's std::map<void*, size_t> (test_unit_secrets_wiped.cpp) and a
-# std::map<std::string, int> in the suite; origin: operator new (bin/test)
-# -> std::allocator_traits -> _M_get_node.
-std::_Rb_tree<void*, std::pair<void* const, unsigned long>, std::_Select1st<std::pair<void* const, unsigned long>>, std::less<void*>, std::allocator<std::pair<void* const, unsigned long>>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9
-std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const, int>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
+# - sodium's raw syscall(SYS_getrandom) fill and libc's explicit_bzero wipe
+#   wrote memory MSan cannot see; under MSan the generator's
+#   SANITIZER_ADAPTATIONS unpoison exactly the bytes each one wrote
+#   (tools/generate_sodium.py, sodium/README.md).
+# - the system libstdc++ is not instrumented; the gate links the
+#   MSan-instrumented libc++ (tools/build_msan_libcxx.sh).
+# - three tests compared or scanned bytes nothing had written (a region's
+#   unused memory, a caller's arena block, a reassembly set's staging); each
+#   now starts those bytes zeroed.
+#
+# A new entry is a finding with a written cause, never a line to make the
+# gate green: fix the cause where it can be fixed.

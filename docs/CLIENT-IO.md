@@ -18,6 +18,22 @@ on the I/O thread. Sends then leave with the next hand-off
 the caller performs transport
 receive and send work inside those calls and no client I/O thread starts.
 
+The BASE receive path uses the same ownership queues and reserves one buffer
+for the producer. Up to N-1 batches may be READY. Each update takes all oldest
+READY batches that fit its 1024-packet budget, processes them outside the mutex,
+and returns their indices in the same update. A busy return keeps those cleared
+buffers caller-owned until the next successful exchange; no packet is processed
+twice or overwritten. Batches beyond the budget remain READY in order.
+
+Stop transfers the development link simulator to the worker using the quit
+publication. The worker drains delayed packets before reporting completion;
+step-driven transports drain in their explicit shutdown step. Stop and polling
+perform no backend work, and reconfiguration after stop is refused.
+
+Custom BASE drivers without wait/wake retain caller-thread per-packet sends;
+this compatibility path does not provide the built-in send offload guarantee.
+Built-in loopback uses the same I/O core and bounded worker-side idle polling.
+
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
 
