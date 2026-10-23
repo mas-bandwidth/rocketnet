@@ -3059,6 +3059,144 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 }
 
 
+// ---------------------------------------------------------------------------
+// standard/MESSAGES.md m1.6, tla/RNChannel.tla EndUpdate: every delivery is
+// received before the next update. A delivery still in the receive queue at
+// update is API misuse: counted MESSAGE_NOT_RECEIVED, an assert in a debug
+// build, and that connection ends with MESSAGE_NOT_RECEIVED. Nothing is
+// dropped silently. A full drain every update delivers every message once,
+// in order.
+// ---------------------------------------------------------------------------
+
+#define MO_NOT_RECEIVED_MESSAGES        8
+#define MO_NOT_RECEIVED_TAKEN           3
+
+// queues the 8 reliable ordered messages ids 100.. on channel 1, from the
+// server to slot 0 (to_client) or from client 0 to the server
+static void mo_not_received_send( mo_pair_t * pair, bool to_client )
+{
+    for ( int m = 0; m < MO_NOT_RECEIVED_MESSAGES; m++ )
+    {
+        uint8_t * q = to_client ? rocketnet_message_server_start( pair->server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 ) :
+                                  rocketnet_message_client_start( pair->clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
+        check( q );
+        mo_fill( q, (uint32_t) ( 100 + m ), 64 );
+        check( to_client ? rocketnet_message_server_finish( pair->server, 0, 64 ) != 0 :
+                           rocketnet_message_client_finish( pair->clients[0], 64 ) != 0 );
+    }
+    if ( to_client )
+        rocketnet_message_server_send_packets( pair->server );
+    else
+        rocketnet_message_client_send_packets( pair->clients[0] );
+}
+
+static void mo_not_received_case( bool to_client )
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 2, NULL, 20000, 20000 );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    rn_message_object_t * receiver = to_client ? &pair.clients[0]->object : &pair.server->object;
+    const rocketnet_counters_t * counters = to_client ? rocketnet_message_client_counters( pair.clients[0] ) : rocketnet_message_server_counters( pair.server );
+
+    mo_not_received_send( &pair, to_client );
+    pair.time += 0.01;
+    check( rn_message_object_update( receiver, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    // the application takes 3 of the 8 delivered, one at a time, and updates
+    std::vector<uint32_t> got;
+    for ( int k = 0; k < MO_NOT_RECEIVED_TAKEN; k++ )
+    {
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        int index = -1;
+        check( rn_message_object_receive( receiver, &index, NULL, &data, &bytes ) == 1 );
+        check( index == 0 );
+        std::vector<uint8_t> v( data, data + bytes );
+        uint32_t id = 0;
+        check( mo_verify( v, &id ) );
+        got.push_back( id );
+        rn_message_object_release( receiver, data );
+    }
+
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == 0 );
+    pair.time += 0.01;
+    check( rn_message_object_update( receiver, pair.time ) == ROCKETNET_UPDATE_OK );
+#if ROCKETNET_ASSERTS
+    check( mo_asserts == 1 );
+#else
+    check( mo_asserts == 0 );
+#endif
+    rocketnet_assert_function( saved_assert );
+
+    // the 5 never received are counted, and the connection ended for them
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == (uint64_t) ( MO_NOT_RECEIVED_MESSAGES - MO_NOT_RECEIVED_TAKEN ) );
+    check( rn_message_object_disconnect_reason( receiver, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
+    check( !rn_message_object_connected( receiver, 0 ) );
+    check( to_client ? pair.net->clients[0]->disconnects == 1 : pair.net->server->disconnects == 1 );
+    for ( size_t m = 0; m < got.size(); m++ )
+        check( got[m] == (uint32_t) ( 100 + m ) );
+
+    // the other client of the server is untouched
+    if ( !to_client )
+        check( rn_message_object_connected( receiver, 1 ) );
+
+    mo_pair_teardown( &pair );
+}
+
+static void test_message_not_received_ends_the_connection()
+{
+    mo_not_received_case( true );
+    mo_not_received_case( false );
+}
+
+static void mo_full_drain_case( bool to_client )
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, NULL, 20000, 20000 );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    mo_not_received_send( &pair, to_client );
+
+    std::vector<uint32_t> got;
+    for ( int i = 0; i < 10; i++ )
+    {
+        std::vector<mo_received_t> g;
+        mo_step( &pair, to_client ? NULL : &g, to_client ? &g : NULL );
+        for ( size_t j = 0; j < g.size(); j++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( g[j].bytes, &id ) );
+            check( g[j].channel == 1 );
+            got.push_back( id );
+        }
+    }
+
+    check( got.size() == MO_NOT_RECEIVED_MESSAGES );
+    for ( size_t m = 0; m < got.size(); m++ )
+        check( got[m] == (uint32_t) ( 100 + m ) );
+    const rocketnet_counters_t * counters = to_client ? rocketnet_message_client_counters( pair.clients[0] ) : rocketnet_message_server_counters( pair.server );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == 0 );
+    check( rn_message_object_connected( &pair.server->object, 0 ) );
+    check( rn_message_object_connected( &pair.clients[0]->object, 0 ) );
+
+    mo_pair_teardown( &pair );
+}
+
+static void test_message_full_drain_delivers_every_message_once_in_order()
+{
+    mo_full_drain_case( true );
+    mo_full_drain_case( false );
+}
+
+REGISTER_UNIT_TEST( test_message_not_received_ends_the_connection );
+REGISTER_UNIT_TEST( test_message_full_drain_delivers_every_message_once_in_order );
+
 REGISTER_UNIT_TEST( test_ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( test_server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( test_client_disconnects_itself_on_exhaustion );
