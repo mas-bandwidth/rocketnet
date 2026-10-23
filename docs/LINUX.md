@@ -268,7 +268,105 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 `scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
 `scripts/rocketnet-provision sweep` after a crash.
 
-**What the server needs.**
+### Space / RocketWerkz machine layout
+
+Use the setup from Space's `game/Apps/Server/Server.cpp`: disable
+hyperthreading, reserve CPU 0 for OS housekeeping, dedicate two physical
+cores to XDP, and pin the game threads to the remaining cores. On Space's
+16-core machine the layout is:
+
+| CPU | Work |
+| --- | --- |
+| 0 | OS housekeeping and non-game interrupts |
+| 1 | XDP queue 0 worker and NIC queue 0 interrupt |
+| 2 | XDP queue 1 worker and NIC queue 1 interrupt |
+| 3–15 | Game main thread and worker pool |
+
+**Disable hyperthreading and isolate the cores at boot.** Space uses this
+exact kernel command line addition:
+
+```text
+nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
+```
+
+Add it to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, preserving
+other required boot arguments, then run `sudo update-grub` and reboot.
+Verify after reboot:
+
+```sh
+cat /proc/cmdline
+cat /sys/devices/system/cpu/smt/control
+cat /sys/devices/system/cpu/online
+cat /sys/devices/system/cpu/isolated
+lscpu -e=CPU,CORE,SOCKET,ONLINE
+```
+
+SMT must be off (or unsupported). The example assumes online CPU IDs 0–15
+represent distinct physical cores; inspect the topology after `nosmt` and
+adapt the ranges for a different machine. At least four physical cores are
+needed for this one-OS/two-XDP layout with a game core remaining. The code's
+CPU arithmetic assumes contiguous CPU IDs; sparse IDs need an explicit map.
+OS housekeeping on CPU 0 does not mean all kernel work can be eliminated
+from the application cores.
+
+**Build the NIC driver for the running kernel.** Space's Intel X710 uses
+`i40e`, built from [the driver source used by Space](https://github.com/mas-bandwidth/ethernet-linux-i40e).
+Capture the exact source revision and build/install steps before reinstalling.
+For Ubuntu 22.04 with the original kernel, use the GA `linux-generic` 5.15
+track and its matching `linux-headers-$(uname -r)` package. Rebuild/install
+the driver following its README, reboot, and verify `uname -r` and
+`ethtool -i <interface>`. A driver built for the previous OS/kernel is not
+the module for the new kernel. Driver zero-copy support on 5.15 still needs
+the hardware qualification below.
+
+**Provision two NIC queues.** Before starting the server, run the existing
+provisioner with the actual interface name (Space currently uses `eno1`):
+
+```sh
+sudo scripts/rocketnet-provision eno1 2
+sudo scripts/rocketnet-provision eno1 2 verify
+```
+
+This performs the runtime steps in the condition table above, including
+channel count, busy-poll settings and IRQ affinity. Prevent irqbalance from
+moving the queue IRQs afterwards; on a dedicated host with irqbalance
+installed, disable it with `sudo systemctl disable --now irqbalance` before
+provisioning. Verify the queue mapping is **queue 0 → CPU 1, queue 1 → CPU 2**.
+For i40e the queue IRQ names are `i40e-eno1-TxRx-0` and `i40e-eno1-TxRx-1` in
+`/proc/interrupts`. After finding their IRQ numbers, the corresponding
+`/proc/irq/<irq>/smp_affinity_list` and `effective_affinity_list` must read
+`1` and `2`. If using `smp_affinity` instead, the hexadecimal masks are `2`
+and `4`: mask `1` means CPU 0. Re-discover IRQ numbers after reboot, driver
+reload or channel changes. Keep other configurable IRQs on CPU 0.
+
+**Use Space's thread placement in the application.** Its constants are
+`NumOsCpus=1`, `NumXdpQueues=2` and `NumXdpCpus=NumXdpQueues`. In RocketNet's
+current server config set:
+
+```c
+server_config.num_os_cpus = 1;
+server_config.num_xdp_queues = 2;
+server_config.transport = "xdp";
+```
+
+RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2.
+Space pins each game worker from within that thread with
+`pthread_setaffinity_np`, using `NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`,
+and requests `SCHED_FIFO` priority. On this host its pool has 13 threads,
+including the main thread, with indices 0–12 mapping to CPUs 3–15. The game
+owns its thread placement; RocketNet does not pin the game's worker pool.
+
+An integration must run its pinning callback on every actual worker and
+check affinity/priority return values. Space's existing `PinThreadToCPUTask`
+uses ordinary scheduler tasks with a short sleep, and its own source notes
+that this does not guarantee every worker receives a callback. Carry over
+the CPU layout and per-thread affinity operation; do not treat a completed
+batch of ordinary tasks as proof of placement. Inspect every thread's
+`Cpus_allowed_list` under `/proc/<pid>/task/<tid>/status` and queue IRQ
+counters during traffic. Confirm AF_XDP zero-copy on both NIC queues;
+startup and an `xdp` transport label alone do not establish zero-copy.
+
+### XDP requirements and checks
 
 - No compiler: the XDP program is compiled and embedded at build time
   (section 1), and the server loads it from memory.
