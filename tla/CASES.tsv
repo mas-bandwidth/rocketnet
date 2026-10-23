@@ -307,3 +307,6 @@ MCRNRioWorkerBrokenSwitchBeforeIdle.cfg	MCRNRioWorker.tla	invariant	FillPhaseOwn
 MCRNRioWorkerBrokenUnboundedDequeue.cfg	MCRNRioWorker.tla	invariant	ExactDelivery	check	rnrioworker	required	-
 MCRNRioWorkerBrokenExitBeforeDrain.cfg	MCRNRioWorker.tla	invariant	FreedOnlyWhenDrained	check	rnrioworker	required	-
 MCRNRioWorkerBrokenNoWake.cfg	MCRNRioWorker.tla	temporal	EveryDatagramConsumed	check	rnrioworker	required	-
+MCRNServerCrypto.cfg	MCRNServerCrypto.tla	pass	-	check	rnservercrypto	required	-
+MCRNServerCryptoBrokenWait.cfg	MCRNServerCrypto.tla	invariant	WaitedStaysClear	check	rnservercrypto	required	-
+MCRNServerCryptoBrokenOverwrite.cfg	MCRNServerCrypto.tla	invariant	Accounted	check	rnservercrypto	required	-

@@ -306,6 +306,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_server_iocp_windows.cpp
     sdk/rocketnet_server_rio_windows.cpp
     sdk/rocketnet_server_protocol.cpp
+    sdk/rocketnet_server_crypto.cpp
     sdk/rocketnet_server_socket_linux.cpp
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
