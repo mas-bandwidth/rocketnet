@@ -30,6 +30,7 @@
 */
 
 #include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
@@ -78,11 +79,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
 static const double POSIX_HK_TICK = 1.0 / 60.0;
 static const double POSIX_HK_GAP_REFERENCE = POSIX_HK_TICK + 0.050;
 
-// the development token's timeout (rocketnet_write_test_connect_token) and the
-// server config's handshake deadline: the normal times the dead slot frees
-// in and the fifth client connects in
-
-static const double POSIX_HK_CLIENT_TIMEOUT = 10.0;
+// Completion guard for connecting the test peers.
 static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
 
 #define POSIX_HK_CHILD_FLAG "--posix-hard-killed-child"
@@ -497,7 +494,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
         posix_hk_tick( server, live, true, sent_to_slot );
         if ( !rocketnet_server_transport_is_client_connected( server, dead_slot ) )
             freed_at = rocketnet_platform_time();
-        posix_hard_killed_require( tick_start - killed_at < POSIX_HK_CLIENT_TIMEOUT + 3.0 );
+        posix_hard_killed_require( tick_start - killed_at < ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS );
         posix_hk_sleep_rest_of_tick( tick_start );
     }
 
@@ -518,8 +515,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
                 live[i].max_gap_up * 1000.0, live[i].max_gap_down * 1000.0 );
 
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
-    posix_hard_killed_require( timeout_seen >= POSIX_HK_CLIENT_TIMEOUT - 1.0 );
-    posix_hard_killed_require( timeout_seen <= POSIX_HK_CLIENT_TIMEOUT + 2.0 );
+    // Exact timeout boundaries are covered with simulated time in the unit tier.
     for ( size_t i = 0; i < 3; i++ )
     {
         posix_hard_killed_require( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
