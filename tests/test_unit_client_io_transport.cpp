@@ -386,4 +386,3 @@ REGISTER_UNIT_TEST( test_client_simulator_stop_defers_backend_send );
 // Busy expose/return, repeated contention and exact packet recovery are
 // covered above by test_client_legacy_receive_handoff_and_backpressure with
 // the unified handoff's permanently producer-owned buffer.
-
