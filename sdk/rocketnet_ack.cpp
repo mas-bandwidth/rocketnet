@@ -811,9 +811,9 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 // The endpoint and the worker's compact history use the same calculations.
 // Typed array views keep their native strides and require no scratch copy.
-// sent_written and received_written guard the endpoint's rings (an unwritten
-// record is the empty record); the worker's history is cleared whole at its
-// reset, so it passes NULL: every record is written.
+// sent_written and received_written guard both endpoint and worker rings: an
+// unwritten record is empty without reading its cold bytes. A fully initialized
+// standalone history may omit the masks.
 template <typename SentRecord, typename ReceivedRecord>
 static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest_received,
                                          const float * rtt_history, const SentRecord * sent,
@@ -984,11 +984,12 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
 }
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                        rocketnet_ack_stats_result_t * result )
+                                        rocketnet_ack_stats_result_t * result,
+                                        const uint64_t * sent_written, const uint64_t * received_written )
 {
     rocketnet_assert(history && result);
     rocketnet_ack_compute_stats(history->highest_sent, history->highest_received,
-                               history->rtt_history, history->sent, history->received, NULL, NULL, result);
+                               history->rtt_history, history->sent, history->received, sent_written, received_written, result);
 }
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint )
