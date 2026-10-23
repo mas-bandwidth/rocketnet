@@ -378,11 +378,19 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
 static void capture_pair_pump( capture_pair_t * pair )
 {
     capture_now = pair->time;
+    // every delivery is received before the next update (standard/MESSAGES.md m1.6)
     rocketnet_client_update( pair->client, pair->time );
+    while ( rocketnet_client_receive_messages( pair->client ) != NULL ) {}
     rocketnet_client_send_packets( pair->client );
     rocketnet_server_update( pair->server, pair->time );
+    while ( rocketnet_server_receive_messages( pair->server ) != NULL ) {}
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
+}
+
+static void capture_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
 }
 
 static void test_load_split_capture_sdk_reads_both_ends()
@@ -434,11 +442,20 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( server_side.reliable_oldest_unacked_age_seconds < 0.0 );
     check( server_side.srtt_seconds >= 0.0 );
 
-    // a slot out of range and NULL arguments read as not connected
+    // a slot out of range reads as not connected
     rocketnet_server_delivery_capture( pair.server, 5, &server_side );
     check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
+
+    // a NULL endpoint is the public boundary's NULL guard: a counted misuse
+    // that fires rocketnet_assert in a debug build, then reads as not connected
+    rocketnet_assert_function( capture_quiet_assert );
+    const uint64_t misuse = rocketnet_api_misuse_count();
     rocketnet_server_delivery_capture( NULL, 0, &server_side );
     check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
+    rocketnet_client_delivery_capture( NULL, &client_side );
+    check( !client_side.connected && !client_side.server_mapping_known && !client_side.remote_endpoint[0] );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+    rocketnet_assert_function( NULL );
 
     // the counter blocks are the ones the endpoint counts in
     check( rocketnet_server_transport_counter_block( pair.server ) != NULL );

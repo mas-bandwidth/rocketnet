@@ -127,6 +127,29 @@ An endpoint MUST NOT send an application message on a connection that is not con
 
 A client's connection is connected while the client is in connected (4) of [RN-1 t11 Handshake: client](TRANSPORT.md#t11); a server's connection to a slot is connected from the session [RN-1 t12 Handshake: server](TRANSPORT.md#t12) assigns that slot until the session ends. The CONFIG control record is not an application message and keeps the timing of [m11 CONFIG control record](#m11). The drop is visible to the application as a refused send and in the counter.
 
+<a id="m1.6"></a>
+### m1.6. Receiving every delivered message
+
+A receiver hands each update's deliveries to the application through one
+receive queue. RN-1 acknowledges a packet when it accepts it, before the
+application has seen the messages it carried, and the sender's window then
+moves past their numbers ([m5.1 Sender numbering](#m5.1)). The receiver
+therefore cannot keep a delivered message past the update that delivered it,
+and it cannot ask for the message again.
+
+1. The application MUST take every message delivered in an update from the
+   receive queue before the next update of that endpoint.
+2. When an update finds a delivered message that the application did not
+   take, the receiver MUST treat it as application misuse. It MUST count each
+   such message once in `MESSAGE_NOT_RECEIVED`, and MUST end that connection
+   with the reason `MESSAGE_NOT_RECEIVED`. A server ends only the connections
+   that have a message left; the others are unaffected. An implementation
+   SHOULD also assert in a debug build.
+3. A receiver MUST NOT drop a delivered message without the count and the
+   end of rule 2, and MUST NOT deliver it at a later update.
+4. A message the receiver did not offer to the application because its
+   connection already ended is not misuse and is not counted.
+
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
 
