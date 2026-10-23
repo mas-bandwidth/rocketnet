@@ -1039,6 +1039,8 @@ void rocketnet_test_posix_server_restart_same_port_100()
     }
 }
 
+#define POSIX_CHURN_SERVER_SLOTS 128
+
 void rocketnet_test_posix_connect_disconnect_1000()
 {
     const char * case_name = "test_posix_connect_disconnect_1000";
@@ -1054,7 +1056,13 @@ void rocketnet_test_posix_connect_disconnect_1000()
 
         const posix_resource_counts_t before = posix_stable_counts();
 
-        rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), 8 );
+        // the server remembers max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO
+        // (8) used tokens (sdk/rocketnet_server_transport.cpp:1865), and a
+        // connect whose history is full waits for an entry to expire:
+        // an 8-slot server held 64, so about every 65th connect stalled for
+        // seconds. 128 slots hold 1024, more than the cycles, so no connect
+        // here waits on the history.
+        rocketnet_server_transport_t * server = posix_server_create( cell, posix_bind_address( cell ), POSIX_CHURN_SERVER_SLOTS );
         char server_address[64];
         posix_server_address( cell, server, server_address, sizeof( server_address ) );
 
