@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_server_calls as check  # noqa: E402
 
 
-def log(total=1000, p99=None, drop=None, extra="", transport="gso", run_id="0123456789abcdef"):
+def log(total=1000, p99=None, drop=None, extra="", transport="gso", run_id="0123456789abcdef",
+        load="full"):
     p99 = p99 or {}
     lines = ["split_ready: role=server"]
     for call in check.CALLS:
@@ -18,7 +19,7 @@ def log(total=1000, p99=None, drop=None, extra="", transport="gso", run_id="0123
             continue
         value = p99.get(call, 10)
         lines.append(f"split_server_call: run_id={run_id} total={total} transport={transport} "
-                     f"scope=traffic_plus_drain call={call} count=100 p50_upper_us=1 "
+                     f"scope=traffic_plus_drain load={load} call={call} count=100 p50_upper_us=1 "
                      f"p99_upper_us={value} max_us=200.000 overbudget_count=1 budget_us=100")
     return "\n".join(lines) + "\n" + extra
 
@@ -27,7 +28,7 @@ class ServerCallsTest(unittest.TestCase):
     def test_all_calls_under_budget_pass(self):
         out = io.StringIO()
         self.assertEqual(check.report([("a", log())], out), [])
-        self.assertIn("1000 gso server_update 1 10 200.000 100 PASS", out.getvalue())
+        self.assertIn("1000 gso full server_update 1 10 200.000 100 PASS", out.getvalue())
 
     def test_budget_is_inclusive(self):
         self.assertEqual(check.report([("a", log(p99={"server_update": 100}))], io.StringIO()), [])
@@ -42,6 +43,25 @@ class ServerCallsTest(unittest.TestCase):
         rows = out.getvalue().splitlines()[1:]
         self.assertTrue(rows[0].startswith("10 "))
         self.assertTrue(rows[-1].startswith("1000 "))
+
+    def test_low_population_is_correctness_only(self):
+        out = io.StringIO()
+        over = check.report([("a", log()), ("b", log(total=100, p99={"server_update": 900}))], out)
+        self.assertEqual(over, [])
+        self.assertIn("100 gso full server_update 1 900 200.000 100 NA", out.getvalue())
+
+    def test_default_load_is_correctness_only(self):
+        over = check.report([("a", log()), ("b", log(load="rate_1hz", p99={"server_update": 900}))],
+                            io.StringIO())
+        self.assertEqual(over, [])
+
+    def test_worst_case_log_is_required(self):
+        with self.assertRaisesRegex(ValueError, "no worst-case log"):
+            check.report([("a", log(load="rate_1hz")), ("b", log(total=500))], io.StringIO())
+
+    def test_unknown_load_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "unknown load"):
+            check.report([("a", log(load="idle"))], io.StringIO())
 
     def test_missing_call_is_invalid(self):
         with self.assertRaisesRegex(ValueError, "missing calls: server_finish_message"):

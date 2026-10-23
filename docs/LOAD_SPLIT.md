@@ -165,19 +165,27 @@ drain and prints one `split_server_call:` line per call, for
 that returns no batch), `server_start_message`, `server_finish_message`
 and `server_send_packets`, each with its count, p50 and p99 upper bounds,
 maximum and over-budget count. The budget for every one of them is 100
-microseconds at p99. `tools/check_server_calls.py` reads one server log per
-population (1, 10, 100, 500 and 1000 clients) and prints a row per
-population and call:
+microseconds at p99, judged at the worst case only: 1000 clients, all
+connected, in the full load mode. Pass `full` as the last argument to the
+server and to every client shard: the server then ticks at 10 Hz and offers
+one message to every client every update, and every client updates at 10 Hz
+and offers one message every update (`rate_target_hz=10 load=full` in the
+receipts; pass `--load full` to the merger). The default mode (one offer
+per client per second, `load=rate_1hz`) and the 1, 10, 100 and 500 rungs are
+correctness runs, not timing. `tools/check_server_calls.py` reads the server
+logs and prints a row per log and call; only the worst-case rows carry a
+budget verdict, the others print `NA`, and a set without a worst-case log is
+invalid:
 
 ```text
-python3 tools/check_server_calls.py --report-only s1.log s10.log s100.log s500.log s1000.log
+python3 tools/check_server_calls.py --report-only s1000-full.log s1.log s10.log s100.log s500.log
 ```
 
 A log missing a call, repeating one, mixing runs or with contradicting
 quantiles is invalid evidence and exits 2. With `--report-only` a budget
 miss prints `verdict=FAIL` and exits 0; without it the miss exits 1. The
-check runs report-only until every call is inside the budget at 1000
-clients, and then without the flag.
+check runs report-only until every call is inside the budget at the worst
+case, and then without the flag.
 
 The server wire baseline is sampled before RUN; each client's baseline is
 sampled before connect, because RUN can arrive during another client's
