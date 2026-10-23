@@ -242,6 +242,9 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
         check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        while ( rocketnet_server_receive_messages( pair.server ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( pair.client ) != NULL ) {}
     }
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( pair.client, &stats );
