@@ -138,13 +138,13 @@ static rn_message_link_t boundary_link(boundary_endpoint_t * e) {
 }
 struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * server; rocketnet_message_client_t * client; double time; };
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
-static void boundary_config(rocketnet_message_config_t * c) {
-    rocketnet_message_default_config(c); c->num_channels=4; c->reliable_messages_in_flight=64; c->receive_message_buffer_bytes=65536; c->max_message_bytes=16384;
+static void boundary_config(rocketnet_message_config_t * c,int max_message_bytes) {
+    rocketnet_message_default_config(c); c->num_channels=4; c->reliable_messages_in_flight=64; c->receive_message_buffer_bytes=65536; c->max_message_bytes=max_message_bytes;
     c->send_message_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->packets_per_update=8; c->unreliable_messages_per_update=64;
     c->message_resend_delay_initial_ms=100; c->message_resend_delay_min_ms=20; c->message_resend_delay_max_ms=400; c->reliable_message_timeout_ms=120000;
 }
-static void boundary_setup(boundary_pair_t * pair) {
-    rocketnet_message_config_t config; boundary_config(&config); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
+static void boundary_setup_max(boundary_pair_t * pair,int max_message_bytes) {
+    rocketnet_message_config_t config; boundary_config(&config,max_message_bytes); pair->net=new boundary_net_t(); pair->net->slot_connection=100; pair->net->next_packet_id=1000; pair->net->next_payload_id=1; memset(pair->net->fragment_counters,0,sizeof(pair->net->fragment_counters));
     pair->net->reassembly=rocketnet_reassembly_set_create(NULL,1,8,16384,64); check(pair->net->reassembly);
     pair->net->server=new boundary_endpoint_t(); pair->net->client=new boundary_endpoint_t();
     memset(pair->net->server->frame_used,0,sizeof(pair->net->server->frame_used)); memset(pair->net->client->frame_used,0,sizeof(pair->net->client->frame_used));
@@ -156,6 +156,7 @@ static void boundary_setup(boundary_pair_t * pair) {
     pair->client=(rocketnet_message_client_t *)rn_message_object_create(NULL,&cl,0,1,&config,NULL,0,100000,1000.0);
     check(pair->server); check(pair->client); pair->time=1000.0;
 }
+static void boundary_setup(boundary_pair_t * pair) { boundary_setup_max(pair,16384); }
 static void boundary_teardown(boundary_pair_t * pair) {
     rocketnet_message_client_destroy(pair->client); rocketnet_message_server_destroy(pair->server);
     rocketnet_reassembly_set_destroy(pair->net->reassembly); delete pair->net->server; delete pair->net->client; delete pair->net;
@@ -272,3 +273,30 @@ static void test_message_boundary_oversize_unreliable_counts_failed_not_refused(
     boundary_teardown(&pair);
 }
 REGISTER_UNIT_TEST(test_message_boundary_oversize_unreliable_counts_failed_not_refused);
+
+// max_message_bytes holds on the send side in every mode, including the ones
+// whose message fits one payload of this transport (16384 bytes, carried in
+// fragments): with a 1416-byte limit, 1417 and 2000 bytes are refused and
+// never reach the server, and 1416 bytes is delivered whole.
+static void test_message_boundary_every_mode_refuses_over_max_message_bytes() {
+    const int limit=1416;
+    for(int reliability=0;reliability<ROCKETNET_CHANNEL_NUM_TYPES;++reliability) {
+        boundary_pair_t pair; boundary_setup_max(&pair,limit);
+        std::vector<boundary_received_t> got; boundary_step(&pair,&got);
+        const int over[2]={limit+1,2000};
+        for(int i=0;i<2;++i) {
+            const std::vector<uint8_t> data=boundary_data((uint32_t)(reliability*4+i),over[i]);
+            check(rocketnet_message_client_send(pair.client,0,reliability,data.data(),over[i])==0);
+        }
+        const std::vector<uint8_t> at_limit=boundary_data((uint32_t)(reliability*4+3),limit);
+        check(rocketnet_message_client_send(pair.client,0,reliability,at_limit.data(),limit)!=0);
+        for(int step=0;step<64 && got.empty();++step) boundary_step(&pair,&got);
+        for(int step=0;step<8;++step) boundary_step(&pair,&got);
+        check(got.size()==1);
+        if(!got.empty()) check(got[0].data==at_limit);
+        check(rocketnet_counter_value(rocketnet_message_server_counters(pair.server),ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION)==0);
+        check(pair.net->client->disconnects==0 && pair.net->server->disconnects==0);
+        boundary_teardown(&pair);
+    }
+}
+REGISTER_UNIT_TEST(test_message_boundary_every_mode_refuses_over_max_message_bytes);
