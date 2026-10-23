@@ -152,13 +152,16 @@ that passed. `BUILDING.md` names the commands.
 
 The 2026-10-23 rows were recorded on Linux, where no native Windows member is
 reachable: the runs themselves were not made there. The Linux Release gate
-(`./bin/test` and `./bin/functional`) was run there and was green. A Linux
-Release AddressSanitizer build (`-DROCKETNET_SANITIZE_ADDRESS=ON`) of the same
-tree ran `test` and `functional` with zero AddressSanitizer reports, which is
-evidence about the shared sources only; it is not a Windows row. The nightly
-Windows AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) runs the
-Release group every night; the Debug AddressSanitizer configuration is
-build-checked there and its suites are owed to the member.
+(`make -j16`, then `./bin/test` and `./bin/functional`) was re-verified at this
+head on this attempt and was green: both suites ended in `*** ALL TESTS PASSED
+***`. A Linux Release AddressSanitizer build (`-DROCKETNET_SANITIZE_ADDRESS=ON`)
+of the same tree ran `test` and `functional` and both ended in `*** ALL TESTS
+PASSED ***` with zero AddressSanitizer reports (no `AddressSanitizer` or
+`ERROR: AddressSanitizer` line in either run's output). That is evidence about
+the shared sources only; it is not a Windows row. The nightly Windows
+AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) runs the Release
+group every night; the Debug AddressSanitizer configuration is build-checked
+there and its suites are owed to the member.
 
 ## Checking the table
 
