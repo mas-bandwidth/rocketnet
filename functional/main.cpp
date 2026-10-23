@@ -62,7 +62,7 @@ static int rocketnet_functional_worker( const char * name )
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
 // the suite's groups (tests/suite_runner.h): a group runs alone, so a case that
 // measures wall time is not measured against the rest of the suite. The live
@@ -80,10 +80,23 @@ static int rocketnet_functional_test_group( const char * name )
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
+#if defined(_WIN32)
+    // These cases bound the receive gap while sending to a closed port. Each
+    // runs alone so other socket tests and the large matrix cannot turn host
+    // scheduling contention into a receive-stall verdict. Keep every bound.
+    if ( strstr( name, "_windows_connreset_send_to_closed_port" ) )
+    {
+        for ( int i = 0; i < rocketnet_functional_test_count(); ++i )
+            if ( strcmp( name, rocketnet_functional_test_name( i ) ) == 0 )
+                return 3 + i;
+    }
+    return 0;
+#else
     return rocketnet_posix_hard_killed_peer_test_group( name );
+#endif
 }
 
-#endif // #if defined(__APPLE__) || defined(__linux__)
+#endif // #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
 // test_transport_control (a sibling binary, test_transport_control.cpp) runs
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
@@ -142,7 +155,7 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control" },
         { "test_iocp", "test_iocp" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined(__APPLE__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },

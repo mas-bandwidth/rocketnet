@@ -69,7 +69,10 @@ should stop as soon as their correctness checks finish; they do not wait out
 that budget. The live message matrix reports elapsed time against both bounds,
 while preserving delivery, ordering, receipt and cleanup checks. This budget
 is separate from the library's main-call latency/performance qualification.
-`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases.
+`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases. The live matrix
+runs apart from other cases on Linux, macOS and Windows. Windows closed-port
+cases with strict receive-gap assertions each run alone, preserving their
+bounds without interference from other socket workloads.
 
 The functional suite is its own target. It runs in parallel under the same
 120 second failure limit and prints the same way. Put a new test in `./bin/test` when the assertion can be
