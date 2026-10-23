@@ -7,7 +7,18 @@
   p99 at 1000 clients).
 - Checkout: `/Volumes/nova/ai/aurora/working/rocketnet-aurora`, branch
   `aurora/active-slot-walks`, base `c15d41d55577ad1028b905b9f20f9790124dba02`.
-- Status: design + baseline only. Nothing implemented, pushed, or PR'd.
+- Status: SUPERSEDED in part by Glenn's RULE CHANGE (2026-10-23, LANES.md):
+  profile worst case only (1000 connected, all active); active-slot lists
+  dropped. The walk inventory (§1) and baseline (§9) stand. Implementation
+  instead cuts per-slot cost at full load on update/send: (1) Observe skips
+  its per-slot connection poll while the slot binding epoch is unchanged
+  (client_slots binding_epoch + link epoch + transport accessor), and
+  (2) send_packets asks the transport for remaining capacity once and counts
+  frames down locally instead of per slot per round. Tests:
+  tests/test_unit_worst_case_calls.cpp. Local Release unit + functional green
+  on studio.local; bench worst-case before/after still owed. No TLA change:
+  no state machine changed (Observe still polls on any binding change;
+  send rotation order and fairness unchanged).
 
 ## 1. Walk inventory — every all-slot walk in server update/send paths
 

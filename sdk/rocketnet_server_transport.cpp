@@ -3432,6 +3432,14 @@ int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_tr
     return rocketnet_client_slots_num_connected( server_transport->protocol.client_slots );
 }
 
+uint64_t rocketnet_server_transport_binding_epoch( struct rocketnet_server_transport_t * server_transport )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    rocketnet_assert( server_transport );
+    return rocketnet_client_slots_binding_epoch( server_transport->protocol.client_slots );
+}
+
 int rocketnet_server_transport_is_client_connected( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

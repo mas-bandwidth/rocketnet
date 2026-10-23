@@ -70,6 +70,12 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index );
 
+// A counter that changes exactly when a slot binding changes (assign or
+// release) and at no other time. A caller that polls slot bindings can
+// skip its poll while the epoch is unchanged. Starts at 0, never resets.
+
+uint64_t rocketnet_client_slots_binding_epoch( const struct rocketnet_client_slots_t * slots );
+
 // Unit-test poison/release/reuse witness for the private slot arrays.
 bool rocketnet_client_slots_reset_witness_for_test();
 

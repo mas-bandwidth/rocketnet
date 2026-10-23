@@ -1256,6 +1256,13 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
 int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport is a counted no-op that returns 0.
+/** @brief Read the slot binding epoch.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @return A counter that changes exactly when a slot binding changes (assign or release) and at no other time. Starts at 0, never resets. Read on the main thread outside update work.
+ */
+uint64_t rocketnet_server_transport_binding_epoch( struct rocketnet_server_transport_t * server_transport );
+
+// a NULL server_transport is a counted no-op that returns 0.
 /** @brief Check whether a slot currently holds a connected client.
  * @param server_transport [in] Created server transport; NULL is a counted no-op.
  * @param client_index [in] Slot index from 0 through max_clients - 1.

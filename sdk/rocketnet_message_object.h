@@ -95,6 +95,13 @@ struct rn_message_link_t
     // CONNECTED.
     uint64_t (*connection)( void * transport, int client_index );
 
+    // A counter that changes exactly when any slot's connection id changes
+    // (assign or release) and at no other time, or NULL when the transport
+    // cannot provide one. Observe polls every slot only when this value
+    // moved since the last Observe; a link with no epoch polls every update,
+    // as before. The server's link answers the client slots' binding epoch.
+    uint64_t (*binding_epoch)( void * transport );
+
     void (*disconnect)( void * transport, int client_index );
 
     // the transport's state, ROCKETNET_CLIENT_TRANSPORT_STATE_* or
@@ -209,6 +216,12 @@ struct rn_message_object_t
     // update. A cap below the client count then serves every client in turn
     // instead of always serving the low indices.
     int send_next_connection;
+
+    // The binding epoch Observe last polled at, and whether it has polled
+    // at all. While the transport's epoch is unchanged no slot's connection
+    // id changed, so Observe has nothing to read. Zeroed at create.
+    uint64_t observed_binding_epoch;
+    int observed_binding_epoch_valid;
 
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame

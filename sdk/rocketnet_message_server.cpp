@@ -34,6 +34,7 @@
 // (THE COPIES (b), rn_channels_dispatch_ordered). rn_message_object_send is the
 // one other copy: the convenience copies the caller's bytes into the record.
 
+#include <limits.h>
 #include <string.h>
 
 #include "rocketnet_internal.h"
@@ -557,8 +558,21 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
     // RNSlots Observe: the server reads every slot's connection after the
     // transport's update; a changed connection resets the slot (Connect,
-    // Disconnect)
-    if ( object->is_server )
+    // Disconnect). While the transport's binding epoch is unchanged no
+    // slot's connection id changed, so there is nothing to read and the
+    // per-slot poll is skipped whole; a link with no epoch polls as before.
+    bool observe_poll = true;
+    if ( object->is_server && object->link.binding_epoch )
+    {
+        const uint64_t epoch = object->link.binding_epoch( object->link.transport );
+        observe_poll = !object->observed_binding_epoch_valid || epoch != object->observed_binding_epoch;
+        if ( observe_poll )
+        {
+            object->observed_binding_epoch = epoch;
+            object->observed_binding_epoch_valid = 1;
+        }
+    }
+    if ( object->is_server && observe_poll )
     {
         for ( int i = 0; i < object->num_connections; i++ )
         {
@@ -909,6 +923,13 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     // due, so nothing is lost.
     const int num_connections = object->num_connections;
     const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
+    // Ask the transport for its remaining capacity once, then count the
+    // frames this pass starts down locally. The transport's count only
+    // falls as frames start, so re-asking per slot per round returns the
+    // same answer at per-slot cost; a link with no capacity query is
+    // uncapped here, as before.
+    int capacity_left = object->link.send_capacity_available ?
+        object->link.send_capacity_available( object->link.transport ) : INT_MAX;
     bool progress;
     do
     {
@@ -921,12 +942,16 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
             // The client's CONFIG waits unnumbered until the transport connects.
             if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
                 continue;
-            if ( object->link.send_capacity_available &&
-                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+            if ( capacity_left <= 0 )
                 goto flush;
             // One frame per connection per round, including when the per-client
             // allowance is larger than one. A busy client cannot take K turns.
-            progress |= rn_message_connection_write( object, i );
+            if ( rn_message_connection_write( object, i ) )
+            {
+                progress = true;
+                if ( capacity_left != INT_MAX )
+                    capacity_left--;
+            }
             object->send_next_connection = ( i + 1 ) % num_connections;
         }
     } while ( progress );
@@ -1204,6 +1229,11 @@ static uint64_t rn_server_link_connection( void * transport, int client_index )
     return rocketnet_server_transport_client_connection_id( (rocketnet_server_transport_t *) transport, client_index );
 }
 
+static uint64_t rn_server_link_binding_epoch( void * transport )
+{
+    return rocketnet_server_transport_binding_epoch( (rocketnet_server_transport_t *) transport );
+}
+
 // P9b: the connection each batch entry was received for, parallel to the
 // batch's client index array
 static uint64_t rn_server_link_payload_connection( void * transport, int k )
@@ -1270,6 +1300,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->send_capacity_available = rn_server_link_send_capacity_available;
     link->send_connected_count = rn_server_link_send_connected_count;
     link->connection = rn_server_link_connection;
+    link->binding_epoch = rn_server_link_binding_epoch;
     link->disconnect = rn_server_link_disconnect;
     link->state = rn_server_link_state;
     link->stop = rn_server_link_stop;

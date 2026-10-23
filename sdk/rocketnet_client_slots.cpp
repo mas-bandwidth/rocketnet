@@ -40,7 +40,8 @@
     /* cold: same index */                                                            \
     X( mapping_index, int * mapping_index )                                           \
     X( confirmed, int * confirmed )                                                   \
-    X( user_data, uint8_t * user_data ) /* max_clients * ROCKETNET_USER_DATA_BYTES */
+    X( user_data, uint8_t * user_data ) /* max_clients * ROCKETNET_USER_DATA_BYTES */ \
+    X( binding_epoch, uint64_t binding_epoch ) /* bumps on assign/release only */
 
 struct rocketnet_client_slots_t
 {
@@ -130,6 +131,12 @@ void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
     rocketnet_free( slots->context, slots );
 }
 
+uint64_t rocketnet_client_slots_binding_epoch( const struct rocketnet_client_slots_t * slots )
+{
+    rocketnet_assert( slots );
+    return slots ? slots->binding_epoch : 0;
+}
+
 int rocketnet_client_slots_max_clients( const struct rocketnet_client_slots_t * slots )
 {
     rocketnet_assert( slots );
@@ -200,6 +207,7 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     slots->bucket_head[bucket] = client_index;
 
     slots->num_connected++;
+    slots->binding_epoch++;
 
     rocketnet_debug( "server assigned client slot %d", client_index );
 
@@ -298,6 +306,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     slots->free_stack[slots->free_stack_count++] = client_index;
 
     slots->num_connected--;
+    slots->binding_epoch++;
 
     rocketnet_debug( "server released client slot %d", client_index );
 }
