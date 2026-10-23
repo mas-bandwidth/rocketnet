@@ -22,6 +22,161 @@
 
 #define check rocketnet_unit_check
 
+#include "rocketnet_driver.h"
+#include "rocketnet_driver_loopback.h"
+#include "rocketnet_client_io.h"
+
+static double live_link_clock = 1000.0;
+
+static double live_link_time_callback( void * )
+{
+    return live_link_clock;
+}
+
+struct live_link_pair_t
+{
+    struct rocketnet_server_transport_t * server;
+    struct rocketnet_client_transport_t * client;
+    double time;
+};
+
+static bool live_link_pair_setup( struct live_link_pair_t * pair )
+{
+    memset( pair, 0, sizeof( *pair ) );
+    pair->time = 1000.0;
+    live_link_clock = pair->time;
+    rocketnet_public_link_simulator_test_development( 1 );
+
+    const uint64_t protocol_id = 0x6c6f6f706261636bULL;
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config_current( &server_config );
+    server_config.protocol_id = protocol_id;
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+    check( pair->server != NULL );
+    if ( !pair->server )
+        return false;
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const char * addresses[] = { server_address };
+    check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id, addresses, 1,
+                                                     0x9e3779b97f4a7c15ULL, 0, 1ULL << 40, 60, NULL,
+                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.step_driven = 1;
+    client_config.time_callback = live_link_time_callback;
+    pair->client = rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), pair->time );
+    check( pair->client != NULL );
+    return pair->client != NULL;
+}
+
+static void live_link_pair_step( struct live_link_pair_t * pair, double dt )
+{
+    pair->time += dt;
+    live_link_clock = pair->time;
+    rocketnet_server_transport_update( pair->server, pair->time );
+    rocketnet_client_transport_update( pair->client, pair->time );
+    rocketnet_server_transport_send_packets( pair->server );
+    rocketnet_client_transport_send_packets( pair->client );
+}
+
+static bool live_link_pair_connect( struct live_link_pair_t * pair )
+{
+    for ( int i = 0; i < 400; i++ )
+    {
+        if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_is_client_connected( pair->server, 0 ) )
+            return true;
+        live_link_pair_step( pair, 0.01 );
+    }
+    return false;
+}
+
+static void live_link_pair_teardown( struct live_link_pair_t * pair )
+{
+    rn_test_client_transport_stop_and_destroy( pair->client );
+    rn_test_server_transport_stop_and_destroy( pair->server );
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+
+static int live_link_server_payload_count( struct live_link_pair_t * pair )
+{
+    const int * indices = NULL;
+    uint8_t * const * data = NULL;
+    const int * bytes = NULL;
+    return rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
+}
+
+static int live_link_client_receive( struct live_link_pair_t * pair )
+{
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    return rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) );
+}
+
+static void test_public_link_simulator_applies_to_live_connection()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 100, 0 ) );
+    uint8_t payload[4] = { 1, 2, 3, 4 };
+    rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
+    for ( int i = 0; i < 20; i++ )
+        live_link_pair_step( &pair, 0.01 );
+    check( live_link_server_payload_count( &pair ) == 0 );
+
+    check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
+
+    check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 0, 0 ) );
+    rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
+    for ( int i = 0; i < 20; i++ )
+        live_link_pair_step( &pair, 0.01 );
+    check( live_link_server_payload_count( &pair ) > 0 );
+
+    live_link_pair_teardown( &pair );
+}
+
+static void test_public_link_simulator_server_applies_to_live_start()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 100, 0 ) );
+    uint8_t payload[4] = { 5, 6, 7, 8 };
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    for ( int i = 0; i < 20; i++ )
+        live_link_pair_step( &pair, 0.01 );
+    check( live_link_client_receive( &pair ) == 0 );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    for ( int i = 0; i < 20; i++ )
+        live_link_pair_step( &pair, 0.01 );
+    check( live_link_client_receive( &pair ) > 0 );
+
+    live_link_pair_teardown( &pair );
+}
+
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
 {
     int found_loss = 0;
@@ -303,6 +458,8 @@ REGISTER_UNIT_TEST( test_public_link_simulator_latency );
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_duplicate );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
+REGISTER_UNIT_TEST( test_public_link_simulator_applies_to_live_connection );
+REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {
