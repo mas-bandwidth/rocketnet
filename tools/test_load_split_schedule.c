@@ -1,9 +1,19 @@
-#include "load_split_schedule.h"
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+
+/* The split default profile's one-second offer phase (load_split_schedule.h).
+   The space profile's frame phase is in tests/test_unit_load_split_schedule.cpp.
+   Build and run beside the harness, from the repository root:
+
+       cc -std=c11 -I. tools/test_load_split_schedule.c -o test_load_split_schedule && ./test_load_split_schedule
+*/
+
+#include "tools/load_split_schedule.h"
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 
-int main( void )
+static void test_split_offer_due_one_second_phase( void )
 {
     double next_due = 0.0;
     uint64_t missed = 0;
@@ -28,5 +38,11 @@ int main( void )
     assert(split_offer_due(5.2, 10.0, &next_due, &missed));
     assert(missed == 5 && next_due == 6.0);
     assert(!split_offer_due(5.21, 10.0, &next_due, &missed));
+}
+
+int main( void )
+{
+    test_split_offer_due_one_second_phase();
+    printf( "test_split_offer_due_one_second_phase\n" );
     return 0;
 }

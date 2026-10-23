@@ -241,3 +241,81 @@ allocation gaps report `non_timing_verdict=FAIL` and never authorize a
 performance-ladder continuation. A runner may continue to the next rung
 only when `non_timing_verdict=PASS` and should retain the overall FAIL and
 timing evidence in its report.
+
+## Space profile
+
+The `space` profile replays the space game server's traffic at 1000 players
+in place of the light default profile. It is opt-in: give `space` as one more
+argument after the aggregate limit, to the server and to every client shard.
+Without it (or with `default`) the harness runs the default profile, and its
+command lines and receipts are unchanged.
+
+```text
+load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 400000 space
+load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 400000 space
+```
+
+Traffic runs in 60 Hz frames on one absolute phase from the traffic start
+(`tools/load_split_schedule.h`):
+
+- Client to server: each client sends one 360-byte UNRELIABLE input a frame.
+  A shard visits every local client once a frame: update, receive, offer,
+  send.
+- Server to client: each frame the server sends every client one 100-byte
+  UNRELIABLE player message, and a 1184-byte UNRELIABLE_WITH_ACK_RECEIPT
+  delta to the clients whose index mod 3 equals the frame's, so each client
+  gets a delta every third frame (20 Hz), staggered as the game staggers
+  them. The game's delta is up to 1400 bytes; 1184 keeps one player message
+  and one delta in one packet. The server calls `rocketnet_server_send_packets`
+  once a frame.
+
+A late wake runs the latest due frame, never a burst, and counts every
+client's share of each frame it skipped in `missed_due_slots`, which fails
+load qualification as in the default profile. `expected_offers` is
+60 x duration x local clients on a shard, and on the server that plus every
+client's deltas (duration x 20 per client). Each stream tracks its sequence
+numbers in the shared 4096-entry bitmap, so a space run is at most 68
+seconds; a longer one is refused at the command line.
+
+The readiness lines and receipts print `profile=space payload_bytes=360
+rate_target_hz=60` and the full shape: `c2s_payload_bytes`, `c2s_rate_hz`,
+`s2c_player_bytes`, `s2c_player_rate_hz`, `s2c_delta_bytes`,
+`s2c_delta_rate_hz`, `s2c_delta_stagger=client_mod_3`, `server_frame_hz`,
+`client_up_cap_kbps` and `client_down_cap_kbps`. A receipt also prints its
+counts per mode: `c2s_unreliable_{offered,accepted,received}`,
+`s2c_player_{offered,accepted,received}` and
+`s2c_delta_{offered,accepted,received}`, the server's
+`s2c_delta_receipts_acked` and `s2c_delta_receipts_lost` (only deltas ask for
+receipts), and `messages_dropped_over_budget`. Every existing field stays.
+`split_stream:` lines are `c2s combo=0`, `s2c combo=0` (player) and
+`s2c combo=5` (delta) per client.
+
+Per-client caps are strict and include IP/UDP headers, as in the default
+profile. Each packet is allowed 96 bytes beyond its message bytes (28 of
+IPv4/UDP, 26 of RocketNet packet, 42 for the acknowledgement block, payload
+form and record headers), and every delta is assumed to take a packet of its
+own:
+
+| direction | derivation | need | cap |
+| --- | --- | --- | --- |
+| client to server | 60 x (360 + 96) x 8 / 1000 | 218.9 kbps | 250 kbps |
+| server to client | (60 x (100 + 96) + 20 x (1184 + 96)) x 8 / 1000 | 298.9 kbps | 350 kbps |
+
+The 100 kbps cap is the default profile's only. A role's per-client up rate
+is what it sends, so the server's is checked against the download cap. The
+aggregate cap is still the operator's argument: 1000 clients need about
+219 Mbps up and 299 Mbps down.
+
+Unreliable traffic may be lost on a real network, so loss is a number and
+never a verdict. A receiver counts what it verifies; a gap in a stream is
+loss, not an order error. Identity, payload and duplicate errors, offer
+refusals, protocol errors and late deliveries still fail, and a stream that
+receives more than its sender offered fails. A space message does not share
+RUN's ordered channel and can overtake a RUN that was lost and resent; a
+client that has sent its GO ACK accepts it.
+
+Merge space logs with `--profile space` (the merger's default is `default`,
+and a log of the other profile fails). The `split_merge_json:` line then adds
+`profile`, `delivery_verdict` and a `loss` object with `offered`, `accepted`,
+`received`, `lost` and `loss_ratio` for `c2s_unreliable`, `s2c_player` and
+`s2c_delta`, and the server's delta receipt counts.

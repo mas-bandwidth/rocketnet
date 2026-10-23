@@ -24,6 +24,17 @@
 #define SPLIT_BARRIER_DEADLINE_S 15.0
 #define SPLIT_CONFIRM_GRACE_S 3.0
 #define SPLIT_MAX_DURATION_S 3600
+#define SPLIT_HEADER_BYTES 24
+/* A space stream is one message a frame at most, and its sequence numbers
+ * are tracked in a LOAD_MAX_SEQ_TRACKED bitmap: 68 seconds at 60 Hz. */
+#define SPLIT_SPACE_MAX_DURATION_S ( (int) ( ( LOAD_MAX_SEQ_TRACKED - 1u ) / SPLIT_SPACE_FRAME_HZ ) )
+
+#if SPLIT_SPACE_DELTA_BYTES > ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES
+#error the space delta must fit one packet
+#endif
+#if SPLIT_SPACE_PLAYER_BYTES < SPLIT_HEADER_BYTES || SPLIT_SPACE_C2S_BYTES < SPLIT_HEADER_BYTES
+#error a space message carries the 24-byte split header
+#endif
 
 struct split_message_t
 {
@@ -35,6 +46,7 @@ struct split_client_t
     struct rocketnet_client_t * api;
     struct load_stream_state_t c2s[LOAD_NUM_COMBOS];
     struct load_stream_state_t s2c;
+    struct load_stream_state_t s2c_delta;           /* space: the UNRELIABLE_WITH_ACK_RECEIPT deltas */
     struct load_wire_sample_t wire_start, wire_end;
     double next_due;
     uint32_t next_combo;
@@ -46,6 +58,7 @@ struct split_server_client_t
 {
     struct load_stream_state_t c2s[LOAD_NUM_COMBOS];
     struct load_stream_state_t s2c;
+    struct load_stream_state_t s2c_delta;           /* space: the UNRELIABLE_WITH_ACK_RECEIPT deltas */
     struct load_wire_sample_t wire_start, wire_end;
     int slot, connected, arm_acked, go_acked, done, drained, finish_sent, finish_acked;
     double next_due;
@@ -69,6 +82,14 @@ struct split_result_t
     double delivery_deadline;
     double aggregate_up_kbps, aggregate_down_kbps;
     uint64_t startup_utc_s, traffic_start_utc_s, traffic_end_utc_s;
+    /* space only: server-to-client counts per mode (the player messages are
+     * UNRELIABLE, the deltas UNRELIABLE_WITH_ACK_RECEIPT), and the SDK's own
+     * loss evidence sampled at the end of the drain. Every client-to-server
+     * message is UNRELIABLE, so the c2s counts above are that mode's. */
+    int profile;
+    uint64_t s2c_player_offered, s2c_player_accepted, s2c_player_received;
+    uint64_t s2c_delta_offered, s2c_delta_accepted, s2c_delta_received;
+    uint64_t receipts_acked, receipts_lost, messages_dropped_over_budget;
 };
 
 static uint64_t split_read_u64_le( const uint8_t * src )
@@ -109,6 +130,80 @@ static int split_verify_message( const uint8_t * data, int bytes, uint32_t magic
                                       message->client, message->combo, message->seq, i) )
             return 0;
     return 1;
+}
+
+/* The space messages carry the same 24-byte header as the default ones; the
+ * rest is a splitmix64 stream seeded from the header, eight bytes a step, so
+ * a 1184-byte delta costs 148 steps to build or check. */
+static uint64_t split_space_seed( uint32_t magic, uint32_t client, uint32_t combo, uint32_t seq, uint64_t run_id )
+{
+    return run_id ^ ((uint64_t) magic * 0x9E3779B97F4A7C15ull) ^ ((uint64_t) client * 0xC2B2AE3D27D4EB4Full) ^
+           ((uint64_t) combo * 0x165667B19E3779F9ull) ^ ((uint64_t) seq * 0xD6E8FEB86659FD93ull);
+}
+
+static uint64_t split_space_next( uint64_t * state )
+{
+    uint64_t z = (*state += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+/* The size of a space message by direction and mode; 0 for none. */
+static int split_space_message_bytes( uint32_t magic, uint32_t combo )
+{
+    if ( magic == LOAD_MAGIC_CLIENT_TO_SV )
+        return combo == ROCKETNET_RELIABILITY_UNRELIABLE ? SPLIT_SPACE_C2S_BYTES : 0;
+    if ( magic == LOAD_MAGIC_SV_TO_CLIENT )
+        return combo == ROCKETNET_RELIABILITY_UNRELIABLE ? SPLIT_SPACE_PLAYER_BYTES :
+               combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ? SPLIT_SPACE_DELTA_BYTES : 0;
+    return 0;
+}
+
+static void split_build_space_message( uint8_t * out, int bytes, uint32_t magic,
+                                       uint32_t client, uint32_t combo, uint32_t seq, uint64_t run_id )
+{
+    write_u32_le(out, magic);
+    write_u32_le(out + 4, client);
+    write_u32_le(out + 8, combo);
+    write_u32_le(out + 12, seq);
+    split_write_u64_le(out + 16, run_id);
+    uint64_t state = split_space_seed(magic, client, combo, seq, run_id);
+    for ( int i = SPLIT_HEADER_BYTES; i < bytes; i += 8 )
+    {
+        const uint64_t word = split_space_next(&state);
+        for ( int k = 0; k < 8 && i + k < bytes; ++k ) out[i + k] = (uint8_t) (word >> (8 * k));
+    }
+}
+
+static int split_verify_space_message( const uint8_t * data, int bytes, uint32_t magic,
+                                       uint64_t run_id, struct split_message_t * message )
+{
+    if ( !data || bytes < SPLIT_HEADER_BYTES || read_u32_le(data) != magic ||
+         split_read_u64_le(data + 16) != run_id )
+        return 0;
+    message->client = read_u32_le(data + 4);
+    message->combo = read_u32_le(data + 8);
+    message->seq = read_u32_le(data + 12);
+    if ( bytes != split_space_message_bytes(magic, message->combo) ) return 0;
+    uint64_t state = split_space_seed(magic, message->client, message->combo, message->seq, run_id);
+    for ( int i = SPLIT_HEADER_BYTES; i < bytes; i += 8 )
+    {
+        const uint64_t word = split_space_next(&state);
+        for ( int k = 0; k < 8 && i + k < bytes; ++k )
+            if ( data[i + k] != (uint8_t) (word >> (8 * k)) ) return 0;
+    }
+    return 1;
+}
+
+/* The SDK reports its canonical receive channel 0 for these four modes, even
+ * though their send API channel argument is the combo. */
+static int split_receive_channel( uint32_t combo )
+{
+    return (combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
+            combo == ROCKETNET_RELIABILITY_RELIABLE ||
+            combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
+            combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT) ? 0 : (int) combo;
 }
 
 static int split_parse_run_id( const char * text, uint64_t * value )
@@ -294,6 +389,69 @@ static int split_client_send( struct rocketnet_client_t * client, uint32_t magic
     return rocketnet_client_finish_message(client, LOAD_PAYLOAD_BYTES) != 0;
 }
 
+/* A space message sends on the channel numbered by its mode, as the default
+ * client-to-server combos do. */
+static int split_server_send_space( struct rocketnet_server_t * server, int slot, uint32_t client,
+                                    uint32_t combo, uint32_t seq, uint64_t run_id )
+{
+    const int bytes = split_space_message_bytes(LOAD_MAGIC_SV_TO_CLIENT, combo);
+    uint8_t * out = rocketnet_server_start_message(server, (uint64_t) slot, (int) combo,
+                                                   (enum rocketnet_reliability_t) combo, bytes);
+    if ( !out ) return 0;
+    split_build_space_message(out, bytes, LOAD_MAGIC_SV_TO_CLIENT, client, combo, seq, run_id);
+    return rocketnet_server_finish_message(server, bytes) != 0;
+}
+
+static int split_client_send_space( struct rocketnet_client_t * client, uint32_t global_client,
+                                    uint32_t seq, uint64_t run_id )
+{
+    const uint32_t combo = ROCKETNET_RELIABILITY_UNRELIABLE;
+    uint8_t * out = rocketnet_client_start_message(client, (int) combo, (enum rocketnet_reliability_t) combo,
+                                                   SPLIT_SPACE_C2S_BYTES);
+    if ( !out ) return 0;
+    split_build_space_message(out, SPLIT_SPACE_C2S_BYTES, LOAD_MAGIC_CLIENT_TO_SV, global_client, combo, seq, run_id);
+    return rocketnet_client_finish_message(client, SPLIT_SPACE_C2S_BYTES) != 0;
+}
+
+/* An unreliable space message may be lost, so a gap is loss, never an
+ * order error; receiving one twice, or one never sent, is still an error. */
+static void split_receive_c2s_space( struct split_result_t * result, struct split_server_client_t * clients,
+                                     int total, uint64_t run_id, const struct rocketnet_message_batch_t * batch,
+                                     int j, const struct rocketnet_server_t * server )
+{
+    struct split_message_t message;
+    if ( !split_verify_space_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, run_id, &message) )
+    {
+        result->payload_errors++;
+        return;
+    }
+    if ( message.client >= (uint32_t) total || message.combo != ROCKETNET_RELIABILITY_UNRELIABLE ||
+         message.seq > split_space_frames(result->duration_target) ||
+         batch->client_index[j] < 0 || batch->client_index[j] >= total ||
+         clients[message.client].slot != batch->client_index[j] ||
+         rocketnet_server_client_id(server, batch->client_index[j]) != (uint64_t) message.client + 1 )
+    {
+        result->identity_errors++;
+        return;
+    }
+    if ( batch->channel[j] != split_receive_channel(message.combo) )
+    {
+        result->payload_errors++;
+        return;
+    }
+    if ( result->barrier_active ||
+         (result->delivery_deadline > 0.0 && rocketnet_time() >= result->delivery_deadline) )
+    {
+        result->late_application_deliveries++;
+        return;
+    }
+    struct load_stream_state_t * stream = &clients[message.client].c2s[message.combo];
+    if ( stream_seen_test_and_set(stream, message.seq) != 0 ) result->duplicate_errors++;
+    if ( message.seq > stream->max_seq_seen ) stream->max_seq_seen = message.seq;
+    stream->recv_count++;
+    result->c2s_received++;
+}
+
 static void split_receive_c2s( struct split_result_t * result, struct split_server_client_t * clients,
                                int total, uint64_t run_id, const struct rocketnet_message_batch_t * batch,
                                const struct rocketnet_server_t * server )
@@ -318,6 +476,11 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             else result->protocol_errors++;
             continue;
         }
+        if ( result->profile == SPLIT_PROFILE_SPACE )
+        {
+            split_receive_c2s_space(result, clients, total, run_id, batch, j, server);
+            continue;
+        }
         if ( !split_verify_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, run_id, &message) )
         {
             result->payload_errors++;
@@ -332,13 +495,7 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             result->identity_errors++;
             continue;
         }
-        /* The SDK reports its canonical receive channel for these four
-         * modes, even though their send API channel argument is the combo. */
-        const int channel = (message.combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
-                             message.combo == ROCKETNET_RELIABILITY_RELIABLE ||
-                             message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
-                             message.combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT) ? 0 : (int) message.combo;
-        if ( batch->channel[j] != channel )
+        if ( batch->channel[j] != split_receive_channel(message.combo) )
         {
             result->payload_errors++;
             continue;
@@ -381,6 +538,39 @@ static const struct rocketnet_message_batch_t * split_batch_entry( const struct 
     return &one;
 }
 
+static void split_receive_s2c_space( struct split_result_t * result, struct split_client_t * client,
+                                     uint32_t global_client, uint64_t run_id,
+                                     const struct rocketnet_message_batch_t * batch, int j )
+{
+    struct split_message_t message;
+    const uint64_t frames = split_space_frames(result->duration_target);
+    if ( !split_verify_space_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, run_id, &message) ||
+         message.client != global_client ||
+         (message.combo == ROCKETNET_RELIABILITY_UNRELIABLE && message.seq > frames) ||
+         (message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT &&
+          message.seq > split_space_delta_offers(global_client, frames)) ||
+         batch->channel[j] != split_receive_channel(message.combo) ||
+         batch->client_index[j] != 0 )
+    {
+        result->payload_errors++;
+        return;
+    }
+    if ( result->barrier_active ||
+         (result->delivery_deadline > 0.0 && rocketnet_time() >= result->delivery_deadline) )
+    {
+        result->late_application_deliveries++;
+        return;
+    }
+    const int delta = message.combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+    struct load_stream_state_t * stream = delta ? &client->s2c_delta : &client->s2c;
+    if ( stream_seen_test_and_set(stream, message.seq) != 0 ) result->duplicate_errors++;
+    if ( message.seq > stream->max_seq_seen ) stream->max_seq_seen = message.seq;
+    stream->recv_count++;
+    result->s2c_received++;
+    if ( delta ) result->s2c_delta_received++;
+    else result->s2c_player_received++;
+}
+
 static void split_receive_s2c( struct split_result_t * result, struct split_client_t * client,
                                uint32_t global_client, uint64_t run_id,
                                const struct rocketnet_message_batch_t * batch )
@@ -388,6 +578,11 @@ static void split_receive_s2c( struct split_result_t * result, struct split_clie
     for ( int j = 0; j < batch->num_messages; ++j )
     {
         struct split_message_t message;
+        if ( result->profile == SPLIT_PROFILE_SPACE )
+        {
+            split_receive_s2c_space(result, client, global_client, run_id, batch, j);
+            continue;
+        }
         if ( !split_verify_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, run_id, &message) ||
              message.client != global_client || message.combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
              message.seq > (uint32_t) result->duration_target ||
@@ -421,7 +616,11 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
     {
         struct split_message_t message;
         const uint32_t magic = batch->data[j] && batch->bytes[j] >= 4 ? read_u32_le(batch->data[j]) : 0;
-        if ( magic == LOAD_MAGIC_SV_TO_CLIENT && peer->startup.running )
+        /* A space message is unreliable and does not share RUN's ordered
+         * channel, so it can overtake a RUN that was lost and resent. The
+         * server sends traffic only after every GO ACK. */
+        if ( magic == LOAD_MAGIC_SV_TO_CLIENT &&
+             (peer->startup.running || (result->profile == SPLIT_PROFILE_SPACE && peer->startup.go)) )
         {
             split_receive_s2c(result, peer, global, run_id, split_batch_entry(batch, j));
             continue;
@@ -476,7 +675,25 @@ static void split_client_runtime_batch( struct split_result_t * result, struct s
     }
 }
 
-static void split_print_streams( const char * role, uint64_t run_id, int first, int count,
+/* The fields that name a profile in readiness lines and receipts. The
+ * default text is the established receipt's, unchanged. */
+static void split_profile_fields( int profile, char * out, size_t bytes )
+{
+    if ( profile != SPLIT_PROFILE_SPACE )
+    {
+        snprintf(out, bytes, "profile=default payload_bytes=32 rate_target_hz=1");
+        return;
+    }
+    snprintf(out, bytes, "profile=space payload_bytes=%d rate_target_hz=%d c2s_payload_bytes=%d c2s_rate_hz=%d "
+             "s2c_player_bytes=%d s2c_player_rate_hz=%d s2c_delta_bytes=%d s2c_delta_rate_hz=%d "
+             "s2c_delta_stagger=client_mod_%d server_frame_hz=%d client_up_cap_kbps=%d client_down_cap_kbps=%d",
+             SPLIT_SPACE_C2S_BYTES, SPLIT_SPACE_FRAME_HZ, SPLIT_SPACE_C2S_BYTES, SPLIT_SPACE_FRAME_HZ,
+             SPLIT_SPACE_PLAYER_BYTES, SPLIT_SPACE_FRAME_HZ, SPLIT_SPACE_DELTA_BYTES, SPLIT_SPACE_DELTA_HZ,
+             SPLIT_SPACE_DELTA_STRIDE, SPLIT_SPACE_FRAME_HZ, SPLIT_SPACE_CLIENT_UP_CAP_KBPS,
+             SPLIT_SPACE_CLIENT_DOWN_CAP_KBPS);
+}
+
+static void split_print_streams( const char * role, uint64_t run_id, int first, int count, int profile,
                                  const struct split_server_client_t * server_clients,
                                  const struct split_client_t * shard_clients )
 {
@@ -485,6 +702,22 @@ static void split_print_streams( const char * role, uint64_t run_id, int first, 
         const int client = first + local;
         const struct load_stream_state_t * c2s = server_clients ? server_clients[client].c2s : shard_clients[local].c2s;
         const struct load_stream_state_t * s2c = server_clients ? &server_clients[client].s2c : &shard_clients[local].s2c;
+        if ( profile == SPLIT_PROFILE_SPACE )
+        {
+            /* one UNRELIABLE stream up; UNRELIABLE players and
+             * UNRELIABLE_WITH_ACK_RECEIPT deltas down */
+            const struct load_stream_state_t * delta = server_clients ?
+                &server_clients[client].s2c_delta : &shard_clients[local].s2c_delta;
+            printf("split_stream: role=%s run_id=%016" PRIx64 " client=%d direction=c2s combo=%d sent=%u received=%u\n",
+                   role, run_id, client, ROCKETNET_RELIABILITY_UNRELIABLE,
+                   c2s[ROCKETNET_RELIABILITY_UNRELIABLE].sent_count, c2s[ROCKETNET_RELIABILITY_UNRELIABLE].recv_count);
+            printf("split_stream: role=%s run_id=%016" PRIx64 " client=%d direction=s2c combo=%d sent=%u received=%u\n",
+                   role, run_id, client, ROCKETNET_RELIABILITY_UNRELIABLE, s2c->sent_count, s2c->recv_count);
+            printf("split_stream: role=%s run_id=%016" PRIx64 " client=%d direction=s2c combo=%d sent=%u received=%u\n",
+                   role, run_id, client, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
+                   delta->sent_count, delta->recv_count);
+            continue;
+        }
         for ( int combo = 0; combo < LOAD_NUM_COMBOS; ++combo )
             printf("split_stream: role=%s run_id=%016" PRIx64 " client=%d direction=c2s combo=%d sent=%u received=%u\n",
                    role, run_id, client, combo, c2s[combo].sent_count, c2s[combo].recv_count);
@@ -521,6 +754,31 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
 {
     struct load_census_survivors_t operational, whole;
     int census = 0;
+    /* A role's up is what it sends: client to server on a shard, server to
+     * client on the server. The caps are a client's, per direction. */
+    const int space = result->profile == SPLIT_PROFILE_SPACE;
+    const int server_role = strcmp(role, "server") == 0;
+    const double client_up_cap = space ? SPLIT_SPACE_CLIENT_UP_CAP_KBPS : SPLIT_DEFAULT_CLIENT_CAP_KBPS;
+    const double client_down_cap = space ? SPLIT_SPACE_CLIENT_DOWN_CAP_KBPS : SPLIT_DEFAULT_CLIENT_CAP_KBPS;
+    const double sent_cap = server_role ? client_down_cap : client_up_cap;
+    const double received_cap = server_role ? client_up_cap : client_down_cap;
+    char profile_text[1024];
+    split_profile_fields(result->profile, profile_text, sizeof(profile_text));
+    if ( space )
+    {
+        const size_t used = strlen(profile_text);
+        snprintf(profile_text + used, sizeof(profile_text) - used,
+                 " c2s_unreliable_offered=%" PRIu64 " c2s_unreliable_accepted=%" PRIu64
+                 " c2s_unreliable_received=%" PRIu64 " s2c_player_offered=%" PRIu64
+                 " s2c_player_accepted=%" PRIu64 " s2c_player_received=%" PRIu64
+                 " s2c_delta_offered=%" PRIu64 " s2c_delta_accepted=%" PRIu64 " s2c_delta_received=%" PRIu64
+                 " s2c_delta_receipts_acked=%" PRIu64 " s2c_delta_receipts_lost=%" PRIu64
+                 " messages_dropped_over_budget=%" PRIu64,
+                 result->c2s_offered, result->c2s_accepted, result->c2s_received,
+                 result->s2c_player_offered, result->s2c_player_accepted, result->s2c_player_received,
+                 result->s2c_delta_offered, result->s2c_delta_accepted, result->s2c_delta_received,
+                 result->receipts_acked, result->receipts_lost, result->messages_dropped_over_budget);
+    }
     const int resources = load_resource_verdict(role, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                                                  threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
                                                  &operational, &whole, &census) &&
@@ -532,9 +790,9 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
         population && !result->identity_errors && !result->payload_errors && !result->order_errors &&
         !result->duplicate_errors && !result->unexpected_disconnects && !result->offer_refusals &&
         !result->protocol_errors && !result->late_application_deliveries && result->wire_valid;
-    const int bandwidth = result->max_peer_up_kbps < 100.0 && result->max_peer_down_kbps < 100.0 &&
+    const int bandwidth = result->max_peer_up_kbps < sent_cap && result->max_peer_down_kbps < received_cap &&
         result->aggregate_up_kbps < aggregate_limit_kbps && result->aggregate_down_kbps < aggregate_limit_kbps;
-    const int timing = strcmp(role, "server") != 0 ||
+    const int timing = !server_role ||
         (result->timing_valid && result->timing_budget_met);
     const int pass = correctness && result->load_complete && bandwidth && resources && timing;
     printf("split_receipt: schema=split_v1 role=%s run_id=%016" PRIx64 " total=%d first=%d count=%d "
@@ -552,8 +810,8 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "max_peer_up_kbps=%.6f max_peer_down_kbps=%.6f aggregate_up_kbps=%.6f "
            "aggregate_down_kbps=%.6f aggregate_limit_kbps=%.6f wire_scope=pre_run_to_traffic_end_conservative "
            "wire_rate_denominator_s=%d "
-           "workload_scope=traffic_plus_drain transport=%s profile=default payload_bytes=32 "
-           "rate_target_hz=1 fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
+           "workload_scope=traffic_plus_drain transport=%s %s "
+           "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
            "resource_baseline_schema=%s warm_cycle=1 survivor_threads_operational=%ld "
            "survivor_handles_operational=%ld survivor_threads_total=%ld survivor_handles_total=%ld "
@@ -574,7 +832,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            result->wire_valid, result->wire_up, result->wire_down,
            result->max_peer_up_kbps, result->max_peer_down_kbps,
            result->aggregate_up_kbps, result->aggregate_down_kbps, aggregate_limit_kbps, duration,
-           transport ? transport : "none", fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+           transport ? transport : "none", profile_text, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
            threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
            census ? "census_v1" : "phase_counts_v1", operational.threads, operational.handles,
            whole.threads, whole.handles, whole.os_pool_threads,
@@ -768,11 +1026,55 @@ static int split_server_start_phase( struct rocketnet_server_t * server, struct 
     return verdict == SPLIT_START_COMPLETE && !result->protocol_errors && !quit;
 }
 
+/* One server offer on one space stream, counted under its mode. */
+static void split_server_offer_space( struct split_result_t * result, struct rocketnet_server_t * server,
+                                      int slot, uint32_t client, uint32_t combo, uint64_t run_id,
+                                      struct load_stream_state_t * stream, uint64_t * offered, uint64_t * accepted )
+{
+    if ( stream->sent_count + 1 >= LOAD_MAX_SEQ_TRACKED ) { result->protocol_errors++; return; }
+    const uint32_t seq = stream->sent_count + 1;
+    result->s2c_offered++;
+    (*offered)++;
+    if ( !split_server_send_space(server, slot, client, combo, seq, run_id) ) { result->offer_refusals++; return; }
+    stream->sent_count = seq;
+    result->s2c_accepted++;
+    (*accepted)++;
+}
+
+/* One space server frame: a player message to every client, and a delta to
+ * the clients whose index mod 3 matches the frame's. */
+static void split_server_space_frame( struct split_result_t * result, struct rocketnet_server_t * server,
+                                      struct split_server_client_t * clients, int total, uint64_t run_id,
+                                      uint64_t frame )
+{
+    for ( int i = 0; i < total; ++i )
+    {
+        if ( !split_server_client_live(server, clients, i) ) { result->unexpected_disconnects++; continue; }
+        split_server_offer_space(result, server, clients[i].slot, (uint32_t) i, ROCKETNET_RELIABILITY_UNRELIABLE,
+                                 run_id, &clients[i].s2c, &result->s2c_player_offered, &result->s2c_player_accepted);
+        if ( split_space_delta_due(frame, (uint32_t) i) )
+            split_server_offer_space(result, server, clients[i].slot, (uint32_t) i,
+                                     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, run_id, &clients[i].s2c_delta,
+                                     &result->s2c_delta_offered, &result->s2c_delta_accepted);
+    }
+}
+
+/* Sleep to the next frame of the traffic phase, again after an early wake. */
+static void split_sleep_to_next_frame( double traffic_start )
+{
+    const double next = split_frame_next_time(rocketnet_time(), traffic_start, SPLIT_SPACE_FRAME_HZ);
+    for ( double left = next - rocketnet_time(); left > 0.0 && !quit; left = next - rocketnet_time() )
+        rocketnet_sleep(left);
+}
+
 static int split_server_run( int total, int duration, uint64_t run_id, const char * server_endpoint,
-                             const char * ready_ipv4, double aggregate_limit_kbps )
+                             const char * ready_ipv4, double aggregate_limit_kbps, int profile )
 {
     struct split_result_t result = { 0 };
     result.duration_target = duration;
+    result.profile = profile;
+    char profile_fields[512];
+    split_profile_fields(profile, profile_fields, sizeof(profile_fields));
     struct split_server_client_t * clients = NULL;
     struct rocketnet_server_t * server = NULL;
     struct load_timing_t timing = { 0 };
@@ -831,9 +1133,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     split_encode_key(key, key_hex);
     result.startup_utc_s = (uint64_t) time(NULL);
     printf("split_ready: schema=split_v1 role=server run_id=%016" PRIx64 " total=%d "
-           "duration_s=%d profile=default payload_bytes=32 rate_target_hz=1 "
+           "duration_s=%d %s "
            "address=%s:%u key=%s transport=%s startup_utc_s=%" PRIu64 "\n",
-           run_id, total, duration, ready_ipv4, (unsigned) rocketnet_server_port(server),
+           run_id, total, duration, profile_fields, ready_ipv4, (unsigned) rocketnet_server_port(server),
            key_hex, transport, result.startup_utc_s);
     fflush(stdout);
 
@@ -919,9 +1221,10 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     result.traffic_start_utc_s = (uint64_t) time(NULL);
     for ( int i = 0; i < total; ++i )
         clients[i].next_due = traffic_start;
-    result.expected_offers = (uint64_t) total * (uint64_t) duration;
+    result.expected_offers = split_expected_offers(profile, 1, 0, total, duration);
     timing.enabled = 1;
     double next_tick = traffic_start;
+    uint64_t next_frame = 0;
     int traffic_sampled = 0;
     const double end_time = traffic_start + (double) duration;
     const double drain_end = end_time + 3.0;
@@ -968,7 +1271,20 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
-        for ( int i = 0; in_traffic && i < total; ++i )
+        if ( profile == SPLIT_PROFILE_SPACE )
+        {
+            /* One frame per wake. A late wake runs the latest due frame and
+             * counts every client's share of the frames it skipped. */
+            uint64_t frame = 0, missed_frames = 0;
+            if ( in_traffic &&
+                 split_frame_due(rocketnet_time(), traffic_start, end_time,
+                                 SPLIT_SPACE_FRAME_HZ, split_space_frames(duration), &next_frame, &missed_frames, &frame) )
+            {
+                result.missed_due_slots += missed_frames * (uint64_t) total;
+                split_server_space_frame(&result, server, clients, total, run_id, frame);
+            }
+        }
+        for ( int i = 0; profile == SPLIT_PROFILE_DEFAULT && in_traffic && i < total; ++i )
         {
             if ( !rocketnet_server_client_connected(server, clients[i].slot) ||
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
@@ -993,11 +1309,26 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         }
         LOAD_TIMED_VOID(&timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets(server));
         split_capture_tick(&capture, rocketnet_time());
+        if ( profile == SPLIT_PROFILE_SPACE )
+        {
+            split_sleep_to_next_frame(traffic_start);
+            continue;
+        }
         next_tick += 0.010;
         const double left = next_tick - rocketnet_time();
         if ( left > 0.0 ) rocketnet_sleep(left);
     }
     result.drain_seconds = rocketnet_time() - end_time;
+    if ( profile == SPLIT_PROFILE_SPACE )
+    {
+        /* Only the deltas ask for receipts, so the server's receipt counts
+         * are theirs: the SDK's loss evidence at the end of the drain. */
+        struct rocketnet_server_stats_t stats;
+        rocketnet_server_stats(server, &stats);
+        result.receipts_acked = stats.receipts_acked;
+        result.receipts_lost = stats.receipts_lost;
+        result.messages_dropped_over_budget = stats.messages_dropped_over_budget;
+    }
     result.drain_complete = result.drain_seconds >= 3.0;
     result.load_complete = result.s2c_offered == result.expected_offers && !result.missed_due_slots;
     timing.enabled = 0;
@@ -1086,7 +1417,7 @@ cleanup:
     {
         if ( clients )
         {
-            split_print_streams("server", run_id, 0, total, clients, NULL);
+            split_print_streams("server", run_id, 0, total, profile, clients, NULL);
             split_print_wire("server", run_id, 0, total, clients, NULL);
         }
         if ( capture.entries ) split_capture_end(&capture, rocketnet_time());
@@ -1163,10 +1494,13 @@ static void split_print_shard_waiting( const struct split_client_t * clients, in
 
 static int split_client_run( int total, int duration, uint64_t run_id, int first, int count,
                              const char * address, const uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES],
-                             double aggregate_limit_kbps )
+                             double aggregate_limit_kbps, int profile )
 {
     struct split_result_t result = { 0 };
     result.duration_target = duration;
+    result.profile = profile;
+    char profile_fields[512];
+    split_profile_fields(profile, profile_fields, sizeof(profile_fields));
     struct split_client_t * clients = NULL;
     char transport[32] = "none";
     int api_started = 0, traffic_sampled = 0, pass = 0;
@@ -1230,9 +1564,9 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     snprintf(transport, sizeof(transport), "%s", rocketnet_client_transport_name(clients[0].api));
     result.startup_utc_s = (uint64_t) time(NULL);
     printf("split_shard_ready: schema=split_v1 role=client-shard run_id=%016" PRIx64
-           " total=%d first=%d count=%d duration_s=%d profile=default "
-           "payload_bytes=32 rate_target_hz=1 startup_utc_s=%" PRIu64 "\n",
-           run_id, total, first, count, duration, result.startup_utc_s);
+           " total=%d first=%d count=%d duration_s=%d %s "
+           "startup_utc_s=%" PRIu64 "\n",
+           run_id, total, first, count, duration, profile_fields, result.startup_utc_s);
     fflush(stdout);
     const double connect_start = rocketnet_time();
     while ( !quit && rocketnet_time() - connect_start < LOAD_CONNECT_DEADLINE_S )
@@ -1313,11 +1647,12 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     const double traffic_start = rocketnet_time();
     result.traffic_start_utc_s = (uint64_t) time(NULL);
     for ( int i = 0; i < count; ++i ) clients[i].next_due = traffic_start;
-    result.expected_offers = (uint64_t) count * (uint64_t) duration;
+    result.expected_offers = split_expected_offers(profile, 0, first, count, duration);
     const double traffic_end = traffic_start + (double) duration;
     const double drain_end = traffic_end + 3.0;
     result.delivery_deadline = drain_end;
     double next_tick = traffic_start;
+    uint64_t next_frame = 0;
     int cursor = 0;
     while ( !quit && rocketnet_time() < drain_end )
     {
@@ -1353,7 +1688,14 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
                                         ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
                     result.offer_refusals++;
         }
-        const int slice = in_traffic ? (count < 100 ? count : 100) : count;
+        /* A space frame visits every local client once: each updates,
+         * offers its input when the shard's frame is due, and sends. */
+        uint64_t frame = 0, missed_frames = 0;
+        const int space_frame = profile == SPLIT_PROFILE_SPACE && in_traffic &&
+            split_frame_due(rocketnet_time(), traffic_start, traffic_end,
+                            SPLIT_SPACE_FRAME_HZ, split_space_frames(duration), &next_frame, &missed_frames, &frame);
+        result.missed_due_slots += missed_frames * (uint64_t) count;
+        const int slice = in_traffic && profile == SPLIT_PROFILE_DEFAULT ? (count < 100 ? count : 100) : count;
         for ( int k = 0; k < slice; ++k )
         {
             if ( !in_traffic && rocketnet_time() >= drain_end ) break;
@@ -1368,6 +1710,28 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             const enum rocketnet_client_state_t state = rocketnet_client_state(peer->api);
             if ( state != ROCKETNET_CLIENT_STATE_CONNECTED )
                 result.unexpected_disconnects++;
+            if ( profile == SPLIT_PROFILE_SPACE )
+            {
+                struct load_stream_state_t * stream = &peer->c2s[ROCKETNET_RELIABILITY_UNRELIABLE];
+                if ( space_frame && state == ROCKETNET_CLIENT_STATE_CONNECTED )
+                {
+                    const uint32_t seq = stream->sent_count + 1;
+                    if ( seq >= LOAD_MAX_SEQ_TRACKED ) result.protocol_errors++;
+                    else
+                    {
+                        result.c2s_offered++;
+                        if ( !split_client_send_space(peer->api, (uint32_t) (first + local), seq, run_id) )
+                            result.offer_refusals++;
+                        else
+                        {
+                            stream->sent_count = seq;
+                            result.c2s_accepted++;
+                        }
+                    }
+                }
+                rocketnet_client_send_packets(peer->api);
+                continue;
+            }
             /* A client update can cross a due slot. The same fresh clock
              * decides traffic eligibility and counts every skipped slot. */
             const double offer_now = rocketnet_time();
@@ -1397,11 +1761,25 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             rocketnet_client_send_packets(peer->api);
         }
         split_capture_tick(&capture, rocketnet_time());
+        if ( profile == SPLIT_PROFILE_SPACE )
+        {
+            split_sleep_to_next_frame(traffic_start);
+            continue;
+        }
         next_tick += 0.010;
         const double left = next_tick - rocketnet_time();
         if ( left > 0.0 ) rocketnet_sleep(left);
     }
     result.drain_seconds = rocketnet_time() - traffic_end;
+    if ( profile == SPLIT_PROFILE_SPACE )
+        for ( int i = 0; i < count; ++i )
+        {
+            struct rocketnet_client_stats_t stats;
+            rocketnet_client_stats(clients[i].api, &stats);
+            result.receipts_acked += stats.receipts_acked;
+            result.receipts_lost += stats.receipts_lost;
+            result.messages_dropped_over_budget += stats.messages_dropped_over_budget;
+        }
     result.drain_complete = result.drain_seconds >= 3.0;
     result.load_complete = result.c2s_offered == result.expected_offers && !result.missed_due_slots;
     if ( !traffic_sampled ) goto cleanup;
@@ -1467,7 +1845,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
 cleanup:
     if ( clients )
     {
-        split_print_streams("client-shard", run_id, first, count, NULL, clients);
+        split_print_streams("client-shard", run_id, first, count, profile, NULL, clients);
         split_print_wire("client-shard", run_id, first, count, NULL, clients);
         if ( capture.entries ) split_capture_end(&capture, rocketnet_time());
         for ( int i = 0; i < count; ++i )
@@ -1497,8 +1875,23 @@ static void split_usage( void )
     fprintf(stderr, "usage:\n"
             "  load_split plan-server <total>\n"
             "  load_split plan-client-shard <total> <local-count>\n"
-            "  load_split server <total> <seconds> <run-id-16hex> <server-ipv4:port> <ready-ipv4> <aggregate-limit-kbps>\n"
-            "  load_split client-shard <total> <seconds> <run-id-16hex> <first> <count> <server-ipv4:port> <server-key-64hex> <aggregate-limit-kbps>\n");
+            "  load_split server <total> <seconds> <run-id-16hex> <server-ipv4:port> <ready-ipv4> <aggregate-limit-kbps> [default|space]\n"
+            "  load_split client-shard <total> <seconds> <run-id-16hex> <first> <count> <server-ipv4:port> <server-key-64hex> <aggregate-limit-kbps> [default|space]\n"
+            "The optional last argument selects the traffic profile; default when absent. space runs at most %d seconds.\n",
+            SPLIT_SPACE_MAX_DURATION_S);
+}
+
+/* The optional profile argument: absent is default. space is bounded by
+ * its sequence tracking. */
+static int split_parse_profile( int argc, int last, char ** argv, int duration, int * profile )
+{
+    *profile = SPLIT_PROFILE_DEFAULT;
+    if ( argc == last ) return 1;
+    if ( argc != last + 1 ) return 0;
+    if ( strcmp(argv[last], "default") == 0 ) return 1;
+    if ( strcmp(argv[last], "space") != 0 || duration > SPLIT_SPACE_MAX_DURATION_S ) return 0;
+    *profile = SPLIT_PROFILE_SPACE;
+    return 1;
 }
 
 int main( int argc, char ** argv )
@@ -1508,6 +1901,7 @@ int main( int argc, char ** argv )
     int total = 0, duration = 0, first = 0, count = 0;
     uint64_t run_id = 0;
     double aggregate_limit_kbps = 0.0;
+    int profile = SPLIT_PROFILE_DEFAULT;
     if ( !split_parse_int(argv[2], 1, ROCKETNET_MAX_CLIENTS, &total) )
     { split_usage(); return 2; }
     if ( strcmp(argv[1], "plan-server") == 0 && argc == 3 )
@@ -1519,12 +1913,12 @@ int main( int argc, char ** argv )
          !split_parse_run_id(argv[4], &run_id) )
     { split_usage(); return 2; }
     signal(SIGINT, interrupt_handler);
-    if ( strcmp(argv[1], "server") == 0 && argc == 8 &&
+    if ( strcmp(argv[1], "server") == 0 && split_parse_profile(argc, 8, argv, duration, &profile) &&
          strlen(argv[5]) < ROCKETNET_MAX_ADDRESS_STRING_BYTES && strchr(argv[5], ':') &&
          strlen(argv[6]) <= 45 && !strchr(argv[6], ':') &&
          split_parse_limit(argv[7], &aggregate_limit_kbps) )
-        return split_server_run(total, duration, run_id, argv[5], argv[6], aggregate_limit_kbps);
-    if ( strcmp(argv[1], "client-shard") == 0 && argc == 10 &&
+        return split_server_run(total, duration, run_id, argv[5], argv[6], aggregate_limit_kbps, profile);
+    if ( strcmp(argv[1], "client-shard") == 0 && split_parse_profile(argc, 10, argv, duration, &profile) &&
          split_parse_int(argv[6], 1, total, &count) &&
          split_parse_int(argv[5], 0, total - count, &first) &&
          strlen(argv[7]) < ROCKETNET_MAX_ADDRESS_STRING_BYTES && strchr(argv[7], ':') &&
@@ -1533,7 +1927,7 @@ int main( int argc, char ** argv )
         uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
         if ( split_decode_key(argv[8], key) )
             return split_client_run(total, duration, run_id, first, count, argv[7], key,
-                                    aggregate_limit_kbps);
+                                    aggregate_limit_kbps, profile);
     }
     split_usage();
     return 2;
