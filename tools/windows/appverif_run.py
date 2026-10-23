@@ -159,17 +159,18 @@ def unissued_stop_code(output: str):
 def configure_stops(appverif: str, image_name: str, codes: list) -> int:
     """Set every issued stop in codes to STOP_ERROR_REPORT; return how many were set.
 
-    appverif -configure sets the codes before the first code no registered
-    provider issues, then fails naming that code and sets none after it. One
-    call with every code therefore leaves every stop after the first unissued
-    one at the default, which breaks into a debugger instead of logging the
-    stop: the run would die on the stop and log nothing about it. Each call
-    starts after the code the last call named, so there are at most len(codes)
+    appverif -configure fails naming the first code no registered provider
+    issues, and the codes it keeps from that call are not part of its
+    contract. One call with every code therefore leaves the stops around the
+    first unissued one depending on what a failed call did, which breaks into
+    a debugger instead of logging the stop: the run would die on the stop and
+    log nothing about it. Each retry names every code but the one the last
+    call named, so a code set by an earlier call is set again (idempotent) and
+    a code that a failed call skipped is set too. There are at most len(codes)
     calls; any other failure raises, because a run whose stops are not all set
     to log is not a run that can report a stop.
     """
     remaining = [int(code, 16) for code in codes]
-    configured = 0
     for _ in range(len(codes) + 1):
         if not remaining:
             break
@@ -186,25 +187,19 @@ def configure_stops(appverif: str, image_name: str, codes: list) -> int:
             check=False,
         )
         if proc.returncode == 0:
-            configured += len(remaining)
-            remaining = []
-            break
+            return len(remaining)
         output = proc.stdout + "\n" + proc.stderr
         code = unissued_stop_code(output)
         if code is None or code not in remaining:
             raise RuntimeError(
                 f"appverif -configure failed (exit {proc.returncode}): {' '.join(output.split())}"
             )
-        index = remaining.index(code)
-        configured += index
-        remaining = remaining[index + 1:]
+        remaining.remove(code)
     if remaining:
         raise RuntimeError(
             f"appverif -configure left {len(remaining)} stop codes unset for {image_name}"
         )
-    if configured == 0:
-        raise RuntimeError(f"appverif -configure set no stop for {image_name}")
-    return configured
+    raise RuntimeError(f"appverif -configure set no stop for {image_name}")
 
 
 def logtofile_enabled():
@@ -227,8 +222,13 @@ def logtofile_enabled():
             winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
         ) as key:
             value, _ = winreg.QueryValueEx(key, "LogToFile")
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError:
+        # no key and no value is the setting the run found: not enabled
         return False
+    except OSError:
+        # a read the run was not allowed to make is not the value zero: leave
+        # the machine-wide setting alone rather than disable it on a guess
+        return None
     if isinstance(value, str):
         return value.strip() not in ("", "0")
     return bool(value)

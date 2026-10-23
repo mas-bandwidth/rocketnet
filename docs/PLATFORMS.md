@@ -145,14 +145,17 @@ that passed. `BUILDING.md` names the commands.
 
 | Group | Configuration | Runs | Result | Date |
 | --- | --- | --- | --- | --- |
-| Debug | Debug | `test.exe`, `test_lifecycle.exe`, `test_iocp.exe`, `functional.exe` (no pin, `ROCKETNET_SERVER_TRANSPORT=iocp`, `ROCKETNET_SERVER_TRANSPORT=rio`) | not made | 2026-10-24 |
-| AddressSanitizer | Release | the same six runs | not made | 2026-10-24 |
-| AddressSanitizer | Debug | the same six runs | not made | 2026-10-24 |
-| Application Verifier | Debug | `test_iocp.exe`, `test_lifecycle.exe`, `functional.exe` (no pin, `iocp`, `rio`) | not made | 2026-10-24 |
+| Debug | Debug | `test.exe`, `test_lifecycle.exe`, `test_iocp.exe`, `functional.exe` (no pin, `ROCKETNET_SERVER_TRANSPORT=iocp`, `ROCKETNET_SERVER_TRANSPORT=rio`) | not made | 2026-10-23 |
+| AddressSanitizer | Release | the same six runs | not made | 2026-10-23 |
+| AddressSanitizer | Debug | the same six runs | not made | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, `test_lifecycle.exe`, `functional.exe` (no pin, `iocp`, `rio`) | not made | 2026-10-23 |
 
-The 2026-10-24 rows were recorded on Linux, where no native Windows member is
+The 2026-10-23 rows were recorded on Linux, where no native Windows member is
 reachable: the runs themselves were not made there. The Linux Release gate
-(`./bin/test` and `./bin/functional`) was run there and was green. The nightly
+(`./bin/test` and `./bin/functional`) was run there and was green. A Linux
+Release AddressSanitizer build (`-DROCKETNET_SANITIZE_ADDRESS=ON`) of the same
+tree ran `test` and `functional` with zero AddressSanitizer reports, which is
+evidence about the shared sources only; it is not a Windows row. The nightly
 Windows AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) runs the
 Release group every night; the Debug AddressSanitizer configuration is
 build-checked there and its suites are owed to the member.
