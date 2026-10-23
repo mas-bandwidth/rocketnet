@@ -158,6 +158,17 @@ static void uring_fake_submitted( void * context, uint64_t user_data )
     }
 }
 
+// The guard of the cases that drive sends under receive pressure: four send
+// budgets and, in a build whose receive budget is the larger
+// (ROCKETNET_MAX_CLIENTS above 1280: 16 per client), a receive call's budget
+// twice over.
+static int64_t uring_send_case_guard()
+{
+    const int64_t send_guard = 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET;
+    const int64_t receive_guard = 2 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET;
+    return send_guard > receive_guard ? send_guard : receive_guard;
+}
+
 static struct uring_fake_t * uring_fake_create( int64_t guard, struct rocketnet_server_uring_test_source_t * source )
 {
     struct uring_fake_t * fake = (struct uring_fake_t*) calloc( 1, sizeof(struct uring_fake_t) );
@@ -268,7 +279,7 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
 static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 {
     struct rocketnet_server_uring_test_source_t source;
-    struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET, &source );
+    struct uring_fake_t * fake = uring_fake_create( uring_send_case_guard(), &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
     rocketnet_unit_check( uring );
@@ -342,13 +353,8 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 
 static void test_io_uring_transport_reap_destroy_after_saturation()
 {
-    // the guard covers four send budgets and, in a build whose receive budget
-    // is the larger (ROCKETNET_MAX_CLIENTS above 1280: 16 per client), the
-    // first receive call's budget twice over
-    const int64_t send_guard = 4 * (int64_t) ROCKETNET_URING_SEND_BUDGET;
-    const int64_t receive_guard = 2 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET;
     struct rocketnet_server_uring_test_source_t source;
-    struct uring_fake_t * fake = uring_fake_create( send_guard > receive_guard ? send_guard : receive_guard, &source );
+    struct uring_fake_t * fake = uring_fake_create( uring_send_case_guard(), &source );
 
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring );
