@@ -241,3 +241,34 @@ static void test_ack_stats_direct_history_uint64_high_water()
 }
 
 REGISTER_UNIT_TEST(test_ack_stats_direct_history_uint64_high_water);
+
+// Stale records may look like current sequence numbers after slot reuse.
+// A cleared validity mask must hide them without touching the cold ring.
+static void test_ack_stats_history_ignores_unwritten_records()
+{
+    auto * history = new rocketnet_ack_stats_history_t;
+    memset(history, 0xA5, sizeof(*history));
+    memset(history->rtt_history, 0, sizeof(history->rtt_history));
+    history->highest_sent = history->highest_received = 3;
+    uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS] = {};
+    uint64_t received_written[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS] = {};
+    for (int i = 1; i <= 3; ++i)
+    {
+        history->sent[i] = { (uint64_t)i, (double)i, 100, 1, {} };
+        history->received[i] = { (uint64_t)i, (double)i, 100, 0 };
+    }
+    rocketnet_ack_stats_result_t result = {};
+    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
+    rocketnet_unit_check(result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0);
+    sent_written[0] = received_written[0] = (1ull << 1) | (1ull << 3);
+    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
+    rocketnet_unit_check(fabsf(result.sent_kbps - 0.8f) < 0.0001f);
+    rocketnet_unit_check(fabsf(result.received_kbps - 0.8f) < 0.0001f);
+    rocketnet_unit_check(fabsf(result.acked_kbps - 0.8f) < 0.0001f);
+    // A generation reset only clears validity; the exact old records remain.
+    sent_written[0] = received_written[0] = 0;
+    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
+    rocketnet_unit_check(result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0);
+    delete history;
+}
+REGISTER_UNIT_TEST(test_ack_stats_history_ignores_unwritten_records);
