@@ -577,6 +577,8 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     uint32_t kbps = 0;
     if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
         return 0;
+    if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
+        return 0;
     const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
     const uint64_t total = connection_bytes == 0 ? 0 : rn_client_header_bytes + connection_bytes;
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
