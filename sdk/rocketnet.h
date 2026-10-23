@@ -1405,6 +1405,44 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
     return rocketnet_client_default_config_internal( config );
 }
 
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: one ROCKETNET_MAX_PACKET_PAYLOAD_BYTES message per 100 ms in
+/// each direction, 10 Hz, with 256-kbps send budgets. Use it in place of
+/// rocketnet_client_default_config. It changes no default and adds no field.
+/// Returns ROCKETNET_STATUS_OK on success.
+
+static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( !config )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    const enum rocketnet_status_t status = rocketnet_client_default_config( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1416-byte payload in each direction every 100 ms. That is
+    // 10 * 1416 = 14,160 payload bytes/s, about 120 kbps on the wire once the
+    // 1500-byte MTU's IP, UDP and RocketNet overhead is counted. The reliable
+    // timeout keeps its 10,000-ms default, so the windows, queues and buffers
+    // below hold 10 s: 100 messages of 1416 bytes is 141,600 bytes, and the
+    // window, queue and in-flight counts round 100 up to 128. Validation
+    // refuses values below its minimums; it never clamps.
+    config->max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;       // one packet's payload per fragment
+    config->max_fragmented_messages = 1;                                  // one 1416-byte fragment, so nothing fragments
+    config->send_kbps = 256;                                              // 2.13x the 120-kbps wire rate
+    config->num_channels = 8;                                             // the light workload's reliability cases
+    config->reliable_messages_in_flight = 128;                            // 100 messages per 10 s, next power of two
+    config->receive_message_buffer_bytes = 141600;                        // 100 * 1416 bytes, 10 s of payload
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // largest message that fits one packet
+    config->send_message_buffer_bytes = 141600;                           // 100 * 1416 bytes, 10 s of payload
+    config->send_queue_messages = 128;                                    // 100 messages per 10 s, rounded up
+    config->packets_in_flight = 128;                                      // 100 packets per 10 s, rounded up
+    config->packets_per_update = 4;                                       // one data packet per update, with headroom
+    config->unreliable_messages_per_update = 8;                           // one message per update, with headroom
+    config->sequenced_messages_held = 64;                                 // 6.4 s at 10 messages/s
+    config->max_message_receipts = 128;                                   // 100 receipts per 10 s, rounded up
+    return ROCKETNET_STATUS_OK;
+}
+
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
@@ -1664,6 +1702,45 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
     if ( config )
         config->config_bytes = sizeof( *config );
     return rocketnet_server_default_config_internal( config );
+}
+
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: one ROCKETNET_MAX_PACKET_PAYLOAD_BYTES message per 100 ms to
+/// each client, 10 Hz, with a 256-kbps send budget per client. Use it in
+/// place of rocketnet_server_default_config. The caller still sets its
+/// protocol id and backend key. It changes no default and adds no field.
+/// Returns ROCKETNET_STATUS_OK on success.
+
+static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( !config )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    const enum rocketnet_status_t status = rocketnet_server_default_config( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1416-byte payload in each direction every 100 ms. That is
+    // 10 * 1416 = 14,160 payload bytes/s, about 120 kbps on the wire once the
+    // 1500-byte MTU's IP, UDP and RocketNet overhead is counted. The reliable
+    // timeout keeps its 10,000-ms default, so the windows, queues and buffers
+    // below hold 10 s: 100 messages of 1416 bytes is 141,600 bytes, and the
+    // window, queue and in-flight counts round 100 up to 128. Validation
+    // refuses values below its minimums; it never clamps.
+    config->max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;       // one packet's payload per fragment
+    config->max_fragmented_messages = 1;                                  // one 1416-byte fragment, so nothing fragments
+    config->per_client_send_kbps = 256;                                   // 2.13x the 120-kbps wire rate
+    config->num_channels = 8;                                             // the light workload's reliability cases
+    config->reliable_messages_in_flight = 128;                            // 100 messages per 10 s, next power of two
+    config->receive_message_buffer_bytes = 141600;                        // 100 * 1416 bytes, 10 s of payload
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // largest message that fits one packet
+    config->send_message_buffer_bytes = 141600;                           // 100 * 1416 bytes, 10 s of payload
+    config->send_queue_messages = 128;                                    // 100 messages per 10 s, rounded up
+    config->packets_in_flight = 128;                                      // 100 packets per 10 s, rounded up
+    config->packets_per_update = 4;                                       // one data packet per update, with headroom
+    config->unreliable_messages_per_update = 8;                           // one message per update, with headroom
+    config->sequenced_messages_held = 64;                                 // 6.4 s at 10 messages/s
+    config->max_message_receipts = 128;                                   // 100 receipts per 10 s, rounded up
+    return ROCKETNET_STATUS_OK;
 }
 
 /// Returns the memory needed by create for this config and max_clients.

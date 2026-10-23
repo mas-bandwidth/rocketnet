@@ -12,10 +12,11 @@ at 1000 clients each client updates at 10 Hz; for 1–100 clients each client
 updates at 100 Hz, with intermediate rates determined by the number of slices
 per round. `LOAD_PROFILE=default` (the default)
 keeps the SDK's default message and transport sizing. `LOAD_PROFILE=light`
-uses the same traffic and checks with message and transport capacities sized
-for this harness's 32-byte payloads, eight reliability cases and one-fragment
-messages. It does not change public defaults or make a general memory promise
-for other applications.
+uses the same traffic and checks with the SDK's public light-client profile,
+`rocketnet_server_light_config` and `rocketnet_client_light_config`, sized for
+one `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` payload (one 1,500-byte MTU packet) per
+100 ms in each direction at 10 Hz. It does not change public defaults; the
+`default` profile remains the stock acceptance.
 
 ## Low-bandwidth population ladder
 
@@ -136,17 +137,22 @@ with the actual host link capacity separately. The fixed-rate workload has
 `timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
 share rate, population, transport and measurement scope.
 
-The light profile sets eight channels, a 64-message in-flight reliability
-window, 4096-byte receive buffers, a 1415-byte maximum message, 12288-byte send
-buffers, 16-message send queues, 16 packets in flight, and one 1416-byte
-transport fragment slot. Its 64-kbps per-client send budget is 25 times the
-2.56-kbps payload-only rate per direction at 1000 clients. At 1–100 clients,
-the 100-Hz schedule is 25.6 kbps of payload, leaving 2.5 times that rate.
-Intermediate populations follow the slice cadence. These ratios are
-configuration calculations, not measured wire usage. The summary reports each endpoint's
+The light profile is the SDK's public light-client geometry: eight channels, a
+128-message in-flight reliability window, 141,600-byte receive buffers, a
+1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message,
+141,600-byte send buffers, 128-message send queues, 128 packets in flight, 64
+sequenced messages held, 128 receipts, and one 1416-byte transport fragment
+slot. Its 256-kbps per-client send budget is 2.13 times the roughly 120-kbps
+wire rate of one 1,500-byte packet per 100 ms in each direction. At
+`max_clients` 1000 the server's `rocketnet_server_required_memory` is
+867,590,336 bytes (867,590 bytes per slot on average), and
+`rocketnet_client_required_memory` for the client profile is 2,974,976 bytes.
+These are configuration calculations and measured create-block sizes, not
+measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` public block size. Those figures exclude the
 transport allocations made at connect/start, native resources and process
-overhead, so they are not whole-session memory estimates.
+overhead, so they are not whole-session memory estimates. The harness's own
+payloads are 32 bytes, so its wire rates stay far below the profile's budget.
 
 The summary also reports per-call Release timing samples during the traffic and
 drain window. Each public frame API call is bracketed by the monotonic clock;
