@@ -349,7 +349,9 @@ struct rocketnet_ack_stats_result_t
 };
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                        rocketnet_ack_stats_result_t * result );
+                                        rocketnet_ack_stats_result_t * result,
+                                        const uint64_t * sent_written = NULL,
+                                        const uint64_t * received_written = NULL );
 
 // -----------------------------------------
 //                    the server's acks
