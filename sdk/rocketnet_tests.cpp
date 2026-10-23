@@ -81,7 +81,7 @@
 extern uint64_t rocketnet_server_cookie_mac_count();
 
 // visit counter for testing: defined in rocketnet_ack.cpp
-extern unsigned long long g_ack_visit_count;
+extern thread_local unsigned long long g_ack_visit_count;
 
 // the ack path's popcount and its portable fallback: defined in rocketnet_ack.cpp
 extern int rocketnet_ack_popcount64( uint64_t v );

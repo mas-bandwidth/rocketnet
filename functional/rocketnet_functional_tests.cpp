@@ -8856,6 +8856,7 @@ static void rocketnet_test_hostname_resolve_localhost()
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
+extern void rocketnet_test_ack_endpoints_independent_across_threads();
 
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
@@ -8889,6 +8890,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients, NULL },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
