@@ -341,8 +341,9 @@ static void ip_pair_setup( ip_pair_t * pair, int packets_per_update = 8 )
 
 static void ip_pair_teardown( ip_pair_t * pair )
 {
-    rocketnet_message_client_destroy( pair->client );
-    rocketnet_message_server_destroy( pair->server );
+    // A teardown-ownership case may already have destroyed either endpoint.
+    if ( pair->client ) rocketnet_message_client_destroy( pair->client );
+    if ( pair->server ) rocketnet_message_server_destroy( pair->server );
     delete pair->net;
 }
 
