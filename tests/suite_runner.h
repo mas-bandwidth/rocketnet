@@ -2,7 +2,8 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Parallel suite runner. Each test is a process. The output is the netcode
+    Suite runner. Each test is a process. Functional cases run serially;
+    deterministic unit cases may run in parallel. The output is the netcode
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
@@ -577,7 +578,8 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     int ( *group_of )( const char * name ) = NULL,
-    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE )
+    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+    int max_jobs = 0 )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -614,7 +616,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
 
-    const int jobs = suite_job_count();
+    const int jobs = max_jobs > 0 ? std::min( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
     struct running_t
     {
@@ -821,7 +823,8 @@ inline int suite_main( int argc, char ** argv,
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
     int ( *group_of )( const char * name ) = NULL,
-    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE )
+    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+    int max_jobs = 0 )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -848,7 +851,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
 
-    const int jobs = suite_job_count();
+    const int jobs = max_jobs > 0 ? std::min( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
     struct running_t
     {
