@@ -79,11 +79,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
 static const double POSIX_HK_TICK = 1.0 / 60.0;
 static const double POSIX_HK_GAP_REFERENCE = POSIX_HK_TICK + 0.050;
 
-// the development token's timeout (rocketnet_write_test_connect_token) and the
-// server config's handshake deadline: the normal times the dead slot frees
-// in and the fifth client connects in
-
-static const double POSIX_HK_CLIENT_TIMEOUT = 10.0;
+// Completion guard for connecting the test peers.
 static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
 
 #define POSIX_HK_CHILD_FLAG "--posix-hard-killed-child"
