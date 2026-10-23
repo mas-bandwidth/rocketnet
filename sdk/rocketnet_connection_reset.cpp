@@ -24,6 +24,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     memcpy( packet_filter, client->packet_filter, sizeof(packet_filter) );
     const double send_rate = client->send_rate;
+    const int defer_payload_acks = client->defer_payload_acks;
     struct rocketnet_counters_t * counters = client->counters;
     struct rocketnet_reassembly_set_t * reassembly = client->reassembly;
     const rocketnet_client_publish_keys_t publish_keys = client->publish_keys;
@@ -43,6 +44,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
     memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
     client->send_rate = send_rate;
+    client->defer_payload_acks = defer_payload_acks;
     client->counters = counters;
     client->state = terminal_state;
     client->client_index = -1;

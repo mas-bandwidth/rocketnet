@@ -19,7 +19,7 @@ naming `<struct>.<member>`.
 
 | Struct | Field | What it is | Decision | Reason |
 |---|---|---|---|---|
-| `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
+| `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and peer | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
@@ -96,3 +96,8 @@ observes the transport connection-id change.
 | | signature verification budget and counters | KEEP | shared abuse budget and lifetime accounting |
 | server transport | transport, I/O owner, config, whole-server wire totals and stats | KEEP | server-wide or lifetime state |
 | message object | config, arena owner, aggregate counters, clock and transport link | KEEP | object lifetime |
+
+The client and encryption mapping reset `accepted_session` independently of
+`replay_session`. ACK eligibility never survives connection reuse. The client
+keeps `defer_payload_acks`, because message-layer ACK admission is a transport
+binding policy, not state learned from the previous peer.

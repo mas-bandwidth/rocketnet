@@ -78,6 +78,8 @@ struct rocketnet_server_protocol_t
     uint64_t * connection_ids;
     uint64_t * acked_connection_ids;
     uint64_t payload_connection_id;
+    uint64_t payload_sequence;
+    int defer_payload_acks;
 };
 
 // The connection id held by client_index now (P9a): 0 for a free slot, an
@@ -280,5 +282,8 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
                                                uint8_t * out_packets,
                                                int * out_packet_bytes,
                                                int max_packets );
+
+// Commit only after the message layer accepted the entire payload.
+void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );
 
 #endif // #ifndef ROCKETNET_SERVER_PROTOCOL_H

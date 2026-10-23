@@ -595,7 +595,7 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
     rn_ordered_acks( &endpoint->ordered, &packet_id, 1, now );
 }
 
-void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
+bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
                              rn_delivery_t * out, int out_capacity, int * out_count, double now )
 {
     // tla/RNEndpoint.tla OnPayload (RNChannel OpenPacket, DeliverMessage):
@@ -604,7 +604,7 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     // comparison (ConfigCompare) runs inside the dispatch.
     (void) now;
     const uint32_t before = rn_ordered_deliveries( &endpoint->ordered );
-    rn_ordered_receive( &endpoint->ordered, payload, bytes );
+    const int result = rn_ordered_receive( &endpoint->ordered, payload, bytes );
     const uint32_t after = rn_ordered_deliveries( &endpoint->ordered );
     int copied = 0;
     if ( out )
@@ -614,6 +614,7 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     }
     if ( out_count )
         *out_count = out ? copied : (int) ( after - before );
+    return result == ROCKETNET_MESSAGE_VIOLATION_NONE && rn_endpoint_error( endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )

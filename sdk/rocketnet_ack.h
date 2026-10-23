@@ -16,7 +16,7 @@
 // The general ack system, per STANDARD.md _Acks_: the transport tells a
 // sender which of its packets arrived, and never resends anything. The
 // sealed plaintext of every session packet begins with an ack block built
-// from the receiver's replay state; a sender that reads one marks its own
+// from the receiver's ACK-eligible history; a sender that reads one marks its own
 // sent packets acknowledged, surfaces the newly-acknowledged packet ids to
 // the layer above, and samples round trip time from the first block that
 // acknowledges each sequence.
@@ -44,8 +44,8 @@ struct rocketnet_ack_block_t
 
 int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_block_t * block );
 
-// Builds a block from the receiver's replay state -- the one received state
-// the standard names, no second high-water mark -- truncating oldest-first
+// Builds a block from the receiver's ACK-eligible history, independently of
+// security replay protection, truncating oldest-first
 // to the capacity: as many ranges as exist and fit, range count at most 255.
 // capacity must be at least the 7-byte minimum, which always fits. returns
 // the bytes written.
