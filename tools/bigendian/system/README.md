@@ -38,7 +38,9 @@ The functional suite kills a single test at 120 seconds on a native Release host
 
 ## How a failed case is replayed
 
-The suites stop at the first failing case and print one line for it: `check failed: <case> <reason>`, where the reason is `exceeded <n>s`, `exit <n>` or `signal <n>`. The case name is the first word after `check failed: `. A case whose own check failed prints its message instead (`check failed: ( ... ), function ...`), and that line carries no case name.
+The suites stop at the first failing case. When the runner failed the case (its time, memory, a signal, or an exit with no check line) it prints one line for it: `check failed: <case> <reason>`, where the reason is `exceeded <n>s`, `exit <n>` or `signal <n>`, and the case name is the first word after `check failed: `.
+
+A case whose own check failed prints `check failed: ( <condition> ), function <function>, file ...` instead. In the unit suite that function is the registered case name, so the job replays it. In the functional suite the function can be a helper shared by several cases (the handoff round trip, for example) and is not the registered name; the job does not guess from it and prints `REPLAY_NO_CASE_NAME:<suite>` for the operator, who replays by hand. An exec binary's own check line (`control check failed: ...`, or `check failed: ( ... ), file ...` with no function) carries no case name either.
 
 The nightly job replays every case it can name, alone, three times, in the same guest, right after the three suites. Each replay prints its own line:
 

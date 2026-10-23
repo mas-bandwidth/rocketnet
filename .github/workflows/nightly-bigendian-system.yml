@@ -207,11 +207,22 @@ jobs:
           # on the quiet guest. A case that passes alone was timing under the
           # other work on the host; a case that fails alone is a defect to fix
           # at its cause. Each replay prints its own exit and seconds.
+          # A runner-level failure prints "check failed: <case> exceeded|exit|signal ...".
+          # A unit case's own check prints
+          # "check failed: ( <condition> ), function <case>, file ..." and that
+          # function is the registered case name. The functional suite prints
+          # the same shape, but its function can be a helper shared by several
+          # cases, so only the unit suite is named from it.
           replay() {
-            label="$1"; bin="$2"; out="$3"; envs="$4"
-            names=$(sed -n 's/^check failed: \([a-z0-9_]*_[a-z0-9_]*\) .*/\1/p' "$out" | sort -u)
+            label="$1"; bin="$2"; out="$3"; envs="$4"; from_function="$5"
+            names=$(sed -n 's/^check failed: \(test_[a-z0-9_]*\) \(exceeded\|exit\|signal\).*/\1/p' "$out")
+            if [ "$from_function" = 1 ]; then
+              names="$names
+$(sed -n 's/^check failed: ( .* ), function \(test_[a-z0-9_]*\), file .*/\1/p' "$out")"
+            fi
+            names=$(printf '%s\n' "$names" | sed '/^$/d' | sort -u)
             if [ -z "$names" ]; then
-              if grep -q '^check failed:' "$out"; then
+              if grep -q 'check failed:' "$out"; then
                 echo "REPLAY_NO_CASE_NAME:$label a check failed with no case name in it; replay that case by hand"
               fi
               return 0
@@ -233,8 +244,8 @@ jobs:
               done
             done
           }
-          replay unit ./bin/test unit.out ""
-          replay func_auto ./bin/functional func_auto.out ""
-          replay func_port ./bin/functional func_port.out "ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable"
+          replay unit ./bin/test unit.out "" 1
+          replay func_auto ./bin/functional func_auto.out "" 0
+          replay func_port ./bin/functional func_port.out "ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable" 0
           exit $rc
           GUEST
