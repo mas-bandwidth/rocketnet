@@ -6362,6 +6362,17 @@ void rocketnet_test_swarm()
     #define ROCKETNET_SWARM_LEAVES( i )     ( ( (i) % 10 ) == 8 )
     #define ROCKETNET_SWARM_ABANDONS( i )   ( ( (i) % 10 ) == 9 )
 
+    // the role counts at this build's ROCKETNET_MAX_CLIENTS (800, 100 and 100
+    // at the default 1000, 10 of the stays fragmenting)
+    int num_stays = 0, num_leaves = 0, num_abandons = 0, num_fragmenters = 0;
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        num_stays += ROCKETNET_SWARM_STAYS( i ) ? 1 : 0;
+        num_fragmenters += ROCKETNET_SWARM_STAYS( i ) && ( i % 100 ) == 0 ? 1 : 0;
+        num_leaves += ROCKETNET_SWARM_LEAVES( i ) ? 1 : 0;
+        num_abandons += ROCKETNET_SWARM_ABANDONS( i ) ? 1 : 0;
+    }
+
     for ( int i = 0; i < num_clients; i++ )
     {
         char address_string[64];
@@ -6461,8 +6472,8 @@ void rocketnet_test_swarm()
             rocketnet_check( clients[i].state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             expected_connected++;
         }
-    rocketnet_check( expected_connected == 900 );
-    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 900 );
+    rocketnet_check( expected_connected == num_stays + num_leaves );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == num_stays + num_leaves );
 
     // --- the payload burst: the stay clients each send three ---
 
@@ -6529,14 +6540,14 @@ void rocketnet_test_swarm()
     for ( ; time < 112.0; time += 0.05 )
         rocketnet_server_protocol_update( &test.server, time );
 
-    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 800 );
-    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 800 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == num_stays );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == num_stays );
 
     const uint64_t * counters = test.counters.values;
 
-    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 900 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 100 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 100 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_CONNECTED] == (uint64_t) ( num_stays + num_leaves ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == (uint64_t) num_leaves );
+    rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == (uint64_t) num_abandons );
 
     // received == sum of outcomes, for every packet family the server saw --
     // the accounting invariant from the standard, asserted over the whole
@@ -6547,9 +6558,9 @@ void rocketnet_test_swarm()
 
     {
         // every fragmented payload sent arrived whole on the direct wire:
-        // 10 fragmenting clients, three rounds -- and nothing was ever
-        // abandoned or dropped at a full batch
-        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 30 );
+        // every hundredth stay client fragments, three rounds -- and nothing
+        // was ever abandoned or dropped at a full batch
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == (uint64_t) ( 3 * num_fragmenters ) );
         rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
         rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
     }

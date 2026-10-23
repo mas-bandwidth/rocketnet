@@ -42,6 +42,22 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_PACKET_BYTES, "send and receive packet bounds match" );
 
+// the smallest power of two at least n, at compile time, for 1 <= n <= 1 << 30:
+// n - 1 with every bit below its highest set bit also set, plus one. The
+// limits that derive from ROCKETNET_MAX_CLIENTS and must be powers of two
+// round up with it.
+
+#define ROCKETNET_POWER_OF_TWO_SMEAR_( x, shift )  ( (x) | ( (x) >> (shift) ) )
+#define ROCKETNET_POWER_OF_TWO_AT_LEAST( n )                                                             \
+    ( ROCKETNET_POWER_OF_TWO_SMEAR_( ROCKETNET_POWER_OF_TWO_SMEAR_( ROCKETNET_POWER_OF_TWO_SMEAR_(       \
+      ROCKETNET_POWER_OF_TWO_SMEAR_( ROCKETNET_POWER_OF_TWO_SMEAR_( (n) - 1, 1 ), 2 ), 4 ), 8 ), 16 ) + 1 )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 1 ) == 1 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 ) == 2 &&
+                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 3 ) == 4 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 2000 ) == 2048 &&
+                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 2048 ) == 2048 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 4000 ) == 4096 &&
+                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 20000 ) == 32768 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 262144 ) == 262144,
+                         "ROCKETNET_POWER_OF_TWO_AT_LEAST rounds up to a power of two" );
+
 // -----------------------------------------
 //          status-returning lifecycle forms
 // -----------------------------------------
@@ -492,9 +508,16 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // here is structural; the tighter bounds are per transport, enforced at the
 // ladder rung (ROCKETNET_GSO_MAX_QUEUES).
 
+// The default max_clients: 1000, the supported server size, or the build's
+// ROCKETNET_MAX_CLIENTS when that is smaller (512 .. 999). A build for more clients
+// (-DROCKETNET_MAX_CLIENTS=10000) still defaults to 1000; the config field
+// asks for more.
+
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
+
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
-    INT_FIELD(    max_clients,        1000,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
+    INT_FIELD(    max_clients,        ROCKETNET_DEFAULT_MAX_CLIENTS,     1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
     BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_NO_ENV )               \

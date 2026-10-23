@@ -18,6 +18,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_memory.h"
 
 #include <stdint.h>
 #include <stdlib.h>

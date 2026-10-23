@@ -481,6 +481,57 @@ different ABI revisions must not be mixed; compare `rocketnet_version()` with
 `ROCKETNET_VERSION` to catch a header and a shared library from different
 releases.
 
+## Maximum clients
+
+`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet.h`) is the most clients one server can
+hold. It is 1000 by default, the supported server size, and a build may set
+another value from 512 through 32768:
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CLIENTS=10000
+
+or `-DROCKETNET_MAX_CLIENTS=10000` on every compile when building the sources
+into your own build. CMake hands the value to the libraries, their consumers
+(a `PUBLIC` definition, so the header a game compiles matches its library),
+the tests, the tools and the embedded XDP program; build `server_xdp.o` by hand
+with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together.
+
+The value raises the ceiling, not the default: `max_clients` still defaults
+to 1000 (or the build's maximum when that is smaller), and a server asks for
+more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. Every limit that
+serves all of a server's clients derives from it at compile time, with a
+static assert holding each to its rule:
+
+| Limit | Rule | 1000 | 10000 |
+|---|---|---|---|
+| client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
+| per-update receive budget, payload batch | 16 packets per client | 16000 | 160000 |
+| portable send batch | one per client | 1000 | 10000 |
+| server-wide send staging (loopback queue, IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
+| IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
+| XDP kernel replay map, userspace replay marks | one entry per client, rounded up to a multiple of 1024 | 1024 | 10240 |
+| XDP reply MAC table | four slots per client, rounded up to a power of two | 4096 | 65536 |
+| reassembly memory budget (`ROCKETNET_REASSEMBLY_MEMORY_MIB` left empty) | 512 MiB per 1000 clients | 512 MiB | 5120 MiB |
+
+Two limits are fixed and asserted instead. The server packet lease table
+(131072 entries, 65536 leases per update) holds two packets per client up to
+the 32768 bound. The per-queue rings of the multi-queue transports (xdp, gso
+and io_uring send staging of 4096, 4096 and 2048 per queue, and the XDP UMEM
+geometry) do not grow with the client count: a destination hash spreads a
+server's clients over its queues, so a build for more clients runs more
+queues (`num_xdp_queues`, or `ROCKETNET_GSO_DEFAULT_QUEUES` and
+`ROCKETNET_URING_DEFAULT_QUEUES` at build time) to keep two packets of
+staging per client; the asserts check that the most queues can. The XDP
+replay window (16 packets per client) is unchanged.
+
+Memory grows with the clients a server asks for, at the per-client depth the
+config sets: `rocketnet_server_required_memory` gives the block before create.
+The default per-client config needs about 13.3 GB at 1000 clients and 133 GB at
+10000, so a 10000-client server sets lighter per-client limits (send and
+receive buffers, queues, windows, receipts and reassembly slots) for its game.
+A build for more clients also carries larger fixed per-server tables (the
+receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
+the server's `max_clients`.
+
 ## History memory budget
 
 `cmake -B build -DROCKETNET_HISTORY_PACKETS=8192` chooses the per-connection
@@ -494,7 +545,8 @@ Separate build trees may select `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
 `CMAKE_LIBRARY_OUTPUT_DIRECTORY` to keep sanitizer/configuration outputs apart.
 
 Large allocation components have independent CMake budgets:
-`ROCKETNET_REASSEMBLY_MEMORY_MIB` defaults to 512 and `ROCKETNET_XDP_MEMORY_MIB`
+`ROCKETNET_REASSEMBLY_MEMORY_MIB` defaults to 512 MiB per 1000 clients (512 in
+the default build; see "Maximum clients") and `ROCKETNET_XDP_MEMORY_MIB`
 to 4096. Both accept 1 through 1048576 MiB. Reassembly includes its slot records,
 arena and delivered mirror; XDP includes userspace queue structs and UMEM.
 Oversized geometry is refused with required and permitted byte counts before
@@ -762,7 +814,8 @@ buffer, so more than one worker can reorder a client's datagrams, across workers
 and across ticks, and the reliable layer answers the reordering with resends; one
 worker is the default for that reason.
 There are 128 posted receives per worker, 4096 receive staging slots per worker
-buffer, and 2048 send frames across all workers. These are resource bounds,
+buffer, and 2048 send frames across all workers (the staging and send frames
+scale with `ROCKETNET_MAX_CLIENTS`; see "Maximum clients"). These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 

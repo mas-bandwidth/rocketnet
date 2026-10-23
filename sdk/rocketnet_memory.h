@@ -4,8 +4,12 @@
 #include <stddef.h>
 #include <initializer_list>
 
+#include "rocketnet.h"                          // ROCKETNET_MAX_CLIENTS
+
+// The reassembly budget scales with the clients a server holds: 512 MiB per
+// 1000, so 512 at the default and 5120 at 10000.
 #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
-#define ROCKETNET_REASSEMBLY_MEMORY_MIB 512
+#define ROCKETNET_REASSEMBLY_MEMORY_MIB ( 512 * ( ( ROCKETNET_MAX_CLIENTS + 999 ) / 1000 ) )
 #endif
 #ifndef ROCKETNET_XDP_MEMORY_MIB
 #define ROCKETNET_XDP_MEMORY_MIB 4096
