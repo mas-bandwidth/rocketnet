@@ -119,7 +119,10 @@ the create log line names each feature as yes or no.
   the run's stride and posts one `WSASendMsg` with one buffer per frame. Every
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
-  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+    resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
+  and by RIO: each runs one completion worker, so a client's datagrams are
+  not reordered by several workers dequeuing one completion port.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
@@ -215,7 +218,7 @@ and `:3573`):
 |---|---|---|
 | GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | one worker per completion thread plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| IOCP (Windows) | one completion worker plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
 | portable/msgx socket | one receive worker and one transmit worker | nothing |
 | io_uring | none | nothing |
