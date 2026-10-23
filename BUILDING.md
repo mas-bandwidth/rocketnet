@@ -63,6 +63,14 @@ sibling binary that does), belongs in the functional suite:
 
     ./bin/functional
 
+Each functional case targets completion within **60 seconds**, with a hard
+**120-second maximum**, including Debug, sanitizer and emulated builds. Cases
+should stop as soon as their correctness checks finish; they do not wait out
+that budget. The live message matrix reports elapsed time against both bounds,
+while preserving delivery, ordering, receipt and cleanup checks. This budget
+is separate from the library's main-call latency/performance qualification.
+`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases.
+
 The functional suite is its own target. It runs in parallel under the same
 120 second failure limit and prints the same way. Put a new test in `./bin/test` when the assertion can be
 reached through a state machine or the simulator. Put it in `./bin/functional`

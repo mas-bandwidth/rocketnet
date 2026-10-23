@@ -142,14 +142,14 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control" },
         { "test_iocp", "test_iocp" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined(__APPLE__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
         { "test_msgx", "test_msgx" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
@@ -158,12 +158,12 @@ int main( int argc, char ** argv )
         { "test_xdp", "test_xdp" },
 #endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #endif
 }
