@@ -321,6 +321,7 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_NO_SOCKET",
     "CLIENT_RECEIVE_FOREIGN_SOURCE",
     "XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION",
+    "MESSAGE_NOT_RECEIVED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -422,6 +423,7 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );

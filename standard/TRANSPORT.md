@@ -3925,6 +3925,7 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_NO_SOCKET` | `refusal` | `none` |
 | `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION` | `refusal` | `none` |
+| `MESSAGE_NOT_RECEIVED` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4047,7 +4048,7 @@ b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00
+f8 12 00 00 00 a4 58 a7 b3 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

@@ -167,13 +167,15 @@ int main( void )
         CHECK( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) != NULL );
     CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
-    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ), "SERVER_DISCONNECTED" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
+    CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
 
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ) != NULL );
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ) != NULL );
