@@ -616,7 +616,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? std::min( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
     struct running_t
     {
@@ -851,7 +851,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? std::min( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
     struct running_t
     {
