@@ -895,6 +895,21 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 // counter groups are per type, so the bookkeeping is table driven and the
 // flow is one straight ladder.
 
+// tla/MCReceiveOrder.tla IdleRemove: a half-open mapping can leave before its
+// handshake deadline -- by the idle timeout or the integrity limit -- and its
+// request claim leaves with it. The claim is released before the mapping is
+// removed, so a claim never outlives the mapping that holds it and the claim
+// window is min(handshake deadline, half-open idle deadline).
+
+static void rocketnet_server_release_mapping_claim( struct rocketnet_server_protocol_t * server,
+                                                    int mapping_index )
+{
+    const struct rocketnet_encryption_mapping_t * mapping =
+        rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
+                                                rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
+}
+
 // The AEAD integrity limit, per the standard's _Replay Protection_: one
 // more sealed packet that did not open on this mapping, across both of its
 // keys. On reaching ROCKETNET_INTEGRITY_LIMIT the connection is torn down
@@ -927,7 +942,12 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
         counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     }
     else
+    {
+        // tla/MCReceiveOrder.tla IdleRemove: the slotless mapping leaves
+        // alone, as the idle timeout does, and releases its token's claim
+        rocketnet_server_release_mapping_claim( server, mapping_index );
         rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+    }
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
@@ -1481,7 +1501,10 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             }
             else if ( current_time >= control->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
             {
+                // tla/MCReceiveOrder.tla IdleRemove: the mapping leaves alone
+                // and releases its token's claim before it is removed
                 rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
+                rocketnet_server_release_mapping_claim( server, iterator );
                 rocketnet_encryption_map_remove( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             }
