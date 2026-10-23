@@ -94,11 +94,35 @@ static uint64_t client_io_transport_packets_received( rocketnet_client_transport
 // BASE publishes up to N-1 batches and retains its producer buffer. Update
 // drains all READY batches that fit, and releases them in the same call.
 extern void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t *, unsigned );
+// Supply an already-completed batch through the bounded fake queue. The
+// handoff buffer holds 1024 packets, but the generic fake queue holds only
+// 256: replenishing one packet per receive keeps this fixture within both
+// capacities even when assertions are enabled.
+struct client_io_completed_batch_t : rocketnet_fake_client_transport_io_t
+{
+    int remaining;
+    rocketnet_address_t source;
+};
+
+static int client_io_completed_batch_receive( void * context, rocketnet_address_t * from, uint8_t * data, int capacity )
+{
+    auto * fake = static_cast<client_io_completed_batch_t *>( static_cast<rocketnet_fake_client_transport_io_t *>( context ) );
+    if ( fake->inbound_count == 0 && fake->remaining > 0 )
+    {
+        const uint8_t datagram[64] = {};
+        rocketnet_fake_client_push( fake, &fake->source, datagram, sizeof(datagram) );
+        --fake->remaining;
+    }
+    return rocketnet_fake_client_receive( fake, from, data, capacity );
+}
+
 static void test_client_legacy_receive_handoff_and_backpressure()
 {
-    auto * fake = new rocketnet_fake_client_transport_io_t();
+    auto * fake = new client_io_completed_batch_t();
+    auto operations = rocketnet_fake_client_operations_base;
+    operations.receive = client_io_completed_batch_receive;
     client_io_transport_clock_t clock = { 1000.0, 0 };
-    auto * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_base, &clock );
+    auto * transport = client_io_transport_create( fake, &operations, &clock );
     rocketnet_address_t server;
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
     uint8_t datagram[64] = {};
@@ -129,9 +153,10 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     // leave further datagrams unread. Each update has only 1024 packet slots.
     for ( int batch = 0; batch < 3; ++batch )
     {
-        for ( int i = 0; i < ROCKETNET_NUM_CLIENT_PACKETS; ++i )
-            rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
+        fake->source = server;
+        fake->remaining = ROCKETNET_NUM_CLIENT_PACKETS;
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
+        check( fake->remaining == 0 && fake->inbound_count == 0 );
     }
     rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
