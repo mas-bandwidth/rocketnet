@@ -49,7 +49,7 @@
 (*              round trip, which the code's 2 x srtt + 4 x deviation +    *)
 (*              30 ms keeps (standard/MESSAGES.md m9.2).                   *)
 (***************************************************************************)
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
     W,              \* the window: reliable numbers in flight (reliable_messages_in_flight)
