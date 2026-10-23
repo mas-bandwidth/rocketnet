@@ -274,14 +274,60 @@ static int split_plan( const char * role, int total, int local )
     return pass ? 0 : 1;
 }
 
+/* The server main calls reported one line each by split_print_server_calls.
+ * The p99 budget for every one of them is 100 microseconds. */
+static const enum load_timing_call_t split_server_calls[] =
+{
+    LOAD_TIMING_SERVER_UPDATE,
+    LOAD_TIMING_SERVER_RECEIVE_MESSAGES,
+    LOAD_TIMING_SERVER_START_MESSAGE,
+    LOAD_TIMING_SERVER_FINISH_MESSAGE,
+    LOAD_TIMING_SERVER_SEND_PACKETS,
+};
+
+static struct load_timing_t split_untimed;
+
 static int split_server_send( struct rocketnet_server_t * server, int slot, uint32_t magic,
                               uint32_t client, uint32_t combo, uint32_t seq, uint64_t run_id,
-                              enum rocketnet_reliability_t reliability, int channel )
+                              enum rocketnet_reliability_t reliability, int channel,
+                              struct load_timing_t * timing )
 {
-    uint8_t * out = rocketnet_server_start_message(server, (uint64_t) slot, channel, reliability, LOAD_PAYLOAD_BYTES);
+    if ( !timing ) timing = &split_untimed;
+    uint8_t * out = NULL;
+    LOAD_TIMED_VALUE(timing, LOAD_TIMING_SERVER_START_MESSAGE, out,
+                     rocketnet_server_start_message(server, (uint64_t) slot, channel, reliability, LOAD_PAYLOAD_BYTES));
     if ( !out ) return 0;
     split_build_message(out, magic, client, combo, seq, run_id);
-    return rocketnet_server_finish_message(server, LOAD_PAYLOAD_BYTES) != 0;
+    int finished = 0;
+    LOAD_TIMED_VALUE(timing, LOAD_TIMING_SERVER_FINISH_MESSAGE, finished,
+                     rocketnet_server_finish_message(server, LOAD_PAYLOAD_BYTES) != 0);
+    return finished;
+}
+
+/* Receive every batch the last update published, timing each call,
+ * including the final call that returns NULL. */
+static const struct rocketnet_message_batch_t * split_server_receive( struct rocketnet_server_t * server,
+                                                                      struct load_timing_t * timing )
+{
+    const struct rocketnet_message_batch_t * batch = NULL;
+    LOAD_TIMED_VALUE(timing, LOAD_TIMING_SERVER_RECEIVE_MESSAGES, batch, rocketnet_server_receive_messages(server));
+    return batch;
+}
+
+static void split_print_server_calls( const struct load_timing_t * timing, uint64_t run_id, int total,
+                                      const char * transport )
+{
+    for ( size_t i = 0; i < sizeof(split_server_calls) / sizeof(split_server_calls[0]); ++i )
+    {
+        const enum load_timing_call_t call = split_server_calls[i];
+        printf("split_server_call: run_id=%016" PRIx64 " total=%d transport=%s scope=traffic_plus_drain "
+               "call=%s count=%" PRIu64 " p50_upper_us=%" PRIu64 " p99_upper_us=%" PRIu64 " "
+               "max_us=%.3f overbudget_count=%" PRIu64 " budget_us=100\n",
+               run_id, total, transport, load_timing_names[call], timing->count[call],
+               load_timing_quantile_upper_us(timing, call, 50),
+               load_timing_quantile_upper_us(timing, call, 99),
+               (double) timing->max_ns[call] / 1000.0, timing->overbudget_count[call]);
+    }
 }
 
 static int split_client_send( struct rocketnet_client_t * client, uint32_t magic,
@@ -720,7 +766,7 @@ static int split_server_start_phase( struct rocketnet_server_t * server, struct 
     const uint32_t ack_magic = phase == SPLIT_START_STEP_ARM ? SPLIT_ACK_MAGIC : SPLIT_GO_ACK_MAGIC;
     for ( int i = 0; i < total; ++i )
         if ( !split_server_send(server, clients[i].slot, send_magic, (uint32_t) i, 0, 1, run_id,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
+                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL, NULL) )
         { result->offer_refusals++; return 0; }
     rocketnet_server_send_packets(server);
     const double phase_start = rocketnet_time();
@@ -910,7 +956,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         if ( !split_server_send(server, clients[i].slot, SPLIT_RUN_MAGIC,
                                 (uint32_t) i, 0, 1, run_id,
                                 ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED) )
+                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, NULL) )
         { result.offer_refusals++; goto cleanup; }
     rocketnet_server_send_packets(server);
     result.startup_complete = 1;
@@ -966,7 +1012,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
          * newly published batch repair delivery after the fixed window. */
         if ( rocketnet_time() >= drain_end ) result.barrier_active = 1;
         const struct rocketnet_message_batch_t * batch = NULL;
-        while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
+        while ( (batch = split_server_receive(server, &timing)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
         for ( int i = 0; in_traffic && i < total; ++i )
         {
@@ -986,7 +1032,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
             if ( !split_server_send(server, clients[i].slot, LOAD_MAGIC_SV_TO_CLIENT,
                                     (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
                                     seq, run_id, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
-                                    ROCKETNET_RELIABILITY_RELIABLE_ORDERED) )
+                                    ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &timing) )
             { result.offer_refusals++; continue; }
             clients[i].s2c.sent_count = seq;
             result.s2c_accepted++;
@@ -1031,7 +1077,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     {
         if ( !split_server_send(server, clients[i].slot, SPLIT_FINISH_MAGIC,
                                 (uint32_t) i, 0, 1, run_id,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
+                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL, &timing) )
         { result.offer_refusals++; goto cleanup; }
         clients[i].finish_sent = 1;
     }
@@ -1061,7 +1107,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     for ( int i = 0; i < total; ++i )
         if ( !split_server_send(server, clients[i].slot, SPLIT_CONFIRM_MAGIC,
                                 (uint32_t) i, 0, 1, run_id,
-                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL) )
+                                ROCKETNET_RELIABILITY_RELIABLE_ORDERED, SPLIT_CONTROL_CHANNEL, &timing) )
         { result.offer_refusals++; goto cleanup; }
     /* Keep retransmission running after confirmation. Shards record their own
      * confirmation; the merger rejects any shard that missed it. */
@@ -1124,6 +1170,7 @@ cleanup:
                timing.count[LOAD_TIMING_SERVER_SEND_PACKETS],
                load_timing_quantile_upper_us(&timing, LOAD_TIMING_SERVER_SEND_PACKETS, 99),
                timing.count[LOAD_TIMING_CLOCK_PAIR]);
+        split_print_server_calls(&timing, run_id, total, transport);
         free(timing.buckets);
     }
     pass = split_print_receipt("server", run_id, total, 0, total, duration, aggregate_limit_kbps,
