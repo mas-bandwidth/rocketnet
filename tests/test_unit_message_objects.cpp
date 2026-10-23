@@ -2437,8 +2437,28 @@ static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side
     config.client_send_kbps = config.server_send_kbps = 0;     // deliberate fixed-pool exhaustion
     if ( room_case->receive_message_buffer_bytes )
         config.receive_message_buffer_bytes = room_case->receive_message_buffer_bytes;
+    // both objects live in caller blocks that start zeroed: the ask compares
+    // the whole block, unused bytes included, and bytes nothing wrote would
+    // read as uninitialised under MemorySanitizer (tools/msan_known.txt)
+    const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
+    const uint64_t server_bytes = rn_message_object_required_bytes( &config, MO_MAX_SLOTS, 1 );
+    const uint64_t client_bytes = rn_message_object_required_bytes( &config, 1, 0 );
+    check( server_bytes > 0 && client_bytes > 0 );
+    void * server_allocation = calloc( 1, (size_t) server_bytes + alignment - 1 );
+    void * client_allocation = calloc( 1, (size_t) client_bytes + alignment - 1 );
+    check( server_allocation != NULL && client_allocation != NULL );
+    void * server_block = (void *) ( ( (uintptr_t) server_allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
+    void * client_block = (void *) ( ( (uintptr_t) client_allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
+
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config, 0, 0 );
+    memset( &pair, 0, sizeof( pair ) );
+    pair.net = mo_net_new();
+    pair.num_clients = 1;
+    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, 0, server_block, server_bytes );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, 0, client_block, client_bytes );
+    check( pair.server && pair.clients[0] );
+    mo_net_connect( pair.net, 0 );
+    pair.time = MO_T0;
     mo_step( &pair );
 
     rn_message_object_t * object = server_side ? &pair.server->object : &pair.clients[0]->object;
@@ -2495,6 +2515,8 @@ static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side
     mo_room_ask_everything( object, 0 );
 
     mo_pair_teardown( &pair );
+    free( client_allocation );
+    free( server_allocation );
 }
 
 static void test_send_room_query_says_no_exactly_when_a_start_exhausts()

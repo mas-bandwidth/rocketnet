@@ -53,6 +53,8 @@ static void send_room_stats_unchanged_by_asking_client( rocketnet_client_t * cli
 {
     struct rocketnet_client_stats_t before;
     struct rocketnet_client_stats_t after;
+    memset( &before, 0, sizeof( before ) );
+    memset( &after, 0, sizeof( after ) );
     rocketnet_client_stats( client, &before );
     const bool answer = rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
     for ( int i = 0; i < 64; i++ )
@@ -68,6 +70,8 @@ static void send_room_stats_unchanged_by_asking_server( rocketnet_server_t * ser
 {
     struct rocketnet_server_client_stats_t before;
     struct rocketnet_server_client_stats_t after;
+    memset( &before, 0, sizeof( before ) );
+    memset( &after, 0, sizeof( after ) );
     rocketnet_server_client_stats( server, slot, &before );
     const bool answer = rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
     for ( int i = 0; i < 64; i++ )
