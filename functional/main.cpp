@@ -80,6 +80,12 @@ static int rocketnet_functional_test_group( const char * name )
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
+    // This case measures the operating system: it paces 25 frames for real
+    // and reads the wall clock around them, so its bound is about the host's
+    // sleep and its scheduler, not about the library. It runs alone, in a
+    // group of its own, after every other group.
+    if ( strcmp( name, "test_frame_sync_wait" ) == 0 )
+        return 4;
     return rocketnet_posix_hard_killed_peer_test_group( name );
 }
 

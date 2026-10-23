@@ -54,6 +54,9 @@ void rocketnet_test_frame_sync_wait()
     // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
     // the assertion is pacing and accounting, never precision -- precision
     // was the issue #56 measurement campaign's job, and CI runners are noisy.
+    // this case measures the operating system, so it runs alone: the suite
+    // gives it a group of its own (functional/main.cpp), and its bound below
+    // is kept exactly as written.
 
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
     rocketnet_check( frame_sync );
