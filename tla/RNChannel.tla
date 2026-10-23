@@ -8,7 +8,7 @@ CONSTANTS W, SendCapacity, P, MaxPid, Capacity, MaxDelay, Duplication,
           AckCapacity, Reordering, FwdPattern, RevPattern, BurstStart, BurstLen,
           BrokenOutOfOrder, BrokenTwice, BrokenDropOnRetransmit,
           BrokenPartialChunk, BrokenChunkBlocksSmall, BrokenNoSequencedReset,
-          ProbeSequenced
+          ProbeSequenced, AppMayLeave, BrokenSilentDrop
 
 Channels == 1..2
 Messages == 0..3
@@ -33,13 +33,20 @@ VARIABLES written, waitedForRoom, roomReturned, refused, uDropped, queued, admit
           sentTrace, trace, rxQueue, chunks, received, live, batch, phase, pending,
           duplicateReady, whole, placed, collision, uSent, uCount, seen,
           probeWrite, probeRead, resetOK,
+          taken, notReceived, misused, deliveredCount,
           fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse
 
 vars == <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
-      uSent, uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent,
-      revPulse>>
+      uSent, uCount, seen, probeWrite, probeRead, resetOK, taken, notReceived, misused, deliveredCount,
+      fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
+
+\* The application's receive state (standard/MESSAGES.md m1.6): taken is how
+\* many of rxQueue the application has received this update, notReceived the
+\* MESSAGE_NOT_RECEIVED count, misused the connection ended with
+\* MESSAGE_NOT_RECEIVED, deliveredCount a ghost of every delivery made.
+appVars == <<taken, notReceived, misused, deliveredCount>>
 
 Fwd == INSTANCE Link WITH Packets <- Packets, Pattern <- FwdPattern,
        wire <- fwdWire, sent <- fwdSent, pulse <- fwdPulse
@@ -71,9 +78,10 @@ ReadySet == {m \in Messages : Ready(m)}
 \* The application's one receive queue, pumped by each receive: rxQueue is the
 \* update's deliveries in delivery order, every channel's together, never
 \* filtered by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next); EndUpdate
-\* ends the update's views and moves the queue into trace, what the
-\* application has received on each channel in earlier updates. Trace(c) is
-\* everything received on channel c, the queue's projection included.
+\* ends the update's views and moves what the application took (Take) into
+\* trace, what the application has received on each channel in earlier
+\* updates. Trace(c) is everything received or receivable on channel c, the
+\* queue's projection included.
 OnChannel(q, c) == SelectSeq(q, LAMBDA x : Channel(x) = c)
 Trace(c) == trace[c] \o OnChannel(rxQueue, c)
 
@@ -92,6 +100,7 @@ Init ==
  /\ pending = {} /\ duplicateReady = {} /\ whole = TRUE
  /\ placed = TRUE /\ collision = FALSE /\ uSent = FALSE /\ uCount = 0
  /\ seen = {} /\ probeWrite = FALSE /\ probeRead = FALSE /\ resetOK = TRUE
+ /\ taken = 0 /\ notReceived = 0 /\ misused = FALSE /\ deliveredCount = 0
  /\ Fwd!Init /\ Rev!Init
 
 Enqueue ==
@@ -104,7 +113,7 @@ Enqueue ==
                         ELSE [sequenced_write EXCEPT ![Channel(queued)] = 0]
  /\ sentTrace' = [sentTrace EXCEPT ![Channel(queued)] = Append(@, queued)]
  /\ resetOK' = (resetOK /\ sequenced_write'[Channel(queued)] = 0)
- /\ UNCHANGED <<written, roomReturned, refused, uDropped, admitted, acked, smap, forgotten, reserved,
+ /\ UNCHANGED <<appVars, written, roomReturned, refused, uDropped, admitted, acked, smap, forgotten, reserved,
       ordered_read, sequenced_watermark, trace, rxQueue, chunks, received, live, batch, phase, pending,
       duplicateReady, whole, placed, collision, uSent, uCount, seen, probeWrite, probeRead, fwdWire,
       fwdSent, fwdPulse, revWire, revSent, revPulse>>
@@ -114,7 +123,7 @@ NumberRecord ==
  /\ LET m == Cardinality(admitted) IN
       /\ \A n \in Parts(m) : n < UPrime + W
       /\ admitted' = admitted \cup {m}
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, acked, smap, forgotten,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, acked, smap, forgotten,
       reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue,
       chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent,
       uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent,
@@ -123,7 +132,7 @@ NumberRecord ==
 ReserveBeforeRoom ==
  /\ BrokenChunkBlocksSmall /\ 2 < queued /\ 2 \notin admitted
  /\ waitedForRoom /\ ~RoomForLarge(acked) /\ Unacked # {} /\ reserved = 0 /\ reserved' = W
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue,
       chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent,
       uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent,
@@ -145,7 +154,7 @@ WritePacket(s, pid, unreliable) ==
  /\ uSent' = (uSent \/ unreliable)
  \* Fresh-packet alpha-renaming: reuse only after map, wires and ACKs quiesce.
  /\ seen' = seen \ {pid}
- /\ UNCHANGED << waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, reserved,
+ /\ UNCHANGED <<appVars, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, reserved,
       ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue, chunks,
       received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uCount,
       probeWrite, probeRead, resetOK, revWire, revSent, revPulse>>
@@ -166,7 +175,7 @@ OpenPacket(p) ==
  /\ pending' = pending \cup {p.id}
  /\ uCount' = uCount + IF p.unrel /\ p.id \notin seen THEN 1 ELSE 0
  /\ seen' = seen \cup {p.id}
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, batch, phase, whole, placed, uSent, probeWrite, probeRead, resetOK, revWire, revSent,
       revPulse>>
@@ -182,14 +191,15 @@ DeliverMessage(m) ==
  /\ whole' = (whole /\ Complete(m))
  /\ placed' = (placed /\ (\A n \in Parts(m) : chunks[Message(n)][Index(n)] = Payload(n)))
  /\ duplicateReady' = duplicateReady \ {m}
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ deliveredCount' = deliveredCount + 1
+ /\ UNCHANGED <<taken, notReceived, misused, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, sentTrace, trace, chunks, received, live, phase,
       pending, collision, uSent, uCount, seen, probeWrite, probeRead, fwdWire, fwdSent, fwdPulse,
       revWire, revSent, revPulse>>
 
 FixBatch ==
  /\ phase = "receive" /\ ReadySet = {} /\ phase' = "process"
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, chunks, received, live, batch, pending, duplicateReady, whole, placed, collision, uSent,
       uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent,
@@ -198,19 +208,44 @@ FixBatch ==
 SendAck ==
  /\ phase = "process" /\ pending # {} /\ Rev!Send(pending)
  /\ pending' = {}
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, chunks, received, live, batch, phase, duplicateReady, whole, placed, collision, uSent,
       uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse>>
 
+\* The application receives the update's deliveries one at a time, in queue
+\* order, between the update that delivered them and the next one
+\* (rn_message_object_receive_messages, rn_message_object_next).
+Take ==
+ /\ AppMayLeave /\ phase = "process" /\ taken < Len(rxQueue)
+ /\ taken' = taken + 1
+ /\ UNCHANGED <<notReceived, misused, deliveredCount, written, waitedForRoom, roomReturned, refused, uDropped,
+      queued, admitted, acked, smap, forgotten, reserved, ordered_write, sequenced_write, ordered_read,
+      sequenced_watermark, sentTrace, trace, rxQueue, chunks, received, live, batch, phase, pending,
+      duplicateReady, whole, placed, collision, uSent, uCount, seen, probeWrite, probeRead, resetOK,
+      fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
+
+\* The update's end: the views die and the deliveries' numbers stop being
+\* live. What the application took joins the trace. A delivery it never took
+\* cannot be kept (its packet is acked, the sender's window moved past it)
+\* and cannot be asked for again, so the update ends the connection as
+\* misuse, counting each such delivery once in notReceived (MESSAGES.md m1.6,
+\* rn_message_object_update's MESSAGE_NOT_RECEIVED). AppMayLeave lets the
+\* application take any prefix with Take; without it the application takes
+\* the whole queue, the documented contract, and the state space is the one
+\* before Take existed. BrokenSilentDrop is the old update, which dropped what
+\* was left with nothing counted and the connection carrying on.
+Took == IF AppMayLeave THEN taken ELSE Len(rxQueue)
 EndUpdate ==
  /\ phase = "process" /\ phase' = "receive"
  /\ live' = live \ batch /\ batch' = {}
- /\ trace' = [c \in Channels |-> trace[c] \o OnChannel(rxQueue, c)]
- /\ rxQueue' = <<>>
+ /\ trace' = [c \in Channels |-> trace[c] \o OnChannel(SubSeq(rxQueue, 1, Took), c)]
+ /\ rxQueue' = <<>> /\ taken' = 0
+ /\ notReceived' = notReceived + IF BrokenSilentDrop THEN 0 ELSE Len(rxQueue) - Took
+ /\ misused' = (misused \/ (~BrokenSilentDrop /\ Took < Len(rxQueue)))
  /\ chunks' = [m \in Messages |-> [i \in 0..Cardinality(Parts(m))-1 |->
        IF Number(m,i) \in batch THEN <<-1,-1>> ELSE chunks[m][i]]]
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<deliveredCount, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       received, pending, duplicateReady, whole, placed, collision, uSent, uCount, seen,
       probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
@@ -220,7 +255,7 @@ ReceiveAck(q) ==
  /\ acked' = acked \cup UNION {smap[i].nums : i \in {j \in DOMAIN smap : smap[j].id \in q}}
  /\ roomReturned' = (roomReturned \/ (waitedForRoom /\ RoomForLarge(acked')))
  /\ smap' = SelectSeq(smap, LAMBDA x : x.id \notin q)
- /\ UNCHANGED <<written, waitedForRoom, refused, uDropped, queued, admitted, forgotten, reserved,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, refused, uDropped, queued, admitted, forgotten, reserved,
       ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue, chunks,
       received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent, uCount,
       seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse>>
@@ -228,7 +263,7 @@ ReceiveAck(q) ==
 GhostSequencedWrite ==
  /\ ProbeSequenced /\ ~probeWrite /\ probeWrite' = TRUE
  /\ sequenced_write' = [sequenced_write EXCEPT ![1] = 1]
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue, chunks,
       received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent, uCount,
       seen, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
@@ -236,21 +271,21 @@ GhostSequencedWrite ==
 GhostSequencedRead ==
  /\ ProbeSequenced /\ ~probeRead /\ probeRead' = TRUE
  /\ sequenced_watermark' = [sequenced_watermark EXCEPT ![1] = 1]
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sentTrace, trace, rxQueue, chunks,
       received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent, uCount,
       seen, probeWrite, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
 
 FwdEnvironment ==
  /\ Fwd!Environment
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
       uSent, uCount, seen, probeWrite, probeRead, resetOK, revWire, revSent, revPulse>>
 
 RevEnvironment ==
  /\ Rev!Environment
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       trace, rxQueue, chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
       uSent, uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse>>
@@ -259,7 +294,7 @@ RevEnvironment ==
 RefuseSend ==
  /\ queued < 4 /\ Cardinality(Outstanding) = SendCapacity
  /\ ~refused /\ refused' = TRUE
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, uDropped, queued, admitted, acked, smap, forgotten,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, uDropped, queued, admitted, acked, smap, forgotten,
       reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue,
       chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uSent,
       uCount, seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent,
@@ -267,7 +302,7 @@ RefuseSend ==
 
 DropUnreliableForBudget ==
  /\ ~uSent /\ uSent' = TRUE /\ uDropped' = 1
- /\ UNCHANGED <<written, waitedForRoom, roomReturned, refused, queued, admitted, acked, smap, forgotten,
+ /\ UNCHANGED <<appVars, written, waitedForRoom, roomReturned, refused, queued, admitted, acked, smap, forgotten,
       reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace, trace, rxQueue,
       chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision, uCount,
       seen, probeWrite, probeRead, resetOK, fwdWire, fwdSent, fwdPulse, revWire, revSent, revPulse>>
@@ -281,16 +316,19 @@ ReceiveAckAny == revWire # <<>> /\ ReceiveAck(Head(revWire).pkt)
 ReceiveUsefulAck == ReceiveAckAny /\ acked' # acked
 SendAckThrough == SendAck /\ revWire' # revWire
 UpdateLoop == FixBatch \/ EndUpdate
-Next == RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ ReserveBeforeRoom \/ WriteAny \/ OpenHead
-     \/ DeliverAny \/ FixBatch \/ SendAck \/ EndUpdate \/ ReceiveAckAny
-     \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment
+\* A connection ended for misuse is gone: nothing more is sent, delivered or
+\* acked on it (rn_message_object_kick).
+Next == ~misused /\
+     ( RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ ReserveBeforeRoom \/ WriteAny \/ OpenHead
+     \/ DeliverAny \/ FixBatch \/ Take \/ SendAck \/ EndUpdate \/ ReceiveAckAny
+     \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment )
 
 \* Same compact fairness as RNWindow: fair RTO/room/budget, packet opening,
 \* and useful transport ACKs before sent-map eviction. No application ACK.
 ProbeAny == GhostSequencedWrite \/ GhostSequencedRead
 \* Each local action advances a bounded monotone cursor. None can run
 \* infinitely to starve another, so one weak-fair disjunction suffices.
-LocalProgress == ProbeAny \/ Enqueue \/ NumberRecord \/ DeliverAny
+LocalProgress == ProbeAny \/ Enqueue \/ NumberRecord \/ DeliverAny \/ Take
 Fairness == /\ WF_vars(LocalProgress)
  /\ SF_vars(WriteOldest) /\ SF_vars(WriteOldestThrough)
  /\ SF_vars(OpenHead) /\ WF_vars(UpdateLoop)
@@ -303,7 +341,7 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 SafetyView == <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       [c \in Channels |-> Trace(c)], chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
-      uSent, uCount, seen, probeWrite, probeRead, resetOK, fwdWire, revWire>>
+      uSent, uCount, seen, probeWrite, probeRead, resetOK, appVars, fwdWire, revWire>>
 
 SafetySpec == Init /\ [][Next]_vars
 
@@ -324,6 +362,7 @@ TypeOK == /\ queued \in 0..4 /\ admitted \subseteq Messages
  /\ reserved \in {0,W} /\ forgotten \subseteq written
  /\ waitedForRoom \in BOOLEAN /\ roomReturned \in BOOLEAN
  /\ sentTrace \in [Channels -> Seq(Messages)] /\ trace \in [Channels -> Seq(Messages)] /\ rxQueue \in Seq(Messages)
+ /\ taken \in 0..Len(rxQueue) /\ notReceived \in Nat /\ misused \in BOOLEAN /\ deliveredCount \in Nat
  /\ \A m \in Messages : \A i \in 0..Cardinality(Parts(m))-1 :
       chunks[m][i] \in {<<-1,-1>>} \cup {Payload(n) : n \in Nums}
  /\ Fwd!TypeOK /\ Rev!TypeOK
@@ -333,6 +372,15 @@ BuffersBounded == /\ Cardinality(Outstanding) <= SendCapacity
  /\ \A n \in Nums \ live : chunks[Message(n)][Index(n)] = <<-1,-1>>
  /\ Len(smap) <= P /\ reserved <= W
  /\ Fwd!InFlightBounded /\ Rev!InFlightBounded
+\* MESSAGES.md m1.6: every delivery is received by the application, still in
+\* this update's queue, or counted MESSAGE_NOT_RECEIVED; none is dropped
+\* silently. BrokenSilentDrop violates it.
+TakenCount == LET Sum[c \in 0..Cardinality(Channels)] ==
+                    IF c = 0 THEN 0 ELSE Sum[c-1] + Len(trace[c])
+              IN Sum[Cardinality(Channels)]
+NoSilentDrop == deliveredCount = TakenCount + notReceived + Len(rxQueue)
+\* A count of MESSAGE_NOT_RECEIVED always ends the connection.
+NotReceivedEndsConnection == (notReceived > 0) => misused
 NoSlotCollision == ~collision /\ \A n,k \in live : n # k => n % W # k % W
 \* Single-run projection plus coupling: the ghost never enters sentTrace or
 \* application delivery; both ordered transitions reset their epoch counter.

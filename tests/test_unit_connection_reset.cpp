@@ -735,7 +735,16 @@ static void reset_loopback_server_sweep_timeout_scenario()
     check( rocketnet_message_client_send( f.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
     check( rocketnet_message_server_send( f.server, a_slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof(a_payload) ) != 0 );
     for ( int i = 0; i < 40; i++ )
+    {
         reset_loopback_step( &f );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_message_server_receive( f.server, NULL, NULL, &data, &bytes ) )
+            rocketnet_message_server_release( f.server, data );
+        while ( rocketnet_message_client_receive( f.clients[0], NULL, &data, &bytes ) )
+            rocketnet_message_client_release( f.clients[0], data );
+    }
 
     // the client goes silent: only the server runs from here
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
