@@ -8865,6 +8865,124 @@ void rocketnet_test_ack_block_validity()
     rocketnet_check( rocketnet_reconstruct_ack_largest( 5, 0xFFFFFFFFULL ) == 0x100000005ULL );
 }
 
+// the bit-at-a-time walk rocketnet_ack_block_build replaced, kept here as the
+// reference the word-at-a-time build must match exactly
+
+static int rocketnet_test_ack_reference_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
+}
+
+static int rocketnet_test_ack_block_build_reference( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
+{
+    struct rocketnet_ack_block_t block;
+    block.largest = replay->highest_opened;
+    block.first_range_length = 0;
+    block.num_ranges = 0;
+    if ( block.largest != 0 )
+    {
+        uint64_t floor_sequence = 1;
+        if ( block.largest >= ROCKETNET_REPLAY_WINDOW_BITS )
+            floor_sequence = block.largest - ROCKETNET_REPLAY_WINDOW_BITS + 1;
+        int max_ranges = ( capacity - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 4;
+        if ( max_ranges > ROCKETNET_ACK_BLOCK_MAX_RANGES )
+            max_ranges = ROCKETNET_ACK_BLOCK_MAX_RANGES;
+        uint64_t s = block.largest;
+        uint32_t first_run = 0;
+        while ( s >= floor_sequence && rocketnet_test_ack_reference_bit( replay, s ) && first_run < 0xFFFF )
+        {
+            first_run++;
+            if ( s == 1 )
+                break;
+            s--;
+        }
+        block.first_range_length = first_run;
+        uint64_t next_high = block.largest - first_run;
+        while ( next_high >= floor_sequence && block.num_ranges < max_ranges )
+        {
+            uint32_t gap = 0;
+            while ( next_high >= floor_sequence && !rocketnet_test_ack_reference_bit( replay, next_high ) && gap < 0xFFFF )
+            {
+                gap++;
+                if ( next_high == 1 )
+                    break;
+                next_high--;
+            }
+            if ( next_high < floor_sequence || rocketnet_test_ack_reference_bit( replay, next_high ) == 0 )
+                break;
+            uint32_t run = 0;
+            while ( next_high >= floor_sequence && rocketnet_test_ack_reference_bit( replay, next_high ) && run < 0xFFFF )
+            {
+                run++;
+                if ( next_high == 1 )
+                {
+                    next_high = 0;
+                    break;
+                }
+                next_high--;
+            }
+            if ( run == 0 )
+                break;
+            block.range_gap[block.num_ranges] = (uint16_t) gap;
+            block.range_length[block.num_ranges] = (uint16_t) run;
+            block.num_ranges++;
+            if ( next_high == 0 )
+                break;
+        }
+    }
+    return rocketnet_ack_block_write( output, &block );
+}
+
+void rocketnet_test_ack_block_build_matches_bit_walk()
+{
+    // the word-at-a-time build writes exactly the bytes of the bit walk for
+    // every arrival pattern: runs and gaps that start, end and cross word
+    // boundaries, wrap the window, reach sequence one or the floor, and
+    // every capacity from the minimum to the maximum
+
+    struct rocketnet_replay_protection_t replay;
+    uint8_t built[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+    uint8_t expected[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+    const int capacities[] = { ROCKETNET_ACK_BLOCK_MIN_BYTES, ROCKETNET_ACK_BLOCK_MIN_BYTES + 4,
+                               ROCKETNET_ACK_BLOCK_MIN_BYTES + 12, ROCKETNET_ACK_BLOCK_MAX_BYTES };
+    const uint32_t loss_per_mille[] = { 0, 1, 10, 100, 500, 900, 999 };
+    for ( int trial = 0; trial < 2000; trial++ )
+    {
+        memset( &replay, 0, sizeof(replay) );
+        const uint64_t start = trial % 3 == 0 ? 1 : 1 + rocketnet_random_uint32() % ( 4 * ROCKETNET_REPLAY_WINDOW_BITS );
+        const uint64_t length = 1 + rocketnet_random_uint32() % ( 2 * ROCKETNET_REPLAY_WINDOW_BITS );
+        const uint32_t loss = loss_per_mille[trial % 7];
+        for ( uint64_t s = start; s < start + length; s++ )
+            if ( s == start + length - 1 || rocketnet_random_uint32() % 1000 >= loss )
+                rocketnet_replay_advance( &replay, s );
+        for ( int c = 0; c < 4; c++ )
+        {
+            const int bytes = rocketnet_ack_block_build( built, capacities[c], &replay );
+            const int expected_bytes = rocketnet_test_ack_block_build_reference( expected, capacities[c], &replay );
+            rocketnet_check( bytes == expected_bytes );
+            rocketnet_check( memcmp( built, expected, (size_t) bytes ) == 0 );
+        }
+    }
+
+    // every word-aligned edge: a single received sequence, and a single hole,
+    // at each bit position of a word at the top and bottom of the window
+    for ( uint64_t largest = 1; largest <= 3 * 64 + 1; largest++ )
+    {
+        for ( uint64_t hole = 0; hole <= largest; hole++ )
+        {
+            memset( &replay, 0, sizeof(replay) );
+            for ( uint64_t s = 1; s <= largest; s++ )
+                if ( s != hole )
+                    rocketnet_replay_advance( &replay, s );
+            const int bytes = rocketnet_ack_block_build( built, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay );
+            const int expected_bytes = rocketnet_test_ack_block_build_reference( expected, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay );
+            rocketnet_check( bytes == expected_bytes );
+            rocketnet_check( memcmp( built, expected, (size_t) bytes ) == 0 );
+        }
+    }
+}
+
 void rocketnet_test_ack_block_build()
 {
     struct rocketnet_replay_protection_t replay;
@@ -14880,6 +14998,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_block_encoding", rocketnet_test_ack_block_encoding },
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },
+    { "test_ack_block_build_matches_bit_walk", rocketnet_test_ack_block_build_matches_bit_walk },
     { "test_ack_endpoint_processing", rocketnet_test_ack_endpoint_processing },
     { "test_ack_apply_skips_acked_range", rocketnet_test_ack_apply_skips_acked_range },
     { "test_ack_apply_counts_unknown_in_acked_run", rocketnet_test_ack_apply_counts_unknown_in_acked_run },
