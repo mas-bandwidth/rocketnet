@@ -2469,7 +2469,13 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     // datagram above queued before the one drain call runs.
 
     {
-        double deadline = rocketnet_platform_time() + 5.0;
+        // the wait is on arrival, so it is bounded by polls of readability
+        // and never by wall time: a loaded host may take any wall time to
+        // schedule this case, and the packet that ends the wait arrives on
+        // the loopback, not on a deadline. the wall cap is a hang guard that
+        // names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_platform_pump_zero_length_chaff", 60.0, 600 );
         for ( ;; )
         {
             fd_set readable;
@@ -2480,7 +2486,7 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
             tv.tv_usec = 100000;
             if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
                 break;
-            rocketnet_check( rocketnet_platform_time() < deadline );
+            rocketnet_check( rocketnet_bounded_wait_poll( wait ) );
         }
         usleep( 200000 );
     }
@@ -2517,7 +2523,13 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     // back the real packet through the chaff
 
     {
-        double deadline = rocketnet_platform_time() + 5.0;
+        // the wait is on arrival, so it is bounded by polls of readability
+        // and never by wall time: a loaded host may take any wall time to
+        // schedule this case, and the packet that ends the wait arrives on
+        // the loopback, not on a deadline. the wall cap is a hang guard that
+        // names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_platform_pump_zero_length_chaff", 60.0, 600 );
         for ( ;; )
         {
             fd_set readable;
@@ -2528,7 +2540,7 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
             tv.tv_usec = 100000;
             if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
                 break;
-            rocketnet_check( rocketnet_platform_time() < deadline );
+            rocketnet_check( rocketnet_bounded_wait_poll( wait ) );
         }
         usleep( 200000 );
     }

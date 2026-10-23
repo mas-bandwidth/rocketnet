@@ -44,4 +44,56 @@
 #define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_TIME_SCALE
 #endif
 
+// ---------------------------------------------------------------------------
+// A bounded wait for an event the host delivers (a datagram, a counter).
+//
+// The wait is bounded by a count of polls -- updates, receives or readiness
+// polls -- and never by wall time: a loaded host may take any amount of wall
+// time to schedule the case that waits, and the library's own clock is the
+// only clock a timeout the library owns is measured in. The wall cap below
+// is a hang guard only: it fires when the polls themselves stop making
+// progress, and it names the case that hung.
+
+#ifdef __cplusplus
+
+#include <chrono>
+#include <cstdio>
+
+struct rocketnet_bounded_wait_t
+{
+    std::chrono::steady_clock::time_point start;
+    double guard_seconds;
+    int poll_bound;
+    int polls;
+    const char * name;
+};
+
+// guard_seconds: the wall cap, generous, a hang guard. poll_bound: the
+// number of polls that bounds the wait.
+inline void rocketnet_bounded_wait_start( rocketnet_bounded_wait_t & wait, const char * name,
+    double guard_seconds, int poll_bound )
+{
+    wait.start = std::chrono::steady_clock::now();
+    wait.guard_seconds = guard_seconds;
+    wait.poll_bound = poll_bound;
+    wait.polls = 0;
+    wait.name = name;
+}
+
+// One poll of a bounded wait. True while the wait may continue; false when
+// the poll bound or the wall cap was reached, after printing the hang
+// loudly and naming the case.
+inline bool rocketnet_bounded_wait_poll( rocketnet_bounded_wait_t & wait )
+{
+    wait.polls++;
+    const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - wait.start ).count();
+    if ( wait.polls <= wait.poll_bound && seconds < wait.guard_seconds )
+        return true;
+    printf( "check failed: %s hung: %d polls, %.1f s without the event\n", wait.name, wait.polls, seconds );
+    fflush( stdout );
+    return false;
+}
+
+#endif // __cplusplus
+
 #endif // ROCKETNET_TEST_TIME_SCALE_H

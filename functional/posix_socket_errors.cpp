@@ -15,6 +15,7 @@
 */
 
 #include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -817,10 +818,15 @@ static void posix_client_drops_foreign_cell( int ipv6, const char * client_trans
     buffer[0] = 0x40;
     posix_send_datagram( pair.server_socket->handle, &to, to_bytes, buffer, 1, NULL );
 
-    const double deadline = rocketnet_platform_time() + 5.0;
+    // the wait is on the counter the transport counts, so it is bounded by
+    // polls of the transport and never by wall time: a loaded host may take
+    // any wall time to schedule this case. the wall cap is a hang guard that
+    // names the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_client_drops_foreign_sources", 60.0, 20000 );
     while ( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] == too_short_before )
     {
-        posix_check( rocketnet_platform_time() < deadline );
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -875,7 +881,12 @@ static void posix_create_probe_hook( int handle )
 
     // Establish the regression's precondition before create resumes: a
     // successful send alone does not prove the receive queue has the packet.
-    const double deadline = rocketnet_platform_time() + 5.0;
+    // the wait is on the queued datagram, so it is bounded by polls of the
+    // socket queue and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_create_keeps_queued_datagram", 60.0, 100000 );
     for ( ;; )
     {
         int queued = 0;
@@ -883,7 +894,7 @@ static void posix_create_probe_hook( int handle )
         posix_check( getsockopt( handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
         if ( queued == 1 )
             break;
-        posix_check( rocketnet_platform_time() < deadline );
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.0002 );
     }
 }
@@ -2222,7 +2233,12 @@ static void posix_xdp_weather( int ipv6 )
             garbage_sent++;
         }
 
-        const double deadline = rocketnet_platform_time() + 5.0;
+        // the wait is on the counters the transport counts, so it is bounded by
+        // polls of the transport and never by wall time: a loaded host may
+        // take any wall time to schedule this case. the wall cap is a hang
+        // guard that names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_xdp_transport_linux_receive_weather", 60.0, 20000 );
         for ( ;; )
         {
             posix_xdp_update( server, client );
@@ -2250,12 +2266,12 @@ static void posix_xdp_weather( int ipv6 )
             }
             if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent && ( round != 0 || other_received_bytes >= 0 ) )
                 break;
-            if ( rocketnet_platform_time() >= deadline )
+            if ( !rocketnet_bounded_wait_poll( wait ) )
             {
                 char what[64];
                 snprintf( what, sizeof(what), "round %d still short (valid %d/%d, other port %d bytes)", round, valid_seen, valid_sent, other_received_bytes );
                 posix_xdp_print( what, &now, &expect );
-                posix_check( rocketnet_platform_time() < deadline );
+                posix_check( false );
             }
             rocketnet_platform_sleep( 0.001 );
         }
