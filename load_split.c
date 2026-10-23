@@ -201,8 +201,14 @@ static int split_stock_profile_environment( void )
         const char * equals = strchr(variable, '=');
         if ( !equals || equals[1] == 0 ) continue;
         const size_t length = (size_t) (equals - variable);
-        if ( (length >= 17 && strncmp(variable, "ROCKETNET_SERVER_", 17) == 0 &&
-              !(length == 26 && strncmp(variable, "ROCKETNET_SERVER_TRANSPORT", 26) == 0)) ||
+        /* The transport and its core layout (AF_XDP queues and the cores
+         * left to the operating system) are deployment placement, not
+         * profile: a dedicated XDP server is measured on its own layout. */
+        const int server_placement =
+            (length == 26 && strncmp(variable, "ROCKETNET_SERVER_TRANSPORT", 26) == 0) ||
+            (length == 31 && strncmp(variable, "ROCKETNET_SERVER_NUM_XDP_QUEUES", 31) == 0) ||
+            (length == 28 && strncmp(variable, "ROCKETNET_SERVER_NUM_OS_CPUS", 28) == 0);
+        if ( (length >= 17 && strncmp(variable, "ROCKETNET_SERVER_", 17) == 0 && !server_placement) ||
              (length >= 17 && strncmp(variable, "ROCKETNET_CLIENT_", 17) == 0 &&
               !(length == 26 && strncmp(variable, "ROCKETNET_CLIENT_TRANSPORT", 26) == 0)) ||
              (length >= 14 && strncmp(variable, "ROCKETNET_DEV_", 14) == 0) )
