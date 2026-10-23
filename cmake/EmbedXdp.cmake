@@ -6,8 +6,11 @@
 #
 # Inputs: SOURCE_DIR, OUTPUT_DIR, XXD, CLANG (a clang with the BPF target, or
 # empty) and MULTIARCH (the host triple whose /usr/include/<triple> holds
-# asm/types.h). The script runs only in a build with XDP (CMakeLists.txt):
-# without a BPF-capable clang the XDP transport is compiled out instead.
+# asm/types.h), and optionally HISTORY_PACKETS: the library's
+# ROCKETNET_HISTORY_PACKETS, which sets the kernel replay window
+# (sdk/rocketnet_xdp_limits.h); without it the header's default applies. The
+# script runs only in a build with XDP (CMakeLists.txt): without a
+# BPF-capable clang the XDP transport is compiled out instead.
 #
 # The object is byte-reproducible from the same sources and toolchain: the
 # compile runs in SOURCE_DIR on relative paths, and -fdebug-compilation-dir
@@ -27,7 +30,11 @@ endif()
 if(NOT EXISTS "/usr/include/${MULTIARCH}/asm/types.h")
     string(REGEX REPLACE "^([^-]+)-(pc|unknown)-linux-" "\\1-linux-" MULTIARCH "${MULTIARCH}")
 endif()
-execute_process(COMMAND "${CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
+set(xdp_defines -D__linux__ -D__BPF__)
+if(HISTORY_PACKETS)
+    list(APPEND xdp_defines "-DROCKETNET_HISTORY_PACKETS=${HISTORY_PACKETS}")
+endif()
+execute_process(COMMAND "${CLANG}" ${xdp_defines} -ffreestanding -O2 -g
         "-I/usr/include/${MULTIARCH}" -Isdk
         -fdebug-compilation-dir=. "-ffile-prefix-map=${SOURCE_DIR}=." "-ffile-prefix-map=${OUTPUT_DIR}=."
         -target bpf -c server_xdp/server_xdp.c -o "${xdp_object}"

@@ -3078,14 +3078,15 @@ connection on reaching the `integrity limit`.
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
 only by the endpoint after a packet opens. Such a prefilter MUST NOT drop a
-packet fewer than the `kernel replay window` sequences behind that high-water
-mark, and it MAY drop any packet at or beyond that distance. The prefilter
-never advances the mark and never accepts a packet the window would refuse.
+packet fewer than the endpoint's replay window depth behind that high-water
+mark, and it MAY drop any packet at or beyond that distance. The mark is never
+ahead of the window's high-water mark, so the prefilter drops only packets the
+window would refuse; a reordered packet the window accepts is never dropped
+in the kernel. The prefilter never advances the mark.
 
 | Name | Value | Unit | Kind | Meaning |
 |---|---|---|---|---|
 | integrity limit | `68719476736` | sealed packets | protocol value | failed opens that end a connection |
-| kernel replay window | `16` | sequences | protocol value | distance behind the kernel high-water mark that a prefilter may drop |
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|

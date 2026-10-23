@@ -923,34 +923,50 @@ static replay_row_t replay_row( const char * label, bool ipv6, uint8_t type, uin
     return row;
 }
 
+// The rows' high-water: two windows, so every row's sequence is positive.
+
+static const uint32_t replay_high_water = 2u * ROCKETNET_XDP_REPLAY_WINDOW;
+
+static uint32_t replay_behind( uint32_t distance )
+{
+    return replay_high_water - distance;
+}
+
 static void replay_rows( bool ipv6, std::vector<replay_row_t> & rows )
 {
-    rows.push_back( replay_row( "payload 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, true ) );
-    rows.push_back( replay_row( "payload 15 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 85, 100, false ) );
-    rows.push_back( replay_row( "payload at the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 100, 100, false ) );
-    rows.push_back( replay_row( "payload one ahead of the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 101, 100, false ) );
+    const uint32_t window = ROCKETNET_XDP_REPLAY_WINDOW;
+    const uint32_t high_water = replay_high_water;
 
-    rows.push_back( replay_row( "keep-alive 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 84, 100, true ) );
-    rows.push_back( replay_row( "ack 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_ACK_PACKET, 84, 100, true ) );
-    rows.push_back( replay_row( "disconnect 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 84, 100, true ) );
-    rows.push_back( replay_row( "fragment 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_FRAGMENT_PACKET, 84, 100, true ) );
+    rows.push_back( replay_row( "payload a window + 1 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window + 1 ), high_water, true ) );
+    rows.push_back( replay_row( "payload a window behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, true ) );
+    rows.push_back( replay_row( "payload a window - 1 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window - 1 ), high_water, false ) );
+    rows.push_back( replay_row( "payload 4000 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( 4000 ), high_water, false ) );
+    rows.push_back( replay_row( "payload 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( 16 ), high_water, false ) );
+    rows.push_back( replay_row( "payload at the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water, high_water, false ) );
+    rows.push_back( replay_row( "payload one ahead of the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water + 1, high_water, false ) );
+
+    rows.push_back( replay_row( "keep-alive a window behind the high-water", ipv6, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, replay_behind( window ), high_water, true ) );
+    rows.push_back( replay_row( "ack a window behind the high-water", ipv6, ROCKETNET_CONNECTION_ACK_PACKET, replay_behind( window ), high_water, true ) );
+    rows.push_back( replay_row( "disconnect a window behind the high-water", ipv6, ROCKETNET_CONNECTION_DISCONNECT_PACKET, replay_behind( window ), high_water, true ) );
+    rows.push_back( replay_row( "fragment a window behind the high-water", ipv6, ROCKETNET_CONNECTION_FRAGMENT_PACKET, replay_behind( window ), high_water, true ) );
 
     // the handshake types are not checked
-    rows.push_back( replay_row( "connection request at 84 is not checked", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, 84, 100, false ) );
-    rows.push_back( replay_row( "connection response at 84 is not checked", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, 84, 100, false ) );
+    rows.push_back( replay_row( "connection request a window behind is not checked", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, replay_behind( window ), high_water, false ) );
+    rows.push_back( replay_row( "connection response a window behind is not checked", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, replay_behind( window ), high_water, false ) );
 
     // another source port has no entry
-    replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, false );
+    replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
     other.spec.source_port = client_port + 1;
     rows.push_back( other );
 
     // no entry at all
-    replay_row_t none = replay_row( "no replay entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, false );
+    replay_row_t none = replay_row( "no replay entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
     none.entry = false;
     rows.push_back( none );
 
     // the wrap: the difference is modulo 2^32, read as signed
-    rows.push_back( replay_row( "high-water 5, sequence 0xfffffff0 is behind across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5, true ) );
+    rows.push_back( replay_row( "high-water 5, sequence a window behind is behind across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5u - window, 5, true ) );
+    rows.push_back( replay_row( "high-water 5, sequence 0xfffffff0 is inside the window across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5, false ) );
     rows.push_back( replay_row( "high-water 0xfffffff0, sequence 5 is ahead across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u, false ) );
 }
 
@@ -992,8 +1008,8 @@ static bool replay_never_writes_the_map( filter_t * filter )
     }
     bool ok = write_config( filter, server_ipv4, server_ipv6 );
     ok &= replay_clear( fd );
-    ok &= replay_write( fd, false, 100 );
-    ok &= replay_write( fd, true, 100 );
+    ok &= replay_write( fd, false, replay_high_water );
+    ok &= replay_write( fd, true, replay_high_water );
 
     std::vector<spec_t> frames;
     for ( int family = 0; family < 2; family++ )
@@ -1012,10 +1028,10 @@ static bool replay_never_writes_the_map( filter_t * filter )
     {
         const spec_t & spec = frames[i];
         const bool checked = replay_is_session_type( spec.packet_type ) && spec.source_port == client_port;
-        const bool behind = checked && (int32_t) ( 100u - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
+        const bool behind = checked && (int32_t) ( replay_high_water - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
         char label[96];
-        snprintf( label, sizeof(label), "%s frame %d, type %d, sequence 0x%08x, entry at 100",
-                  spec.ipv6 ? "ipv6" : "ipv4", (int) i, spec.packet_type, spec.sequence );
+        snprintf( label, sizeof(label), "%s frame %d, type %d, sequence 0x%08x, entry at %u",
+                  spec.ipv6 ? "ipv6" : "ipv4", (int) i, spec.packet_type, spec.sequence, replay_high_water );
         ok &= run_frame( filter, label, spec, behind ? XDP_DROP : XDP_REDIRECT,
                          behind ? ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED : ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     }
@@ -1031,9 +1047,9 @@ static bool replay_never_writes_the_map( filter_t * filter )
             printf( "  FAIL the ipv%d entry is gone: %s\n", family == 1 ? 6 : 4, strerror( errno ) );
             ok = false;
         }
-        else if ( value.high_water != 100 )
+        else if ( value.high_water != replay_high_water )
         {
-            printf( "  FAIL the ipv%d entry reads %u, wrote 100\n", family == 1 ? 6 : 4, value.high_water );
+            printf( "  FAIL the ipv%d entry reads %u, wrote %u\n", family == 1 ? 6 : 4, value.high_water, replay_high_water );
             ok = false;
         }
     }

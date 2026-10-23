@@ -352,7 +352,9 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
 
     // replay: a session packet from a source with a replay map entry is
     // dropped when its sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind
-    // the entry's high-water (tla/RNXdpReplay.tla, KernelFilter). The
+    // the entry's high-water (tla/RNXdpReplay.tla, KernelFilter). The window
+    // is the userspace replay window, so nothing dropped here would have
+    // been accepted there. The
     // difference is taken modulo 2^32 and read as signed, so a sequence ahead
     // of the high-water passes across the wrap. The handshake types carry no
     // sequence here and are not checked. The map is only looked up, never

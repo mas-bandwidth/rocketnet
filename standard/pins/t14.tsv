@@ -1,6 +1,4 @@
 # RN-1 t14 Replay protection (standard/TRANSPORT.md): document name, sdk expression, value.
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet_constants.h"
-#include "rocketnet_xdp_limits.h"
 integrity limit	ROCKETNET_INTEGRITY_LIMIT	68719476736
-kernel replay window	ROCKETNET_XDP_REPLAY_WINDOW	16
