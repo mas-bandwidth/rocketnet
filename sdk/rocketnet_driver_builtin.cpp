@@ -1112,12 +1112,9 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
-static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
+static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
-    // rn-iocp-one-completion-worker: iocp runs exactly one completion worker
-    // plus its one send worker, whatever num_xdp_queues says (it is for
-    // Linux AF_XDP, not this transport).
-    (void) config;
+    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
     return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS );
 }
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t*) transport ); }
@@ -1239,9 +1236,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if (strcmp(transport, "iocp") == 0)
     {
-        // rn-iocp-one-completion-worker: one completion worker plus the one
-        // send worker, always; num_xdp_queues does not size iocp.
-        (void) config;
+        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker.
         plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes(ROCKETNET_IOCP_DEFAULT_WORKERS);
         plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1; plan.sockets = 1;
     }
