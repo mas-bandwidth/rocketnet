@@ -14,12 +14,16 @@ and, on Debian or Ubuntu, the packages CI installs: `cmake`, `build-essential`,
 `clang`, `libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md`, Dependencies).
 `dpkg-query` in section 10 checks they are present.
 
-libbpf and libxdp are required: configure stops without them
-(`cmake/RocketNetDependencies.cmake:19-31`). liburing is optional: without it
-the `io_uring` transport is built to refuse and configure prints
-`liburing not found: the io_uring server transport is built to refuse`
-(`cmake/RocketNetDependencies.cmake:32-50`, `CMakeLists.txt:22`). The libbpf
-floor is 1.0 (`BUILDING.md:479-482`).
+XDP needs libbpf and an AF_XDP provider: libxdp on newer distributions,
+or the AF_XDP APIs in stock libbpf 0.5 on Ubuntu 22.04. On 22.04 omit
+`libxdp-dev` from the package command; configure reports
+`XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`.
+The installed package retains the provider used for its build.
+liburing is optional; without it the io_uring transport is built to refuse.
+Jammy's liburing 2.1 also lacks the multishot receive headers needed by that
+transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
+22.04 build compatibility", for build checks and the separate kernel/NIC
+runtime qualification boundary.
 
 The XDP program is compiled at build time, never on the server host.
 `cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
@@ -29,8 +33,8 @@ with a clang that has the BPF target, against the kernel UAPI headers
 `rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. The
 build is tolerant, for a deployment that never runs XDP (a host without root,
 such as AWS GameLift): a configure that finds no such clang, or no libbpf or
-libxdp, prints `XDP off: no clang with the BPF target was found, so XDP is
-compiled out of this build` (or `XDP off: libbpf or libxdp was not found, so
+AF_XDP provider, prints `XDP off: no clang with the BPF target was found, so XDP is
+compiled out of this build` (or `XDP off: libbpf or AF_XDP headers/library were not found, so
 XDP is compiled out of this build`) and compiles the whole XDP
 transport out, with no embedded object, no XDP or netlink gateway code in the
 library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on

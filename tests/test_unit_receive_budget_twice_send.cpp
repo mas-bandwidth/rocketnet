@@ -23,6 +23,7 @@
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_server_rio.h"
 #include "rocketnet_server_uring.h"
+#include "rocketnet_uring_codec.h"
 
 #define check rocketnet_unit_check
 
@@ -107,9 +108,8 @@ REGISTER_UNIT_TEST( test_iocp_transport_receive_budget_twice_send );
 REGISTER_UNIT_TEST( test_rio_transport_receive_budget_twice_send );
 #endif
 
-#if defined(__linux__) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
+#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
 
-#include "rocketnet_uring_codec.h"
 #include <errno.h>
 
 #define RB_FAKE_CAPACITY ( 1 << 18 )

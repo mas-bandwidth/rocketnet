@@ -56,8 +56,16 @@ Full build instructions live in [BUILDING.md](BUILDING.md).
 - **Linux (Ubuntu 24.04):**
   ```sh
   sudo apt update
-  sudo apt install -y cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+  sudo apt install -y cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
   ```
+- **Linux (Ubuntu 22.04, stock libraries, XDP enabled):**
+  ```sh
+  sudo apt update
+  sudo apt install -y cmake build-essential clang libbpf-dev liburing-dev xxd
+  ```
+  AF_XDP is supplied by libbpf 0.5 on this distribution; there is no
+  `libxdp-dev` package. Build/link compatibility does not establish runtime
+  qualification on the original 5.15 kernel or a particular NIC.
 - **macOS:**
   ```sh
   brew install cmake
@@ -385,7 +393,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
-  - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or libxdp.
+  - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or an AF_XDP provider.
   - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`), `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`): a production build (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and server create, and a connect token sealed to the published development server key at client connect.
 - **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receipts`, `rocketnet_server_receipts`) return `0` when refused. `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages` return `NULL` when no batch is left. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a negative status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a server index outside `0 .. max_clients - 1`); a rate of `0` sets the default rate. On a connection that is not CONNECTED the call returns `ROCKETNET_STATUS_OK` and changes nothing. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, an init with only one allocator function, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
