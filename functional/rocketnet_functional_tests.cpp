@@ -3681,6 +3681,9 @@ void rocketnet_test_public_client_server_queries()
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        while ( rocketnet_server_receive_messages( server ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( client ) != NULL ) {}
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
