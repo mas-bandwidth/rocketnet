@@ -63,6 +63,8 @@ static rn_delivery_t * rn_channels_reliable_delivery( rn_channels_t * channels )
 
 // Keyed by (channel, ordering). A held message is `used` 1 (complete: in the
 // ring, ready for its turn); a block still collecting fragments is `used` 2.
+// A code-2 block collecting its fragments is keyed by (RN_HELD_RELIABLE_BLOCK,
+// first number), a channel no channel index reaches.
 // At most W entries are live (each holds a live number), so the table is never
 // full. Backward-shift deletion keeps probes short without tombstones.
 
@@ -602,6 +604,89 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
+// A block's anchor (CHANNELS.md 8, "No start packet"): any chunk opens the
+// block's state on its own. The first one seen is the anchor: its descriptor
+// holds the count, the chunks in, and the block's first number, and the held
+// index finds it by key. Every later chunk must agree with it on the count,
+// the first number and the base, so the block's completion is one count and
+// never a rescan of its descriptors. The chunk is copied to its own offset,
+// ring + index * F (THE COPIES (b): a chunk must outlive the batch).
+// RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
+
+rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, const struct rocketnet_message_record_t * record,
+                                                     uint32_t key_channel, uint32_t key_index, uint32_t slot,
+                                                     uint32_t first_number, int64_t base_units, uint32_t * out_held )
+{
+    rn_region_t * region = channels->region;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t count = record->fragments + 1;
+    const uint64_t key = rn_held_key( key_channel, key_index );
+    rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
+    rn_receive_descriptor_t * anchor = descriptor;
+
+    uint32_t held = rn_held_find( region, key );
+    if ( held == RN_DESCRIPTOR_NONE )
+    {
+        if ( !rn_held_insert( region, key, slot, RN_HELD_COLLECTING ) )
+        {
+            rn_region_exhaust( region );
+            return NULL;
+        }
+        held = rn_held_find( region, key );
+        descriptor->block_count = (uint16_t) count;
+        descriptor->block_have = 0;
+        descriptor->sequencing = first_number;
+    }
+    else
+    {
+        anchor = &region->receive_descriptors[region->held_index[held].number_slot];
+
+        // the block's count, first number and base must agree with the first
+        // chunk seen, or this chunk belongs to something else
+        const uint32_t anchor_index = rn_u24( (uint32_t) anchor->number - first_number );
+        if ( region->held_index[held].used != RN_HELD_COLLECTING || !anchor->live ||
+             anchor->block_count != count || anchor->sequencing != first_number || anchor_index >= count ||
+             (int64_t) anchor->ring - (int64_t) anchor_index * (int64_t) ( F / 16 ) != base_units )
+        {
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+            return NULL;
+        }
+    }
+
+    memcpy( region->receive_ring + (uint64_t) record->ring * 16, record->data, (size_t) record->bytes );
+    anchor->block_have++;
+    *out_held = held;
+    return anchor;
+}
+
+// Every chunk is in: the first number's descriptor takes the whole block (the
+// update's end releases every number of it from there) and the anchor gives
+// it up. A block that waits for its turn stays in the held index, complete; one
+// delivered now leaves it.
+
+void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_receive_descriptor_t * anchor,
+                               uint32_t first_slot, uint32_t count, uint32_t total, uint32_t base_units, bool keep )
+{
+    rn_region_t * region = channels->region;
+    rn_receive_descriptor_t * first = &region->receive_descriptors[first_slot];
+    if ( anchor != first )
+        anchor->block_count = 0;
+    first->block_count = (uint16_t) count;                      // released together at the update's end
+    first->block_have = (uint16_t) count;
+    first->bytes = total;
+    first->ring = base_units;
+
+    if ( keep )
+    {
+        region->held_index[held].number_slot = first_slot;
+        region->held_index[held].used = RN_HELD_COMPLETE;
+    }
+    else
+    {
+        rn_held_erase( region, held );
+    }
+}
+
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
 // whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
 // RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
@@ -656,48 +741,14 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     const uint32_t first_number = rn_u24( record->number - index );
     const uint32_t first_slot = first_number & ( window - 1 );
-    const uint64_t key = rn_held_key( record->channel, record->ordering );
 
-    // Any chunk opens the block's state on its own (8, "No start packet"): the
-    // first one seen is the block's anchor, its descriptor holds the count, the
-    // chunks in, and the block's first number, and the held index finds it by
-    // (channel, ordering).
-    uint32_t held = rn_held_find( region, key );
-    rn_receive_descriptor_t * anchor = descriptor;
-
-    if ( held == RN_DESCRIPTOR_NONE )
-    {
-        if ( !rn_held_insert( region, key, slot, RN_HELD_COLLECTING ) )
-        {
-            rn_region_exhaust( region );
-            return ROCKETNET_CHANNEL_DISPATCH_NONE;
-        }
-        held = rn_held_find( region, key );
-        descriptor->block_count = (uint16_t) count;
-        descriptor->block_have = 0;
-        descriptor->sequencing = first_number;
-    }
-    else
-    {
-        anchor = &region->receive_descriptors[region->held_index[held].number_slot];
-
-        // the block's count, first number and base must agree with the first
-        // chunk seen, or this chunk belongs to something else
-        const uint32_t anchor_index = rn_u24( (uint32_t) anchor->number - first_number );
-        if ( region->held_index[held].used != RN_HELD_COLLECTING || !anchor->live ||
-             anchor->block_count != count || anchor->sequencing != first_number || anchor_index >= count ||
-             (int64_t) anchor->ring - (int64_t) anchor_index * (int64_t) ( F / 16 ) != base_units )
-        {
-            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
-            return ROCKETNET_CHANNEL_DISPATCH_NONE;
-        }
-    }
-
-    // Placed by index, not by arrival: ring + index * F, which is this chunk's
-    // own offset (THE COPIES (b): a chunk must outlive the batch).
-    // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
-    memcpy( region->receive_ring + (uint64_t) record->ring * 16, record->data, (size_t) record->bytes );
-    anchor->block_have++;
+    // Placed by index, not by arrival, and counted in the block's anchor,
+    // found by (channel, ordering).
+    uint32_t held = RN_DESCRIPTOR_NONE;
+    rn_receive_descriptor_t * anchor = rn_channels_block_collect( channels, record, record->channel, record->ordering, slot,
+                                                                  first_number, base_units, &held );
+    if ( !anchor )
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
 
     if ( anchor->block_have < count )
         return ROCKETNET_CHANNEL_DISPATCH_HELD;                 // never a partial delivery
@@ -714,15 +765,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    if ( anchor != first )
-        anchor->block_count = 0;
-    first->block_count = (uint16_t) count;                      // released together at the update's end
-    first->block_have = (uint16_t) count;
-    first->bytes = total;
-    first->ring = (uint32_t) base_units;
-
-    region->held_index[held].number_slot = first_slot;
-    region->held_index[held].used = RN_HELD_COMPLETE;
+    rn_channels_block_settle( channels, held, anchor, first_slot, count, total, (uint32_t) base_units, true );
 
     if ( delta != 0 )
         return ROCKETNET_CHANNEL_DISPATCH_HELD;                 // complete, waiting for its turn
