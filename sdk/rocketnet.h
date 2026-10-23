@@ -1067,13 +1067,6 @@ struct rocketnet_client_config_t
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
-    /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// client fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
-
     /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets the limit. Range is 1 ..
     /// 256. Zero selects the default, 8.
 
@@ -1108,7 +1101,8 @@ struct rocketnet_client_config_t
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 262144. An unreliable message is held to the smaller of
+    /// max_message_bytes and ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES.
 
     int max_message_bytes;
 
@@ -1222,13 +1216,6 @@ struct rocketnet_server_config_t
 
     int num_os_cpus;
 
-    /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// server fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
-
     /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets the limit per client.
     /// Range is 1 .. 256. Zero selects the default, 8.
 
@@ -1278,7 +1265,8 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 262144. An unreliable message is held to the smaller of
+    /// max_message_bytes and ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES.
 
     int max_message_bytes;
 

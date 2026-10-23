@@ -427,8 +427,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
     BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
-    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,                                                       \
-                                                                         ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     UINT64_FIELD( game_clock_epoch,      0,                                                                                    0 )
@@ -501,8 +499,6 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET | ROCKETNET_CONFIG_NO_ENV )    \
     INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,                                                       \
-                                                                         ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )                          \
