@@ -382,7 +382,7 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             continue;
         }
         if ( message.client >= (uint32_t) total || message.combo >= LOAD_NUM_COMBOS ||
-             message.seq > split_expected_combo_offers(message.client, message.combo, result->duration_target) ||
+             message.seq > split_expected_combo_offers(message.client, message.combo, result->duration_target * split_rate_hz()) ||
              batch->client_index[j] < 0 || batch->client_index[j] >= total ||
              clients[message.client].slot != batch->client_index[j] ||
              rocketnet_server_client_id(server, batch->client_index[j]) != (uint64_t) message.client + 1 )
@@ -448,7 +448,7 @@ static void split_receive_s2c( struct split_result_t * result, struct split_clie
         struct split_message_t message;
         if ( !split_verify_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, run_id, &message) ||
              message.client != global_client || message.combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
-             message.seq > (uint32_t) result->duration_target ||
+             message.seq > (uint32_t) (result->duration_target * split_rate_hz()) ||
              batch->channel[j] != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
              batch->client_index[j] != 0 )
         {
