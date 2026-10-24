@@ -717,11 +717,10 @@ static void test_transport_disconnect_preserves_simulator_loss()
 REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
 
 // The public disconnect requests stop right after sealing the burst. With a
-// link simulator the burst is staged in the simulator's queue, which only the
-// caller's thread drains, and a stopping update never drains it: stop must
-// send what the simulator holds, or every burst stays queued and the server
-// frees the slot only on timeout. Shutdown updates hold the clock fixed, so
-// a latency must not keep the burst back either (tla/RNClientLinkStop.tla).
+// link simulator the burst is staged in the caller-owned queue. Stop transfers
+// the queue to the worker, which drains it before publishing completion; the
+// step-driven fixture explicitly runs that completion. Shutdown holds the
+// clock fixed, so latency must not keep the burst back (tla/RNClientLinkStop.tla).
 static void test_client_disconnect_sends_burst_staged_in_link_simulator()
 {
     destroy_disconnect_env_guard_t env_guard;

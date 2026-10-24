@@ -241,8 +241,6 @@ void * rocketnet_malloc( void * context, size_t bytes );
 /** @brief Releases storage returned by rocketnet_malloc. @param context Ignored; the allocation's original context and deallocator are retained. @param p Pointer to release; NULL is a no-op. Do not use p after this call. */
 void rocketnet_free( void * context, void * p );
 
-/** @brief Clears a buffer before releasing it through rocketnet_free. @param context Opaque allocator context; allocation metadata selects the original deallocator. @param p Pointer to release; NULL is a no-op. @param p_size Number of bytes to clear. The caller ensures p_size does not exceed the allocation. */
-void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
 
 // -----------------------------------------
 //                   transport config
@@ -1512,12 +1510,12 @@ struct rocketnet_message_config_t
     int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
     int reliable_messages_in_flight;                // WIRE, power of two; 64 .. 1 << 20; default 1024
-    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
-    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 262144
-    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
-    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
+    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 1048576. */
+    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 1048576
+    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 1048576. */
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 1048576
+    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 4194304. */
+    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 4194304
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
@@ -1642,7 +1640,7 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, and ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 // a type a caller's own mask leaves out is refused (counted
 // MESSAGE_SEND_TYPE_NOT_ENABLED). Plain
-// UNRELIABLE is one record in one packet, up to 1411 bytes. UNRELIABLE_SEQUENCED
+// UNRELIABLE uses records packed together in a frame, up to 1411 bytes per message. UNRELIABLE_SEQUENCED
 // can use the transport's fragments for one larger unreliable RECORDS payload.
 // Receipt-bearing UNRELIABLE uses the code-0 wire form at single-packet size and promotes a larger
 // message to a reliable code-2 block with an ACKED-only receipt. Both are
@@ -2026,6 +2024,13 @@ void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture );
 
 #endif // #if ROCKETNET_DEV
+
+
+void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport );
+void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k );
+
+void rocketnet_server_transport_defer_payload_acks( struct rocketnet_server_transport_t * transport );
+void rocketnet_server_transport_accept_payload( struct rocketnet_server_transport_t * transport, int k );
 
 #ifdef __cplusplus
 }

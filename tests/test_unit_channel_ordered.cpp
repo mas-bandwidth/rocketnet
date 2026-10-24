@@ -613,10 +613,10 @@ static void exchange_perfect( node_t * a, node_t * b, double * now, int updates,
 
 static void test_large_chunked_one_per_packet_and_delivered_whole()
 {
-    // the defaults: the largest message fits (max_message_bytes 262144, 228 chunks)
+    // the defaults: a 1 MiB message fits (911 chunks)
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    check( config.max_message_bytes >= 262144 );
+    check( config.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
     node_t * a = node_new( &config, 16 );
     node_t * b = node_new( &config, 16 );
 
@@ -631,9 +631,9 @@ static void test_large_chunked_one_per_packet_and_delivered_whole()
     double now = 1.0;
     int packets = 0;
     int records_max = 0;
-    exchange_perfect( a, b, &now, 40, &packets, &records_max );
+    exchange_perfect( a, b, &now, 80, &packets, &records_max );
 
-    // 228 chunks, each in its own packet: one record each, nothing resent
+    // One record per fragment, each in its own packet, nothing resent
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( packets == (int) ( ( bytes + F - 1 ) / F ) );
     check( records_max == 1 );
@@ -2063,9 +2063,85 @@ static void test_ordered_failed_send_at_zero_is_due_next_update()
     node_free( a );
 }
 
+static void test_ordered_block_paced_past_the_timeout_completes()
+{
+    // MESSAGES m9.3: a block whose chunks the send budget paces out over three
+    // times the reliable timeout completes with no timeout, checked every
+    // update as rn_endpoint_tick does: chunks waiting for budget are not
+    // timed, each sent chunk is acked well inside the timeout.
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    config.reliable_message_timeout_ms = 2000;
+    node_t * a = node_new( &config, 16, true, 250 );               // 31,250 bytes a second
+    node_t * b = node_new( &config, 16 );
+
+    const uint32_t bytes = 200000;                                  // 6.4 s at the budget
+    check( send_message( a, 0, bytes ) != 0 );
+
+    double now = 1000.0;
+    int updates = 0;
+    while ( b->delivered.empty() && updates < 2000 )
+    {
+        now += 0.01;
+        updates++;
+        check( rn_window_ack_check_timeout( &a->ordered.ack, now ) == 0 );
+        wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+        const int n = write_packets( a, now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        for ( int p = 0; p < n; p++ )
+            check( open_packet( b, &out[p] ) );
+        std::vector<uint64_t> acks;
+        take_acks( b, &acks );
+        feed_acks( a, acks, now + 0.001 );
+    }
+    check( b->delivered.size() == 1 && b->delivered[0].bytes == bytes );
+    check( now - 1000.0 > 3.0 * 2.0 );
+    check( a->ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+
+    node_free( a );
+    node_free( b );
+}
+
+static void test_ordered_chunk_timeout_runs_from_its_own_first_send()
+{
+    // MESSAGES m9.3: the reliable timeout runs from the oldest unacknowledged
+    // number's own first send, not from its block's first send, and a number
+    // not yet sent has no clock running. A block paced out over longer than
+    // the timeout (1 MiB at the default 1000 kbps) must not end the connection.
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    config.reliable_message_timeout_ms = 10000;
+    node_t * a = node_new( &config, 1 );
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    check( send_message( a, 0, 2 * F + 1 ) != 0 );                 // three chunks, numbers 0, 1, 2
+
+    // chunk 0 first sent at 1000.0 and acked: the oldest is chunk 1, never sent
+    wire_packet_t out[4];
+    check( write_packets( a, 1000.0, out, 1 ) == 1 );
+    feed_acks( a, std::vector<uint64_t>( 1, out[0].id ), 1000.05 );
+    check( a->ordered.send.U == 1 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, 1012.0 ) == 0 );
+    check( a->ordered.ack.has_oldest == 0 );
+
+    // chunk 1 first sent at 1012.0, more than the timeout after its block's first send
+    check( write_packets( a, 1012.0, out, 1 ) == 1 );
+    check( a->ordered.ack.has_oldest == 1 && a->ordered.ack.oldest_first_send == 1012.0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, 1021.99 ) == 0 );
+    check( a->ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // and it times out at its own first send plus the timeout
+    check( rn_window_ack_check_timeout( &a->ordered.ack, 1022.0 ) == 1 );
+    check( a->ordered.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+
+    node_free( a );
+}
+
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
+REGISTER_UNIT_TEST( test_ordered_chunk_timeout_runs_from_its_own_first_send );
+REGISTER_UNIT_TEST( test_ordered_block_paced_past_the_timeout_completes );
 REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
 REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
 REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );

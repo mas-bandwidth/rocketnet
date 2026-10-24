@@ -118,9 +118,30 @@ if(ROCKETNET_HISTORY_PACKETS LESS 4096 OR ROCKETNET_HISTORY_PACKETS GREATER 3276
     message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768")
 endif()
 
-set(ROCKETNET_REASSEMBLY_MEMORY_MIB 512 CACHE STRING "Maximum reassembly component allocation in MiB")
+# The most clients one server holds (sdk/rocketnet.h ROCKETNET_MAX_CLIENTS).
+# 1000 is the supported default; -DROCKETNET_MAX_CLIENTS=10000 builds a larger
+# server, and every limit that serves all clients derives from it (BUILDING.md,
+# "Maximum clients").
+set(ROCKETNET_MAX_CLIENTS 1000 CACHE STRING "Maximum clients per server (512..32768)")
+if(NOT ROCKETNET_MAX_CLIENTS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be an integer")
+endif()
+if(ROCKETNET_MAX_CLIENTS LESS 512 OR ROCKETNET_MAX_CLIENTS GREATER 32768)
+    message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be 512..32768")
+endif()
+
+# Empty ROCKETNET_REASSEMBLY_MEMORY_MIB scales with the clients: 512 MiB per
+# 1000 (sdk/rocketnet_memory.h), so 512 at the default and 5120 at 10000.
+set(ROCKETNET_REASSEMBLY_MEMORY_MIB "" CACHE STRING "Maximum reassembly component allocation in MiB (empty: 512 per 1000 clients)")
 set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
+set(ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+if(NOT ROCKETNET_REASSEMBLY_MEMORY_MIB STREQUAL "")
+    list(APPEND ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB})
+endif()
 foreach(budget ROCKETNET_REASSEMBLY_MEMORY_MIB ROCKETNET_XDP_MEMORY_MIB)
+    if(${budget} STREQUAL "")
+        continue()
+    endif()
     if(NOT ${budget} MATCHES "^[0-9]+$")
         message(FATAL_ERROR "${budget} must be an integer")
     endif()
@@ -169,9 +190,9 @@ else()
     endif()
 endif()
 add_compile_definitions(
+    ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
-    ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
-    ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+    ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
 include(cmake/RocketNetDependencies.cmake)
 
@@ -180,9 +201,9 @@ if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
     # falls to its volatile byte loop unless a HAVE_ macro names the platform
     # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
-    # configure picks there. The byte loop spends ~125 ms on the 56 MB server
-    # transport that rocketnet_server_transport_destroy wipes through
-    # rocketnet_clear_and_free (sdk/rocketnet.cpp:488).
+    # configure picks there. Only key material is wiped (a few hundred bytes
+    # per object), so the loop's speed no longer matters, but the platform
+    # wipe is the one libsodium itself uses.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
     endif()
@@ -242,7 +263,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
         OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
-        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n")
+        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n${ROCKETNET_HISTORY_PACKETS}\n${ROCKETNET_MAX_CLIENTS}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -250,6 +271,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
             "-DXXD=${ROCKETNET_XXD}"
             "-DCLANG=${ROCKETNET_BPF_CLANG}"
             "-DMULTIARCH=${ROCKETNET_MULTIARCH}"
+            "-DHISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}"
+            "-DMAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
         BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
         DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
@@ -353,7 +376,7 @@ add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_S
 # the count depend on the host's load. Built only when a tool links it.
 add_library(rocketnet_dev_stats_manual STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
-# in (the message layer's payload copy count, the public link simulator's
+# in (the message layer's payload copy count, the ack walk's visit count, the public link simulator's
 # development switch, and the io_uring transport's fake completion source). Only
 # the unit suite links it, so the installed rocketnet library carries no test hook.
 set(rocketnet_test_hook_targets)
@@ -362,7 +385,7 @@ if(ROCKETNET_BUILD_TESTS)
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
     target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1)
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -434,13 +457,15 @@ foreach(target rocketnet rocketnet_dev rocketnet_dev_stats_manual rocketnet_shar
     else()
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=0)
     endif()
+    # PUBLIC for the same reason: the consumer's ROCKETNET_MAX_CLIENTS is the
+    # library's.
+    target_compile_definitions(${target} PUBLIC ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS})
     if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
         target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
     endif()
     target_compile_definitions(${target} PRIVATE
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
-        ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
-        ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+        ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
     target_include_directories(${target} BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_include_directories(${target} PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"
@@ -571,8 +596,8 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
-    target_compile_definitions(test PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
+    target_compile_definitions(test PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
     target_compile_definitions(test PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
@@ -624,7 +649,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1
-        ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
+        ROCKETNET_STATS_MANUAL_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"

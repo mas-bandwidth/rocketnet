@@ -7,6 +7,7 @@
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "fake_client_driver.h"
+#include "client_io_rig.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -133,6 +134,8 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
     return 0;
 }
 
+static rocketnet_client_io_rig_t * transport_results_rig = NULL;
+
 static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_client_transport_io_operations_t * ops,
     rocketnet_client_transport_io_t * transport, rocketnet_client_io_t * io,
     rocketnet_client_receive_buffer_t ** buffers, transport_results_clock_t * clock, bool batch )
@@ -149,37 +152,21 @@ static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( ops, lie, &config, &bind, transport ) );
 
-    static uint8_t ring0[ROCKETNET_FRAME_STRIDE];
-    static uint8_t ring1[ROCKETNET_FRAME_STRIDE];
-    static int counts0[1];
-    static int counts1[1];
-    memset( ring0, 0, sizeof( ring0 ) );
-    memset( ring1, 0, sizeof( ring1 ) );
-    counts0[0] = 0;
-    counts1[0] = 0;
-
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-    rocketnet_client_io_ring_view_t view1 = view0;
-    view1.data = ring1;
-    view1.wire_bytes = (const uint8_t *) counts1;
-
-    buffers[0] = new rocketnet_client_receive_buffer_t;
-    buffers[1] = new rocketnet_client_receive_buffer_t;
-    clock->now = 1000.0;
     // every caller passes io value-initialised: zeroed, as init expects
-    rocketnet_client_io_init( io, transport, &view0, &view1, buffers, transport_results_time, clock );
+    transport_results_rig = rocketnet_client_io_rig_create();
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+        buffers[i] = transport_results_rig->buffers[i];
+    clock->now = 1000.0;
+    rocketnet_client_io_rig_init( transport_results_rig, io, transport, transport_results_time, clock );
 }
 
 static void transport_results_close_io( rocketnet_client_transport_io_t * transport, rocketnet_client_receive_buffer_t ** buffers )
 {
     rocketnet_client_transport_io_close( transport );
-    delete buffers[0];
-    delete buffers[1];
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+        buffers[i] = NULL;
+    rocketnet_client_io_rig_destroy( transport_results_rig );
+    transport_results_rig = NULL;
 }
 
 // A receive_batch that returns one past the count it was asked for does not
@@ -191,7 +178,7 @@ static void test_transport_results_client_batch_over_count_is_a_fault()
     lie.mode = 1;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
@@ -215,7 +202,7 @@ static void test_transport_results_client_negative_byte_count_is_a_fault()
     lie.mode = 2;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
@@ -235,7 +222,7 @@ static void test_transport_results_client_oversized_byte_count_is_a_fault()
     lie.mode = 3;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, false );
@@ -258,7 +245,7 @@ static void test_transport_results_client_batch_refuses_a_bad_byte_count()
     lie.mode = 4;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
@@ -284,7 +271,7 @@ static void test_transport_results_client_truncated_batch_copies_only_prefix()
     lie.mode = 6;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
@@ -309,7 +296,7 @@ static void test_transport_results_client_batch_impossible_length_is_a_fault()
     lie.mode = 7;
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
-    rocketnet_client_receive_buffer_t * buffers[2] = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     transport_results_clock_t clock;
     rocketnet_client_io_t io = {};
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
@@ -335,32 +322,17 @@ static void test_transport_results_client_without_wait_skips_the_call()
     rocketnet_unit_check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_base, &fake, &config, &bind, &transport ) );
     rocketnet_unit_check( transport.operations->wait == NULL );
 
-    uint8_t ring0[ROCKETNET_FRAME_STRIDE] = {};
-    uint8_t ring1[ROCKETNET_FRAME_STRIDE] = {};
-    int counts0[1] = { 0 };
-    int counts1[1] = { 0 };
-    rocketnet_client_io_ring_view_t view0 = {};
-    view0.data = ring0;
-    view0.frame_stride = ROCKETNET_FRAME_STRIDE;
-    view0.wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-    view0.wire_bytes = (const uint8_t *) counts0;
-    view0.wire_bytes_stride = sizeof( int );
-    rocketnet_client_io_ring_view_t view1 = view0;
-    view1.data = ring1;
-    view1.wire_bytes = (const uint8_t *) counts1;
-
-    rocketnet_client_receive_buffer_t * buffers[2] = { new rocketnet_client_receive_buffer_t, new rocketnet_client_receive_buffer_t };
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     transport_results_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
-    rocketnet_client_io_init( &io, &transport, &view0, &view1, buffers, transport_results_time, &clock );
+    rocketnet_client_io_rig_init( rig, &io, &transport, transport_results_time, &clock );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( fake.wait_calls == 0 );
     rocketnet_unit_check( io.transport_faults == 0 );
 
     rocketnet_client_transport_io_close( &transport );
-    delete buffers[0];
-    delete buffers[1];
+    rocketnet_client_io_rig_destroy( rig );
     printf( "test_transport_results_client_without_wait_skips_the_call\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_without_wait_skips_the_call );

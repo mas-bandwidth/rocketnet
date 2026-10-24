@@ -27,8 +27,12 @@ static void test_public_message_limit_defaults_and_constant()
     rocketnet_server_config_t server;
     check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_default_config( &server ) == ROCKETNET_STATUS_OK );
-    check( client.max_message_bytes == 262144 );
-    check( server.max_message_bytes == 262144 );
+    check( client.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( client.receive_message_buffer_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.receive_message_buffer_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( client.send_message_buffer_bytes == 4 * ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.send_message_buffer_bytes == 4 * ROCKETNET_MAX_MESSAGE_BYTES );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_defaults_and_constant );
 
@@ -82,12 +86,13 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     check( after.total_bytes == before.total_bytes );
     const int payload = transport.max_payload_bytes ? transport.max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     check( payload == 16384 );
-    check( rocketnet_reassembly_memory_allowed_delivered( 1000, 8, payload,
-        rocketnet_server_reassembly_delivered_capacity( 1000, 8 ), rocketnet_server_reassembly_delivered_bytes( 1000, 8, payload ) ) );
+    // at the build's most clients, since the budget scales with them (512 MiB per 1000)
+    check( rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, payload,
+        rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, payload ) ) );
     // A naive assignment of the application default to the transport cap
     // exceeds its budget before any allocation. Exercise the actual planner.
-    check( !rocketnet_reassembly_memory_allowed_delivered( 1000, 8, 262144,
-        rocketnet_server_reassembly_delivered_capacity( 1000, 8 ), rocketnet_server_reassembly_delivered_bytes( 1000, 8, 262144 ) ) );
+    check( !rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, 262144,
+        rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, 262144 ) ) );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
 

@@ -19,9 +19,9 @@
 // after it has actually opened -- marking on receipt would let a forgery
 // with a guessed sequence block the real packet.
 
-// The window depth, the one home: replay protection maintains it and the
-// ack block builder enumerates it -- the same received state, per the
-// standard, so the two can never disagree.
+// ACK eligibility uses a separate instance of this bounded history. A
+// successful open advances security replay protection immediately; payload
+// ACK eligibility advances only after successful message processing.
 
 #define ROCKETNET_REPLAY_WINDOW_BITS ROCKETNET_HISTORY_PACKETS
 
