@@ -1004,7 +1004,11 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a state
 const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 {
-    switch ( (int) state )
+    // read as the int a C caller passed, as rocketnet_log_level does: a load
+    // of an enum outside its range of values is undefined in C++
+    int value;
+    memcpy( &value, &state, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED:           return "MESSAGE_NOT_RECEIVED";
         case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:       return "MESSAGE_MEMORY_EXHAUSTED";
@@ -1031,7 +1035,11 @@ const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a reason
 const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason )
 {
-    switch ( (int) reason )
+    // read as the int a C caller passed, as rocketnet_log_level does: a load
+    // of an enum outside its range of values is undefined in C++
+    int value;
+    memcpy( &value, &reason, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_DISCONNECT_REASON_NONE:                      return "NONE";
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "CONFIG_MISMATCH";
