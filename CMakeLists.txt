@@ -874,12 +874,13 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(dst PRIVATE cxx_std_11)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
-    add_executable(transport_fill bench/transport_fill.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
-    add_executable(lease_cost bench/lease_cost.cpp)
+    # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
+    # against each candidate's static library (bench/transport_fill.md,
+    # bench/lease_cost.py), so neither is a target here.
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
+    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev_stats_manual)
@@ -892,7 +893,6 @@ if(ROCKETNET_BUILD_TOOLS)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "$<TARGET_FILE:instruction_count>"
             "${CMAKE_CURRENT_BINARY_DIR}/instruction_count")
-    target_link_libraries(lease_cost PRIVATE Threads::Threads)
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
     # The corpus replay transports: fuzz/replay_main.cpp provides the main the
