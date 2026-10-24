@@ -469,6 +469,12 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         auto * slot = &builder->packet[p];
 
         slot->count = count;
+        slot->resends = 0;
+        for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; r++ )
+        {
+            if ( items[taken[r]].taken && items[taken[r]].resend )
+                slot->resends++;
+        }
         for ( uint32_t n = 0; n < count; n++ )
             slot->numbers[n] = numbers[n];
         slot->records = records;
@@ -498,11 +504,15 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
         return;
 
     const uint32_t count = builder->packet[packet_index].count;
-    if ( count == 0 )
-        return;                                                 // a pure-unreliable packet takes no sent-map entry
+    if ( count != 0 )
+    {
+        // RNChannel!WritePacket's smap': keyed by the transport's own packet id.
+        rn_window_ack_commit_packet( builder->ack, packet_id, builder->packet[packet_index].numbers, count, now );
+    }
 
-    // RNChannel!WritePacket's smap': keyed by the transport's own packet id.
-    rn_window_ack_commit_packet( builder->ack, packet_id, builder->packet[packet_index].numbers, count, now );
+    // a resend is counted when the packet carrying it is sent (6.4, RNResendTiming)
+    for ( uint32_t i = 0; i < builder->packet[packet_index].resends; i++ )
+        rn_builder_count( builder->region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
 }
 
 void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int packet_index, double now )

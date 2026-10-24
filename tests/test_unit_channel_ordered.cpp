@@ -2063,6 +2063,41 @@ static void test_ordered_failed_send_at_zero_is_due_next_update()
     node_free( a );
 }
 
+// One reliable record is sent, then resent. That resend's packet is refused
+// in place of the commit, so it is not counted. The next update carries the
+// same record again and commits it: MESSAGE_RESENT is 1, and the update
+// after that writes nothing.
+
+static void test_ordered_failed_resend_counted_once()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+
+    wire_packet_t first[4];
+    check( write_packets( a, 1000.0, first, 4 ) == 1 );
+    const double delay = rn_window_ack_class_delay( &a->ordered.ack, false );
+
+    // the resend, written and then failed in place of the commit
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    pointers[0] = frames[0];
+    check( rn_ordered_write( &a->ordered, 1000.0 + delay, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, 1000.0 + delay );
+
+    // the next update writes the resend again and commits it
+    wire_packet_t out[4];
+    check( write_packets( a, 1000.0 + delay + 1.0 / 60.0, out, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+
+    // a further update writes nothing
+    check( write_packets( a, 1000.0 + delay + 2.0 / 60.0, out, 4 ) == 0 );
+
+    node_free( a );
+}
+
 static void test_ordered_block_paced_past_the_timeout_completes()
 {
     // MESSAGES m9.3: a block whose chunks the send budget paces out over three
@@ -2140,6 +2175,7 @@ static void test_ordered_chunk_timeout_runs_from_its_own_first_send()
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
+REGISTER_UNIT_TEST( test_ordered_failed_resend_counted_once );
 REGISTER_UNIT_TEST( test_ordered_chunk_timeout_runs_from_its_own_first_send );
 REGISTER_UNIT_TEST( test_ordered_block_paced_past_the_timeout_completes );
 REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
