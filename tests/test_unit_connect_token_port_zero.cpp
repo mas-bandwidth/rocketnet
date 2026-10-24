@@ -72,7 +72,10 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
     if ( transport )
     {
         rn_test_client_transport_stop_and_destroy( transport );
-        check( fake->destroy_calls == 1 );
+        // a token naming both families may open the driver once per family
+        // it tries (tests/test_unit_client_bind_family.cpp), so an accepted
+        // create closes it at least once
+        check( fake->destroy_calls >= 1 );
     }
     else
     {
