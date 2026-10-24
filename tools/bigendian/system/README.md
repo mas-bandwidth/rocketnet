@@ -34,13 +34,40 @@ One TCG run at 4 vCPUs and 4G RAM:
 - `./bin/functional` on the auto ladder takes 149 seconds
 - `./bin/functional` with the portable transport pin takes 126 seconds
 
-The functional suite kills a single test at 120 seconds. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+The functional suite kills a single test at 120 seconds on a native Release host. The guest build sets `ROCKETNET_TEST_EMULATED`, so the same cap is scaled five times, to 600 seconds, by `tests/time_scale.h`; the Release workloads themselves are unchanged. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+
+## How a failed case is replayed
+
+The suites stop at the first failing case. When the runner failed the case (its time, memory, a signal, or an exit with no check line) it prints one line for it: `check failed: <case> <reason>`, where the reason is `exceeded <n>s`, `exit <n>` or `signal <n>`, and the case name is the first word after `check failed: `.
+
+A case whose own check failed prints `check failed: ( <condition> ), function <function>, file ...` instead. In the unit suite that function is the registered case name, so the job replays it. In the functional suite the function can be a helper shared by several cases (the handoff round trip, for example) and is not the registered name; the job does not guess from it and prints `REPLAY_NO_CASE_NAME:<suite>` for the operator, who replays by hand. An exec binary's own check line (`control check failed: ...`, or `check failed: ( ... ), file ...` with no function) carries no case name either.
+
+The nightly job replays every case it can name, alone, three times, in the same guest, right after the three suites. Each replay prints its own line:
+
+```
+REPLAY_BEGIN:func_auto:test_transport_control RUN:1
+REPLAY_CASE:test_transport_control RUN:1 EXIT:0 SEC:12.3
+REPLAY_END:func_auto:test_transport_control RUN:1
+```
+
+`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand. The guest kernel's socket buffer ceiling (`net.core.rmem_max`, `net.core.wmem_max`) is the stock 256 KiB, while the fleet hosts that run the native suite grant 4 MiB. With the stock ceiling the platform-socket burst case (`test_posix_send_burst`) loses a few datagrams to receive-queue overflow when the emulator stalls its drain thread while other cases run beside it, although it passes alone three times of three; so the guest script raises both ceilings to 4 MiB before the suites.
+
+By hand, the same three replays are:
+
+```
+./bin/test --run <case>
+./bin/functional --run <case>
+ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional --run <case>
+```
+
+The suite's exec cases are their own binaries under `bin/` and take no argument: `./bin/test_serialize`, `./bin/test_transport_control`, `./bin/test_xdp`. The nightly job picks the binary by name, so the same rule holds there.
 
 ## How to run it by hand
 
 On a Linux host with `qemu-system-s390x`, `cloud-localds`, and `qemu-img`, repeat the verification, the boot, and the in-guest build above. Then, in the guest, from the source tree:
 
 ```
+sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304
 uname -sn
 ./bin/test
 ./bin/functional
