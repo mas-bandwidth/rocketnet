@@ -425,14 +425,21 @@ older and newer `vng` releases pass it to the guest shell alike:
 
 ```sh
 vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv4 && sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv6"
-vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v"
+vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 4 --append "irqaffinity=0 isolcpus=2-3 nohz_full=2-3" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v"
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md`), on the same `server_xdp.o` the
-library embeds. In a 1536M guest with two isolated CPUs and no clang on
+library embeds. The teardown case creates a two-queue veth and sets
+`num_os_cpus=2`, so its workers target CPUs 2 and 3; the filter guest therefore
+boots four CPUs and isolates 2-3. With those boot-tier settings and no clang on
 `PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_client`
-and `xdp_create_fails_part_way_tears_down`.
+and `xdp_create_fails_part_way_tears_down`. If the child server reports
+`xdp pre-flight failed: this machine is not provisioned for the XDP data plane`,
+check the guest's remaining conditions with section 6 and provision any missing
+runtime settings with `sudo scripts/rocketnet-provision <interface> 2`, followed
+by `sudo scripts/rocketnet-provision <interface> 2 verify`. Missing boot-tier
+settings require a reboot before retrying.
 
 The nightly 1,000-client xdp load cell needs a far larger guest: the server
 and its 1,000 default-profile clients share one process, and the plan alone is
