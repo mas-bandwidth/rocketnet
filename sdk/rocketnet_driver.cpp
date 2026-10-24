@@ -48,11 +48,17 @@ bool rocketnet_transport_discovers_bound_port( int transport )
     return definition && definition->discovers_bound_port;
 }
 
-bool rocketnet_transport_pin_only( int transport )
+bool rocketnet_transport_pin_only( int transport, bool server )
 {
     const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( transport );
-    return definition && ( definition->server_preference >= ROCKETNET_TRANSPORT_PIN_ONLY ||
-                           definition->client_preference >= ROCKETNET_TRANSPORT_PIN_ONLY );
+    if ( !definition )
+        return false;
+    return ( server ? definition->server_preference : definition->client_preference ) >= ROCKETNET_TRANSPORT_PIN_ONLY;
+}
+
+bool rocketnet_transport_pin_only( int transport )
+{
+    return rocketnet_transport_pin_only( transport, true );
 }
 
 struct rocketnet_transport_lists_t

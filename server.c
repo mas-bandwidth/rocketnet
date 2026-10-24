@@ -54,7 +54,7 @@ static volatile int quit;
 // section 2: the run seed offsets the length rule (section 4), and both ends
 // get the same seed, so every schedule computation in this program reads it
 // from here rather than a literal.
-static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
+static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes = 262144 };
 
 void interrupt_handler( int signal )
 {
@@ -957,7 +957,6 @@ int main( int argc, char ** argv )
     rocketnet_message_default_config( &message_config );
     message_config.packets_per_update = packets_per_update;
     g_live.max_message_bytes = (uint32_t) message_config.max_message_bytes;
-    g_live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, address, &config, &message_config, NULL, 0, send_kbps );
     if ( !server )

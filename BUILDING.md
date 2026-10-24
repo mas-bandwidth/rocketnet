@@ -712,7 +712,6 @@ the client and server forms are separate settings. The unit inventory checks thi
 list in both directions against the SDK reads and the public header.
 
 * Environment: ROCKETNET_CLIENT_PACKET_FILTER
-* Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
 * Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_CLIENT_STEP_DRIVEN
 * Environment: ROCKETNET_CLIENT_TRANSPORT
@@ -742,7 +741,6 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
 * Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
-* Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
 * Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS

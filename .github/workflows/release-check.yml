@@ -1,23 +1,32 @@
 # rocketnet release checks (#111, serialize's release-check.yml pattern).
 #
-# WHO READS THIS, per job, because the two have different readers and saying
-# "the pull request" for both would be wrong. version-consistency is a
-# per-commit gate read by the pull request, same as every job in ci.yml, and
-# it is in this file rather than that one only because it is about the
-# RELEASE rather than the build, exactly as serialize splits them.
-# unreleased-wire-changes does NOT run on a pull request at all -- it is a
-# push-to-main job, for the reason given above it -- so its reader is
-# whoever watches main's runs, which today is the estate's notification
-# email, and its failure is a statement about main rather than about any
-# one PR.
+# WHO READS THIS, per job, because the three have different readers and
+# saying "the pull request" for all of them would be wrong.
+# version-consistency is a per-commit gate read by the pull request, same as
+# every job in ci.yml, and it is in this file rather than that one only
+# because it is about the RELEASE rather than the build, exactly as serialize
+# splits them. unreleased-wire-changes does NOT run on a pull request at all
+# -- it is a push-to-main job, for the reason given above it -- so its reader
+# is whoever watches main's runs, which today is the estate's notification
+# email, and its failure is a statement about main rather than about any one
+# PR. space-vendors-the-release is a release gate too: it runs on a v* tag
+# push and on a manual dispatch, so its reader is whoever cuts the release.
 #
-# Two failures are guarded here, and they are different failures:
+# Three failures are guarded here, and they are different failures:
 #
 #   version-consistency     the version sites in the tree disagree with each
 #                           other, or with the tag being built
 #   unreleased-wire-changes main has drifted past the newest release with
 #                           wire-affecting changes aboard and nothing says a
 #                           release is owed
+#   space-vendors-the-release
+#                           the integrating application vendors another
+#                           commit than the one being released, or vendors it
+#                           with different bytes
+#   space-builds-and-soaks-on-the-release
+#                           the integrating application, built against the
+#                           release, drops a frame, hitches, loses its server
+#                           or its bots under a bounded real-time swarm
 #
 # The second is DORMANT TODAY and says so in its own output: rocketnet has no
 # v* tags yet, so there is no newest release to compare against and the job
@@ -36,6 +45,11 @@ on:
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      space_ref:
+        description: the robotgamedevelopers/space branch or commit the soak builds (space builds and soaks on the release)
+        required: false
+        default: main
 
 concurrency:
   group: release-check-${{ github.workflow }}-${{ github.ref }}
@@ -205,3 +219,75 @@ jobs:
             exit 1
           fi
           echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag $version when the release is ready. The commit list is in the job summary."
+
+  # The integrating application (robotgamedevelopers/space, private) vendors
+  # rocketnet into game/ThirdParty/rocketnet/ with its own re-vendor script,
+  # which archives five paths at a pinned commit and records the pin in
+  # game/ThirdParty/rocketnet/VENDOR.md. A release of rocketnet is only real
+  # if the application that ships it vendors exactly the commit being
+  # released: a release built against another copy of the library is a release
+  # nobody tested.
+  #
+  # This is a RELEASE GATE, not a per-commit check. It runs on a v* tag push
+  # and on a manual dispatch, never on a pull request, so the one-minute CI
+  # budget is untouched. The commit it checks is the one the run is on: the
+  # tag's commit on a tag push, the dispatched ref's head on a dispatch.
+  #
+  # The token is a repository secret the owner adds. The gate reads it from
+  # the environment, never as an argument, and never prints it. A missing
+  # token is a failure that says so, never a skip: an unproven release is not
+  # a release.
+
+  space-vendors-the-release:
+    name: space vendors the release
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: [self-hosted, Linux, X64, fleet]
+    env:
+      SPACE_READ_TOKEN: ${{ secrets.SPACE_READ_TOKEN }}
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the gate's own cases
+        run: python3 tools/test_check_space_vendor.py
+
+      - name: Prove the application vendors this commit byte for byte
+        run: python3 tools/check_space_vendor.py --release "$GITHUB_SHA"
+
+  # Vendoring the release byte for byte is not the same as running on it. This
+  # job clones the integrating application, builds its dedicated server and
+  # happy_path with its own Makefile, and holds eight headless bots on the
+  # server for 90 seconds with scripts/bot_swarm.sh. The server pegs its loop
+  # to real time and logs every dropped frame; tools/check_space_soak_log.py
+  # fails the run on any dropped frame from the first frame on, any large
+  # hitch, a server exit before the bound, a BOTS FAIL line or no client
+  # connected. tools/space_release_soak.sh is the whole of it and runs the
+  # same way on a bench.
+  #
+  # A release gate like the vendor job: a v* tag push and a manual dispatch,
+  # never a pull request. It needs the vendor job, so a release that does not
+  # vendor byte for byte stops there. It needs a fleet Linux runner with four
+  # or more CPUs (space's dedicated server dies below four), passwordless sudo
+  # (the swarm's veth pair and network namespace), Go, cmake and libcurl
+  # headers. The timeout fits space's cold build plus the hold and
+  # bot_swarm.sh's own ten-minute bound on happy_path. The multi-hour soak is
+  # not this job.
+
+  space-builds-and-soaks-on-the-release:
+    name: space builds and soaks on the release
+    needs: space-vendors-the-release
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 60
+    env:
+      SPACE_READ_TOKEN: ${{ secrets.SPACE_READ_TOKEN }}
+      SPACE_REF: ${{ inputs.space_ref || 'main' }}
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the log check's own cases
+        run: python3 tools/test_check_space_soak_log.py
+
+      - name: Build space against this commit and hold eight bots for 90 seconds
+        run: ROCKETNET_RELEASE="$GITHUB_SHA" tools/space_release_soak.sh "$SPACE_REF" 90
