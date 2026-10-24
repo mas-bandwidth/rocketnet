@@ -73,6 +73,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEN
                          "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
                          "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
+
+// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
+// clients spread over the queues, and the most queues stage two packets for
+// every client (BUILDING.md, "Maximum clients")
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
+                         "the io_uring queues together can stage two packets for every client" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 

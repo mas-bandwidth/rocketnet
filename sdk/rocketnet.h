@@ -88,9 +88,24 @@
 #endif
 
 
-/// Maximum clients per server.
+/// Maximum clients per server. 1000 unless the build defines another value
+/// (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of the same name); the
+/// limits that serve every client derive from it (BUILDING.md, "Maximum
+/// clients"). The library and every file that includes this header must be
+/// built with the same value.
 
+#ifndef ROCKETNET_MAX_CLIENTS
 #define ROCKETNET_MAX_CLIENTS                                       1000
+#endif
+
+// The bounds are the transports' fixed geometry: below 512 a server's
+// per-update receive budget is smaller than its largest send ring allows,
+// and above 32768 the io_uring queues cannot serve every client (BUILDING.md,
+// "Maximum clients").
+
+#if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
+#error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
+#endif
 
 /// A destination ID is a uint64_t client index.
 /// Valid client indexes range from 0 through max_clients - 1.
@@ -115,8 +130,9 @@
 
 #define ROCKETNET_MAX_PACKET_PAYLOAD_BYTES                 1416
 
-/// Maximum message bytes that fit in one packet.
-/// The limit is the same for every reliability type.
+/// Maximum message bytes that fit in one packet, for UNRELIABLE and
+/// UNRELIABLE_WITH_ACK_RECEIPT. UNRELIABLE_SEQUENCED carries a longer header,
+/// so its limit is 1405 bytes, or 1404 on a channel of 256 or more.
 /// Larger unreliable messages use the matching reliable type.
 /// UNRELIABLE becomes RELIABLE.
 /// UNRELIABLE_SEQUENCED becomes RELIABLE_SEQUENCED on its channel.
@@ -1027,9 +1043,14 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// iocp,rio,portable on Windows, keeping native server transports first.
 /// io_uring requires build support. macOS clients try msgx,portable; other
 /// clients try portable. Loopback is selected by name, never by auto. An
-/// explicit server pin of "portable" is available in either build. A one-name
-/// list selects only that transport.
-/// Unsupported names are skipped with a log.
+/// explicit server pin of "portable" is available in either build.
+/// A known name that this build does not offer for this endpoint on this
+/// platform (gso on a client or on macOS, for example) is skipped with a log.
+/// A list with at least one name that is not skipped is a strict pin: only
+/// those transports are tried, and if all of them refuse, connect or start
+/// fails. A list whose every name is skipped falls back to this endpoint's
+/// auto order with a warning, so one fleet-wide list deploys unchanged to
+/// mixed machines.
 /// Unknown names refuse the list and report valid names.
 ///
 /// Fields marked "must match on both ends" are checked during connection. A
@@ -1349,9 +1370,12 @@ struct rocketnet_server_config_t
 
 /// Messages
 
-/// Create allocates the client or server through the configured allocator.
-/// Connect and start may allocate transport memory. The required_memory calls
-/// report the memory needed by create.
+/// Create allocates the client or server as one block through the configured
+/// allocator. Connect and start then allocate transport memory through the
+/// same allocator, before any traffic: sockets, worker threads, I/O rings and
+/// buffers, and on the server its per-client protocol tables. Nothing in the
+/// frame loop below allocates. The required_memory calls report only the
+/// block create needs.
 ///
 /// Pass the same game clock to every update, in seconds.
 /// Run each frame on one thread. Update first, receive until NULL, simulate,
@@ -1711,6 +1735,11 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ipv4_address accepts "a.b.c.d:port". ipv6_address accepts "[v6]:port".
 /// Either may be NULL. That family is then not served. Both NULL is refused.
 /// With both, the two share one port.
+/// The given addresses are the advertised addresses that connect tokens are
+/// checked against. Every transport except xdp binds the wildcard address of the family
+/// (0.0.0.0 or [::], or [::] for both families) on the given port, so a
+/// specific IP is not a bind restriction. xdp attaches to the interface that
+/// carries the given address.
 /// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
 /// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
 /// Every server reads both at create. Each override is logged.

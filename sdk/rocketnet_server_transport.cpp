@@ -265,7 +265,7 @@ struct rocketnet_server_transport_t
 {
     // the cache-line-aligned members lead, each a whole number of cache
     // lines, so the compiler inserts no alignment padding before any of them
-    rocketnet_packet_leases_t<131072> packet_leases;
+    rocketnet_packet_leases_t<ROCKETNET_SERVER_PACKET_LEASES> packet_leases;
     struct rocketnet_server_payload_ring_t payload_ring;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
@@ -1471,7 +1471,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     if (!rocketnet_reassembly_memory_allowed_delivered(requested_clients, requested_slots, requested_payload,
             rocketnet_server_reassembly_delivered_capacity(requested_clients, requested_slots),
             rocketnet_server_reassembly_delivered_bytes(requested_clients, requested_slots, requested_payload)))
