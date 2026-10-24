@@ -23,4 +23,7 @@ MCReleaseToFree == FALSE
 \* MCRNSecurityTablesBrokenReleaseTwice.cfg overrides ReleaseChecksLive with
 \* this: a release pushes the slot without unlinking it from its chain.
 MCReleaseChecksLive == FALSE
+\* MCRNSecurityTablesBrokenBackwardsWindow.cfg overrides BackwardsRollover
+\* with this: the window rolls over only when the clock passes it.
+MCNoBackwardsRollover == FALSE
 =============================================================================

@@ -29,6 +29,29 @@ static inline uint64_t rn_round16( uint64_t bytes )
     return ( bytes + 15 ) & ~(uint64_t) 15;
 }
 
+// The dispatch half of m4 checks 7 and 8: a block's shape bounds (count at
+// least two, inside W and max_message_bytes, index inside the count, every
+// fragment but the last exactly F) and its base units. The layer 2 reader works
+// on wire limits before a region exists, so it checks the same bounds apart; the
+// caller checks the block's span and the fragment's own ring span and counts its
+// own counter.
+bool rn_block_shape_valid( const rn_channels_t * channels, const struct rocketnet_message_record_t * record, int64_t * out_base_units )
+{
+    const rn_region_t * region = channels->region;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t count = record->fragments + 1;
+    const uint32_t index = record->fragment;
+    const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
+    const bool last = index + 1 == count;
+
+    if ( count < 2 || count > max_count || count > region->window || index >= count ||
+         ( last ? ( record->bytes < 1 || (uint32_t) record->bytes > F ) : (uint32_t) record->bytes != F ) )
+        return false;
+
+    *out_base_units = (int64_t) record->ring - (int64_t) index * ( F / 16 );
+    return true;
+}
+
 // The delivery table (CHANNELS.md 10.1): every delivery of the update, this
 // record's or one released from a hold, appended in order. The caller checked
 // there is room.
@@ -147,7 +170,7 @@ static void rn_held_erase( rn_region_t * region, uint32_t index )
 // reaches dispatch without that is filled in here from the record, so dispatch
 // stands alone. NULL when the slot is live under a different number.
 
-static rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot )
+rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot )
 {
     rn_region_t * region = channels->region;
     const uint32_t slot = record->number & ( region->window - 1 );
@@ -710,20 +733,19 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     const uint32_t window = region->window;
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
-    const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
 
-    // a count at least two, inside W, at most what max_message_bytes allows, and
-    // an index inside it: a sender that breaks these is a violation, never memory
-    // corruption (6.3)
-    if ( record->fragments == 0 || count > max_count || count > window || index >= count )
+    // a count at least two, inside W and max_message_bytes, an index inside it,
+    // and every fragment but the last exactly F (checks 7 and 8, the shape half)
+    int64_t base_units = 0;
+    if ( !rn_block_shape_valid( channels, record, &base_units ) )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    // every chunk but the last is exactly F bytes (8)
-    const bool last = index + 1 == count;
-    if ( last ? ( record->bytes < 1 || (uint32_t) record->bytes > F ) : (uint32_t) record->bytes != F )
+    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
+                                      rn_round16( (uint64_t) record->bytes ) ) )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -732,7 +754,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     // the block's span: its base is this chunk's ring offset less index * F, and
     // it ends inside the ring (check 8). A chunk that is not the last knows the
     // end only to within the last chunk's one byte.
-    const int64_t base_units = (int64_t) record->ring - (int64_t) index * (int64_t) ( F / 16 );
+    const bool last = index + 1 == count;
     const uint64_t span_end = (uint64_t) ( base_units < 0 ? 0 : base_units ) * 16 + (uint64_t) ( count - 1 ) * F + ( last ? rn_round16( (uint64_t) record->bytes ) : 16 );
     if ( base_units < 0 || span_end > region->ring_bytes )
     {

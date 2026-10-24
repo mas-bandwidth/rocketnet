@@ -165,5 +165,23 @@ static void test_client_memory_plan_step_driven()
     check( plan_bytes >= allocated );
 }
 
+// The client plan answers bytes for "msgx" only where the registry offers it
+// (macOS); on every other platform, iOS included, the name has no plan.
+static void test_client_memory_plan_msgx_only_on_macos()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+
+    check( rocketnet_client_transport_required_memory( &config, "portable" ) > 0 );
+
+    const uint64_t msgx_bytes = rocketnet_client_transport_required_memory( &config, "msgx" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    check( msgx_bytes > 0 );
+#else
+    check( msgx_bytes == 0 );
+#endif
+}
+
 REGISTER_UNIT_TEST( test_client_memory_plan_non_step_driven );
 REGISTER_UNIT_TEST( test_client_memory_plan_step_driven );
+REGISTER_UNIT_TEST( test_client_memory_plan_msgx_only_on_macos );

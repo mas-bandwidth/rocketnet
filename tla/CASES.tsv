@@ -86,6 +86,7 @@ MCRNSecurityTablesFlood.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables
 MCRNSecurityTablesBrokenGlobalLockout.cfg	MCRNSecurityTables.tla	temporal	HonestConnectsUnderFlood	check	rnsecuritytables	required	-
 MCRNSecurityTablesBrokenReleaseKeepsSlot.cfg	MCRNSecurityTables.tla	invariant	CanRecordMatchesScan	check	rnsecuritytables	required	-
 MCRNSecurityTablesBrokenReleaseTwice.cfg	MCRNSecurityTables.tla	invariant	FreeAndOrderPartitionSlots	check	rnsecuritytables	required	-
+MCRNSecurityTablesBrokenBackwardsWindow.cfg	MCRNSecurityTables.tla	invariant	FloodWindowBounded	check	rnsecuritytables	required	-
 MCRNConnectionMemory.cfg	MCRNConnectionMemory.tla	pass	-	check	rnconnectionmemory	required	-
 MCRNConnectionMemoryBrokenNoReset.cfg	MCRNConnectionMemory.tla	invariant	ReusedSlotStartsClean	check	rnconnectionmemory	required	-
 MCRNConnectionMemoryBrokenCarryOn.cfg	MCRNConnectionMemory.tla	action	ExhaustionOnlyLeadsToDisconnect	check	rnconnectionmemory	required	-

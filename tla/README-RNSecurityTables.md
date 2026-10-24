@@ -147,6 +147,31 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 | `PreviousOutlivesWindow` | `FALSE`: a stall past the window drops the previous generation | mutant `TRUE` keeps the previous generation across a stall |
 | `ReleaseToFree` (definition) | `TRUE`: a released claim's slot goes back on the free list | reversed witness `FALSE`: the slot stays in place with a zeroed deadline |
 | `ReleaseChecksLive` (definition) | `TRUE`: a release unlinks the entry, so a second release finds nothing | reversed witness `FALSE`: the slot is pushed without unlinking it |
+| `RefuseUnremembered` (FloodSpec, a definition) | `FALSE` since 2026-10-20: only a source with a recorded failure is refused | reversed witness `TRUE`: a full table refused every source it could not remember |
+| `BackwardsRollover` (FloodSpec, a definition) | `TRUE` since 2026-10-24: the window also rolls over when the clock steps back before its start | reversed witness `FALSE`: the one-sided rollover keeps a spent window open for the length of a backwards correction |
+
+## The failed-signature budget under a flood (FloodSpec)
+
+`FloodSpec` models `rocketnet_signature_verify_budget_allow`,
+`rocketnet_signature_verify_budget_record_failure` and the window decay
+they both run first (`sdk/rocketnet_server_protocol.cpp`): two forgers
+against one table slot and a budget of two spend the budget and fill
+the table while one honest client connects. The flood clock `fclock`
+moves forward (`FloodClockForward`) and is stepped back to any earlier
+time (`FloodClockBack`: an NTP step, a VM resume; the timestamp is the
+unix wall clock whenever no game clock epoch is configured). The window
+(`FailWindow = 2` ticks over `0..3`) rolls over, clearing the count and
+the table, when the clock has passed it or has stepped back before its
+start. `FloodWindowBounded`: whenever a source would be refused, the
+clock is at or after the window's start and less than one window past
+it, so a recorded failure refuses its source for at most the window
+length of clock movement in either direction. Under the one-sided
+rollover (`BackwardsRollover = FALSE`, the code before 2026-10-24) a
+forger spends the budget in a window begun at clock 2 (6 states), the clock steps
+back to 0, and the source is still refused: the window would stay open
+for the correction plus its length. `test_signature_budget_window_restarts_on_backwards_clock`
+pins the code: the budget spent at timestamp 1000 refuses the source,
+and the same source is allowed at 900.
 
 ## Findings
 
@@ -191,10 +216,15 @@ Each reversed witness has a committed configuration registered in
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+| `BrokenGlobalLockout.cfg` | `RefuseUnremembered <- MCRefuseUnremembered` (`TRUE`), FloodSpec | `HonestConnectsUnderFlood` |
+| `BrokenBackwardsWindow.cfg` | `BackwardsRollover <- MCNoBackwardsRollover` (`FALSE`), FloodSpec | `FloodWindowBounded` |
 | `BrokenReleaseKeepsSlot.cfg` | `ReleaseToFree <- MCReleaseToFree` (`FALSE`) | `CanRecordMatchesScan` |
 | `BrokenReleaseTwice.cfg` | `ReleaseChecksLive <- MCReleaseChecksLive` (`FALSE`) | `FreeAndOrderPartitionSlots` |
 
-Refresh all fifteen cases through the pinned `tlacheck` runner and merge with
+`Flood.cfg` is FloodSpec's passing control: `FloodInvariants` (with
+`FloodWindowBounded`) and `HonestConnectsUnderFlood` hold.
+
+Refresh all sixteen cases through the pinned `tlacheck` runner and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
