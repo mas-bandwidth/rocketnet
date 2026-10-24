@@ -2978,7 +2978,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // descriptor read and its frame held while the staging buffer has room.
             uint32_t num_consumed = 0;
 
+            // The frames this pass hands back to the fill ring: one per
+            // descriptor read whose frame lies in the receive region, so it
+            // can be fewer than num_consumed (rocketnet_xdp_fill_return).
+            uint32_t num_returned = 0;
+
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+            const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+            const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
             for ( uint32_t i = 0; i < num_packets; i++ ) 
             {
@@ -2987,18 +2995,22 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 
-                frame[num_consumed] = desc->addr;
                 num_consumed++;
+
+                // only a receive-region frame goes back to the fill queue; a
+                // descriptor naming any other frame is dropped, never refilled
+                // (tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
+                if ( rocketnet_xdp_fill_return( desc->addr, receive_region_begin, receive_region_end, &frame[num_returned] ) )
+                    num_returned++;
 
                 // the descriptor is checked against the receive region and
                 // its own frame before a byte of it is read; a refused one is
-                // counted in receive_drops.descriptor, and its address stays
-                // in frame[] above, so it goes back to the fill queue like any
-                // dropped frame
+                // counted once, in receive_drops.descriptor (a refused one in
+                // the receive region still went back to the fill queue above,
+                // like any dropped frame)
 
                 const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
+                    receive_region_begin, receive_region_end,
                     desc->addr, desc->len, &socket->receive_drops );
                 if ( !packet_data )
                     continue;
@@ -3038,8 +3050,11 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 &socket->receive_queue );
 
             // The peek was bounded by available pending storage, so every
-            // consumed frame remains owned until a full fill reservation.
-            const bool retained = pending_return.append(frame, num_consumed);
+            // returned frame remains owned until a full fill reservation. The
+            // fill credit is the returned count, not num_consumed: a refused
+            // descriptor outside the receive region is released from the RX
+            // ring above but never refilled.
+            const bool retained = pending_return.append(frame, num_returned);
             rocketnet_assert(retained);
             if (!retained)
             {

@@ -449,6 +449,24 @@ static inline const uint8_t * rocketnet_xdp_receive_descriptor(
     return (const uint8_t*) umem + addr;
 }
 
+// FILL RETURN: whether a receive descriptor's frame goes back to the fill
+// ring. Only a frame of the receive region [region_begin, region_end) is
+// the receive path's to hand back; a descriptor naming any other frame (a
+// send-region frame, which only a driver or kernel defect delivers) is
+// never returned, so a frame on the send free list is never received into.
+// On true *frame_addr is the address of the frame that holds addr (a
+// received address carries the headroom offset into its frame). Counting
+// a refused descriptor is rocketnet_xdp_receive_descriptor's, not this
+// rule's. tla/RNXdpReceiveRing.tla: Take, FillHoldsOnlyReceiveFrames.
+
+static inline bool rocketnet_xdp_fill_return( uint64_t addr, uint64_t region_begin, uint64_t region_end, uint64_t * frame_addr )
+{
+    if ( !frame_addr || addr < region_begin || addr >= region_end )
+        return false;
+    *frame_addr = addr - addr % ROCKETNET_XDP_FRAME_SIZE;
+    return true;
+}
+
 // RECEIVE DRAIN: the queue a receive call visits at this step. start is the
 // first queue of the call and step is how far around the ring it has walked.
 
