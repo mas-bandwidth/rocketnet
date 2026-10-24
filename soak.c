@@ -46,6 +46,12 @@
     alive: the post-warmup sample at the first planned reconnect, a peak
     sample at every later reconnect and every 10 s, and the end sample after
     the bound, once the last client is destroyed and before the server is.
+    Memory is also sampled every 10 s after the warm-up and at the end, each
+    sample printed as "soak memory: t=<s> resident_bytes=<n>
+    smaps_rss_bytes=<n> private_dirty_bytes=<n>" (smaps_rollup Rss and
+    Private_Dirty on Linux, -1 elsewhere), and each series' least-squares
+    slope prints as "soak memory slope: <name> bytes_per_minute=<n>
+    samples=<n> allowed=<page bytes>".
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes on
     Windows); a run that ends inside the warm cycle, as every run under 30 s
@@ -54,8 +60,8 @@
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
-    and the memory count grows by at most one page per ten minutes of run
-    since the post-warmup sample (at least one page). A count that is not
+    and the slope of every memory series after the warm-up is at most one
+    page per minute (a falling series passes). A count that is not
     flat prints "soak: --assert-flat FAILED: <name> start=<n> end=<n>" and
     the run exits 1; so does a run that ends inside the warm cycle. A second
     --assert-flat, or one given a value (--assert-flat=...), is refused with
@@ -241,6 +247,40 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     return violations;
 }
 
+// the memory samples after the warm-up: seconds since the post-warmup
+// sample, and per series the memory count, smaps Rss and Private_Dirty.
+// Static and fixed: 8192 samples at 10 s cover 22 hours; a longer run
+// judges its first 8192.
+
+#define SOAK_MEMORY_SAMPLES 8192
+#define SOAK_MEMORY_SERIES ( 1 + PROCESS_RESOURCES_DETAIL_COUNT )
+
+static double soak_memory_seconds[SOAK_MEMORY_SAMPLES];
+static int64_t soak_memory_bytes[SOAK_MEMORY_SERIES][SOAK_MEMORY_SAMPLES];
+
+static const char * soak_memory_series_name( int series )
+{
+    return series == 0 ? process_resources_name( PROCESS_RESOURCES_MEMORY ) : process_resources_detail_name( series - 1 );
+}
+
+static void soak_record_memory( int * memory_samples, double seconds, const struct process_resources_t * sample )
+{
+    int64_t detail[PROCESS_RESOURCES_DETAIL_COUNT];
+    process_resources_read_detail( detail );
+    printf( "soak memory: t=%.0f %s=%lld %s=%lld %s=%lld\n", seconds,
+            soak_memory_series_name( 0 ), (long long) sample->values[PROCESS_RESOURCES_MEMORY],
+            soak_memory_series_name( 1 ), (long long) detail[0],
+            soak_memory_series_name( 2 ), (long long) detail[1] );
+    const int n = *memory_samples;
+    if ( n >= SOAK_MEMORY_SAMPLES )
+        return;
+    soak_memory_seconds[n] = seconds;
+    soak_memory_bytes[0][n] = sample->values[PROCESS_RESOURCES_MEMORY];
+    for ( int i = 0; i < PROCESS_RESOURCES_DETAIL_COUNT; i++ )
+        soak_memory_bytes[1 + i][n] = detail[i];
+    *memory_samples = n + 1;
+}
+
 int main( int argc, char ** argv )
 {
     uint64_t max_iterations = 0;
@@ -412,6 +452,7 @@ int main( int argc, char ** argv )
     struct process_resources_t resources_start;
     struct process_resources_t resources_end;
     struct process_resources_t resources_peak;
+    int memory_samples = 0;
     memset( &resources_start, 0, sizeof( resources_start ) );
     memset( &resources_end, 0, sizeof( resources_end ) );
     memset( &resources_peak, 0, sizeof( resources_peak ) );
@@ -462,6 +503,7 @@ int main( int argc, char ** argv )
                     resources_start = sample;
                     resources_peak = sample;
                     resources_start_time = rocketnet_time();
+                    soak_record_memory( &memory_samples, 0.0, &sample );
                 }
                 process_resources_peak( &resources_peak, &sample );
             }
@@ -602,7 +644,10 @@ int main( int argc, char ** argv )
             {
                 struct process_resources_t sample;
                 if ( process_resources_read( &sample ) )
+                {
                     process_resources_peak( &resources_peak, &sample );
+                    soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &sample );
+                }
             }
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
@@ -693,22 +738,33 @@ int main( int argc, char ** argv )
     {
         resources_ended = 1;
         process_resources_peak( &resources_peak, &resources_end );
+        soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &resources_end );
     }
 
     if ( resources_started && resources_ended )
     {
-        const double seconds_since_start = rocketnet_time() - resources_start_time;
         for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
-            if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
+            if ( i != PROCESS_RESOURCES_MEMORY && assert_flat && !process_resources_flat( resources_start.values[i], resources_end.values[i] ) )
             {
-                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
+                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld\n", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
-                if ( i == PROCESS_RESOURCES_MEMORY )
-                    printf( " (allowed growth %lld bytes over %.0f s)", (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
-                printf( "\n" );
+                failures++;
+            }
+        }
+        for ( int series = 0; series < SOAK_MEMORY_SERIES; series++ )
+        {
+            if ( soak_memory_bytes[series][0] < 0 )
+                continue;   // smaps is Linux only
+            const double slope = process_resources_slope_bytes_per_minute( soak_memory_seconds, soak_memory_bytes[series], memory_samples );
+            printf( "soak memory slope: %s bytes_per_minute=%.0f samples=%d allowed=%lld\n", soak_memory_series_name( series ),
+                    slope, memory_samples, (long long) process_resources_page_bytes() );
+            if ( assert_flat && !process_resources_slope_flat( slope, memory_samples ) )
+            {
+                printf( "soak: --assert-flat FAILED: %s bytes_per_minute=%.0f over %d samples after the warm-up (allowed %lld)\n",
+                        soak_memory_series_name( series ), slope, memory_samples, (long long) process_resources_page_bytes() );
                 failures++;
             }
         }

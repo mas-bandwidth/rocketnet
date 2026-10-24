@@ -19,13 +19,25 @@
     reads for its cells; the Windows counters are the ones load.c reads.
     A count that cannot be read is -1, and process_resources_read returns 0.
 
-    THE FLAT RULE (process_resources_flat). Taken after a warm cycle, so every
-    path the run repeats has run once: the fd or handle count and the thread
-    count at the end must equal their post-warmup counts exactly, and the
-    memory count at the end may exceed its post-warmup count by at most one
-    page for every ten minutes of run since the post-warmup sample, rounded
-    up, and never less than one page. A memory count below its post-warmup
-    count is not a leak and passes.
+    THE FLAT RULE. Taken after a warm-up window that lets every preallocated
+    buffer the run repeats be touched once (the caller's warm cycle: its
+    first full send/receive and reconnect cycle, and never under 30 s), so
+    pages of preallocated memory faulting in on first use are not counted:
+
+      fds (handles) and threads   the count at the end equals the
+                                  post-warmup count exactly
+                                  (process_resources_flat).
+      memory                      the least-squares slope of the memory
+                                  samples taken every 10 s after the
+                                  warm-up (resident_bytes; on Linux also
+                                  smaps Rss and Private_Dirty) is at most
+                                  one page per minute
+                                  (process_resources_slope_flat). A
+                                  falling memory count is not a leak and
+                                  passes.
+
+    Nothing is prefaulted to make the rule hold: memory still growing after
+    the warm-up is reported, never excused.
 
     A plain C header: soak.c (C) and the C++ suites can both include it. Every
     function is static inline, so a translation unit that uses only some of
@@ -229,28 +241,95 @@ static inline void process_resources_peak( struct process_resources_t * peak, co
     }
 }
 
-// the memory growth THE FLAT RULE allows over seconds_since_start of run
+// THE FLAT RULE for an fd (handle) or thread count: 1 when the end count
+// equals the post-warmup count, 0 when it does not (or either is unread);
+// memory is judged by its slope (process_resources_slope_flat)
 
-static inline int64_t process_resources_memory_allowance_bytes( double seconds_since_start )
-{
-    int64_t periods = seconds_since_start > 0.0 ? (int64_t) ( seconds_since_start / 600.0 ) : 0;
-    if ( (double) periods * 600.0 < seconds_since_start )
-        periods++;
-    if ( periods < 1 )
-        periods = 1;
-    return periods * process_resources_page_bytes();
-}
-
-// THE FLAT RULE for one count: 1 when the end count is flat against the
-// post-warmup count, 0 when it is not (or either count is unread)
-
-static inline int process_resources_flat( int index, int64_t start, int64_t end, double seconds_since_start )
+static inline int process_resources_flat( int64_t start, int64_t end )
 {
     if ( start < 0 || end < 0 )
         return 0;
-    if ( index == PROCESS_RESOURCES_MEMORY )
-        return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
     return end == start;
+}
+
+// the mapped-and-touched memory of the process on Linux: Rss and
+// Private_Dirty from /proc/self/smaps_rollup, in bytes; both -1 elsewhere or
+// when unreadable, and the function returns 0
+
+#define PROCESS_RESOURCES_DETAIL_COUNT 2
+
+#define PROCESS_RESOURCES_DETAIL_SMAPS_RSS 0
+#define PROCESS_RESOURCES_DETAIL_PRIVATE_DIRTY 1
+
+static inline const char * process_resources_detail_name( int index )
+{
+    switch ( index )
+    {
+        case PROCESS_RESOURCES_DETAIL_SMAPS_RSS:      return "smaps_rss_bytes";
+        case PROCESS_RESOURCES_DETAIL_PRIVATE_DIRTY:  return "private_dirty_bytes";
+        default:                                      return "unknown";
+    }
+}
+
+static inline int process_resources_read_detail( int64_t * detail )
+{
+    detail[PROCESS_RESOURCES_DETAIL_SMAPS_RSS] = -1;
+    detail[PROCESS_RESOURCES_DETAIL_PRIVATE_DIRTY] = -1;
+#if !defined(_WIN32) && !defined(__APPLE__)
+    FILE * file = fopen( "/proc/self/smaps_rollup", "r" );
+    if ( !file )
+        return 0;
+    char line[256];
+    while ( fgets( line, sizeof( line ), file ) )
+    {
+        if ( strncmp( line, "Rss:", 4 ) == 0 )
+            detail[PROCESS_RESOURCES_DETAIL_SMAPS_RSS] = (int64_t) strtoll( line + 4, NULL, 10 ) * 1024;
+        else if ( strncmp( line, "Private_Dirty:", 14 ) == 0 )
+            detail[PROCESS_RESOURCES_DETAIL_PRIVATE_DIRTY] = (int64_t) strtoll( line + 14, NULL, 10 ) * 1024;
+    }
+    fclose( file );
+#endif
+    return detail[PROCESS_RESOURCES_DETAIL_SMAPS_RSS] >= 0 && detail[PROCESS_RESOURCES_DETAIL_PRIVATE_DIRTY] >= 0;
+}
+
+// the least-squares slope of count samples (seconds[i], bytes[i]), in bytes
+// per minute; 0 for fewer than two samples or samples all at one time
+
+static inline double process_resources_slope_bytes_per_minute( const double * seconds, const int64_t * bytes, int count )
+{
+    if ( count < 2 )
+        return 0.0;
+    double mean_seconds = 0.0;
+    double mean_bytes = 0.0;
+    for ( int i = 0; i < count; i++ )
+    {
+        mean_seconds += seconds[i];
+        mean_bytes += (double) bytes[i];
+    }
+    mean_seconds /= (double) count;
+    mean_bytes /= (double) count;
+    double covariance = 0.0;
+    double variance = 0.0;
+    for ( int i = 0; i < count; i++ )
+    {
+        const double ds = seconds[i] - mean_seconds;
+        covariance += ds * ( (double) bytes[i] - mean_bytes );
+        variance += ds * ds;
+    }
+    if ( variance <= 0.0 )
+        return 0.0;
+    return covariance / variance * 60.0;
+}
+
+// THE FLAT RULE for memory: 1 when the post-warmup slope is at most one page
+// per minute (a falling count passes), 0 when it is not or there are fewer
+// than two post-warmup samples
+
+static inline int process_resources_slope_flat( double bytes_per_minute, int count )
+{
+    if ( count < 2 )
+        return 0;
+    return bytes_per_minute <= (double) process_resources_page_bytes();
 }
 
 #endif // #ifndef ROCKETNET_TESTS_PROCESS_RESOURCES_H

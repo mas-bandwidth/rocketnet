@@ -134,6 +134,12 @@ resource_field()
     sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1
 }
 
+slopes()
+{
+    # slopes <log>: "resident_bytes=<n>/min smaps_rss_bytes=..." from the soak memory slope lines
+    sed -nE 's/^soak memory slope: ([a-z_]+) bytes_per_minute=([0-9-]+) .*/\1=\2\/min/p' "$1" | tr '\n' ' ' | sed 's/ $//'
+}
+
 summary_value()
 {
     awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"
@@ -154,11 +160,11 @@ judge()
         fail_reason="server transport granted '${server:-none}', the cell pins $want"
     fi
     if [ -n "$fail_reason" ]; then
-        echo "SOAK cell=$cell FAIL $fail_reason (log $log)"
+        echo "SOAK cell=$cell FAIL $fail_reason slopes: $(slopes "$log") (log $log)"
         failures=$(( failures + 1 ))
         return 1
     fi
-    echo "SOAK cell=$cell PASS server=$server client=$client seconds=$SECONDS_PER_CELL verified=$verified fds=$(resource_field "$log" fds) threads=$(resource_field "$log" threads) resident_bytes=$(resource_field "$log" resident_bytes)"
+    echo "SOAK cell=$cell PASS server=$server client=$client seconds=$SECONDS_PER_CELL verified=$verified fds=$(resource_field "$log" fds) threads=$(resource_field "$log" threads) resident_bytes=$(resource_field "$log" resident_bytes) slopes: $(slopes "$log")"
 }
 
 run_host_cell()
