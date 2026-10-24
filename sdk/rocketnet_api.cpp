@@ -172,9 +172,16 @@ static bool rn_dev_env_int( const char * name, int found, const char * text, int
 {
     if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
         return true;
+    // ASCII digits only, checked before strtol, which would take leading
+    // whitespace and a '+': the same rule as every other numeric override
+    // (rocketnet_config_numeric_charset, sdk/rocketnet_config.cpp). Every
+    // range here starts at 0, so no sign is valid.
+    bool digits = found == 1;
+    for ( const char * cursor = text; digits && *cursor != '\0'; cursor++ )
+        digits = *cursor >= '0' && *cursor <= '9';
     char * end = NULL;
-    const long parsed = found == 1 ? strtol( text, &end, 10 ) : 0;
-    if ( found != 1 || end == text || *end != '\0' || parsed < min_value || parsed > max_value )
+    const long parsed = digits ? strtol( text, &end, 10 ) : 0;
+    if ( !digits || end == text || *end != '\0' || parsed < min_value || parsed > max_value )
     {
         rocketnet_error( "%s=\"%s\" refused: expected %d .. %d", name, text, min_value, max_value );
         return false;
