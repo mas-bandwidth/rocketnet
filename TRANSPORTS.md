@@ -55,6 +55,20 @@ and `rocketnet_server_uring_leaked_transports` are internal transport helpers
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
 
+## Client transports
+
+A client transport fills `rocketnet_client_transport_io_operations_t`
+(`sdk/rocketnet_driver.h`) and runs on the client I/O thread of
+[docs/CLIENT-IO.md](docs/CLIENT-IO.md): the I/O thread owns the socket, and the
+game thread hands it rings of sealed packets through the N-buffer handoff. The
+client ladder is `portable` on every platform and `msgx` on macOS, ahead of
+portable there. `msgx` and `portable` share one client table, and the pump is
+the socket's, chosen at create from the transport name: `msgx` the Darwin
+`sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
+the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
+pins and its degrade path are in [docs/MACOS.md](docs/MACOS.md), "The msgx
+client".
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:
