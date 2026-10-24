@@ -220,20 +220,21 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
         const int first = ( slice % server_receive_low_tick_slices ) * clients_per_slice;
         for ( int i = first; i < first + clients_per_slice; ++i )
         {
+            struct rocketnet_client_transport_t * client = clients[(size_t) i];
             for ( int p = 0; p < server_receive_low_tick_packets_per_client_update; ++p )
             {
                 struct rocketnet_packet_context_t context;
-                uint8_t * packet = rocketnet_client_transport_start_packet( clients[i], server_receive_low_tick_packet_bytes, &context );
+                uint8_t * packet = rocketnet_client_transport_start_packet( client, server_receive_low_tick_packet_bytes, &context );
                 if ( !packet )
                     break;
                 int capacity = 0;
-                uint8_t * payload = rocketnet_client_transport_packet_payload( clients[i], &context, &capacity );
+                uint8_t * payload = rocketnet_client_transport_packet_payload( client, &context, &capacity );
                 server_receive_low_tick_require( payload != NULL && capacity >= server_receive_low_tick_packet_bytes );
-                memset( payload, (int) ( i & 0xff ), (size_t) server_receive_low_tick_packet_bytes );
-                server_receive_low_tick_require( rocketnet_client_transport_finish_packet( clients[i], &context, server_receive_low_tick_packet_bytes ) > 0 );
+                memset( payload, i & 0xff, (size_t) server_receive_low_tick_packet_bytes );
+                server_receive_low_tick_require( rocketnet_client_transport_finish_packet( client, &context, server_receive_low_tick_packet_bytes ) > 0 );
             }
-            rocketnet_client_transport_send_packets( clients[i] );
-            rocketnet_client_transport_update( clients[i], time );
+            rocketnet_client_transport_send_packets( client );
+            rocketnet_client_transport_update( client, time );
         }
         ++slice;
         if ( slice % server_receive_low_tick_slices == 0 )
