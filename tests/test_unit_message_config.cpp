@@ -891,6 +891,60 @@ static void test_config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
+// The sent-packet map against the window (docs/CHANNELS.md 6.4,
+// standard/MESSAGES.md m9.1; tla/RNSentMap.tla NoLiveEviction): under the
+// library's default window and map (the receive ring and the store raised
+// to hold the burst), a client with no send budget writes 1000 reliable
+// messages of 800 bytes, one to a packet, while the transport holds every
+// ack: about a window of packets inside one round trip. Then the acks land. Every
+// packet's entry is still in the map when its ack arrives: nothing is
+// evicted, nothing is resent, and the sender's U reaches next. Red with the
+// old default of 256 entries: the burst evicts its own entries and their acks
+// are ignored.
+static void test_message_config_sent_map_holds_a_window_burst()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.receive_message_buffer_bytes = 1 << 20;  // the receive ring and the store hold the whole unacked
+    config.send_message_buffer_bytes = 1 << 22;     // burst; W and P stay the defaults
+    mc_pair_t pair;
+    mc_pair_setup( &pair, 1, &config, -1 );           // below 0: no client send budget (11.5)
+
+    const int messages = 1000;                      // with CONFIG, 1001 of the window's 1024 numbers
+    const int bytes = 800;                          // two never share a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES packet
+    check( 2 * bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    check( messages < config.reliable_messages_in_flight );
+    uint8_t data[bytes];
+    for ( int i = 0; i < messages; i++ )
+    {
+        mc_fill( data, (uint32_t) i, (uint32_t) bytes );
+        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes ) != 0 );
+    }
+
+    // the burst: every first send leaves before any ack lands
+    std::vector<mc_received_t> server_got;
+    pair.net->hold_acks = true;
+    for ( int i = 0; i < 6; i++ )
+        mc_step( &pair, &server_got, NULL, 0.001 );
+    check( server_got.size() == (size_t) messages );
+    rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
+    check( client->ordered.send.next >= (uint64_t) messages );
+
+    // the acks land, well inside the 2 s initial resend delay
+    pair.net->hold_acks = false;
+    for ( int i = 0; i < 4; i++ )
+        mc_step( &pair, &server_got, NULL, 0.001 );
+
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.clients[0] );
+    check( mc_counter( counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 0 );
+    check( mc_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+    check( client->ordered.send.U == client->ordered.send.next );
+    check( server_got.size() == (size_t) messages );
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    mc_pair_teardown( &pair );
+}
+
 // The fuzz seed f8 0d 00 30 (fuzz/corpus_config/regress_config_f80d0030)
 // applies "0" to message_resend_delay_max_ms (range 10..60000, zero is not
 // "use the default"). The harness expects validation to refuse it exactly as
@@ -945,5 +999,6 @@ REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
+REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );

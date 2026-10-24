@@ -187,7 +187,7 @@ structs, except `config_bytes`.
 | max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
 | send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
-| packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
+| packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and at least `reliable_messages_in_flight` |
 | packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
 | unreliable_messages_per_update | ROCKETNET_CLIENT_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` | refuses the create unless `1..65536` |
 | sequenced_messages_held | ROCKETNET_CLIENT_SEQUENCED_MESSAGES_HELD | int | `16` | refuses the create unless `0..4096` |
@@ -213,7 +213,7 @@ structs, except `config_bytes`.
 | max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
 | send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
-| packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
+| packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `1024` (per client) | refuses the create unless `64..1048576` and at least `reliable_messages_in_flight` |
 | packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
 | unreliable_messages_per_update | ROCKETNET_SERVER_UNRELIABLE_MESSAGES_PER_UPDATE | int | `1024` (per client per update) | refuses the create unless `1..65536` |
 | sequenced_messages_held | ROCKETNET_SERVER_SEQUENCED_MESSAGES_HELD | int | `16` | refuses the create unless `0..4096` |
@@ -299,8 +299,8 @@ the worker has not exited.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 13.3 GB (13,319,166,272 bytes)
-of memory, which scales to approximately 13.3 MB (13,317,056 bytes) per client slot.
+A default 1,000-client server requires approximately 13.4 GB (13,417,470,272 bytes)
+of memory, which scales to approximately 13.4 MB (13,415,360 bytes) per client slot.
 This memory figure can be measured directly using `rocketnet_server_required_memory`:
 
 ```c
@@ -332,8 +332,28 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ./measure_server_memory
 ```
 
-It prints `1000 clients: 13319166272`, `1 client: 15427392`, `2 clients: 28744448`
-and `delta: 13317056` on this SDK revision.
+It prints `1000 clients: 13417470272`, `1 client: 15525696`, `2 clients: 28941056`
+and `delta: 13415360` on this SDK revision.
+
+A light-client server uses `rocketnet_server_light_config`, which fills the
+defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
+client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
+per-client send budget is 256 kbps (256 / 120 = 2.13). A message holds one
+packet's payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes), and
+`max_fragmented_messages` is 1. Over the 10,000 ms reliable timeout left at
+its default, that rate is 100 messages; a 1,415-byte message can take two
+window numbers, so the reliable window is 256. The receive buffer is 142,400
+bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
+packets in flight are 256, each update may send 4 packets and 4 unreliable
+messages, 100 sequenced messages are held, 128 receipts are kept, and there
+are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
+reports 955,710,336 bytes (about 0.96 GB, 955,710 bytes per slot on average).
+The matching `rocketnet_client_light_config` makes
+`rocketnet_client_required_memory` report 3,063,168 bytes.
+
+Both figures are the SDK's create block only. They exclude the transport
+allocations made at connect and start, native resources, and process
+overhead. The default profile remains the stock acceptance.
 
 ```c
 #include "rocketnet.h"
