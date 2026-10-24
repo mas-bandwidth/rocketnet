@@ -35,13 +35,32 @@ static inline int rocketnet_xdp_probe_program( const struct bpf_insn * instructi
 #endif
 }
 
-static inline int rocketnet_xdp_query_id( int interface_index, unsigned int * id )
+// The programs attached to an interface, one id per attach mode. prog_id is
+// the single-mode id and reads 0 when programs are attached in more than one
+// mode (XDP_ATTACHED_MULTI); the per-mode ids are filled in either case.
+typedef struct rocketnet_xdp_attached_t
+{
+    unsigned int prog_id;
+    unsigned int drv_prog_id;
+    unsigned int skb_prog_id;
+    unsigned int hw_prog_id;
+} rocketnet_xdp_attached_t;
+
+static inline int rocketnet_xdp_query_attached( int interface_index, rocketnet_xdp_attached_t * attached )
 {
 #if ROCKETNET_XDP_LEGACY_LIBBPF
-    return bpf_get_link_xdp_id( interface_index, id, 0 );
+    struct xdp_link_info info = {};
+    const int result = bpf_get_link_xdp_info( interface_index, &info, sizeof(info), 0 );
 #else
-    return bpf_xdp_query_id( interface_index, 0, id );
+    struct bpf_xdp_query_opts info = {};
+    info.sz = sizeof(info);
+    const int result = bpf_xdp_query( interface_index, 0, &info );
 #endif
+    attached->prog_id = info.prog_id;
+    attached->drv_prog_id = info.drv_prog_id;
+    attached->skb_prog_id = info.skb_prog_id;
+    attached->hw_prog_id = info.hw_prog_id;
+    return result;
 }
 
 // The caller owns object on every outcome. Legacy libbpf loads the single
