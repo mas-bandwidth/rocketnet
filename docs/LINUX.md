@@ -542,21 +542,26 @@ other processes of its user, so every CI runner of the user on a host shares
 the budget: `tools/check_memlock.sh`, which CI runs before the functional
 suite on the Linux legs, prints the limit, the per-server need on this kernel
 and PASS when the limit is at least the user's runners times the per-case
-need, else FAIL. **The runner limit is 65536 KiB (`LimitMEMLOCK=64M`)** on
-every fleet host whose kernel is after 6.8, for up to 16 runners of one user;
-a host already higher (the 6.8 hosts carry about 8 to 16 GiB) keeps its
-limit. Set it on the runner services and on the user manager that starts
-them, since a user service cannot exceed its manager's hard limit:
+need, else FAIL. **The runner limit is 1048576 KiB (`LimitMEMLOCK=1G`)** on
+every fleet host whose kernel is after 6.8; a host already higher (the 6.8
+hosts carry about 8 to 16 GiB) keeps its limit. The same 26 cases at once,
+with the fleet's other work of that user on the host, refused 5 at 8192 KiB
+in each of two runs, 6 at 65536 KiB in one of five runs, and none at
+1048576 KiB in three runs (2026-10-23, amd-1; the only failures there were
+the two copies of `test_io_uring_transport_server_probe` taking one port).
+The kernel's count is invisible from user space, so the limit is sized well
+past the formula. Set it on the runner services and on the user manager that
+starts them, since a user service cannot exceed its manager's hard limit:
 
 ```
 # /etc/systemd/system/user@<uid>.service.d/memlock.conf
 [Service]
-LimitMEMLOCK=64M
+LimitMEMLOCK=1G
 
 # ~/.config/systemd/user/nova-runner-.service.d/memlock.conf
 # (a prefix drop-in: every nova-runner-*.service of that user)
 [Service]
-LimitMEMLOCK=64M
+LimitMEMLOCK=1G
 ```
 
 then `systemctl daemon-reload`, `systemctl --user daemon-reload`, and in a
