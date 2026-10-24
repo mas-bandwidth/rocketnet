@@ -506,7 +506,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->replay_handshake.highest_opened );
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->handshake_highest_opened );
     if ( sequence == 0 )
     {
         rocketnet_spam( "client ignored challenge. zero sequence" );
@@ -576,8 +576,8 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     if ( client->publish_keys )
         client->publish_keys( client->keys_context, client );
 
-    if ( sequence > client->replay_handshake.highest_opened )
-        client->replay_handshake.highest_opened = sequence;
+    if ( sequence > client->handshake_highest_opened )
+        client->handshake_highest_opened = sequence;
     client->last_receive_time = current_time;
 
     // the response is built once and retransmitted byte-identical: same key,
@@ -630,7 +630,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     }
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->replay_handshake.highest_opened );
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->handshake_highest_opened );
     if ( sequence == 0 )
     {
         rocketnet_spam( "client ignored denied. zero sequence" );
