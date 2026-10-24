@@ -11,7 +11,10 @@
 (d) a fresh empty directory holding only rocketnet.h and the prebuilt
     development static library builds, links and runs tools/header_alone as C
     and as C++: a message server and client on 127.0.0.1 exchange one message
-    each way.
+    each way;
+(e) no comment cites an internal design reference (a tla/ module, a docs/
+    design note, a README- note, a pull request or issue number); user
+    documents such as USAGE.md and BUILDING.md may be cited.
 
 Prints one line per check and exits 0 only when every check passes.
 """
@@ -53,6 +56,23 @@ def strip_comments(text):
 
 def line_of(text, offset):
     return text.count("\n", 0, offset) + 1
+
+
+# (e) -----------------------------------------------------------------------
+
+INTERNAL_REFERENCE = re.compile(r"tla/|\.tla\b|docs/|README-|PR #|#[0-9]{3}")
+
+
+def check_no_internal_references(text):
+    found = 0
+    for match in re.finditer(r"//[^\n]*|/\*.*?\*/", text, flags=re.S):
+        hit = INTERNAL_REFERENCE.search(match.group(0))
+        if hit:
+            found += 1
+            report(False, "(e) line %d: comment cites an internal reference: %s" %
+                   (line_of(text, match.start() + hit.start()), hit.group(0)))
+    if not found:
+        report(True, "(e) no comment cites an internal design reference")
 
 
 # (a) -----------------------------------------------------------------------
@@ -403,6 +423,7 @@ def main():
     check_channel_bound(args.cc, args.cxx)
     check_includes(raw)
     check_declarations(raw)
+    check_no_internal_references(raw)
     if not args.no_run:
         self_contained(build, args.config, args.cc, args.cxx)
     if failures:
