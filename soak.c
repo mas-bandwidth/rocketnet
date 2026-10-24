@@ -27,10 +27,11 @@
     transport layer has no send budget, so the rate is the only limit. Without
     it soak sends one packet each way per iteration. The pacing never makes a
     refusal itself: each direction sends at most ROCKETNET_SOAK_RATE_BURST
-    packets per iteration and holds at most ROCKETNET_SOAK_RATE_WINDOW packets
-    in flight (sent, not yet received on the other side, less those its send
-    history has counted lost), so a stall never overruns the receiver's
-    acknowledgement window (SEND_HISTORY_OVERFLOW); and the client sends
+    packets per iteration and holds its unacknowledged span (its highest sent
+    session sequence less the largest the other side has acknowledged, read
+    through the delivery capture) under ROCKETNET_SOAK_RATE_WINDOW, so a stall
+    on either side never overruns the 4096-packet send history
+    (SEND_HISTORY_OVERFLOW); and the client sends
     nothing more in an iteration once a hand-off of its fill ring is deferred
     (CLIENT_SEND_DEFERRED: the I/O thread still holds the other rings), so a
     stalled I/O thread never fills the ring (SEND_RING_FULL). What a stall
@@ -107,7 +108,7 @@ static int dev_token_binary( const char * address, uint64_t client_id, uint64_t 
 #define ROCKETNET_SOAK_MAX_COUNTERS 256
 #define ROCKETNET_SOAK_RATE_MAX 1000000ULL
 #define ROCKETNET_SOAK_RATE_BURST 64           // packets each way per iteration at most: a quarter of the client's 256-slot fill ring
-#define ROCKETNET_SOAK_RATE_WINDOW 1024        // packets each way in flight at most: a quarter of the 4096-packet send history
+#define ROCKETNET_SOAK_RATE_WINDOW 1024        // unacknowledged sequences each way at most: a quarter of the 4096-packet send history
 #define ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES ( 64ULL * 1024 * 1024 )
 #define ROCKETNET_SOAK_USAGE "usage: soak [--seconds S] [--one-connection] [--rate N] [--assert-every S] [positive iteration count]"
 #define ROCKETNET_SOAK_DISCONNECT_REASONS ( ROCKETNET_CLIENT_STATE_DISCONNECTED - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED + 1 )
@@ -351,18 +352,27 @@ static void soak_print_counters( const char * name, const struct rocketnet_count
     }
 }
 
+// the unacknowledged span of one end: its highest sent session sequence less
+// the largest the other end has acknowledged, counted from the end's highest
+// sent sequence at the connect (before the first acknowledgement the largest
+// acknowledged reads 0); 0 when the capture is not connected
+static uint64_t soak_unacked_span( const struct rocketnet_delivery_capture_t * capture, uint64_t sent_sequence_at_connect )
+{
+    if ( !capture->connected )
+        return 0;
+    const uint64_t acked = capture->largest_acked_sequence > sent_sequence_at_connect ? capture->largest_acked_sequence : sent_sequence_at_connect;
+    return capture->highest_sent_sequence > acked ? capture->highest_sent_sequence - acked : 0;
+}
+
 // how many packets one direction may send this iteration: what the wall
-// clock owes, at most a burst, and at most what keeps the in-flight packets
-// (sent, not yet received, less those the send history counted lost) inside
-// the window
-static uint64_t soak_rate_send_count( uint64_t owed, uint64_t sent, uint64_t received, uint64_t lost )
+// clock owes, at most a burst, and at most what keeps its unacknowledged span
+// inside the window
+static uint64_t soak_rate_send_count( uint64_t owed, uint64_t sent, uint64_t unacked_span )
 {
     uint64_t count = owed > sent ? owed - sent : 0;
     if ( count > ROCKETNET_SOAK_RATE_BURST )
         count = ROCKETNET_SOAK_RATE_BURST;
-    const uint64_t accounted = received + lost;
-    const uint64_t in_flight = sent > accounted ? sent - accounted : 0;
-    const uint64_t room = in_flight < ROCKETNET_SOAK_RATE_WINDOW ? ROCKETNET_SOAK_RATE_WINDOW - in_flight : 0;
+    const uint64_t room = unacked_span < ROCKETNET_SOAK_RATE_WINDOW ? ROCKETNET_SOAK_RATE_WINDOW - unacked_span : 0;
     return count < room ? count : room;
 }
 
@@ -523,20 +533,18 @@ int main( int argc, char ** argv )
     memset( &sequences, 0, sizeof( sequences ) );
     uint64_t resident_baseline = 0;
     uint64_t asserts = 0;
-    // the pacing, per connection: packets each way sent and received since
-    // the connect, and the server's lost count at the connect
+    // the pacing, per connection: packets each way sent since the connect,
+    // and each end's highest sent session sequence at the connect
     uint64_t connection_client_sent = 0;
     uint64_t connection_server_sent = 0;
-    uint64_t connection_client_received = 0;
-    uint64_t connection_server_received = 0;
-    uint64_t connection_server_lost_base = 0;
+    uint64_t client_sent_sequence_at_connect = 0;
+    uint64_t server_sent_sequence_at_connect = 0;
     uint64_t asserted_client_sent = 0;
     uint64_t asserted_server_sent = 0;
     const int counter_send_deferred = soak_counter_index( "CLIENT_SEND_DEFERRED" );
-    const int counter_send_history_lost = soak_counter_index( "SEND_HISTORY_LOST" );
-    if ( rate && ( counter_send_deferred < 0 || counter_send_history_lost < 0 ) )
+    if ( rate && counter_send_deferred < 0 )
     {
-        printf( "soak: --rate needs the CLIENT_SEND_DEFERRED and SEND_HISTORY_LOST counters\n" );
+        printf( "soak: --rate needs the CLIENT_SEND_DEFERRED counter\n" );
         rn_native_server_transport_stop_and_destroy( server );
         rocketnet_term();
         return 1;
@@ -627,9 +635,13 @@ int main( int argc, char ** argv )
                 connect_time = rocketnet_time();
                 connection_client_sent = 0;
                 connection_server_sent = 0;
-                connection_client_received = 0;
-                connection_server_received = 0;
-                connection_server_lost_base = counter_send_history_lost >= 0 ? rocketnet_counter_value( rocketnet_server_transport_counters( server ), counter_send_history_lost ) : 0;
+                struct rocketnet_delivery_capture_t capture;
+                memset( &capture, 0, sizeof( capture ) );
+                rocketnet_client_transport_delivery_capture( client, &capture );
+                client_sent_sequence_at_connect = capture.highest_sent_sequence;
+                memset( &capture, 0, sizeof( capture ) );
+                rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &capture );
+                server_sent_sequence_at_connect = capture.highest_sent_sequence;
             }
 
             // one packet each way per iteration, or with --rate as many as
@@ -641,10 +653,14 @@ int main( int argc, char ** argv )
             if ( rate )
             {
                 const uint64_t owed = (uint64_t) ( ( rocketnet_time() - connect_time ) * (double) rate );
-                const uint64_t client_lost = rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_history_lost );
-                const uint64_t server_lost = rocketnet_counter_value( rocketnet_server_transport_counters( server ), counter_send_history_lost ) - connection_server_lost_base;
-                client_send_count = client_ring_held ? 0 : soak_rate_send_count( owed, connection_client_sent, connection_server_received, client_lost );
-                server_send_count = soak_rate_send_count( owed, connection_server_sent, connection_client_received, server_lost );
+                struct rocketnet_delivery_capture_t client_capture;
+                struct rocketnet_delivery_capture_t server_capture;
+                memset( &client_capture, 0, sizeof( client_capture ) );
+                memset( &server_capture, 0, sizeof( server_capture ) );
+                rocketnet_client_transport_delivery_capture( client, &client_capture );
+                rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &server_capture );
+                client_send_count = client_ring_held ? 0 : soak_rate_send_count( owed, connection_client_sent, soak_unacked_span( &client_capture, client_sent_sequence_at_connect ) );
+                server_send_count = soak_rate_send_count( owed, connection_server_sent, soak_unacked_span( &server_capture, server_sent_sequence_at_connect ) );
             }
 
             // every size cycles through, both directions, every byte checked;
@@ -678,7 +694,6 @@ int main( int argc, char ** argv )
                 int payload_client_index, payload_bytes;
                 uint8_t * server_payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
                 server_received++;
-                connection_server_received++;
                 if ( fault_verify_pending && payload_bytes > 0 )
                 {
                     server_payload[0] ^= 0xff;
@@ -700,7 +715,6 @@ int main( int argc, char ** argv )
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
             {
                 client_received++;
-                connection_client_received++;
                 if ( fault_verify_pending )
                 {
                     received[0] ^= 0xff;
