@@ -73,6 +73,43 @@ libFuzzer runtime, for example
 Makefile links the CoreFoundation and SystemConfiguration frameworks in
 place of the Linux bpf, xdp and io_uring libraries.
 
+### With libFuzzer (Windows)
+
+On Windows the libFuzzer runtime ships with Visual Studio's ClangCL toolset
+(the "C++ Clang tools for Windows" component): `clang-cl.exe` under
+`VC/Tools/Llvm/x64/bin`, and `clang_rt.fuzzer-x86_64.lib` with the
+AddressSanitizer runtime in `lib/windows` of its resource directory
+(`clang-cl -print-resource-dir`). Build the development library once with
+that toolset, instrumented, on the release C runtime (clang-cl refuses
+AddressSanitizer with the debug runtime, `/MDd`), then compile each target
+at the tree's warning floor and link it against the library. From Git Bash
+at the checkout root:
+
+```sh
+cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL \
+    "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /fsanitize=address -fsanitize=fuzzer-no-link" \
+    "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /fsanitize=address -fsanitize=fuzzer-no-link"
+cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
+"$CLANG_CL" -nologo -Zi -O1 -std:c++17 -EHsc -utf-8 -fp:precise \
+    -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
+    -DWIN32 -D_WINDOWS -DROCKETNET_DEV=1 -fsanitize=fuzzer,address \
+    -Isodium -Isdk -Itest fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
+    -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe -Fo:bin/rocketnet_fuzz_session.obj
+cp "$("$CLANG_CL" -print-resource-dir)/lib/windows/clang_rt.asan_dynamic-x86_64.dll" bin/
+mkdir -p corpus_session
+ASAN_OPTIONS=detect_leaks=0 ./bin/rocketnet_fuzz_session.exe \
+    -dict=fuzz/dict/rocketnet_fuzz_session.dict -max_total_time=60 corpus_session fuzz/corpus_session
+```
+
+The link set is the replay drivers' one: `rocketnet_dev.lib` alone, since
+the platform source names `WS2_32`, `IPHLPAPI`, `Qwave` and `winmm` itself.
+LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
+checker), so the Windows leg runs with `detect_leaks=0` and leaks are
+checked on Linux. The nightly `fuzz-windows` job in
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
+target in the table above; the netcode differential target stays Linux only.
+
 ### Without libFuzzer: the replay drivers
 
 CMake builds a `fuzz_replay_<target>` binary for every target. Each one is
@@ -204,9 +241,10 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 - `ci.yml` `fuzz-smoke` replays the committed corpora through the
   `fuzz_replay_*` drivers on every push.
-- `fuzz-nightly.yml` builds the libFuzzer targets, restores each target's
-  growing corpus from the cache, runs a bounded campaign
-  (`max_total_time`, 900 s by default) and uploads any reproducer.
+- `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
+  Windows, restores each target's growing corpus from the cache (one cache
+  per platform), runs a bounded campaign (`max_total_time`, 900 s by
+  default) and uploads any reproducer.
 
 ## OSS-Fuzz (prepared, not submitted)
 
