@@ -1,0 +1,209 @@
+# The nightly deterministic simulation sweep (docs/DST.md) on Linux, macOS and Windows.
+#
+# One seed fixes a whole dst run: the wire's loss, duplication, delay, jitter and
+# reordering, the keys, and the mocked clock. The same seeds and options must
+# print the same trace on every OS, or a failing seed found on one OS cannot be
+# replayed on another. Each leg builds Release dst and test, runs the fifteen
+# test_dst_ unit cases by --run, runs `dst --seeds 1-50` and fails unless its
+# PASS line carries DST_REFERENCE_TRACE below, then sweeps a longer seed range
+# sized from a measurement on that OS to about twenty minutes.
+#
+# A red night prints, per failing seed,
+#   FAIL seed=<n> step=<s> check=<name> what=<detail>
+#   replay: ./bin/dst --seeds <n>-<n> --shape full
+# and the replay line reproduces the same schedule on any of the three OSes.
+#
+# The reference trace changes only when the harness or the library changes what
+# a run does; a change that moves it updates DST_REFERENCE_TRACE and docs/DST.md
+# in the same commit, from three equal PASS lines (Linux, macOS, Windows).
+#
+# Nightlies are exempt from the two-minute rule. Measured at 010c8167 (Release):
+# seeds 1-500 took 55 s on amd-2 (Linux), 43 s on mini-m5-1 (macOS) and
+# WINDOWS_MEASURED on captain (Windows). timeout-minutes is the sweep plus the
+# build, doubled.
+
+name: nightly-dst
+
+on:
+  schedule:
+    - cron: "45 10 * * *"
+  workflow_dispatch:
+
+env:
+  DST_REFERENCE_TRACE: f5b51aa640524001
+
+jobs:
+
+  dst-linux:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    env:
+      DST_BIN: ./bin
+      DST_EXE: ""
+      DST_SWEEP: 51-11000
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release)
+        run: make
+
+      - name: The fifteen test_dst_ unit cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
+            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
+            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
+            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
+            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
+            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
+            test_dst_check_clean_sequence_passes; do
+            "$DST_BIN/test$DST_EXE" --run "$c"
+          done
+
+      - name: Seeds 1-50 print the reference trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 | tr -d '\r' | tee dst-reference.log
+          if grep -q '^FAIL' dst-reference.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_REFERENCE_TRACE"
+          got=$(tail -n 1 dst-reference.log)
+          if [ "$got" != "$want" ]; then
+            echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
+            exit 1
+          fi
+
+      - name: Sweep the nightly seed range
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
+
+  dst-macos:
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    env:
+      DST_BIN: ./bin
+      DST_EXE: ""
+      DST_SWEEP: 51-14000
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release)
+        run: make
+
+      - name: The fifteen test_dst_ unit cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
+            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
+            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
+            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
+            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
+            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
+            test_dst_check_clean_sequence_passes; do
+            "$DST_BIN/test$DST_EXE" --run "$c"
+          done
+
+      - name: Seeds 1-50 print the reference trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 | tr -d '\r' | tee dst-reference.log
+          if grep -q '^FAIL' dst-reference.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_REFERENCE_TRACE"
+          got=$(tail -n 1 dst-reference.log)
+          if [ "$got" != "$want" ]; then
+            echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
+            exit 1
+          fi
+
+      - name: Sweep the nightly seed range
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
+
+  dst-windows:
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    env:
+      DST_BIN: ./bin/Release
+      DST_EXE: .exe
+      DST_SWEEP: 51-11000
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release --target dst test --parallel
+
+      - name: The fifteen test_dst_ unit cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
+            test_dst_seed_range_uint64_max_terminates test_dst_fail_names_seed test_dst_server_kick_reaches_slot_holder \
+            test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
+            test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
+            test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
+            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
+            test_dst_check_clean_sequence_passes; do
+            "$DST_BIN/test$DST_EXE" --run "$c"
+          done
+
+      - name: Seeds 1-50 print the reference trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 | tr -d '\r' | tee dst-reference.log
+          if grep -q '^FAIL' dst-reference.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_REFERENCE_TRACE"
+          got=$(tail -n 1 dst-reference.log)
+          if [ "$got" != "$want" ]; then
+            echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
+            exit 1
+          fi
+
+      - name: Sweep the nightly seed range
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
