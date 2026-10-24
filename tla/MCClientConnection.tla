@@ -17,6 +17,13 @@ EXTENDS ClientConnection
 \* the safety properties every run checks
 SafetyInvariants ==
     /\ TypeOK /\ ConnectedMeansHandshake /\ TimeoutHonoured /\ DeadlineHonoured
-    /\ AtMostOneLiveSession
+    /\ AtMostOneLiveSession /\ OneRequestFamily /\ CommitsOnAnswer
+
+\* the family race runs (MCClientConnectionRace.cfg and its reversed witness
+\* MCClientConnectionBrokenCommitEarly.cfg): a token naming both families on
+\* a host with both, the IPv6 route broken so only IPv4 answers
+MCBothFamilies  == {"ipv4", "ipv6"}
+MCIpv4Reachable == {"ipv4"}
+MCCommitEarly   == TRUE
 
 =============================================================================

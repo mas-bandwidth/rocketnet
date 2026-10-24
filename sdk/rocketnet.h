@@ -1236,7 +1236,9 @@ struct rocketnet_server_config_t
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp and gso. Zero selects
-    /// the transport default. Range is 1 .. 1024.
+    /// the transport default. Range is 1 .. 1024. The Windows iocp transport
+    /// ignores it and always runs one completion worker plus one send worker;
+    /// the Windows rio transport ignores it and runs one I/O worker.
 
     int num_xdp_queues;
 
@@ -1415,7 +1417,11 @@ struct rocketnet_receipt_t
 
 /// Each connection starts fresh.
 /// The last failure state remains until disconnect or the next connect.
-/// Connect opens a socket for the address family in the token.
+/// Connect opens a socket for the address family in the token. When the token
+/// names both families and the host can use both, connect opens a socket for
+/// each, the cookie request goes to both servers, and the first cookie commits
+/// the connection to the family that answered; the other socket is closed
+/// then. The token's lifetime and timeout bound the attempt as before.
 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
