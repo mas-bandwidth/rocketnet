@@ -376,3 +376,5 @@ MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDr
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
 MCRNMsgxPause.cfg	MCRNMsgxPause.tla	pass	-	check	rnmsgxpause	required	-
 MCRNMsgxPauseBrokenExpiryClearsFresh.cfg	MCRNMsgxPause.tla	invariant	FreshPauseSurvives	check	rnmsgxpause	required	-
+MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
+MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-
