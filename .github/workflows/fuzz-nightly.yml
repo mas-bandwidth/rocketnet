@@ -292,3 +292,254 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+  # MemorySanitizer over the same ten-target matrix, Linux only (row 262's
+  # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
+  # linked object must be instrumented: the development library, vendored
+  # sodium included, is configured with the MSan flags and the instrumented
+  # libc++ headers exactly as tools/run_msan.sh does, and each target links
+  # against that archive with -fsanitize=fuzzer-no-link,memory, origins
+  # tracked, and the instrumented libc++.
+  #
+  # libFuzzer's engine is built here against that same libc++ and with MSan.
+  # The engine clang ships (libclang_rt.fuzzer-<arch>.a) is compiled against
+  # libstdc++, so a target whose objects use the instrumented libc++ cannot
+  # resolve its std::__cxx11 references; forced to link anyway, its
+  # uninstrumented std::string writes leave poison that the instrumented
+  # libc++ then reports. Compiling compiler-rt/lib/fuzzer at the release
+  # pinned by tools/build_msan_libcxx.sh, with the same libc++ headers and
+  # the same MSan flags, gives an engine whose every write updates the shadow.
+  # The source tarball is the one that script verifies, at its pinned sha256.
+  #
+  # A runner without /opt/msan-libcxx-<clang version> fails with a
+  # TOOL-MISSING line naming it. Any MemorySanitizer report fails the leg;
+  # tools/msan_known.txt belongs to the unit gate and is not an allowlist for
+  # fuzzing. The corpus cache is separate from the asan leg's (corpus-msan/).
+  fuzz-msan:
+    name: nightly fuzz MSan (${{ fromJSON(matrix.leg).target }})
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg:
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+    concurrency:
+      group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the MSan-instrumented libc++
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang_version=$(clang++ -dumpversion)
+          libcxx=/opt/msan-libcxx-"$clang_version"
+          if [ ! -f "$libcxx/lib/libc++.so" ] || [ ! -f "$libcxx/include/c++/v1/__config_site" ]; then
+            echo "TOOL-MISSING msan-libcxx $clang_version (no MSan-instrumented libc++ in $libcxx; bash tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"
+            exit 1
+          fi
+          echo "MSAN_LIBCXX=$libcxx" >> "$GITHUB_ENV"
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang clang++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Restore the MSan libFuzzer engine
+        uses: actions/cache@v4
+        with:
+          path: .msan-libfuzzer
+          key: msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-v1
+          restore-keys: |
+            msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build the MSan libFuzzer engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .msan-libfuzzer/libFuzzer.a ]; then
+            echo "using the cached MSan libFuzzer engine"
+            exit 0
+          fi
+          version=$(clang++ -dumpversion)
+          # the tarball and pins tools/build_msan_libcxx.sh verifies
+          case "$version" in
+            18.1.3) sha256=2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651 ;;
+            21.1.8) sha256=4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142 ;;
+            *) echo "TOOL-MISSING llvm-project source pin for clang $version (add it to tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"; exit 1 ;;
+          esac
+          work=.msan-libfuzzer
+          mkdir -p "$work"
+          tarball="llvm-project-$version.src.tar.xz"
+          curl -fsSL -o "$work/$tarball" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/$tarball"
+          echo "$sha256  $work/$tarball" | sha256sum -c -
+          tar -xJf "$work/$tarball" -C "$work"
+          src="$work/llvm-project-$version.src/compiler-rt/lib/fuzzer"
+          mkdir -p "$work/obj"
+          for f in "$src"/Fuzzer*.cpp; do
+            clang++ -O1 -g -std=c++17 -fPIC \
+              -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+              -nostdinc++ -isystem "$MSAN_LIBCXX/include/c++/v1" -I "$src" \
+              -c "$f" -o "$work/obj/$(basename "${f%.cpp}").o"
+          done
+          ar rcs "$work/libFuzzer.a" "$work/obj"/*.o
+          rm -rf "$work/llvm-project-$version.src" "$work/$tarball"
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus-msan/${{ fromJSON(matrix.leg).target }}
+          key: fuzz-corpus-msan-${{ fromJSON(matrix.leg).target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-msan-${{ fromJSON(matrix.leg).target }}-
+
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz-msan
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -nostdinc++ -isystem ${{ env.MSAN_LIBCXX }}/include/c++/v1"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel
+
+      - name: Build ${{ fromJSON(matrix.leg).target }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          clang++ -g -O1 -std=c++17 \
+            -ffp-contract=off \
+            -DROCKETNET_DEV=1 \
+            -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+            -nostdinc++ -isystem "${{ env.MSAN_LIBCXX }}/include/c++/v1" \
+            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
+            .msan-libfuzzer/libFuzzer.a \
+            -stdlib=libc++ -L"${{ env.MSAN_LIBCXX }}/lib" -Wl,-rpath,"${{ env.MSAN_LIBCXX }}/lib" \
+            -lbpf -lxdp -luring -lpthread -lm \
+            -o "bin/${{ fromJSON(matrix.leg).target }}"
+
+      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
+        env:
+          MSAN_OPTIONS: halt_on_error=1:print_stats=0
+        run: |
+          set -euo pipefail
+          mkdir -p "corpus-msan/${{ fromJSON(matrix.leg).target }}"
+          T="${{ github.event.inputs.max_total_time || '900' }}"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s under MSan with ${{ fromJSON(matrix.leg).dict }}"
+          ./"bin/${{ fromJSON(matrix.leg).target }}" \
+            "corpus-msan/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
+            -dict="${{ fromJSON(matrix.leg).dict }}" \
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-msan-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
+
+  # Source coverage of the campaign, one job per OS after the matrix, on the
+  # Linux and macOS runners. tools/fuzz_coverage.sh builds the replay drivers
+  # with source-based coverage, runs them over each target's committed corpus
+  # plus pseudo-random inputs, and appends its per-area table as Markdown to
+  # the job summary through FUZZ_COV_SUMMARY (the script's default build dir is
+  # per job, so Linux and macOS do not share one).
+  coverage:
+    name: nightly fuzz coverage (Linux)
+    needs: fuzz
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang clang++ xxd pkg-config llvm-profdata llvm-cov; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Fuzz coverage
+        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
+
+  coverage-macos:
+    name: nightly fuzz coverage (macOS)
+    needs: fuzz-macos
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 45
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Fuzz coverage
+        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
