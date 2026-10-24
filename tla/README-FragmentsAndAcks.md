@@ -76,7 +76,8 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and the model's rule witnesses sit in it |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: a completed payload that is then dropped as `FRAGMENT_PAYLOAD_BATCH_FULL` was accepted fragment by fragment and is still acknowledged, which USAGE.md:146-148 allows at the fragment level; the gap is real and the model's rule witnesses sit in it. A fragment reassembly refuses is not in this gap (`NamedOnlyIfAccepted`) |
+| `NamedOnlyIfAccepted` | a fragment reassembly refuses (stale, count or size mismatch, payload too large, duplicate index) is never named by a block, so the sender's aggregate never completes on it. The block is built from the ack-eligible window (`accepted_session` in the code), and a fragment enters it only when `rocketnet_reassembly_process_fragment` accepts it (standard/TRANSPORT.md t15.3: a packet is eligible only once its type data passes validation); its sequence is still spent in the replay window |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
 | `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
@@ -209,8 +210,8 @@ done
 
 `MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
 (`Witness = "none"`, `StaleRule = "code"`), burns on, both links `"arbitrary"` under
-`SpecSafety`, checking the twelve invariants (nine, and the three bitmap invariants
-below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
+`SpecSafety`, checking the thirteen invariants (nine, `NamedOnlyIfAccepted`, and the three
+bitmap invariants below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
 is the same instance under `Spec` with `OpenedSurfacesOrLaps` added. The
 instance: `MaxSeq = 4`, `SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`,
 `MaxRanges = 2`, `Slots = 1`, `IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts
@@ -261,6 +262,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | bits | `MCFragmentsAndAcksBits.cfg` | bits: live-small with `SentRing = 2`, `MaxSeq = 4`, `SpecSafety` + `CountPinned`, ack link `"none"` | passes | required |
 | wit-walkskip | `MCFragmentsAndAcksWitWalkskip.cfg` | bits, `Witness = "walkskip"`, no `CountPinned` | **fails** `WalkVisitsUnacked` | required |
 | wit-staleheld | `MCFragmentsAndAcksWitStaleheld.cfg` | bits, `Witness = "staleheld"`, no `CountPinned` | **fails** `BitsMatchRing` | required |
+| wit-ackrefused | `MCFragmentsAndAcksWitAckRefused.cfg` | safety, `Witness = "ackrefused"`: a fragment is ack-eligible as soon as it opens, before reassembly judges it (the order before t15.3 was applied to type 9) | **fails** `NamedOnlyIfAccepted` | required |
 | link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
 Instances shrunk to fit the 110 s budget at two TLC workers: `live-small` from
@@ -326,6 +328,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 10.165 s |
 | `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.867 s |
 | `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.910 s |
+| `MCFragmentsAndAcksWitAckRefused.cfg` | `NamedOnlyIfAccepted` violated (exit 12) | 193,615 | 64,587 | 7.506 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
