@@ -80,7 +80,19 @@ struct rocketnet_server_protocol_t
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
     int defer_payload_acks;
+#if ROCKETNET_TEST_SEAMS
+    uint64_t test_payload_writes;                           // writes of a payload's plaintext bytes: the open, and any copy after it
+#endif // #if ROCKETNET_TEST_SEAMS
 };
+
+#if ROCKETNET_TEST_SEAMS
+// The receive path's work since create, for the unit suite: the keyed hashes
+// of the server's encryption map and the writes of payload plaintext.
+// Defined in sdk/rocketnet_server_transport.cpp.
+struct rocketnet_server_transport_t;
+void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
+                                                   uint64_t * map_hashes, uint64_t * payload_writes );
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // The connection id held by client_index now (P9a): 0 for a free slot, an
 // index out of range, or a protocol without the connection id arrays.
@@ -126,6 +138,34 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                      uint8_t * out_payload,
                                      int * out_payload_bytes,
                                      int * out_payload_client_index );
+
+// The receive entry the server transport calls, with nothing copied twice.
+// known_mapping_index is the caller's encryption-map lookup for from (-1 for
+// none), made with nothing changing the map since, or
+// ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP and the protocol looks it up: a
+// sealed packet pays one keyed hash. (A connection request's ladder still
+// looks its address up on its own rung.) The packet opens into opened, the caller's
+// ROCKETNET_RECEIVE_CEILING bytes; an accepted payload is delivered where it
+// opened, *out_payload pointing at its bytes inside opened (NULL otherwise),
+// and one above out_payload_capacity is refused whole as
+// RECEIVE_CURSOR_TOO_SMALL. Every counter is the one process_packet counts.
+
+#define ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP -2
+
+int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
+                                                const struct rocketnet_address_t * from,
+                                                int known_mapping_index,
+                                                const uint8_t * packet_data,
+                                                int packet_bytes,
+                                                uint64_t current_timestamp,
+                                                double current_time,
+                                                uint8_t * response_packet,
+                                                int * response_bytes,
+                                                uint8_t * opened,
+                                                int out_payload_capacity,
+                                                const uint8_t ** out_payload,
+                                                int * out_payload_bytes,
+                                                int * out_payload_client_index );
 
 // Rotates the connection cookie key when current_time has reached
 // cookie_key_rotation_time. With an on-time rotation the outgoing key is kept
@@ -180,7 +220,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 //   suppresses it and keep-alives appear only on an otherwise idle
 //   connection.
 //
-// The acknowledgment is the peer's unverifiable claim, not proof; see
+// The acknowledgment is the client's unverifiable claim, not proof; see
 // _Keep-alive generation_ in STANDARD.md and the fuller reasoning at the
 // definition. The caller loops the client indices each frame. Returns 0 when
 // not connected or not due.

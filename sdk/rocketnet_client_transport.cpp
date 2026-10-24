@@ -440,6 +440,212 @@ static inline void rocketnet_client_link_flush( rocketnet_client_transport_t * t
         rocketnet_network_simulator_flush_window( transport->link_simulator );
 }
 
+// The family race (TRANSPORT.md t11 rule 3): a token naming both an IPv4 and
+// an IPv6 server address, on a host that can use both, dials both. The
+// transport's io is then this pair, behind the ordinary operations table, so
+// every path below it (the caller's sends, the I/O thread and its rings, the
+// link simulator, the legacy receive worker, the caller's step) is unchanged:
+// family[0] is the address the token selects (the IPv6 server, its socket
+// connected to it as at BASE), family[1] the IPv4 server on a second socket
+// of its own, opened and connected with the first at create, never during
+// update. While both are in flight every packet sent to the primary server
+// goes to the other server too, and both sockets are read. The first valid
+// connection cookie commits the attempt to the family it arrived on
+// (rocketnet_client_race_commit, tla/ClientConnection.tla ClientRecvCookie,
+// tla/ServerConnection.tla CommitChoices): from then on only that family is
+// sent to and read, so a connection request goes to one family only
+// (OneRequestFamily, OneFamilyPerAttempt), and the other family's socket is
+// closed by the thread that reads the sockets, at its next wait or receive.
+// A late answer from the other family that was already read fails the
+// source check and is counted as a foreign source.
+//
+// Threads. The caller's thread commits (in update) and is the only thread
+// that sends to a server address it reads from the protocol; the reading
+// thread (the I/O thread, the legacy worker, or the caller's own step)
+// closes the losing socket only after it observes the commit, and the caller
+// touches only the kept family once it committed. No lock: one release
+// store, read with acquire.
+
+#define ROCKETNET_CLIENT_RACE_WAIT_SECONDS 0.001     // the reading thread's poll of the second socket during the race
+
+struct rocketnet_client_race_t
+{
+    rocketnet_client_transport_io_operations_t operations;  // the table the transport holds: the inner capabilities, routed here
+    rocketnet_client_transport_io_t family[2];              // [0] the token's selected family, [1] the other
+    rocketnet_address_t server_address[2];                  // the server of each family, from the token
+    std::atomic<int> committed;                             // -1 while both are in flight, else the family kept
+    bool closed;                                            // the losing family's socket is closed (the reading thread)
+    std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at its close
+    void * context;
+};
+
+static void rocketnet_client_race_destroy( void * instance );
+
+static rocketnet_client_race_t * rocketnet_client_race_of( const rocketnet_client_transport_t * transport )
+{
+    if ( !transport->io.operations || transport->io.operations->destroy != rocketnet_client_race_destroy )
+        return NULL;
+    return (rocketnet_client_race_t *) transport->io.instance;
+}
+
+static uint64_t rocketnet_client_race_family_send_failures( const rocketnet_client_transport_io_t * family )
+{
+    return family->instance && family->operations->send_failures ? family->operations->send_failures( family->instance ) : 0;
+}
+
+// the reading thread closes the losing family once it sees the commit
+static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
+{
+    const int committed = race->committed.load( std::memory_order_acquire );
+    if ( committed >= 0 && !race->closed )
+    {
+        rocketnet_client_transport_io_t * lost = &race->family[1 - committed];
+        race->closed_send_failures.store( rocketnet_client_race_family_send_failures( lost ), std::memory_order_release );
+        rocketnet_client_transport_io_close( lost );
+        race->closed = true;
+    }
+    return committed;
+}
+
+static void rocketnet_client_race_destroy( void * instance )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    for ( int i = 0; i < 2; i++ )
+        rocketnet_client_transport_io_close( &race->family[i] );
+    void * context = race->context;
+    race->~rocketnet_client_race_t();
+    rocketnet_free( context, race );
+}
+
+// the family whose server has the address family of to: only the two server
+// addresses are ever sent to
+static int rocketnet_client_race_family_of( const rocketnet_client_race_t * race, const rocketnet_address_t * to )
+{
+    return to->type == race->server_address[1].type ? 1 : 0;
+}
+
+static void rocketnet_client_race_send( void * instance, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = race->committed.load( std::memory_order_acquire );
+    const int family = rocketnet_client_race_family_of( race, to );
+    if ( committed >= 0 )
+    {
+        // a packet queued for the losing family before the commit is dropped
+        if ( family == committed )
+            race->family[family].operations->send( race->family[family].instance, to, packet_data, packet_bytes );
+        return;
+    }
+    race->family[family].operations->send( race->family[family].instance, to, packet_data, packet_bytes );
+    if ( family == 0 && rocketnet_address_equal( to, &race->server_address[0] ) )
+        race->family[1].operations->send( race->family[1].instance, &race->server_address[1], packet_data, packet_bytes );
+}
+
+static void rocketnet_client_race_send_batch( void * instance, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = race->committed.load( std::memory_order_acquire );
+    if ( committed >= 0 )
+    {
+        // a packet handed off for the losing family before the commit is dropped
+        bool all_kept = true;
+        for ( int i = 0; i < num_packets; i++ )
+            all_kept = all_kept && rocketnet_client_race_family_of( race, sends[i].to ) == committed;
+        rocketnet_client_transport_io_t * kept = &race->family[committed];
+        if ( all_kept )
+        {
+            kept->operations->send_batch( kept->instance, sends, num_packets );
+            return;
+        }
+        for ( int i = 0; i < num_packets; i++ )
+            if ( rocketnet_client_race_family_of( race, sends[i].to ) == committed )
+                kept->operations->send( kept->instance, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+        return;
+    }
+    race->family[0].operations->send_batch( race->family[0].instance, sends, num_packets );
+    for ( int i = 0; i < num_packets; i++ )
+        if ( rocketnet_address_equal( sends[i].to, &race->server_address[0] ) )
+            race->family[1].operations->send( race->family[1].instance, &race->server_address[1],
+                                              sends[i].packet_data, sends[i].packet_bytes );
+}
+
+static int rocketnet_client_race_receive( void * instance, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = rocketnet_client_race_kept( race );
+    if ( committed >= 0 )
+        return race->family[committed].operations->receive( race->family[committed].instance, from, packet_data, packet_bytes );
+    const int bytes = race->family[0].operations->receive( race->family[0].instance, from, packet_data, packet_bytes );
+    if ( bytes != 0 )
+        return bytes;
+    return race->family[1].operations->receive( race->family[1].instance, from, packet_data, packet_bytes );
+}
+
+static int rocketnet_client_race_receive_batch( void * instance, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = rocketnet_client_race_kept( race );
+    if ( committed >= 0 )
+        return race->family[committed].operations->receive_batch( race->family[committed].instance, from, packet_data, packet_stride, packet_bytes, max_packets );
+    int received = race->family[0].operations->receive_batch( race->family[0].instance, from, packet_data, packet_stride, packet_bytes, max_packets );
+    if ( received < 0 || received >= max_packets )
+        return received;
+    const int second = race->family[1].operations->receive_batch( race->family[1].instance, from + received,
+                                                                  packet_data + received * packet_stride, packet_stride,
+                                                                  packet_bytes + received, max_packets - received );
+    return second > 0 ? received + second : received;
+}
+
+// while both are in flight the wait blocks on the primary socket and its
+// wake, at most the race poll, and reports readable so the second socket is
+// read too; the handshake's packets are few, and the race ends at the first
+// cookie
+static bool rocketnet_client_race_wait( void * instance, bool readable, double timeout_seconds )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = rocketnet_client_race_kept( race );
+    if ( committed >= 0 )
+        return race->family[committed].operations->wait( race->family[committed].instance, readable, timeout_seconds );
+    if ( !readable )
+        return race->family[0].operations->wait( race->family[0].instance, false, timeout_seconds );
+    const double timeout = timeout_seconds < ROCKETNET_CLIENT_RACE_WAIT_SECONDS ? timeout_seconds : ROCKETNET_CLIENT_RACE_WAIT_SECONDS;
+    race->family[0].operations->wait( race->family[0].instance, true, timeout );
+    return true;
+}
+
+// the wake is level-triggered: both are set while both are in flight, so the
+// kept family's wake is set whichever wins
+static void rocketnet_client_race_wake( void * instance )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = race->committed.load( std::memory_order_acquire );
+    for ( int i = 0; i < 2; i++ )
+        if ( committed < 0 || committed == i )
+            race->family[i].operations->wake( race->family[i].instance );
+}
+
+static uint64_t rocketnet_client_race_send_failures( void * instance )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = race->committed.load( std::memory_order_acquire );
+    if ( committed >= 0 )
+        return rocketnet_client_race_family_send_failures( &race->family[committed] ) +
+               race->closed_send_failures.load( std::memory_order_acquire );
+    return rocketnet_client_race_family_send_failures( &race->family[0] ) +
+           rocketnet_client_race_family_send_failures( &race->family[1] );
+}
+
+// the commit, on the caller's thread: the attempt keeps the family that
+// answered first, and its server is the protocol's server from now on
+static void rocketnet_client_race_commit( rocketnet_client_transport_t * transport, rocketnet_client_race_t * race, int family )
+{
+    transport->protocol.server_address = race->server_address[family];
+    race->committed.store( family, std::memory_order_release );
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client keeps %s: the first cookie answered there",
+                    rocketnet_address_to_string( &race->server_address[family], address_string ) );
+}
+
 static void rocketnet_client_link_send( rocketnet_client_transport_t * transport,
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
@@ -453,6 +659,8 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
                                       to, packet_data, packet_bytes, transport->time );
 }
 
+// tla/RNClientLinkStop.tla Drain: a running update sends every copy the link
+// simulator holds that has come due.
 static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -546,11 +754,17 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // ownership overhead is added per allocation. The transport name must be a
 // concrete built-in for this platform; unknown names, "auto" and transport lists
 // are not concrete and return false.
+//
+// The plan takes no token, so it is the bound for the worst token: one naming
+// both families on a host that can use both, whose create opens the family
+// race's second socket of the granted transport (no second thread) and its
+// rocketnet_client_race_t (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
+// RaceFamilies). A one-family create allocates less than the plan.
 
 struct rocketnet_client_memory_plan_t
 {
     uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, total_bytes;
+    uint64_t transport_io_bytes, race_bytes, total_bytes;
     int sockets;
 };
 
@@ -623,7 +837,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !transport ) return false;
     rocketnet_client_transport_config_t defaults;
     if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
-    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
@@ -648,17 +862,22 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #else
         plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif
+        // the family race's second socket, the same allocations as the first,
+        // and the race block that routes the two
+        plan.race_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_race_t) } );
+        if ( !plan.race_bytes || !rocketnet_memory_add( plan.race_bytes, 1, plan.transport_io_bytes ) )
+            return false;
         if ( !config->step_driven )
         {
             if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
                 return false;
         }
-        plan.sockets = 1;
+        plan.sockets = 2;
     }
     else return false;
 
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes ) return false;
-    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes } )
+    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes || !plan.race_bytes ) return false;
+    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) ) return false;
     return plan.total_bytes <= SIZE_MAX;
 }
@@ -831,7 +1050,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
-    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
     {
@@ -848,7 +1067,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
@@ -921,7 +1140,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
 
-    client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    client_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
@@ -1000,6 +1219,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 *status = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
             return NULL;
         }
+    }
+
+    // A token naming port 0 can never reach a server: macOS refuses the
+    // connect, and Linux and Windows accept it and the packets reach no
+    // server. Every flagged address is checked, so the refusal does not
+    // depend on the host's IPv6.
+    if ( rocketnet_signed_connect_data_names_port_zero( &client_transport->protocol.signed_fields ) )
+    {
+        rocketnet_error( "connect token names a server address with port 0; refusing to connect" );
+        rocketnet_client_transport_abort_create( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO;
+        return NULL;
     }
 
     // the socket binds after the token parse so the bind family can follow
@@ -1215,6 +1447,95 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     client_transport->transport = granted_transport;
 
+    // the family race (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
+    // RaceFamilies): a token naming both families on a host that can use
+    // both selected its IPv6 server above, and the IPv4 server is dialed
+    // too, on a second socket of the granted transport, bound with the
+    // family an IPv4 server binds today and connected to that server. Both
+    // sockets are opened here, with the connect; nothing is opened during
+    // update. A host whose second socket is refused races nothing and
+    // connects exactly as a one-family client; a refusal for want of memory
+    // ends the create, as for the first socket. The memory plan seam opens
+    // no socket and races nothing.
+
+    const uint8_t token_flags = client_transport->protocol.signed_fields.address_flags;
+    if ( !rocketnet_client_memory_plan_seam_enabled &&
+         client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
+         ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 )
+    {
+        struct rocketnet_signed_connect_data_t ipv4_only = client_transport->protocol.signed_fields;
+        ipv4_only.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+        rocketnet_address_t race_server;
+        rocketnet_client_protocol_pick_server_address( &ipv4_only, false, &race_server );
+
+        rocketnet_address_t race_bind;
+        memset( &race_bind, 0, sizeof(race_bind) );
+        race_bind.type = (uint8_t) rocketnet_platform_client_bind_family( ROCKETNET_ADDRESS_IPV4, ipv6_available, ipv4_server_dual_stack );
+
+        const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( granted_transport );
+        const rocketnet_client_transport_io_operations_t * operations = step_driven_operations ? step_driven_operations :
+            ( definition && definition->backend ? definition->backend->client : NULL );
+        int race_status = ROCKETNET_STATUS_OK;
+        const rocketnet_client_transport_io_config_t race_config = { rocketnet_transport_name( granted_transport ), config, &race_status };
+        rocketnet_client_transport_io_t race_io = {};
+        if ( rocketnet_client_transport_io_open( operations, step_driven_operations ? step_driven_transport_context : client_transport->context,
+                                                 &race_config, &race_bind, &race_io ) &&
+             race_io.operations->connect && !race_io.operations->connect( race_io.instance, &race_server ) )
+            rocketnet_client_transport_io_close( &race_io );
+
+        rocketnet_client_race_t * race = NULL;
+        bool race_out_of_memory = race_status == ROCKETNET_STATUS_OUT_OF_MEMORY;
+        if ( race_io.instance )
+        {
+            race = (rocketnet_client_race_t *) rocketnet_malloc( context, sizeof(rocketnet_client_race_t) );
+            if ( !race )
+            {
+                rocketnet_client_transport_io_close( &race_io );
+                race_out_of_memory = true;
+            }
+        }
+
+        if ( race_out_of_memory )
+        {
+            rocketnet_error( "client transport create: the %s transport could not allocate its second family's endpoint", rocketnet_transport_name( granted_transport ) );
+            rocketnet_client_transport_abort_create( client_transport );
+            if ( status )
+                *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+            return NULL;
+        }
+
+        if ( race )
+        {
+            new ( race ) rocketnet_client_race_t();
+            const rocketnet_client_transport_io_operations_t * inner = client_transport->io.operations;
+            race->operations = *inner;
+            race->operations.destroy = rocketnet_client_race_destroy;
+            race->operations.send = rocketnet_client_race_send;
+            race->operations.receive = rocketnet_client_race_receive;
+            race->operations.send_batch = inner->send_batch ? rocketnet_client_race_send_batch : NULL;
+            race->operations.receive_batch = inner->receive_batch ? rocketnet_client_race_receive_batch : NULL;
+            race->operations.wait = inner->wait ? rocketnet_client_race_wait : NULL;
+            race->operations.wake = inner->wake ? rocketnet_client_race_wake : NULL;
+            race->operations.send_failures = inner->send_failures ? rocketnet_client_race_send_failures : NULL;
+            race->operations.connect = NULL;    // both sockets are connected above
+            race->family[0] = client_transport->io;
+            race->family[1] = race_io;
+            race->server_address[0] = client_transport->protocol.server_address;
+            race->server_address[1] = race_server;
+            race->committed.store( -1, std::memory_order_relaxed );
+            race->closed = false;
+            race->closed_send_failures.store( 0, std::memory_order_relaxed );
+            race->context = context;
+            client_transport->io.operations = &race->operations;
+            client_transport->io.instance = race;
+            rocketnet_info( "client races both families: %s too", rocketnet_address_to_string( &race_server, string_buffer ) );
+        }
+        else
+        {
+            rocketnet_info( "client races no family: the second family's socket was refused" );
+        }
+    }
+
     if ( refused_names[0] != '\0' )
     {
         rocketnet_info( "client transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
@@ -1305,6 +1626,16 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    // tla/RNClientIoShutdown.tla Start: create starts the worker generation
+    // below, the I/O thread or the legacy receive thread.
+    // tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
+    // created here runs every core action.
+    // tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
+    // IoWait, IoWake, IoClearWake and IoExit: the I/O thread's step sends each
+    // handed-off ring, drains datagrams into its buffer and publishes it, waits
+    // and wakes, and exits once quit is stored.
+    // tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
+    // handed-off ring and marks it sent when every slot left.
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
         rocketnet_client_io_ring_view_t views[ROCKETNET_CLIENT_IO_NUM_RINGS];
@@ -1392,6 +1723,15 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 // Requests never join, call a backend send, or wait for a ring. The final
 // filling ring is published without reopening the other ring: no producer may
 // touch either ring after stop, and the worker can drain both independently.
+// tla/RNClientIoShutdown.tla RequestStop, RepeatStop and RequestReturn: the
+// first call publishes the final filling ring with quit, a repeat returns at
+// once, and neither waits on the worker.
+// tla/RNClientIo.tla Stop: stores quit and wakes the I/O thread
+// (rocketnet_client_io_stop).
+// tla/RNBufferHandoff.tla MainStop: hands the Filling ring to the worker with
+// the quit store.
+// tla/RNClientLinkStop.tla Stop: publishes quit without draining the link
+// simulator or calling the backend.
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
@@ -1417,6 +1757,8 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
 }
 
+// tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
+// completion flag and returns without waiting.
 bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1438,6 +1780,8 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
     client_transport->stop_burst_pending.store( false, std::memory_order_release );
 }
 
+// tla/RNClientIoShutdown.tla WorkerQuiesce: the legacy worker sends what it
+// still holds, then stores stopped.
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_transport_flush_disconnect( client_transport );
@@ -1468,6 +1812,19 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
+// transport is freed.
+
+// tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
+// transport not yet stopped, joins the worker thread, then frees.
+// tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
+// Done: destroy makes its last hand-off, waits at the deadline for the other
+// ring to reach Sent, drops the committed slots it cannot hand off, joins,
+// frees and ends.
+// tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
+// generation before the next one runs, as the synchronous destroy and the
+// next connect do here.
+// tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1519,12 +1876,24 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     // sdk/rocketnet_connection_reset.cpp:42), and the server's own
     // redundant disconnect packets still in flight are dropped uncounted.
 
-    if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
+    // While the family race is in flight the other family's server is
+    // dialed too (tla/ServerConnection.tla InFlight); once the race commits
+    // it is foreign like any other source, so a late answer from it is
+    // dropped and counted here.
+
+    rocketnet_client_race_t * race = rocketnet_client_race_of( client_transport );
+    const bool racing = race && race->committed.load( std::memory_order_relaxed ) < 0 &&
+                        client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE;
+    const bool from_second = racing && rocketnet_address_equal( from, &race->server_address[1] );
+
+    if ( !from_second && !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
     {
         if ( client_transport->protocol.server_address.type != ROCKETNET_ADDRESS_NONE )
             client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE]++;
         return;
     }
+
+    const int state_before = client_transport->protocol.state;
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
@@ -1543,6 +1912,14 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
                                               payload ? payload : overflow,
                                               payload ? ROCKETNET_FRAME_SIZE : ROCKETNET_RECEIVE_CEILING,
                                               &payload_bytes );
+
+    // the first valid cookie moves the client out of requesting cookie: the
+    // race commits to the family it arrived on (tla/ClientConnection.tla
+    // ClientRecvCookie). Nothing else leaves requesting cookie forward.
+
+    if ( racing && state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE &&
+         client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
+        rocketnet_client_race_commit( client_transport, race, from_second ? 1 : 0 );
 
     // an accepted session packet feeds the quality trackers: loss from gaps
     // in the session sequence, jitter from the receive thread's per-packet
@@ -1608,6 +1985,11 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // yield, no retry; a ring the I/O thread holds is never reused
 // (HandOffNeverWaits, NoReuseBeforeSent).
 
+// tla/RNClientIo.tla HandOffTo, DeferTo and Reopen: hands the Filling ring to
+// the I/O thread, or counts the deferral when the other ring is busy; after a
+// hand-off it empties the reopened ring send_fill now names.
+// tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
+// the other ring is Sent; the fixed main never waits for the I/O thread.
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
 {
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
@@ -1680,6 +2062,12 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 
 // Try once at each caller handoff. Unit tests can refuse either phase without
 // starting a competing thread or depending on scheduler timing.
+// tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
+// exchange, never waiting.
+// tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
+// waits for a held mutex; the fixed main only try-acquires and never waits.
+// tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
+// return phases.
 static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
 {
 #if ROCKETNET_TEST_SEAMS
@@ -1703,6 +2091,10 @@ static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_rec
 // Take the oldest READY buffers that fit the packet budget. If the worker
 // owns the mutex, leave everything in place and continue this update without
 // receiving. Returning previously processed buffers precedes taking new ones.
+// tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
+// takes the oldest READY prefix within the packet budget.
+// tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
+// index exchange under the mutex, then the release.
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
 {
     if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
@@ -1725,6 +2117,8 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
 
 // Keep processed buffers caller-owned if the worker has the mutex. They are
 // neither READY nor FREE, so neither side can process or overwrite them again.
+// tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
+// outside the mutex and returns them without taking any.
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
 {
     if ( num_exposed == 0 )
@@ -1822,6 +2216,13 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 
 }
 
+// tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
+// buffer at its start and returns it at its end, on the main thread.
+// tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
+// I/O step runs on the caller's thread inside update, never blocking.
+// tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
+// tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
+// buffer outside the mutex, and its end begins the next expose.
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2003,6 +2404,10 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
+// tla/RNClientIo.tla Write and OnGame: a game thread takes a free slot of the
+// Filling ring.
+// tla/RNBufferHandoff.tla Produce: on send the producer writes its ring outside
+// the mutex.
 uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2245,6 +2650,7 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
     return total_wire_bytes;
 }
 
+// tla/RNClientIo.tla Commit: seals the slot in place and commits it.
 static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( client_transport );
@@ -2485,6 +2891,10 @@ int rocketnet_client_transport_client_index( rocketnet_client_transport_t * clie
     return client_transport->protocol.client_index;
 }
 
+// tla/RNClientIo.tla Disconnect: seals the burst into the Filling ring and
+// hands it off to the address saved before the protocol reset.
+// tla/RNClientLinkStop.tla Disconnect: with the link simulator the burst takes
+// the loss policy and its surviving copies are staged in the simulator queue.
 void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2672,6 +3082,10 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 // buffer that cannot publish leaves datagrams in the transport until a later
 // update frees one. No buffer another side owns is ever written.
 
+// tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
+// worker locks, publishes its buffer index and takes a free one, then unlocks.
+// tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
+// with MaxReady N-1.
 static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
@@ -2685,6 +3099,11 @@ static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * clie
     }
 }
 
+// tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
+// its buffer outside the mutex.
+// tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
+// writes into a buffer it already published, which update now holds.
+// tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
     rocketnet_assert( client_transport );
@@ -2777,6 +3196,13 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
+// seen.
+// tla/RNBufferHandoff.tla WorkerWait, WorkerWakes and Terminated: the worker
+// sleeps when nothing was done and wakes on the wake or readable, and the
+// behaviour ends with both threads done.
+// tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
+// stop is complete.
 static void rocketnet_client_thread_function( void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;

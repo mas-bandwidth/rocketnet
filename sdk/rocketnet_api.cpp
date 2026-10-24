@@ -241,7 +241,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 
     rocketnet_client_transport_default_config_current( transport );
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
     {
@@ -313,7 +312,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
@@ -501,7 +499,6 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     struct rocketnet_client_transport_config_t transport;
     rocketnet_client_transport_default_config_current( &transport );
     memcpy( config->packet_filter, transport.packet_filter, sizeof( config->packet_filter ) );
-    config->max_payload_bytes = transport.max_payload_bytes;
     config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
@@ -564,27 +561,25 @@ enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_c
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
-    // Workload: one 1416-byte payload in each direction every 100 ms. That is
-    // 10 * 1416 = 14,160 payload bytes/s, about 120 kbps on the wire once the
-    // 1500-byte MTU's IP, UDP and RocketNet overhead is counted. The reliable
-    // timeout keeps its 10,000-ms default, so the windows, queues and buffers
-    // below hold 10 s: 100 messages of 1416 bytes is 141,600 bytes, and the
-    // window, queue and in-flight counts round 100 up to 128. Validation
-    // refuses values below its minimums; it never clamps.
-    config->max_payload_bytes = ROCKETNET_RECEIVE_PAYLOAD_BYTES;          // one MTU's 1416-byte payload per fragment
-    config->max_fragmented_messages = 1;                                  // one 1416-byte fragment, so nothing fragments
-    config->send_kbps = 256;                                              // 2.13x the 120-kbps wire rate
-    config->num_channels = 8;                                             // the light workload's reliability cases
-    config->reliable_messages_in_flight = 128;                            // 100 messages per 10 s, next power of two
-    config->receive_message_buffer_bytes = 141600;                        // 100 * 1416 bytes, 10 s of payload
-    config->max_message_bytes = ROCKETNET_RECEIVE_PAYLOAD_BYTES - 1;      // largest message that fits one MTU
-    config->send_message_buffer_bytes = 141600;                           // 100 * 1416 bytes, 10 s of payload
-    config->send_queue_messages = 128;                                    // 100 messages per 10 s, rounded up
-    config->packets_in_flight = 128;                                      // 100 packets per 10 s, rounded up
-    config->packets_per_update = 4;                                       // one data packet per update, with headroom
-    config->unreliable_messages_per_update = 8;                           // one message per update, with headroom
-    config->sequenced_messages_held = 64;                                 // 6.4 s at 10 messages/s
-    config->max_message_receipts = 128;                                   // 100 receipts per 10 s, rounded up
+    // Workload: one 1500-byte MTU packet each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the one-packet ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message is not split across packets
+    config->send_kbps = 256;                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415: one packet's payload less the form byte
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
     return ROCKETNET_STATUS_OK;
 }
 
@@ -622,14 +617,14 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder, false ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
@@ -1352,7 +1347,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
     config->num_xdp_queues = transport->num_xdp_queues;
     config->num_os_cpus = transport->num_os_cpus;
-    config->max_payload_bytes = transport->max_payload_bytes;
     config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
@@ -1400,27 +1394,25 @@ enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_c
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
-    // Workload: one 1416-byte payload in each direction every 100 ms. That is
-    // 10 * 1416 = 14,160 payload bytes/s, about 120 kbps on the wire once the
-    // 1500-byte MTU's IP, UDP and RocketNet overhead is counted. The reliable
-    // timeout keeps its 10,000-ms default, so the windows, queues and buffers
-    // below hold 10 s: 100 messages of 1416 bytes is 141,600 bytes, and the
-    // window, queue and in-flight counts round 100 up to 128. Validation
-    // refuses values below its minimums; it never clamps.
-    config->max_payload_bytes = ROCKETNET_RECEIVE_PAYLOAD_BYTES;          // one MTU's 1416-byte payload per fragment
-    config->max_fragmented_messages = 1;                                  // one 1416-byte fragment, so nothing fragments
-    config->per_client_send_kbps = 256;                                   // 2.13x the 120-kbps wire rate
-    config->num_channels = 8;                                             // the light workload's reliability cases
-    config->reliable_messages_in_flight = 128;                            // 100 messages per 10 s, next power of two
-    config->receive_message_buffer_bytes = 141600;                        // 100 * 1416 bytes, 10 s of payload
-    config->max_message_bytes = ROCKETNET_RECEIVE_PAYLOAD_BYTES - 1;      // largest message that fits one MTU
-    config->send_message_buffer_bytes = 141600;                           // 100 * 1416 bytes, 10 s of payload
-    config->send_queue_messages = 128;                                    // 100 messages per 10 s, rounded up
-    config->packets_in_flight = 128;                                      // 100 packets per 10 s, rounded up
-    config->packets_per_update = 4;                                       // one data packet per update, with headroom
-    config->unreliable_messages_per_update = 8;                           // one message per update, with headroom
-    config->sequenced_messages_held = 64;                                 // 6.4 s at 10 messages/s
-    config->max_message_receipts = 128;                                   // 100 receipts per 10 s, rounded up
+    // Workload: one 1500-byte MTU packet each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the one-packet ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message is not split across packets
+    config->per_client_send_kbps = 256;                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415: one packet's payload less the form byte
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
     return ROCKETNET_STATUS_OK;
 }
 
@@ -1457,7 +1449,7 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,

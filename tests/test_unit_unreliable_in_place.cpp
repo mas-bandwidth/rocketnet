@@ -100,10 +100,10 @@ struct ip_end_t
     std::vector<int> batch_slot;
 
     std::vector<uint64_t> acks_due;     // ids this end opened, waiting for a packet to carry them
-    std::vector<uint64_t> acks_inbox;   // ids the peer acked in the packets it sent
+    std::vector<uint64_t> acks_inbox;   // ids the other end acked in the packets it sent
     std::vector<uint64_t> acked;        // this update's acked batch
     std::vector<int> acked_slot;
-    std::vector<uint64_t> acked_all;    // every id the peer acked
+    std::vector<uint64_t> acked_all;    // every id the other end acked
 
     bool connected;
     bool refuse_start;                  // start_packet gives no frame while set (a full ring)
@@ -134,7 +134,7 @@ static void ip_update( void * transport, double time )
 {
     (void) time;
     ip_end_t * e = (ip_end_t *) transport;
-    ip_end_t * peer = e->is_server ? &e->net->client : &e->net->server;
+    ip_end_t * remote = e->is_server ? &e->net->client : &e->net->server;
     e->acked.clear();
     e->acked_slot.clear();
     e->batch.clear();
@@ -161,7 +161,7 @@ static void ip_update( void * transport, double time )
         e->acked_all.push_back( e->acks_inbox[k] );
     }
     e->acks_inbox.clear();
-    (void) peer;
+    (void) remote;
 }
 
 static int ip_payloads( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
@@ -233,8 +233,8 @@ static int ip_finish_packet( void * transport, rocketnet_packet_context_t * cont
     ip_copy_bytes( packet.data, payload, (size_t) payload_bytes );
     packet.acks.swap( e->acks_due );
     e->sent.push_back( packet );
-    ip_end_t * peer = e->is_server ? &e->net->client : &e->net->server;
-    peer->inbound.push_back( packet );
+    ip_end_t * remote = e->is_server ? &e->net->client : &e->net->server;
+    remote->inbound.push_back( packet );
     if ( payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return payload_bytes + 64 * ( payload_bytes / ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 );   // the fragments' wire bytes
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
@@ -264,8 +264,8 @@ static void ip_send_packets( void * transport )
     packet.id = ++e->net->next_id;
     packet.slot = 0;
     packet.acks.swap( e->acks_due );
-    ip_end_t * peer = e->is_server ? &e->net->client : &e->net->server;
-    peer->inbound.push_back( packet );
+    ip_end_t * remote = e->is_server ? &e->net->client : &e->net->server;
+    remote->inbound.push_back( packet );
 }
 
 static uint64_t ip_connection( void * transport, int client_index )

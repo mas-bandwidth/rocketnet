@@ -222,7 +222,7 @@ bool rocketnet_platform_hostname_resolve( const char * hostname, const char * po
 uint16_t rocketnet_platform_preferred_client_port( void );
 
 /**
- * @brief Reports whether an IPv6 client socket can also use IPv4-mapped peers.
+ * @brief Reports whether an IPv6 client socket can also use IPv4-mapped addresses.
  *
  * Call after platform initialization. Some platforms, including OpenBSD,
  * report false because they keep IPv6 sockets IPv6-only.
@@ -256,7 +256,7 @@ void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available );
  *
  * @param server_address_type ROCKETNET_ADDRESS_IPV4 or ROCKETNET_ADDRESS_IPV6.
  * @param ipv6_available Whether an IPv6 socket can be created on this host.
- * @param dual_stack Whether IPv6 sockets also carry IPv4-mapped peers.
+ * @param dual_stack Whether IPv6 sockets also carry IPv4-mapped addresses.
  * @return IPv6 when the server needs it or an IPv4 server can use dual stack;
  * IPv4 when only IPv4 is possible; ROCKETNET_ADDRESS_NONE when the server is
  * IPv6 and this host has no IPv6 stack.
@@ -346,16 +346,16 @@ void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * soc
 void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
 
 /**
- * @brief Connects a UDP socket to its one peer.
+ * @brief Connects a UDP socket to its one remote endpoint.
  *
  * The kernel then drops every datagram from any other source before it is
- * queued, and every send on the socket goes to the peer: the destination a
+ * queued, and every send on the socket goes to the remote endpoint: the destination a
  * send names is not passed to the kernel, so the caller sends only to the
- * peer. A client socket connects once, right after it is created, to the
+ * remote endpoint. A client socket connects once, right after it is created, to the
  * server its connect token selects; a server socket is never connected. An
- * ICMP error for the peer may then reach a receive, which skips it.
+ * ICMP error for the remote endpoint may then reach a receive, which skips it.
  * @param socket Live socket returned by socket_create; must be non-NULL.
- * @param to IPv4 or IPv6 peer the socket can carry; must be non-NULL.
+ * @param to IPv4 or IPv6 remote endpoint the socket can carry; must be non-NULL.
  * @return True when connected; false when the kernel refused or the socket
  * cannot carry the address, with the refusal logged.
  */
@@ -449,7 +449,7 @@ int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_
 // Winsock reports an ICMP port, host or network unreachable that answers an
 // earlier send as an error on the next receive of a UDP socket: WSAECONNRESET
 // (SIO_UDP_CONNRESET) or WSAENETRESET (SIO_UDP_NETRESET), and an overlapped or
-// registered receive completes with the matching unreachable status. A peer
+// registered receive completes with the matching unreachable status. A client
 // that dies without closing its socket makes a server see these on every
 // send to it. Every rocketnet socket turns both reports off at create, and
 // every receive path skips these statuses, counts them and keeps draining.
@@ -996,7 +996,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         int type;
         /** @brief True when the socket was created for an IPv6 bind address. */
         bool ipv6;
-        /** @brief True once rocketnet_platform_socket_connect connected it to its one peer. */
+        /** @brief True once rocketnet_platform_socket_connect connected it to its one remote endpoint. */
         bool connected;
         /** @brief Native socket descriptor owned by this object. */
         rocketnet_platform_socket_handle_t handle;
@@ -1046,7 +1046,7 @@ bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t *
         void * context;
         bool ipv6;
         bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
-        bool connected;             // connected to its one peer (rocketnet_platform_socket_connect); sends name no destination
+        bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
@@ -1096,7 +1096,7 @@ bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, 
     {
         void * context;
         bool ipv6;
-        bool connected;             // connected to its one peer (rocketnet_platform_socket_connect); sends name no destination
+        bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     };

@@ -24,6 +24,35 @@ is a failed measurement, even when declared debt. No incomplete exploration
 is labeled a pass. Freshness (`groups --stale` returns `[]`) means the records
 match the current inputs; it does not turn a debt failure into a proof.
 
+## Per-action citations
+
+A coverage row proves its code file cites its model at the module grain
+(`tla/<Module>.tla`). Each modelled transition must also cite its module and
+action.
+
+- A module's actions are the operators its `Next` definition reaches, followed
+  through operators that are only disjunctions or existentials of other
+  operators (e.g. `Next == RefuseStep \/ AdvanceStep \/ AcceptStep` reaches the
+  three steps), stopping at an operator whose body primes a variable or uses
+  `UNCHANGED`. Parameters and quantifiers are dropped: `Connect(s)` is
+  `Connect`.
+- The rule applies to every module with at least one `current` coverage row; a
+  module with only `owed`, `dst`, `none` or `covered` rows is out of scope,
+  and Link is excluded as the module-grain checker excludes it.
+- An action is cited when one of that module's `current`-row code files has a
+  comment that names `<Module>.tla` (with or without the `tla/` prefix) and
+  the action name in the same comment; the mention may run over consecutive
+  comment lines.
+- An action that models an outside event with no code (loss, forging, a clock,
+  an environment step) is exempt only when a current row's note for the module
+  contains `environment actions A, B and C`; naming an action the module does
+  not have is a failure.
+
+`tools/check_tla_coverage.py --actions` prints each uncited action as
+`<module> <action>: <code files>` and a closing `ACTIONS UNCITED <n>` line;
+`--actions-strict` adds exit status 1 while any remain, and `--actions` is in
+report mode (same exit status as without the flag).
+
 ## Pinned runner and checker
 
 Build `tools/tlacheck` from public `mas-bandwidth/nova-tools` commit
@@ -110,6 +139,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
 | `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
+| `serversession` | 12 | Server lifecycle: the passing control (invariants and HandshakeResolves) and eleven witnesses, including NoReceiveUnlessRunning and NoAdmitUnlessRunning and the two stopping witnesses |
 | `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
 | `rnserversendfair` | 4 | The server send pass under a payload-frame cap: controls at N=3/K=1 and N=5/K=2 (bounded service within ceil(N/K) updates) and two reversed witnesses: the pass starts at index 0 every update (`MCRNServerSendFairBrokenFromZero.cfg`) and the first client consumes the cap (`MCRNServerSendFairBrokenInPlace.cfg`), both violating `FairService` |
 | `sendhandoff` | 3 | Send handoff generations: the control and reversed witnesses for reopening the front and accepting a stale pointer below the published base |

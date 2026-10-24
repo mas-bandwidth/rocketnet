@@ -15,6 +15,14 @@ EXTENDS Naturals, Sequences, FiniteSets, TLC
 \* The "promote" scenario models the rule that an unreliable send too big for
 \* one packet is promoted to its reliable twin: 0 to 2, 1 to 4, 5 to the
 \* reliable code-2 path (the receipt stays with the layer above).
+\* The "blocks" scenario sends every code-4 message as a block in two
+\* fragments (ArriveFragment); a block is complete, and deliverable, only
+\* once both have arrived. It checks the one in-turn rule (InTurnOneRule):
+\* an in-turn sequenced message, block or record, is delivered as soon as it
+\* is complete and newer than the watermark; a newer in-turn message
+\* supersedes an incomplete in-turn block; nothing in turn is held as future
+\* state. Broken = "BlockInTurnHeld" is the earlier code, which collected an
+\* in-turn block in the one future-state slot and compared it there.
 CONSTANTS Scenario, Broken, SendCapacity, OrderedCapacity, HoldCapacity
 Channels == 1..2
 Codes == {0,1,2,3,4,5}
@@ -35,6 +43,8 @@ Plans ==
       [] Scenario = "hold" -> {Plan(<<3,1,4,2>>, <<1,1,1,1>>)}
       [] Scenario = "promote" -> {Plan(PromotePlanCodes, <<1,1,1,1>>),
                                   Plan(<<1,3,4,2>>, <<1,1,1,1>>)}
+      [] Scenario = "blocks" -> {Plan(<<4,3,1,4>>, <<1,1,1,1>>),
+                                 Plan(<<4,1,3,4>>, <<1,1,1,1>>)}
       [] OTHER -> {Plan(<<1,3,4,2>>, <<1,1,1,1>>),
                    Plan(<<4,1,3,2>>, <<1,1,1,1>>),
                    Plan(<<1,1,4,2>>, <<1,1,1,1>>),
@@ -53,10 +63,10 @@ Max(s) == CHOOSE n \in s : \A k \in s : n >= k
 
 VARIABLES plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason
+          referenceTrace, connected, reason, missed
 vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason>>
+          referenceTrace, connected, reason, missed>>
 
 \* The first three sends of the promote plan are too big for one record, so
 \* each unreliable one is promoted to its reliable twin (the promotion rule). The
@@ -74,16 +84,42 @@ Channel(m) == queue[m].channel
 Order(m) == queue[m].ordering
 Sequence(m) == queue[m].sequencing
 Newer(a,b) == Order(a) > Order(b) \/ (Order(a) = Order(b) /\ Sequence(a) > Sequence(b))
+\* A code-4 block: two fragments, each its own reliable number, arriving in
+\* any order (sdk/rocketnet_channel_sequenced.cpp, rn_sequenced_block).
+Block(m) == Scenario = "blocks" /\ Code(m) = 4
+Fragments == 1..2
 \* r.trace is the application's one receive queue, pumped by each receive: every
 \* code's and every channel's deliveries in delivery order, never filtered
 \* by channel (sdk/rocketnet_message_server.cpp, rn_message_object_next). The per-channel
 \* ordered and sequenced traces below are its projections.
 EmptyReceiver == [ordered_read |-> [c \in Channels |-> 0],
     sequenced_watermark |-> [c \in Channels |-> 0],
-    heldOrdered |-> {}, heldSequenced |-> {}, seen |-> {}, trace |-> <<>>]
+    heldOrdered |-> {}, heldSequenced |-> {}, seen |-> {}, trace |-> <<>>,
+    inTurn |-> {}, arrived |-> {}, counted |-> {}, arrivedInTurn |-> {}]
 OrderedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Code(m) = 3 /\ Channel(m) = c)
 SequencedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Sequenced(Code(m)) /\ Channel(m) = c)
 ReliableTrace(r) == SelectSeq(r.trace, LAMBDA m : Code(m) = 2)
+\* r.arrived holds every block fragment that has reached the receiver;
+\* r.counted those its collecting block counted since it was anchored (the
+\* code's block_have); r.arrivedInTurn those that arrived in their epoch.
+Complete(r,m) == ~Block(m) \/ \A f \in Fragments : <<m,f>> \in r.counted
+\* The in-turn block still collecting fragments on channel c. The rule keeps
+\* it apart from the future-state slot (r.inTurn); the earlier code kept it in
+\* that slot, where it is the held state of the current epoch.
+InTurnCollecting(r,c) ==
+    IF Broken = "BlockInTurnHeld"
+    THEN {n \in r.heldSequenced : Channel(n)=c /\ Order(n)=r.ordered_read[c]}
+    ELSE {n \in r.inTurn : Channel(n)=c}
+ReleaseInTurn(r,cur) ==
+    IF Broken = "BlockInTurnHeld" THEN [r EXCEPT !.heldSequenced = @ \ cur]
+    ELSE [r EXCEPT !.inTurn = @ \ cur]
+\* The rule's precondition: m is in turn, newer than the watermark, and no
+\* other in-turn block at least as new is collecting.
+Deliverable(r,m) ==
+    LET c == Channel(m) IN
+    /\ Sequenced(Code(m)) /\ Order(m) = r.ordered_read[c]
+    /\ Sequence(m) >= r.sequenced_watermark[c]
+    /\ ~\E n \in InTurnCollecting(r,c) \ {m} : Sequence(n) >= Sequence(m)
 
 \* One delivery function, shared by direct arrival and held-message drain.
 DeliverMessage(r,m,held) ==
@@ -108,10 +144,18 @@ RECURSIVE Drain(_,_,_)
 Drain(input,c,fuel) ==
     CHOOSE output \in {
         LET stale == {m \in r.heldSequenced : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
-            s == [r EXCEPT !.heldSequenced = @ \ stale]
-            readyS == {m \in s.heldSequenced : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
+            staleTurn == {m \in r.inTurn : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
+            s == [r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn]
+            turn == {m \in s.heldSequenced : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
+            readyS == {m \in turn : Complete(s,m)}
+            openS == turn \ readyS
             readyO == {m \in s.heldOrdered : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
         IN IF fuel=0 THEN s
+           \* a held block still short of fragments when its epoch opens is
+           \* in turn now: it leaves the future-state slot (the earlier code
+           \* kept it there)
+           ELSE IF openS # {} /\ Broken # "BlockInTurnHeld" THEN
+             Drain(TLCEval([s EXCEPT !.heldSequenced = @ \ openS, !.inTurn = @ \cup openS]), c, fuel-1)
            ELSE IF readyS # {} THEN
              LET m == Min(readyS)
                  t == [s EXCEPT !.heldSequenced = @ \ {m}]
@@ -129,13 +173,47 @@ Dispatch(r,m) ==
          IN IF Code(m)=2 THEN DeliverMessage(s,m,FALSE)
             ELSE IF Order(m)<s.ordered_read[Channel(m)] THEN s
             ELSE IF Order(m)=s.ordered_read[Channel(m)] THEN
-              Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
+              IF Sequenced(Code(m)) THEN
+                \* one in-turn rule: an in-turn block at least as new
+                \* supersedes this record; an older one is released
+                LET cur == InTurnCollecting(s,Channel(m))
+                IN IF \E n \in cur : Sequence(n) >= Sequence(m) THEN s
+                   ELSE Drain(TLCEval(DeliverMessage(ReleaseInTurn(s,cur),m,FALSE)), Channel(m), MaxMessages+1)
+              ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
             ELSE IF Code(m)=3 THEN [s EXCEPT !.heldOrdered = @ \cup {m}]
             ELSE LET held == {n \in s.heldSequenced : Channel(n)=Channel(m)}
                      newest == held = {} \/ (\A n \in held : Newer(m,n))
                  IN IF Broken="HoldAllSequenced" THEN [s EXCEPT !.heldSequenced = @ \cup {m}]
                     ELSE IF newest THEN [s EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
                     ELSE s
+
+\* One block fragment, r.arrived already counting it. In turn, the rule: the
+\* block is checked against the watermark and the in-turn block, never
+\* against the future-state slot, and delivered once complete. Ahead of its
+\* turn (and, for the earlier code, in turn too) it is the one held state.
+DispatchFragment(r0,m,f) ==
+    LET c == Channel(m)
+        anchor == [r0 EXCEPT !.counted = (@ \ ({m} \X Fragments)) \cup {<<m,f>>}]
+        more == [r0 EXCEPT !.counted = @ \cup {<<m,f>>}]
+    IN IF Order(m) < r0.ordered_read[c] THEN r0
+       ELSE IF Order(m) = r0.ordered_read[c] /\ Sequence(m) < r0.sequenced_watermark[c] THEN
+         [r0 EXCEPT !.inTurn = @ \ {m}]
+       ELSE IF Order(m) = r0.ordered_read[c] /\ Broken # "BlockInTurnHeld" THEN
+         LET cur == {n \in r0.inTurn : Channel(n)=c}
+         IN IF m \in cur THEN
+              IF Complete(more,m) THEN Drain(TLCEval(DeliverMessage([more EXCEPT !.inTurn = @ \ {m}],m,FALSE)), c, MaxMessages+1)
+              ELSE more
+            ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN r0
+            ELSE LET t == [anchor EXCEPT !.inTurn = @ \ cur]
+                 IN IF Complete(t,m) THEN Drain(TLCEval(DeliverMessage(t,m,FALSE)), c, MaxMessages+1)
+                    ELSE [t EXCEPT !.inTurn = @ \cup {m}]
+       ELSE LET held == {n \in r0.heldSequenced : Channel(n)=c}
+                t == IF m \in held THEN more
+                     ELSE IF \A n \in held : Newer(m,n) THEN [anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
+                     ELSE r0
+            IN IF m \in t.heldSequenced /\ Complete(t,m) /\ Order(m) = t.ordered_read[c] THEN
+                 Drain(TLCEval(DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)), c, MaxMessages+1)
+               ELSE t
 
 \* Independent ordered-only receiver. Its input is ordered packet arrivals
 \* with sequenced traffic erased. It never reads mixed receiver state or
@@ -153,7 +231,7 @@ Init ==
     /\ written={} /\ numbers= <<>> /\ opened={} /\ lost={}
     /\ acked={} /\ resend={} /\ receiver=EmptyReceiver /\ orderedInputs={}
     /\ referenceTrace=[c \in Channels |-> <<>>]
-    /\ connected=TRUE /\ reason="NONE"
+    /\ connected=TRUE /\ reason="NONE" /\ missed={}
 
 Enqueue ==
     /\ connected /\ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
@@ -164,20 +242,21 @@ Enqueue ==
           /\ sequenced_write'=IF k=3 THEN [sequenced_write EXCEPT ![c]=0]
                                ELSE IF Sequenced(k) THEN [sequenced_write EXCEPT ![c]=@+1]
                                ELSE sequenced_write
-    /\ UNCHANGED <<connected,reason>>
+    /\ UNCHANGED <<connected,reason,missed>>
     /\ UNCHANGED <<plan,written,numbers,opened,lost,acked,resend,
                     receiver,orderedInputs,referenceTrace>>
 
 WritePacket(m,attempt) ==
     /\ connected /\ m \in DOMAIN queue /\ attempt \in 1..2
     /\ Packet(m,attempt) \notin written
-    /\ IF attempt=1 THEN \A n \in 1..(m-1) : Packet(n,1) \in written
+    /\ ~Block(m)
+    /\ IF attempt=1 THEN \A n \in 1..(m-1) : Block(n) \/ Packet(n,1) \in written
        ELSE Reliable(Code(m)) /\ Packet(m,1) \in written /\ m \notin acked
     /\ written'=written \cup {Packet(m,attempt)}
     /\ numbers'=IF Reliable(Code(m)) /\ m \notin Values(numbers) THEN Append(numbers,m) ELSE numbers
     /\ resend'=IF Reliable(Code(m)) THEN resend \cup {m} ELSE resend
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,opened,lost,
-                    acked,receiver,orderedInputs,referenceTrace,connected,reason>>
+                    acked,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
 OpenPacket(pid) ==
     /\ connected /\ pid \in written \ (opened \cup lost)
@@ -191,6 +270,9 @@ OpenPacket(pid) ==
           /\ resend'=IF overflow THEN {} ELSE resend
           /\ reason'=IF overflow THEN "MESSAGE_MEMORY_EXHAUSTED" ELSE reason
           /\ orderedInputs'=IF Code(m)=3 THEN orderedInputs \cup {m} ELSE orderedInputs
+          /\ missed'=IF ~overflow /\ ~(Reliable(Code(m)) /\ m \in receiver.seen) /\
+                         Deliverable(receiver,m) /\ m \notin Values(r.trace)
+                      THEN missed \cup {m} ELSE missed
     /\ referenceTrace'=[c \in Channels |-> OrderedReference(orderedInputs',c,0)]
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     lost,acked>>
@@ -202,25 +284,45 @@ ReceiveAck(q) ==
            reliable == {m \in delivered : Reliable(Code(m))}
        IN /\ acked'=acked \cup reliable /\ resend'=resend \ reliable
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
-                    opened,lost,receiver,orderedInputs,referenceTrace,connected,reason>>
+                    opened,lost,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 LosePacket(pid) ==
     /\ connected /\ pid \in written \ (opened \cup lost) /\ pid % 2 = 1
     /\ lost'=lost \cup {pid}
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
-                    opened,acked,resend,receiver,orderedInputs,referenceTrace,connected,reason>>
+                    opened,acked,resend,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
 MemoryExhausted ==
     /\ connected /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
     /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED"
-    /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}]
+    /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
-                    opened,lost,acked,orderedInputs,referenceTrace>>
+                    opened,lost,acked,orderedInputs,referenceTrace,missed>>
+
+\* A block fragment reaches the receiver. Fragments are reliable numbers whose
+\* transport (WritePacket, ReceiveAck) is RNBlocks' and FragmentsAndAcks'
+\* concern; here only their arrival order matters. missed records a block
+\* whose fragments all arrived in its turn, that was Deliverable when the last
+\* one came, and that was not delivered.
+ArriveFragment(m,f) ==
+    /\ connected /\ m \in DOMAIN queue /\ Block(m)
+    /\ <<m,f>> \notin receiver.arrived
+    /\ LET a == [receiver EXCEPT !.arrived = @ \cup {<<m,f>>},
+                    !.arrivedInTurn = IF Order(m) = receiver.ordered_read[Channel(m)]
+                                      THEN @ \cup {<<m,f>>} ELSE @]
+           r == TLCEval(DispatchFragment(a,m,f))
+       IN /\ receiver'=r
+          /\ missed'=IF ({m} \X Fragments) \subseteq a.arrivedInTurn /\
+                         Deliverable(receiver,m) /\ m \notin Values(r.trace)
+                      THEN missed \cup {m} ELSE missed
+    /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
+                    opened,lost,acked,resend,orderedInputs,referenceTrace,connected,reason>>
 
 WriteAny == \E m \in Messages, attempt \in 1..2 : WritePacket(m,attempt)
 OpenAny == \E pid \in Pids : OpenPacket(pid)
 AckAny == \E pid \in Pids : ReceiveAck({pid})
 LoseAny == \E pid \in Pids : LosePacket(pid)
-Next == MemoryExhausted \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny
+ArriveAny == \E m \in Messages, f \in Fragments : ArriveFragment(m,f)
+Next == MemoryExhausted \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
 SafetySpec == Init /\ [][Next]_vars
 \* All enabled actions consume a finite id/cursor. Weak fairness of this
 \* disjunction therefore drains every reliable send/arrival/packet ACK.
@@ -235,6 +337,11 @@ TypeOK ==
     /\ receiver.sequenced_watermark \in [Channels -> 0..MaxMessages]
     /\ receiver.heldOrdered \subseteq DOMAIN queue
     /\ receiver.heldSequenced \subseteq DOMAIN queue
+    /\ receiver.inTurn \subseteq {m \in DOMAIN queue : Block(m)}
+    /\ receiver.arrived \subseteq {m \in DOMAIN queue : Block(m)} \X Fragments
+    /\ receiver.counted \subseteq receiver.arrived
+    /\ receiver.arrivedInTurn \subseteq receiver.arrived
+    /\ missed \subseteq DOMAIN queue
     /\ receiver.trace \in Seq(Messages) /\ Len(receiver.trace)<=2*MaxMessages
     /\ referenceTrace \in [Channels -> Seq(Messages)]
     /\ written \subseteq Pids /\ opened \subseteq written /\ lost \subseteq written
@@ -249,6 +356,7 @@ BuffersBounded ==
     /\ Cardinality(receiver.heldOrdered)<=OrderedCapacity
     /\ Cardinality(receiver.heldSequenced)<=HoldCapacity
     /\ \A c \in Channels : Cardinality({m \in receiver.heldSequenced : Channel(m)=c})<=1
+    /\ \A c \in Channels : Cardinality({m \in receiver.inTurn : Channel(m)=c})<=1
     /\ Len(numbers)<=SendCapacity /\ Cardinality(resend)<=SendCapacity
     /\ Cardinality(written)<=2*MaxMessages
 SequencedNeverBackwards == \A c \in Channels :
@@ -277,6 +385,13 @@ SequencedNewestWins == \A c \in Channels :
 EpochWatermark == \A c \in Channels :
     LET now == {m \in Values(SequencedTrace(receiver,c)) : Order(m)=receiver.ordered_read[c]}
     IN receiver.sequenced_watermark[c] = IF now={} THEN 0 ELSE 1+Max({Sequence(m) : m \in now})
+\* The one in-turn rule. Nothing in turn sits in the future-state slot, and
+\* every in-turn message, block or record, that was Deliverable when it
+\* became complete was delivered then.
+InTurnNeverHeldAsFuture == \A m \in receiver.heldSequenced :
+    Order(m) > receiver.ordered_read[Channel(m)]
+InTurnDeliveredWhenComplete == missed = {}
+InTurnOneRule == InTurnNeverHeldAsFuture /\ InTurnDeliveredWhenComplete
 TransportAckClearsResend == connected => resend=Values(numbers) \ acked
 AckedImpliesTransportArrival == \A m \in acked : \E pid \in opened : PacketMessage(pid)=m
 EveryReliableAckedAndDelivered == <> (~connected \/ (Len(queue)=MaxMessages /\

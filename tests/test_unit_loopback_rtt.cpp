@@ -12,7 +12,7 @@
 // (finish_packet) and the time its ack reaches the layer (acked), so every
 // RTT sample the window takes (sdk/rocketnet_window_ack.cpp:605) is seen.
 //
-// Each step updates both peers at times separated by LOOPBACK_RTT_DT. The
+// Each step updates client and server at times separated by LOOPBACK_RTT_DT. The
 // sender writes after both updates, the receiver consumes it on the next
 // step, and the receiver emits the ack on its next update and it reaches the sender on the
 // following step. Payload ACK eligibility is committed after message processing,
@@ -23,7 +23,7 @@
 // sdk/rocketnet_server_protocol.cpp:1611).
 //
 // The link loses nothing. A delivered message must not be resent. The resend
-// delay is the adaptive resend delay, and the peer's ack arrives by 4*dt, so both update
+// delay is the adaptive resend delay, and the receiver's ack arrives by 4*dt, so both update
 // orders assert zero resends.
 
 #include "unit_shutdown.h"

@@ -167,15 +167,17 @@ with the actual host link capacity separately. The fixed-rate workload has
 share rate, population, transport and measurement scope.
 
 The light profile is the SDK's public light-client geometry: eight channels, a
-128-message in-flight reliability window, 141,600-byte receive buffers, a
-1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message,
-141,600-byte send buffers, 128-message send queues, 128 packets in flight, 64
-sequenced messages held, 128 receipts, and one 1416-byte transport fragment
-slot. Its 256-kbps per-client send budget is 2.13 times the roughly 120-kbps
-wire rate of one 1,500-byte packet per 100 ms in each direction. At
+256-message in-flight reliability window, a 142,400-byte receive buffer, a
+1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message, a
+141,500-byte send buffer, a 128-message send queue, 256 packets in flight, 4
+packets and 4 unreliable messages per update, 100 sequenced messages held, 128
+receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
+256-kbps per-client send budget is 2.13 times the roughly 120-kbps wire rate
+of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
+120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-868,782,336 bytes (868,782 bytes per slot on average), and
-`rocketnet_client_required_memory` for the client profile is 2,976,192 bytes.
+955,710,336 bytes (955,710 bytes per slot on average), and
+`rocketnet_client_required_memory` for the client profile is 3,063,168 bytes.
 These are configuration calculations and measured create-block sizes, not
 measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` public block size. Those figures exclude the

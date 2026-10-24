@@ -171,7 +171,7 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | Kernel replay protection with a read-only high-water map | ✅ | — | — | — | — | — | — | — |
 | The standard sizes the kernel replay map apart from the userspace replay window | ✅ | — | — | — | — | — | — | — |
 | AF_XDP bind requests zero-copy | ✅ | — | — | — | — | — | — | — |
-| Replies go to the peer's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
+| Replies go to the client's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
 | AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
@@ -481,7 +481,7 @@ Historical preview-1 planning retained for context. Some fixes listed here lande
 | Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
 | Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |
 | Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ❌ | ❌ | ❌ |
-| The default configuration needs about 13.3 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 868,782,336 bytes (868,782 bytes per slot) for 1000 players at 10 Hz and a client at 2,976,192 bytes. | ❌ | ❌ | ❌ |
+| The default configuration needs about 13.3 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 955,710,336 bytes (955,710 bytes per slot) for 1000 players at 10 Hz and a client at 3,063,168 bytes. | ❌ | ❌ | ❌ |
 | The server's send loop walks every slot on each round, so its cost grows with rounds times max clients. The final deliverable walks only the connections that have packets due. | ❌ | ❌ | ❌ |
 | The server decrypts and seals packets on the game thread; the client already decrypts on its I/O thread. The final deliverable moves server decrypt and seal off the game thread. | ❌ | ❌ | ❌ |
 | Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ❌ | — | — |
@@ -541,7 +541,7 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | Every Windows transport, every address family, fifty times clean | — | — | ❌ |
 | Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ❌ | — | — |
 | Linux: 1000 light clients on every transport | ❌ | — | — |
-| Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
+| Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
 | macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary | — | ❌ | — |
 | macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ❌ | — |
 | Linux: the nightly soak jobs green at the branch | ❌ | — | — |

@@ -206,7 +206,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 
 // the packet threshold of RFC 9002 section 6.1.1 (kPacketThreshold): a sent
-// packet is known lost once the peer has acknowledged a sequence at least
+// packet is known lost once the receiver has acknowledged a sequence at least
 // this many above it. sequence based, so it needs no clock and fits the
 // sequence-distance windows of the standard's _Replay window sizing_.
 // tla/RNSentHistory.tla models the classification it drives.
@@ -231,10 +231,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_MESSAGE_RESEND_DELAY_GRANULARITY_MS                          30
 // Retained for historical benchmark comparisons; it does not cap live resends.
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
-
-// Bound per-client ACK statistics publication to this many slot visits per
-// server update. Free slots consume a visit but never touch cold endpoints.
-#define ROCKETNET_CLIENT_STATS_SLOTS_PER_UPDATE                           20
 
 #define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
 #define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30
