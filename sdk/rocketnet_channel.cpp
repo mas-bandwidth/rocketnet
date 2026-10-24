@@ -854,7 +854,8 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     for ( uint32_t i = 0; i < count; i++ )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
-        if ( descriptor->live && descriptor->number == number + i )
+        // Standalone dispatch stores wire numbers, which wrap within a block.
+        if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
             descriptor->live = 0;
             descriptor->block_count = 0;

@@ -559,6 +559,53 @@ static void test_default_mask_enables_all_eight_types()
     rn_region_reset( region );
 }
 
+// RNChannel!EndUpdate releases every fragment, including wire numbers after wrap.
+static void test_channel_release_block_across_u24_wrap()
+{
+    rn_region_t * region = dispatch_region();
+    rocketnet_unit_check( region != NULL );
+    rn_region_reset( region );
+    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    static uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    memset( chunk, 0xCD, sizeof( chunk ) );
+    struct rn_delivery_t delivery;
+    for ( uint32_t i = 0; i < 4; i++ )
+    {
+        struct rocketnet_message_record_t record;
+        dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, chunk, (int) sizeof( chunk ) );
+        record.block = 1;
+        record.number = ( 0xFFFFFEu + i ) & 0xFFFFFFu;
+        record.fragment = i;
+        record.fragments = 3;
+        record.ring = i * ( ROCKETNET_MESSAGE_FRAGMENT_BYTES / 16 );
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) ==
+                              ( i == 3 ? ROCKETNET_CHANNEL_DISPATCH_DELIVERED : ROCKETNET_CHANNEL_DISPATCH_HELD ) );
+    }
+    rocketnet_unit_check( delivery.bytes == 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    rocketnet_unit_check( memcmp( delivery.data, chunk, sizeof( chunk ) ) == 0 );
+    rn_channels_end_update( &channels );
+    for ( uint32_t i = 0; i < 4; i++ )
+        rocketnet_unit_check( region->receive_descriptors[( 0xFFFFFEu + i ) & ( region->window - 1 )].live == 0 );
+
+    const uint64_t collisions = dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION];
+    for ( uint32_t i = 0; i < 2; i++ )
+    {
+        struct rocketnet_message_record_t record;
+        dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, chunk, 16 );
+        record.number = i;
+        record.ordering = i + 1;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+        rocketnet_unit_check( delivery.bytes == 16 );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == collisions );
+    }
+    rn_channels_end_update( &channels );
+    rn_region_reset( region );
+}
+
+REGISTER_UNIT_TEST( test_channel_release_block_across_u24_wrap );
 REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
