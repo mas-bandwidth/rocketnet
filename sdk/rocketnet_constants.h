@@ -256,6 +256,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_SOCKET_SEND_BUFFER_SIZE                              1000000
 #define ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE                           1000000
 
+// A server socket's receive request holds one update's inbound packets at
+// max_clients (rocketnet_server_receive_buffer_bytes, USAGE.md "Receive
+// buffer sizing"): max_clients x the per-client receive rate x the longest
+// update interval x the margin, never below ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE
+// and capped at INT_MAX. The longest interval is the slowest supported update
+// rate; the margin covers the kernel's per-packet accounting, which charges
+// more than the packet bytes.
+#define ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ                              10
+#define ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN                               2
+
 #define ROCKETNET_VALUE_TRACKER_HISTORY                                   1024
 
 #endif // #ifndef ROCKETNET_CONSTANTS_H
