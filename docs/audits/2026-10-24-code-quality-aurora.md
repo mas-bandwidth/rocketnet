@@ -10,29 +10,29 @@ one-sentence concrete failure or cost, and the smallest fix.
 
 ## Findings
 
-### 1. risk — `sdk/rocketnet_window_send.cpp:19`
-
-- Defect: `rn_window_send_position` computes `send->ring_next % B` with `B = region->ring_bytes`, and the only guarantee that `ring_bytes` is non-zero and a multiple of 16 is a `rocketnet_assert` in `rn_window_send_init` (line 85), which compiles out under `NDEBUG`.
-- Failure or cost: A release-build region carved without the validated config path (a future or test caller) reaches this line with `ring_bytes == 0` and takes a hardware divide-by-zero (SIGFPE) instead of a stall/refusal.
-- Smallest fix: Return a stall from `rn_window_send_admit` when `ring_bytes == 0`, or make `rn_window_send_init` refuse (return a status) on a zero/non-multiple-of-16 ring.
-
-### 2. risk — `sdk/rocketnet_fragment.cpp:312`
-
-- Defect: `rocketnet_reassembly_process_fragment` bounds-checks `connection_index` only with `rocketnet_assert` (also line 265 in the reset entry point), then indexes `newest_completed[connection_index]`, the slot array (line 350), and the arena with it unchecked.
-- Failure or cost: In a release build, any caller that passes an out-of-range connection index gets an out-of-bounds read/write in heap arena memory rather than a counted refusal.
-- Smallest fix: Replace the assert with a real range check that returns 0 (and fires `size_mismatch` or a dedicated counter) at both entry points.
-
-### 3. bug — `sdk/rocketnet_stats_window.h:13`
+### 1. bug — `sdk/rocketnet_stats_window.h:13`
 
 - Defect: The advance condition treats `time < buckets[index].time` (a backwards clock) as elapsed time, advancing to and zeroing the next bucket, despite the header comment (lines 6–8) saying buckets advance with elapsed time.
 - Failure or cost: A non-monotonic time source (a rewound game clock, a step-driven test clock, a corrected wall clock) wipes one stats bucket per update and can cycle through all of them, silently destroying the published per-second rates.
 - Smallest fix: Drop the `time < buckets[index].time` disjunct so a backwards step keeps the current bucket (the duplicated client copy at `sdk/rocketnet_client_transport.cpp:2281` needs the same change).
 
-### 4. bug — `sdk/rocketnet_packet_loss_tracker.h:91`
+### 2. bug — `sdk/rocketnet_packet_loss_tracker.h:91`
 
 - Defect: When the unprocessed sequence gap reaches `ROCKETNET_PACKET_LOSS_TRACKER_HISTORY` (1024), `rocketnet_packet_loss_tracker_update` jumps `last_packet_processed` to the newest sequence and returns 0 lost with no comment or counter naming the discard.
 - Failure or cost: After a stall or burst larger than 1024 sequences between updates, the client publishes 0 lost packets for that interval (`sdk/rocketnet_client_transport.cpp:2348` adds the return straight into `packets_lost`), so packet-loss statistics read clean exactly when loss was worst.
 - Smallest fix: Return the count of unjudged sequences as lost (or clamp-count them), and name the behaviour in a comment beside the branch.
+
+### 3. risk — `sdk/rocketnet_window_send.cpp:19`
+
+- Defect: `rn_window_send_position` computes `send->ring_next % B` with `B = region->ring_bytes`, and the only guarantee that `ring_bytes` is non-zero and a multiple of 16 is a `rocketnet_assert` in `rn_window_send_init` (line 85), which compiles out under `NDEBUG`.
+- Failure or cost: A release-build region carved without the validated config path (a future or test caller) reaches this line with `ring_bytes == 0` and takes a hardware divide-by-zero (SIGFPE) instead of a stall/refusal.
+- Smallest fix: Return a stall from `rn_window_send_admit` when `ring_bytes == 0`, or make `rn_window_send_init` refuse (return a status) on a zero/non-multiple-of-16 ring.
+
+### 4. risk — `sdk/rocketnet_fragment.cpp:312`
+
+- Defect: `rocketnet_reassembly_process_fragment` bounds-checks `connection_index` only with `rocketnet_assert` (also line 265 in the reset entry point), then indexes `newest_completed[connection_index]`, the slot array (line 350), and the arena with it unchecked.
+- Failure or cost: In a release build, any caller that passes an out-of-range connection index gets an out-of-bounds read/write in heap arena memory rather than a counted refusal.
+- Smallest fix: Replace the assert with a real range check that returns 0 (and fires `size_mismatch` or a dedicated counter) at both entry points.
 
 ### 5. risk — `sdk/rocketnet_base64.cpp:63`
 
@@ -61,7 +61,7 @@ one-sentence concrete failure or cost, and the smallest fix.
 ### 9. quality — `sdk/rocketnet_client_transport.cpp:2281`
 
 - Defect: The client re-implements the stats-window advance inline instead of using the shared `rocketnet_stats_window_advance` template (`sdk/rocketnet_stats_window.h:10`) that the server uses, duplicating the bucket, frame, and time bookkeeping across two array layouts.
-- Failure or cost: Every fix to the advance rule (including finding 3 above) must be made twice and can drift, leaving client and server publishing rates under different rules.
+- Failure or cost: Every fix to the advance rule (including finding 1 above) must be made twice and can drift, leaving client and server publishing rates under different rules.
 - Smallest fix: Store the client's frame/time beside its frames in one bucket struct and call the shared template, deleting the copy.
 
 ### 10. quality — `sdk/rocketnet_address.cpp:131`
@@ -102,7 +102,7 @@ one-sentence concrete failure or cost, and the smallest fix.
 
 ## Counts
 
-- bug: 2 (findings 3, 4)
-- risk: 4 (findings 1, 2, 5, 6)
+- bug: 2 (findings 1, 2)
+- risk: 4 (findings 3–6)
 - quality: 9 (findings 7–15)
 - total: 15
