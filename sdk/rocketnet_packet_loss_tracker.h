@@ -10,6 +10,20 @@
 
 #include "rocketnet_constants.h"
 #include "rocketnet_memory_checks.h"
+#include <limits.h>
+
+// The greatest number of packets one update reports lost. Between two updates
+// a sequence distance is unbounded, but the server's lease table admits at
+// most ROCKETNET_SERVER_PACKET_LEASES / 2 = 65536 packets in one update, the
+// largest per-update send burst the protocol has, and a 1500-byte stream
+// cannot carry more than that in the time a stalled update covers. A corrupt
+// or renamed sequence beyond it is therefore clamped here rather than
+// saturating INT_MAX and poisoning the lifetime loss rate. The count stays
+// exact for every burst a client can actually receive.
+#define ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE                65536
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE <= INT_MAX,
+                         "one update's lost count fits the int the client adds to its stats" );
 
 struct rocketnet_packet_loss_tracker_t
 {
@@ -17,6 +31,9 @@ struct rocketnet_packet_loss_tracker_t
 
     uint64_t last_packet_processed;
     uint64_t most_recent_packet_received;
+    // distinct sequences received above last_packet_processed (not yet
+    // judged); lets an update judge a span longer than the history ring
+    uint64_t packets_received_ahead;
 
     ROCKETNET_DECLARE_SENTINEL(1)
 
@@ -51,6 +68,7 @@ inline void rocketnet_packet_loss_tracker_reset( rocketnet_packet_loss_tracker_t
 
     tracker->last_packet_processed = 0;
     tracker->most_recent_packet_received = 0;
+    tracker->packets_received_ahead = 0;
 
     for ( int i = 0; i < ROCKETNET_PACKET_LOSS_TRACKER_HISTORY; ++i )
     {
@@ -68,6 +86,13 @@ inline void rocketnet_packet_loss_tracker_packet_received( rocketnet_packet_loss
 
     const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
 
+    // count a sequence not yet judged, once: a duplicate whose slot already
+    // holds it is not counted again
+    if ( sequence > tracker->last_packet_processed && tracker->received_packets[index] != sequence )
+    {
+        tracker->packets_received_ahead++;
+    }
+
     tracker->received_packets[index] = sequence;
     // the high-water mark never moves backwards: a reordered older packet
     // stays a hole in the judged window, not a new most-recent sequence, so
@@ -77,6 +102,22 @@ inline void rocketnet_packet_loss_tracker_packet_received( rocketnet_packet_loss
     {
         tracker->most_recent_packet_received = sequence;
     }
+}
+
+// the number of sequences in (finish, most_recent] the history ring holds: the
+// safety margin, at most ROCKETNET_PACKET_LOSS_TRACKER_SAFETY slots
+inline uint64_t rocketnet_packet_loss_tracker_margin_received( const rocketnet_packet_loss_tracker_t * tracker, uint64_t finish )
+{
+    uint64_t received = 0;
+    for ( uint64_t sequence = finish + 1; sequence <= tracker->most_recent_packet_received; ++sequence )
+    {
+        const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
+        if ( tracker->received_packets[index] == sequence )
+        {
+            received++;
+        }
+    }
+    return received;
 }
 
 inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t * tracker )
@@ -90,8 +131,32 @@ inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t
 
     if ( finish > start && finish - start >= ROCKETNET_PACKET_LOSS_TRACKER_HISTORY )
     {
-        tracker->last_packet_processed = tracker->most_recent_packet_received;
-        return 0;
+        // the span [start, finish] is longer than the history ring, so the
+        // ring alone cannot judge its older part (those slots were
+        // overwritten). Judge it by count instead: lost is the span length
+        // minus the distinct sequences received in it, which is the running
+        // count of sequences received above last_packet_processed less the
+        // ones received in the safety margin (finish, most_recent] (read from
+        // the ring, at most SAFETY slots). The margin's count is carried
+        // forward and the margin is judged next time, as in the scan below.
+        // Returning zero here would read a long stall as no loss; counting the
+        // whole span as lost would read a long received burst as total loss.
+        // The answer is capped at ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_
+        // UPDATE: one update reports at most the loss a real stream at the
+        // assumed MTU can produce, so a corrupt sequence jump cannot saturate
+        // the count.
+        const uint64_t span = finish - start + 1;
+        const uint64_t margin_received = rocketnet_packet_loss_tracker_margin_received( tracker, finish );
+        const uint64_t span_received = ( tracker->packets_received_ahead > margin_received ) ? ( tracker->packets_received_ahead - margin_received ) : 0;
+        const uint64_t span_lost = ( span > span_received ) ? ( span - span_received ) : 0;
+
+        tracker->last_packet_processed = finish;
+        tracker->packets_received_ahead = margin_received;
+
+        // bound the answer by what one update can actually account for: a
+        // sequence jump beyond a real stream's reach is capped, never
+        // saturated to INT_MAX
+        return (int) ( span_lost > ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE ? ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE : span_lost );
     }
 
     for ( uint64_t sequence = start; sequence <= finish; ++sequence )
@@ -101,6 +166,11 @@ inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t
         {
             lost_packets++;
         }
+    }
+
+    if ( finish >= start )
+    {
+        tracker->packets_received_ahead = rocketnet_packet_loss_tracker_margin_received( tracker, finish );
     }
 
     tracker->last_packet_processed = finish;

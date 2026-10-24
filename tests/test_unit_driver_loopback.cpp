@@ -1275,7 +1275,111 @@ static void test_server_drains_completed_queue_to_budget()
     rocketnet_unit_check( server->server_stats.packets_received == uint64_t(budget + 17) );
     rn_test_server_transport_stop_and_destroy( server );
 }
+
+// Every dequeue restarts an empty queue at slot zero. A queue that empties
+// after three datagrams leaves head == tail == 0, so the next datagram lands
+// in slot zero; a queue that never empties still wraps its free-running
+// indices and keeps FIFO order across the wrap.
+static void test_loopback_queue_restarts_at_slot_zero_when_empty()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t server_address, client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "0.0.0.0:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+
+    rocketnet_address_t to = client_address;
+    set_ipv4_loopback( to );
+
+    uint32_t head = 0, tail = 0, capacity = 0;
+    rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+    rocketnet_unit_check( head == 0 && tail == 0 && capacity >= 4 );
+
+    int32_t value[1024];
+    uint8_t buf[64];
+    int bytes = 0;
+    rocketnet_address_t from;
+
+    for ( int32_t i = 0; i < 3; ++i )
+    {
+        value[0] = i;
+        rocketnet_platform_send_t packet = { &to, (const uint8_t*) value, (int) sizeof( int32_t ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    for ( int32_t i = 0; i < 3; ++i )
+    {
+        bytes = client.operations->receive( client.instance, &from, buf, (int) sizeof( buf ) );
+        rocketnet_unit_check( bytes == (int) sizeof( int32_t ) );
+        int32_t got = 0;
+        memcpy( &got, buf, sizeof( got ) );
+        rocketnet_unit_check( got == i );
+        rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+        if ( i < 2 )
+            rocketnet_unit_check( head == (uint32_t) ( i + 1 ) && head != tail );
+    }
+    rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+    rocketnet_unit_check( head == 0 && tail == 0 );
+
+    value[0] = 99;
+    rocketnet_platform_send_t packet = { &to, (const uint8_t*) value, (int) sizeof( int32_t ) };
+    server.operations->send_batch( server.instance, &packet, 1 );
+    rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+    rocketnet_unit_check( head == 0 && tail == 1 );
+    bytes = client.operations->receive( client.instance, &from, buf, (int) sizeof( buf ) );
+    rocketnet_unit_check( bytes == (int) sizeof( int32_t ) );
+    int32_t got = 0;
+    memcpy( &got, buf, sizeof( got ) );
+    rocketnet_unit_check( got == 99 );
+    rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+    rocketnet_unit_check( head == 0 && tail == 0 );
+
+    // A backlog that never empties crosses the wrap with FIFO intact.
+    for ( uint32_t i = 0; i < capacity; ++i )
+    {
+        value[0] = (int32_t) i;
+        rocketnet_platform_send_t fill = { &to, (const uint8_t*) value, (int) sizeof( int32_t ) };
+        server.operations->send_batch( server.instance, &fill, 1 );
+    }
+    for ( int32_t i = 0; i < 5; ++i )
+    {
+        bytes = client.operations->receive( client.instance, &from, buf, (int) sizeof( buf ) );
+        rocketnet_unit_check( bytes == (int) sizeof( int32_t ) );
+        memcpy( &got, buf, sizeof( got ) );
+        rocketnet_unit_check( got == i );
+    }
+    for ( uint32_t i = 0; i < 5; ++i )
+    {
+        value[0] = (int32_t) ( capacity + i );
+        rocketnet_platform_send_t more = { &to, (const uint8_t*) value, (int) sizeof( int32_t ) };
+        server.operations->send_batch( server.instance, &more, 1 );
+    }
+    for ( uint32_t i = 5; i < capacity + 5; ++i )
+    {
+        bytes = client.operations->receive( client.instance, &from, buf, (int) sizeof( buf ) );
+        rocketnet_unit_check( bytes == (int) sizeof( int32_t ) );
+        memcpy( &got, buf, sizeof( got ) );
+        rocketnet_unit_check( got == (int32_t) i );
+    }
+    rocketnet_loopback_test_queue_indices( client.instance, &head, &tail, &capacity );
+    rocketnet_unit_check( head == 0 && tail == 0 );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
+    printf( "test_loopback_queue_restarts_at_slot_zero_when_empty\n" );
+}
+
 REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
+REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );

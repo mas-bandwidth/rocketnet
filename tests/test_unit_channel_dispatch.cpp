@@ -559,6 +559,87 @@ static void test_default_mask_enables_all_eight_types()
     rn_region_reset( region );
 }
 
+// A block whose numbers cross 2^24 is released whole at the end of the update:
+// every number of the update's deliveries is free after it (tla/RNChannel.tla
+// EndUpdate). Fragments two and three of a block starting at 0xFFFFFE carry the
+// wire numbers 0 and 1, and a stale descriptor there refuses the next record in
+// the same slot as MESSAGE_SLOT_COLLISION.
+
+static void test_channel_release_block_across_u24_wrap()
+{
+    rn_region_t * region = dispatch_region();
+    rocketnet_unit_check( region != NULL );
+
+    rn_region_reset( region );
+    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    const uint32_t window = region->window;
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t first_number = 0xFFFFFE;
+    static uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    memset( chunk, 0x5C, sizeof( chunk ) );
+
+    struct rn_delivery_t delivery;
+    for ( uint32_t i = 0; i < 4; i++ )
+    {
+        struct rocketnet_message_record_t block;
+        memset( &block, 0, sizeof( block ) );
+        block.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+        block.block = 1;
+        block.channel = 0;
+        block.number = ( first_number + i ) & 0xFFFFFFu;
+        block.ordering = 0;
+        block.fragment = i;
+        block.fragments = 3;
+        block.ring = i * ( F / 16 );
+        block.data = chunk;
+        block.bytes = (int) F;
+
+        const int result = rn_channels_dispatch( &channels, &block, &delivery );
+        rocketnet_unit_check( result == ( i + 1 == 4 ? ROCKETNET_CHANNEL_DISPATCH_DELIVERED : ROCKETNET_CHANNEL_DISPATCH_HELD ) );
+    }
+    rocketnet_unit_check( channels.deliveries == 1 );
+
+    rn_channels_end_update( &channels );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
+
+    // the wrapped numbers 0 and 1 are free with the rest of the block: a new
+    // number one window later, in each of their slots, is not a collision
+    rocketnet_unit_check( !region->receive_descriptors[0].live );
+    rocketnet_unit_check( !region->receive_descriptors[1].live );
+
+    for ( uint32_t i = 0; i < 2; i++ )
+    {
+        struct rocketnet_message_record_t record;
+        dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, chunk, (int) sizeof( chunk ) );
+        record.number = window + i;
+        record.ordering = 1 + i;
+
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
+    }
+
+    rn_channels_end_update( &channels );
+
+    // and the numbers the block's wrapped fragments carried dispatch anew
+    for ( uint32_t i = 0; i < 2; i++ )
+    {
+        struct rocketnet_message_record_t record;
+        dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, chunk, (int) sizeof( chunk ) );
+        record.number = i;
+        record.ordering = 3 + i;
+
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
+    }
+
+    rn_region_reset( region );
+}
+
+REGISTER_UNIT_TEST( test_channel_release_block_across_u24_wrap );
 REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
