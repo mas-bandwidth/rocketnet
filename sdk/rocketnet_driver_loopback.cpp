@@ -6,6 +6,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_client_protocol.h"
 
 #include <string.h>
 
@@ -35,6 +36,7 @@ struct rocketnet_loopback_endpoint_t
     uint32_t head;
     uint32_t tail;
     uint32_t count;
+    uint32_t capacity;                  // a power of two: the queue's datagrams, fixed at create
     rocketnet_loopback_packet_t * packets;
     bool live;
 };
@@ -44,8 +46,19 @@ struct rocketnet_loopback_state_t
     rocketnet_platform_mutex_t mutex;
     rocketnet_loopback_endpoint_t endpoints[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
     std::atomic<uint64_t> send_failures[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
+    // the live endpoint bound on each (family, port), as its table index plus
+    // one: create refuses a second endpoint of a family on a port, so a
+    // datagram's destination is one lookup, not a walk of the table
+    uint16_t bound[2][65536];
     uint16_t next_port;
 };
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_MAX_ENDPOINTS < 65535, "an endpoint's table index plus one fits the bound table" );
+
+static uint16_t * loopback_bound_entry( rocketnet_loopback_state_t & state, int type, uint16_t port )
+{
+    return &state.bound[type == ROCKETNET_ADDRESS_IPV6 ? 1 : 0][port];
+}
 
 struct rocketnet_loopback_state_init_t
 {
@@ -135,24 +148,28 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
 
 // the endpoint a datagram reaches: one bound to this address, or to the
 // wildcard of this family, on this port. an IPv4 datagram also reaches a
-// dual-stack endpoint bound to the IPv6 wildcard on that port.
+// dual-stack endpoint bound to the IPv6 wildcard on that port. Create refuses
+// a second endpoint of one family on one port, so each is one lookup in
+// state.bound.
 
 static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loopback_state_t & state, const rocketnet_address_t & to )
 {
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+    if ( to.type != ROCKETNET_ADDRESS_IPV4 && to.type != ROCKETNET_ADDRESS_IPV6 )
+        return NULL;
+    const uint16_t same = *loopback_bound_entry( state, to.type, to.port );
+    if ( same )
     {
-        rocketnet_loopback_endpoint_t & e = state.endpoints[i];
-        if ( e.live && e.bind.port == to.port && e.bind.type == to.type &&
-             ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
+        rocketnet_loopback_endpoint_t & e = state.endpoints[same - 1];
+        if ( e.live && ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
             return &e;
     }
     if ( to.type == ROCKETNET_ADDRESS_IPV4 )
     {
-        for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+        const uint16_t dual = *loopback_bound_entry( state, ROCKETNET_ADDRESS_IPV6, to.port );
+        if ( dual )
         {
-            rocketnet_loopback_endpoint_t & e = state.endpoints[i];
-            if ( e.live && e.bind.port == to.port && e.bind.type == ROCKETNET_ADDRESS_IPV6 &&
-                 loopback_is_wildcard( e.bind ) )
+            rocketnet_loopback_endpoint_t & e = state.endpoints[dual - 1];
+            if ( e.live && loopback_is_wildcard( e.bind ) )
                 return &e;
         }
     }
@@ -164,12 +181,12 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
 
 static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
 {
-    if ( dst->count >= ROCKETNET_LOOPBACK_QUEUE_PACKETS )
+    if ( dst->count >= dst->capacity )
     {
         ++dst->dropped;
         return NULL;
     }
-    return &dst->packets[dst->tail % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+    return &dst->packets[dst->tail & ( dst->capacity - 1 )];
 }
 
 size_t rocketnet_loopback_queue_bytes( int packets )
@@ -177,7 +194,25 @@ size_t rocketnet_loopback_queue_bytes( int packets )
     return sizeof( rocketnet_loopback_packet_t ) * (size_t) packets;
 }
 
-static void * loopback_create( void * context, rocketnet_address_t * bind )
+// The server endpoint's queue, from the plan: every datagram one server
+// update may read, ROCKETNET_RECEIVE_PACKETS_PER_CLIENT for each of the
+// configured clients, rounded up to a power of two (16384 at 1000 clients),
+// and never less than a client endpoint's. A whole population's disconnect
+// bursts, ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS from each client, fit
+// beside one update's ordinary traffic, and one update reads them all.
+int rocketnet_loopback_server_queue_packets( int max_clients )
+{
+    const uint64_t wanted = (uint64_t) ( max_clients > 0 ? max_clients : 1 ) * (uint64_t) ROCKETNET_RECEIVE_PACKETS_PER_CLIENT;
+    uint64_t packets = ROCKETNET_LOOPBACK_QUEUE_PACKETS;
+    while ( packets < wanted )
+        packets *= 2;
+    return (int) packets;
+}
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS + 2,
+                         "a server loopback queue sized from the plan holds every client's disconnect burst beside two packets of ordinary traffic each" );
+
+static void * loopback_create( void * context, rocketnet_address_t * bind, int queue_packets )
 {
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
         return NULL;
@@ -233,7 +268,7 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
     ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
-        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
+        rocketnet_loopback_queue_bytes( queue_packets ) );
     if ( !ep->packets )
         return NULL;
     ep->context = context;
@@ -243,18 +278,21 @@ static void * loopback_create( void * context, rocketnet_address_t * bind )
     ep->head = 0;
     ep->tail = 0;
     ep->count = 0;
+    ep->capacity = (uint32_t) queue_packets;
     ep->live = true;
+    *loopback_bound_entry( state, bind->type, bind->port ) = (uint16_t) ( slot + 1 );
     return ep;
 }
 
-static void * loopback_server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
+static void * loopback_server_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return loopback_create( context, bind );
+    const int max_clients = config && config->transport ? config->transport->max_clients : ROCKETNET_MAX_CLIENTS;
+    return loopback_create( context, bind, rocketnet_loopback_server_queue_packets( max_clients ) );
 }
 
 static void * loopback_client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * bind )
 {
-    return loopback_create( context, bind );
+    return loopback_create( context, bind, ROCKETNET_LOOPBACK_QUEUE_PACKETS );
 }
 
 static void loopback_destroy( void * transport )
@@ -262,6 +300,9 @@ static void loopback_destroy( void * transport )
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
+    uint16_t * bound = loopback_bound_entry( state, ep->bind.type, ep->bind.port );
+    if ( *bound == (uint16_t) ( ep - state.endpoints + 1 ) )
+        *bound = 0;
     rocketnet_free( ep->context, ep->packets );
     memset( ep, 0, sizeof( *ep ) );
 }
@@ -360,7 +401,7 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
     int received = 0;
     while ( received < count && ep->count > 0 )
     {
-        rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+        rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
         if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
         {
             ++ep->dropped;
@@ -385,7 +426,7 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     rocketnet_platform_mutex_guard( &state.mutex );
     if ( ep->count == 0 )
         return 0;
-    rocketnet_loopback_packet_t * packet = &ep->packets[ep->head % ROCKETNET_LOOPBACK_QUEUE_PACKETS];
+    rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
     if ( packet->bytes > capacity )
     {
         ++ep->dropped;
