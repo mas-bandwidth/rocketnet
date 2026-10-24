@@ -105,7 +105,7 @@ Liveness, under the fairness described below:
 
 ### Loss patterns TLC explored
 
-Both links take a Link pattern. The committed run is `"arbitrary"` on both (any copy may
+Both links take a Link pattern. The full instance is `"arbitrary"` on both (any copy may
 be dropped at any time, with duplication and reordering; `find-stale-ahead2` adds a tick
 of jitter); the four
 deterministic patterns `"none"`, `"first"`, `"alternate"` (the first packet dropped,
@@ -189,7 +189,7 @@ warns of:
 
 `Window = SentRing` means a sequence the sender still retains is one the receiver can
 still name (the code's `ROCKETNET_HISTORY_PACKETS` sizes both). Liveness was then checked
-only at the `live-small` instance; the `live` run on the committed instance did not
+only at the `live-small` instance; the `live` run on the full instance did not
 finish (see the results).
 
 ## How to run it
@@ -208,24 +208,36 @@ done
   --out "$job/RUNS.tsv" "$job"/fragmentsandacks-*/RUNS.tsv
 ```
 
-`MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
-(`Witness = "none"`, `StaleRule = "code"`), burns on, both links `"arbitrary"` under
-`SpecSafety`, checking the thirteen invariants (nine, `NamedOnlyIfAccepted`, and the three
-bitmap invariants below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
-is the same instance under `Spec` with `OpenedSurfacesOrLaps` added. The
-instance: `MaxSeq = 4`, `SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`,
-`MaxRanges = 2`, `Slots = 1`, `IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts
-`{2, 3}`, `Stride = 2`, `FinalBytes = 1`, `MaxPayload = 5`, `MaxFragment = 3`,
-`DrainCap = 4`, `DeliveredCap = 2`, `Capacity = 2`, `MaxDelay = 0`, duplication and
-reordering on. Four sequences are two payload ids' worth: enough for an eviction, a
-burn beside a send, a deferral and every witness. The safety state space at this size
-is 44.9 million distinct states (depth 49, 12 minutes with 4 workers), far over the
-110 s budget, so the committed run is a `bench` row with its debt named; at `MaxSeq = 6`
-with jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8`
-it passes 95 million. The below-bound batch witness still violates inside the budget.
+The full instance is the honest sender under the code's rules (`Witness = "none"`,
+`StaleRule = "code"`), burns on, both links `"arbitrary"`: `MaxSeq = 4`,
+`SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`, `MaxRanges = 2`, `Slots = 1`,
+`IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts `{2, 3}`, `Stride = 2`,
+`FinalBytes = 1`, `MaxPayload = 5`, `MaxFragment = 3`, `DrainCap = 4`,
+`DeliveredCap = 2`, `Capacity = 2`, `MaxDelay = 0`, duplication and reordering on. Four
+sequences are two payload ids' worth: enough for an eviction, a burn beside a send, a
+deferral and every witness. Its safety state space is 44.9 million distinct states
+(depth 49, 12 minutes with 4 workers), far over the 110 s budget; at `MaxSeq = 6` with
+jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8` it
+passes 95 million. `MCFragmentsAndAcksLive.cfg` is the full instance under `Spec` with
+`OpenedSurfacesOrLaps` added, a `bench` row with its debt named, and the `pat-*` bench
+rows are the full instance with a pattern.
+
+`MCFragmentsAndAcks.cfg` is the committed run on the gate instance: the full instance
+with five cuts, both links `"none"` (no loss), duplication off, `MaxCount = 2` with counts
+`{2}`, and burns off, under `SpecSafety`, checking the thirteen invariants (nine,
+`NamedOnlyIfAccepted`, and the three bitmap invariants below) and `CountPinned`. It is
+1,056,577 distinct states at depth 39 and passes inside the budget, so it is a
+`required` row. Reordering stays on with `Capacity = 2`, so payload 2's first fragment
+can overtake payload 1's second; reassembly then refuses the late fragment as stale,
+which is the case `NamedOnlyIfAccepted` is about. The gate instance therefore reaches the
+refusal: `MCFragmentsAndAcksWitAckRefused.cfg` is the same instance with
+`Witness = "ackrefused"` and violates the invariant at depth 12. What the cuts leave out
+is checked elsewhere: duplication by `live-dup`, loss with three-fragment payloads and
+burns by `pat-alternate` (a `required` pass on the full instance), and burns lapping a
+held slot by `bits`. The below-bound batch witness still violates inside the budget.
 The code-arm stale rows are shrunk so their passes finish inside it.
 
-The other cfgs are the committed file with a few lines changed. Three shapes recur:
+The other cfgs are the full instance with a few lines changed. Three shapes recur:
 
 - *safety*: `SPECIFICATION SpecSafety`, no `PROPERTIES`;
 - *defect*: `DefectIds = {0, 1, 5}`, `MaxGen = 1`, `Capacity = 1`, duplication,
@@ -238,7 +250,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 
 | Run | Cfg | Changes | Expected | Gate |
 |---|---|---|---|---|
-| committed | `MCFragmentsAndAcks.cfg` | none (`SpecSafety` + `CountPinned`) | passes | bench: over budget |
+| committed | `MCFragmentsAndAcks.cfg` | the gate instance: both links `"none"`, duplication off, `MaxCount = 2`, counts `{2}`, burns off (`SpecSafety` + `CountPinned`) | passes | required |
 | live | `MCFragmentsAndAcksLive.cfg` | `Spec` + `OpenedSurfacesOrLaps` | passes | bench: over budget |
 | live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
@@ -262,10 +274,11 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | bits | `MCFragmentsAndAcksBits.cfg` | bits: live-small with `SentRing = 2`, `MaxSeq = 4`, `SpecSafety` + `CountPinned`, ack link `"none"` | passes | required |
 | wit-walkskip | `MCFragmentsAndAcksWitWalkskip.cfg` | bits, `Witness = "walkskip"`, no `CountPinned` | **fails** `WalkVisitsUnacked` | required |
 | wit-staleheld | `MCFragmentsAndAcksWitStaleheld.cfg` | bits, `Witness = "staleheld"`, no `CountPinned` | **fails** `BitsMatchRing` | required |
-| wit-ackrefused | `MCFragmentsAndAcksWitAckRefused.cfg` | safety, `Witness = "ackrefused"`: a fragment is ack-eligible as soon as it opens, before reassembly judges it (the order before t15.3 was applied to type 9) | **fails** `NamedOnlyIfAccepted` | required |
+| wit-ackrefused | `MCFragmentsAndAcksWitAckRefused.cfg` | the gate instance, safety, `Witness = "ackrefused"`: a fragment is ack-eligible as soon as it opens, before reassembly judges it (the order before t15.3 was applied to type 9) | **fails** `NamedOnlyIfAccepted` | required |
 | link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
-Instances shrunk to fit the 110 s budget at two TLC workers: `live-small` from
+Instances shrunk to fit the 110 s budget at two TLC workers: the committed run from the
+full instance to the gate instance (above); `live-small` from
 `MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defect` from
 `MaxSeq = 4` to `MaxSeq = 2`. The code-arm stale rows use `IdSpace = 16`, so `Reach` is
 4. `find-stale` is the measured pass: `FirstId` 3 and `MaxGen` 3 give honest ids 3, 4
@@ -292,7 +305,7 @@ probe can be repeated by hand.
 The measured records are the `fragmentsandacks` rows of `tla/RUNS.tsv` (TLC 2.19, the
 pinned jar, two workers per case, 110 s per case, each case its own shard, four at
 once), re-measured after the three bitmap invariants were added to every cfg with an
-`INVARIANTS` section. Every case reaches its declared result except the six `bench`
+`INVARIANTS` section. Every case reaches its declared result except the seven `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
 is 1,422,444 distinct states and the recorded run finishes in 57.104 s, inside the budget, so a
@@ -337,8 +350,8 @@ are not current records; they are the evidence for the bench rows above.
 
 | Run | Result | States | Distinct | Depth | Time |
 |---|---|---|---|---|---|
-| committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
-| live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
+| full instance (`SpecSafety`, the invariants then + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
+| live (`Spec` + `OpenedSurfacesOrLaps`, full instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
 | find-stale-serial-small (unreduced small instance, `StaleRule = "serial"`) | pass: the half-space comparison | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
 | find-stale-ahead2 (unreduced: `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on, old forward difference) | violated `StaleOnlyIfOlder` under the retired arm | 8,174,784 | 1,739,380 | | 21 s |
@@ -348,7 +361,7 @@ The evidence for an over-budget run of `pat-alternate` (not the gate record) is 
 budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
 pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 
-Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
+Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the full instance,
 a three-id defect instance (272 million distinct states in 50 minutes) and the serial
 rule at `MaxSeq = 6` with jitter (106 million).
 
