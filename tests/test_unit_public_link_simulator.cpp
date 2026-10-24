@@ -224,6 +224,29 @@ static void test_public_link_simulator_server_applies_to_live_start()
     live_link_pair_teardown( &pair );
 }
 
+// A server switched from latency to all-zero while the simulator holds
+// packets still delivers every one of them: the setting changes what the
+// simulator does with the packets sent after it, never the ones it holds.
+static void test_public_link_simulator_server_switch_off_delivers_held()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 200, 0, 0, 0 ) );
+    const int num_payloads = 8;
+    uint8_t payload[4] = { 9, 10, 11, 12 };
+    for ( int i = 0; i < num_payloads; i++ )
+        rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( live_link_client_bytes_seen( &pair, 1 ) == 0 );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+    check( live_link_client_bytes_seen( &pair, 40 ) == num_payloads * (int) sizeof( payload ) );
+    check( rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
+
+    live_link_pair_teardown( &pair );
+}
+
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
 {
     int found_loss = 0;
@@ -507,6 +530,7 @@ REGISTER_UNIT_TEST( test_public_link_simulator_duplicate );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 REGISTER_UNIT_TEST( test_public_link_simulator_applies_to_live_connection );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
+REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {

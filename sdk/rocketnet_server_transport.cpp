@@ -905,9 +905,13 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
 
+// The drain runs whenever the server has a simulator, whatever the setting:
+// a switch from latency or jitter to all-zero leaves the packets the
+// simulator already holds, and they still leave when they come due (as the
+// client drain does). Gating it on the setting would strand and lose them.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
-    if ( !rocketnet_server_link_active( transport ) )
+    if ( !transport->link_simulator )
         return;
     for (;;)
     {
