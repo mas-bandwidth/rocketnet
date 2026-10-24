@@ -518,10 +518,13 @@ A 10000-client build is qualified by
 [docs/QUALIFICATION-max-clients-10000.md](docs/QUALIFICATION-max-clients-10000.md)
 and re-proven nightly on the Linux fleet runner by
 [`.github/workflows/nightly-max-clients.yml`](.github/workflows/nightly-max-clients.yml):
-zero-warning builds at DEV ON and OFF, the unit suite, and a bounded loopback
-load of all 10000 clients. The 10000 load's plan needs large host memory
-(reassembly budget 5120 MiB plus the per-client server tables), so the nightly
-runner checks host room against the plan before running.
+zero-warning builds with gcc and clang at DEV ON and OFF, the unit suite, and
+a bounded loopback load of all 10000 clients for 30 seconds
+(`LOAD_PROFILE=light ./bin/load 10000 30`). The load uses the light
+per-client config, about 25 GB planned for the server and its 10000
+in-process clients, because the default per-client config plans about
+183 GB for the server alone (below); the runner checks host room against the
+plan before the load runs.
 
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
@@ -553,7 +556,7 @@ replay window (16 packets per client) is unchanged.
 
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the block before create.
-The default per-client config needs about 13.3 GB at 1000 clients and 133 GB at
+The default per-client config needs about 18.3 GB at 1000 clients and 183 GB at
 10000, so a 10000-client server sets lighter per-client limits (send and
 receive buffers, queues, windows, receipts and reassembly slots) for its game.
 A build for more clients also carries larger fixed per-server tables (the
