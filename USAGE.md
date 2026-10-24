@@ -30,6 +30,47 @@ connect tokens. [BUILDING.md, "Production builds"](BUILDING.md#production-builds
 lists the production build and install commands.
 [KEYS.md](KEYS.md) covers the backend and server keys and production tokens.
 
+New to RocketNet? [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) is the
+path through this file and the others, from a fresh checkout to a server and
+a client exchanging messages.
+
+## Threads
+
+This section is the threading contract. The header states it in short:
+lookup and time calls are thread-safe, and client and server objects are not.
+
+- **The caller owns each client and server object, one thread at a time.**
+  Every call on one object (update, receive, start, finish and abort message,
+  send packets, receipts, stats, connect, disconnect, start, stop and destroy)
+  is made from one thread at a time, never concurrently. The library takes no
+  lock on the caller's behalf.
+- **The caller may move an object between threads** with its own handoff, for
+  example a mutex, a queue or a thread join, so that the last call on the old
+  thread happens before the first call on the new one. The library adds no
+  handoff of its own. A received message's `data` pointer stays valid only
+  until the next receive or update on that object, whichever thread makes it.
+- **The library's own network threads never call into the game except through
+  the documented callbacks.** The allocator functions passed to
+  `rocketnet_init` can run on a network thread and must be thread-safe. The log
+  function installed with `rocketnet_log_function` runs on the thread that
+  logs, which can be a network thread, so it must be thread-safe and must not
+  call `rocketnet_log_function`. The assert function installed with
+  `rocketnet_assert_function` runs on the thread that fires the assert, in
+  debug builds only. A client's `state_change_callback` runs on the caller's
+  thread, during update, disconnect and destroy, and must not call client
+  functions.
+- **Process-wide setup is serialized with application work.** Never race
+  `rocketnet_init` with `rocketnet_term`, call `rocketnet_term` while no other
+  library call runs, and install the assert function before concurrent
+  library calls.
+
+Client connect and server start create the library's network threads. They
+do the socket I/O and bounded background work and hand their results to the
+caller's update; protocol state advances in update, on the caller's thread.
+Disconnect and stop request that those threads end, the completion queries
+`rocketnet_client_disconnected` and `rocketnet_server_stopped` report when
+they have, and destroy joins them.
+
 ## Start and stop
 
 Call `rocketnet_init` once before creating a client or a server, and check its
