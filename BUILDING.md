@@ -522,7 +522,12 @@ or `-DROCKETNET_MAX_CLIENTS=10000` on every compile when building the sources
 into your own build. CMake hands the value to the libraries, their consumers
 (a `PUBLIC` definition, so the header a game compiles matches its library),
 the tests, the tools and the embedded XDP program; build `server_xdp.o` by hand
-with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together.
+with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together. A build
+that embeds the XDP program with its own copy of `cmake/EmbedXdp.cmake` passes
+nothing at the defaults and `-DMAX_CLIENTS=` (and `-DHISTORY_PACKETS=`) at
+another value; the generated `rocketnet_server_xdp.h` refuses to compile into a
+library whose `ROCKETNET_MAX_CLIENTS` or `ROCKETNET_HISTORY_PACKETS` differs
+from the program's.
 
 A 10000-client build is qualified by
 [docs/QUALIFICATION-max-clients-10000.md](docs/QUALIFICATION-max-clients-10000.md)

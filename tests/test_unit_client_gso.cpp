@@ -3,9 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The gso client's send path (sdk/rocketnet_client_gso.h) on a fake socket:
-// the syscall seam records every sendmmsg message (its datagrams, its
-// UDP_SEGMENT stride) and refuses on command. No socket, no thread, no time.
+// The gso client's send and receive paths (sdk/rocketnet_client_gso.h) on a
+// fake socket: the syscall seam records every sendmmsg message (its datagrams,
+// its UDP_SEGMENT stride) and refuses on command, and delivers queued receive
+// messages with the UDP_GRO cmsg each names. No socket, no thread, no time.
 // Every expected value is a literal, never computed by the code under test.
 
 #include "test_unit_registry.h"
@@ -17,6 +18,7 @@
 #include "rocketnet_client_gso.h"
 #include "rocketnet_platform.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
@@ -27,8 +29,13 @@
 #define UDP_SEGMENT 103
 #endif
 
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
 #define FAKE_GSO_MAX_MESSAGES 64
 #define FAKE_GSO_MAX_PACKETS 256
+#define FAKE_GSO_MAX_RECEIVES 8
 
 // one sendmmsg message the fake socket took: its datagrams in order, and its
 // UDP_SEGMENT stride (0: a plain message)
@@ -41,8 +48,32 @@ struct fake_gso_message_t
     uint8_t first_byte[ROCKETNET_CLIENT_GSO_MAX_SEGMENTS];
 };
 
+// one message the fake socket delivers on recvmmsg: bytes of payload, all of
+// segment s equal to tag + s when cut at stride, and its control area
+enum fake_gso_control_t
+{
+    FAKE_GSO_CONTROL_NONE,              // no cmsg: one datagram
+    FAKE_GSO_CONTROL_GRO,               // a UDP_GRO cmsg holding stride
+    FAKE_GSO_CONTROL_SHORT,             // a UDP_GRO cmsg too short to hold an int
+    FAKE_GSO_CONTROL_TRUNCATED,         // MSG_CTRUNC: the kernel had more control than room
+};
+
+struct fake_gso_receive_t
+{
+    int bytes;
+    int stride;
+    int tag;
+    fake_gso_control_t control;
+};
+
 struct fake_gso_socket_t
 {
+    int gro_calls;
+    int gro_result;
+    int recvmmsg_calls;
+    int num_receives;
+    int next_receive;
+    fake_gso_receive_t receives[FAKE_GSO_MAX_RECEIVES];
     int probe_calls;
     int probe_result;
     int sendmmsg_calls;
@@ -115,7 +146,101 @@ static int fake_gso_segment_probe( void * context, int socket )
     return fake->probe_result;
 }
 
-static const rocketnet_client_gso_syscalls_t fake_gso_syscalls = { fake_gso_sendmmsg, fake_gso_segment_probe };
+static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages )
+{
+    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    rocketnet_unit_check( socket == 7 );
+    rocketnet_unit_check( num_messages == 1 );
+    fake->recvmmsg_calls++;
+    if ( fake->next_receive >= fake->num_receives )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+    const fake_gso_receive_t * receive = &fake->receives[fake->next_receive++];
+    struct msghdr * header = &messages[0].msg_hdr;
+
+    rocketnet_unit_check( header->msg_iovlen == 1 );
+    rocketnet_unit_check( header->msg_iov[0].iov_len >= (size_t) receive->bytes );
+    uint8_t * data = (uint8_t*) header->msg_iov[0].iov_base;
+    for ( int i = 0; i < receive->bytes; i++ )
+        data[i] = (uint8_t) ( receive->tag + ( receive->stride > 0 ? i / receive->stride : 0 ) );
+    messages[0].msg_len = (unsigned int) receive->bytes;
+
+    // the source: the one server, 127.0.0.1:40000
+    rocketnet_unit_check( header->msg_name != NULL );
+    rocketnet_unit_check( header->msg_namelen >= sizeof(struct sockaddr_in) );
+    struct sockaddr_in name;
+    memset( &name, 0, sizeof(name) );
+    name.sin_family = AF_INET;
+    name.sin_port = htons( 40000 );
+    name.sin_addr.s_addr = htonl( 0x7F000001 );
+    memcpy( header->msg_name, &name, sizeof(name) );
+    header->msg_namelen = sizeof(name);
+
+    header->msg_flags = 0;
+    if ( receive->control == FAKE_GSO_CONTROL_NONE )
+    {
+        header->msg_controllen = 0;
+    }
+    else if ( receive->control == FAKE_GSO_CONTROL_TRUNCATED )
+    {
+        header->msg_controllen = 0;
+        header->msg_flags = MSG_CTRUNC;
+    }
+    else
+    {
+        rocketnet_unit_check( header->msg_control != NULL );
+        rocketnet_unit_check( header->msg_controllen >= CMSG_SPACE( sizeof(int) ) );
+        memset( header->msg_control, 0, header->msg_controllen );
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_GRO;
+        if ( receive->control == FAKE_GSO_CONTROL_GRO )
+        {
+            cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+            const int stride = receive->stride;
+            memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+            header->msg_controllen = CMSG_SPACE( sizeof(int) );
+        }
+        else
+        {
+            cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+            const uint16_t stride = (uint16_t) receive->stride;
+            memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+            header->msg_controllen = CMSG_SPACE( sizeof(uint16_t) );
+        }
+    }
+    return 1;
+}
+
+static int fake_gso_gro_enable( void * context, int socket )
+{
+    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    rocketnet_unit_check( socket == 7 );
+    fake->gro_calls++;
+    return fake->gro_result;
+}
+
+static bool fake_gso_read_address( void *, const struct sockaddr_storage * storage, rocketnet_address_t * from )
+{
+    rocketnet_unit_check( storage->ss_family == AF_INET );
+    const struct sockaddr_in * name = (const struct sockaddr_in*) storage;
+    memset( from, 0, sizeof(*from) );
+    from->type = ROCKETNET_ADDRESS_IPV4;
+    const uint32_t host = ntohl( name->sin_addr.s_addr );
+    from->data.ipv4[0] = (uint8_t) ( host >> 24 );
+    from->data.ipv4[1] = (uint8_t) ( host >> 16 );
+    from->data.ipv4[2] = (uint8_t) ( host >> 8 );
+    from->data.ipv4[3] = (uint8_t) host;
+    from->port = ntohs( name->sin_port );
+    return true;
+}
+
+static const rocketnet_client_gso_syscalls_t fake_gso_syscalls =
+{
+    fake_gso_sendmmsg, fake_gso_segment_probe, fake_gso_recvmmsg, fake_gso_gro_enable, fake_gso_read_address
+};
 
 // num_packets datagrams of packet_bytes[i] bytes each, every byte of packet i
 // equal to tag + i, all to the one server
@@ -303,5 +428,130 @@ static void test_client_gso_send_falls_back_on_live_refusal()
     rocketnet_unit_check( test_gso.packet_send_failures.load() == 2 );
 }
 REGISTER_UNIT_TEST( test_client_gso_send_falls_back_on_live_refusal );
+
+// the receive slots the I/O thread hands receive_batch: ROCKETNET_FRAME_SIZE
+// apart, as the client I/O step lays them out
+#define FAKE_GSO_RECEIVE_SLOTS 64
+#define FAKE_GSO_RECEIVE_STRIDE 2048
+
+static uint8_t test_receive_data[FAKE_GSO_RECEIVE_SLOTS * FAKE_GSO_RECEIVE_STRIDE];
+static rocketnet_address_t test_receive_from[FAKE_GSO_RECEIVE_SLOTS];
+static int test_receive_bytes[FAKE_GSO_RECEIVE_SLOTS];
+
+static void fake_gso_queue_receive( int bytes, int stride, int tag, fake_gso_control_t control )
+{
+    rocketnet_unit_check( test_socket.num_receives < FAKE_GSO_MAX_RECEIVES );
+    fake_gso_receive_t * receive = &test_socket.receives[test_socket.num_receives++];
+    receive->bytes = bytes;
+    receive->stride = stride;
+    receive->tag = tag;
+    receive->control = control;
+}
+
+// slot i holds bytes datagram bytes, every one equal to value, from 127.0.0.1:40000
+static void check_gso_receive_slot( int i, int bytes, int value )
+{
+    rocketnet_unit_check( test_receive_bytes[i] == bytes );
+    rocketnet_unit_check( test_receive_from[i].type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_unit_check( test_receive_from[i].data.ipv4[0] == 127 );
+    rocketnet_unit_check( test_receive_from[i].data.ipv4[3] == 1 );
+    rocketnet_unit_check( test_receive_from[i].port == 40000 );
+    const uint8_t * slot = test_receive_data + (size_t) i * FAKE_GSO_RECEIVE_STRIDE;
+    for ( int j = 0; j < bytes; j++ )
+        rocketnet_unit_check( slot[j] == (uint8_t) value );
+}
+
+static void test_client_gso_receive_splits_gro_by_stride()
+{
+    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( test_receive_bytes, 0, sizeof(test_receive_bytes) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
+    rocketnet_unit_check( test_socket.gro_calls == 1 );
+
+    // a coalesced message of five 100-byte datagrams and a 40-byte tail, then
+    // a plain 200-byte datagram with no cmsg
+    fake_gso_queue_receive( 540, 100, 10, FAKE_GSO_CONTROL_GRO );
+    fake_gso_queue_receive( 200, 0, 30, FAKE_GSO_CONTROL_NONE );
+
+    // the coalesced message lands as its six datagrams, in order, from slot 0;
+    // the next message waits: 58 slots left cannot hold a full GRO message
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 6 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
+    for ( int i = 0; i < 5; i++ )
+        check_gso_receive_slot( i, 100, 10 + i );
+    check_gso_receive_slot( 5, 40, 15 );
+
+    // the plain datagram is the next call's, in slot 0 of the slots it is given
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 1 );
+    check_gso_receive_slot( 0, 200, 30 );
+
+    // an empty socket is zero
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 0 );
+
+    rocketnet_unit_check( test_gso.gro_batches == 1 );
+    rocketnet_unit_check( test_gso.packets_received == 7 );
+    rocketnet_unit_check( test_gso.gro_packets_dropped == 0 );
+    rocketnet_unit_check( test_gso.gro_cmsg_faults == 0 );
+
+    // a receive buffer with room for four takes the first four of ten 300-byte
+    // datagrams and drops the other six, counted
+    memset( &test_socket, 0, sizeof(test_socket) );
+    fake_gso_queue_receive( 3000, 300, 50, FAKE_GSO_CONTROL_GRO );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 4 );
+    for ( int i = 0; i < 4; i++ )
+        check_gso_receive_slot( i, 300, 50 + i );
+    rocketnet_unit_check( test_gso.gro_packets_dropped == 6 );
+    rocketnet_unit_check( test_gso.packets_received == 11 );
+    rocketnet_unit_check( test_gso.gro_batches == 2 );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
+
+    // a refused UDP_GRO probe is the plain tier
+    memset( &test_socket, 0, sizeof(test_socket) );
+    test_socket.gro_result = -1;
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( !rocketnet_client_gso_init_receive( &test_gso, true ) );
+    rocketnet_unit_check( test_socket.gro_calls == 1 );
+
+    // probe_gro false asks nothing
+    memset( &test_socket, 0, sizeof(test_socket) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( !rocketnet_client_gso_init_receive( &test_gso, false ) );
+    rocketnet_unit_check( test_socket.gro_calls == 0 );
+}
+REGISTER_UNIT_TEST( test_client_gso_receive_splits_gro_by_stride );
+
+static void test_client_gso_receive_gro_fault_is_counted()
+{
+    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( test_receive_bytes, 0, sizeof(test_receive_bytes) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
+
+    // a UDP_GRO cmsg too short to hold its int is one fault and the message
+    // is one datagram of all 600 bytes: never cut at a stride it cannot read
+    fake_gso_queue_receive( 600, 0, 70, FAKE_GSO_CONTROL_SHORT );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 1 );
+    check_gso_receive_slot( 0, 600, 70 );
+    rocketnet_unit_check( test_gso.gro_cmsg_faults == 1 );
+    rocketnet_unit_check( test_gso.gro_batches == 0 );
+
+    // a truncated control area is the same fault
+    fake_gso_queue_receive( 400, 0, 80, FAKE_GSO_CONTROL_TRUNCATED );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 1 );
+    check_gso_receive_slot( 0, 400, 80 );
+    rocketnet_unit_check( test_gso.gro_cmsg_faults == 2 );
+
+    // the fault is the message's alone: the next coalesced message splits
+    fake_gso_queue_receive( 400, 200, 90, FAKE_GSO_CONTROL_GRO );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 2 );
+    check_gso_receive_slot( 0, 200, 90 );
+    check_gso_receive_slot( 1, 200, 91 );
+    rocketnet_unit_check( test_gso.gro_cmsg_faults == 2 );
+    rocketnet_unit_check( test_gso.gro_batches == 1 );
+    rocketnet_unit_check( test_gso.gro_packets_dropped == 0 );
+    rocketnet_unit_check( test_gso.packets_received == 4 );
+}
+REGISTER_UNIT_TEST( test_client_gso_receive_gro_fault_is_counted );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
