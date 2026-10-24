@@ -211,6 +211,9 @@ struct rocketnet_client_legacy_receive_state_t
     X( time_callback, double (*time_callback)( void * context ) ) /* the receive stamp clock, read once at create */ \
     X( link_simulator, struct rocketnet_network_simulator_t * link_simulator )                                       \
     X( link_simulator_from, rocketnet_address_t link_simulator_from )                                                \
+    /* the per-packet link path: the simulator was created with a setting */                                         \
+    /* (rocketnet_network_simulator_created_active), read once at create */                                          \
+    X( link_path, bool link_path )                                                                                   \
     X( counters, struct rocketnet_counters_t counters )                                                              \
     X( protocol, struct rocketnet_client_protocol_t protocol )                                                       \
     X( client_stats, struct rocketnet_client_transport_stats_t client_stats )                                        \
@@ -426,7 +429,13 @@ extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_s
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
 extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
 #else
+static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
+{
+    (void) simulator;
+    return false;
+}
 static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
 {
     (void) simulator; (void) mutex;
@@ -482,8 +491,7 @@ static inline bool rocketnet_client_link_active( rocketnet_client_transport_t * 
 // live setting never changes it.
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
-    return ( transport->io_thread || transport->step_in_update ) &&
-           !rocketnet_network_simulator_created_active( transport->link_simulator );
+    return ( transport->io_thread || transport->step_in_update ) && !transport->link_path;
 }
 
 // Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
@@ -722,9 +730,13 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
 // simulator holds that has come due by now.  A held packet leaves on the
 // thread that owns the simulator: the caller's thread on both paths, since
 // the per-packet path sends there and the ring path's hand-off is there too.
+// Every development connection owns a simulator, so a simulator holding
+// nothing is read without the lock and drains nothing, as the server drain
+// does: a scan of its empty slots on every update is the client frame's
+// cost of a zero setting (bench/instruction_count.cpp client_frame).
 static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport, double now )
 {
-    if ( !transport->link_simulator )
+    if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
         return;
     rocketnet_address_t from, to;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -1680,6 +1692,9 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             rocketnet_client_transport_abort_create( client_transport );
             return NULL;
         }
+        // the path is decided here, once, and never moves; the frame reads
+        // the decision, not the simulator
+        client_transport->link_path = rocketnet_network_simulator_created_active( client_transport->link_simulator );
     }
 
     rocketnet_buffer_handoff_init( &client_transport->receive_buffer_index.handoff, 0 );
@@ -1715,7 +1730,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // on its own thread.  That was decided when the simulator was configured
     // and it never moves: a live setting change does not move a running
     // connection between the two paths.
-    client_transport->io_thread = !rocketnet_network_simulator_created_active( client_transport->link_simulator ) &&
+    client_transport->io_thread = !client_transport->link_path &&
         ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
           ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );
 
