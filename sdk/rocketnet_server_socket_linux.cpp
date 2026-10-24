@@ -226,9 +226,6 @@ struct rocketnet_server_xdp_socket_t
     rocketnet_platform_mutex_t send_mutex;
     rocketnet_platform_mutex_t receive_mutex;
 
-    int num_free_receive_frames;
-    uint64_t receive_frames[ROCKETNET_XDP_NUM_FRAMES/2];
-
     int num_free_send_frames;
     uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES/2];
     std::atomic<int> send_flow_index{-1};
@@ -500,18 +497,6 @@ static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t fr
     }
 }
 
-static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
-{
-    uint64_t frame = INVALID_FRAME;
-    if ( socket->num_free_receive_frames > 0 )
-    {
-        socket->num_free_receive_frames--;
-        frame = socket->receive_frames[socket->num_free_receive_frames];
-        socket->receive_frames[socket->num_free_receive_frames] = INVALID_FRAME;
-    }
-    return frame;
-}
-
 static void rocketnet_server_socket_xdp_thread_function( void * data );
 
 // the public address as the 16 network-order bytes the XDP config carries
@@ -765,7 +750,7 @@ uint64_t rocketnet_xdp_umem_bytes(int queues)
     if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
     uint64_t bytes = 0;
     if (!rocketnet_memory_add(bytes, (uint64_t)queues,
-            (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
+            (uint64_t)ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
         return 0;
     return bytes;
 }
@@ -1711,7 +1696,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // allocate umem
 
-        const int buffer_size = ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        // send frames [0, NUM_FRAMES/2), then the fill frames up to ROCKETNET_XDP_UMEM_FRAMES
+
+        const int buffer_size = ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
         if ( posix_memalign( &socket->buffer, (size_t) getpagesize(), (size_t) buffer_size ) ) 
         {
@@ -1817,18 +1804,11 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         socket->send_flow_index.store( socket->send_handoff.producer, std::memory_order_relaxed );
 
-        // initialize receive frame allocator
-
-        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
-        {
-            socket->receive_frames[j] = (uint64_t) ( ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE );
-        }
-
-        socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
-
-        // populate fill ring for packets to be received in. The ring has room
-        // for twice these frames (ROCKETNET_XDP_FILL_RING_SIZE), so the worker
-        // always has a slot to hand a frame back in
+        // populate fill ring for packets to be received in, once: every frame
+        // of the receive region goes on it, and a received frame goes back to
+        // it, never to a free list. The ring has room for twice these frames
+        // (ROCKETNET_XDP_FILL_RING_SIZE), so the worker always has a slot to
+        // hand a frame back in
 
         {
             uint32_t index;
@@ -1842,14 +1822,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
             for ( int i = 0; i < ROCKETNET_XDP_FILL_FRAMES; i++ )
             {
-                const uint64_t frame = alloc_receive_frame( socket );
-                if ( frame == INVALID_FRAME )
-                {
-                    rocketnet_error( "server could not allocate receive frame for fill queue" );
-                    rocketnet_server_socket_abort_create( server_socket );
-                    return NULL;
-                }
-                *xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i ) = frame;
+                *xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i ) =
+                    (uint64_t) ( ROCKETNET_XDP_NUM_FRAMES / 2 + i ) * ROCKETNET_XDP_FRAME_SIZE;
             }
 
             xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_FRAMES );
@@ -2382,7 +2356,7 @@ bool rocketnet_server_socket_test_buffer_exchange()
 {
     const uint64_t planned_bytes = sizeof(rocketnet_server_socket_t) +
         sizeof(rocketnet_xdp_replay_marks_t) + sizeof(rocketnet_server_xdp_socket_t) +
-        (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        (uint64_t)ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
     bool valid = rocketnet_server_socket_memory_required( 1 ) == planned_bytes;
     rocketnet_xdp_buffer_exchange_t<3> exchange;
     valid &= exchange.producer == 0;
@@ -2966,7 +2940,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
                     (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
+                    (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
                     desc->addr, desc->len, &socket->receive_drops );
                 if ( !packet_data )
                     continue;
