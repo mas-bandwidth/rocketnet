@@ -246,8 +246,12 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test_sodium
 
+      # The committed sodium pair from its SHA-256 pinned inputs, byte for
+      # byte, on the Linux Release (b) leg and the macOS Release leg; the
+      # Windows (b) leg runs the same step (sodium/README.md, "Reproducing
+      # the vendored inputs").
       - name: Reproduce the committed sodium pair
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
@@ -731,6 +735,12 @@ jobs:
         if: matrix.leg == 'a'
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
+
+      # The same reproduction as the Linux and macOS Release legs, from a
+      # Windows checkout (sodium/README.md, "Reproducing the vendored inputs").
+      - name: Reproduce the committed sodium pair
+        if: matrix.leg == 'b'
+        run: python tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       # leg (a) runs the suites on the default development library
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
