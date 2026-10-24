@@ -862,6 +862,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
     }
 
+    // tla/RNXdpReplay.tla Connect: a new session takes a slot and its opened high water stays at zero.
+    // tla/ReplayWindow.tla Connect: the mapping takes a slot and its replay window is left unchanged.
+    // tla/RNSlots.tla Connect: the slot's connection owner becomes the new connection id.
     int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index, mapping->user_data );
     rocketnet_assert( client_index != -1 );     // num_free was checked above
     rocketnet_server_connection_id_assigned( server, client_index );
@@ -1190,6 +1193,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
 
+    // tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.
     // session types: the mapping holds a slot (the gate above), so the
     // sequence is marked now, after the open (tla/ReplayWindow.tla
     // NoAdvanceBeforeConnect).
@@ -1748,6 +1752,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     return bytes;
 }
 
+// tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks, and only when that debt is nonzero.
 int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol_t * server,
                                                 int client_index,
                                                 double current_time,

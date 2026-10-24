@@ -66,6 +66,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
         rocketnet_reassembly_set_reset_connection( reassembly, 0 );
 }
 
+// tla/RNXdpReplay.tla Release: ends the session for this slot.
+// tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
 void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index )
 {
     rocketnet_assert( server );
@@ -89,6 +91,7 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );
 
+    // tla/RNSlots.tla Disconnect: the slot's connection id returns to none.
     if ( server->connection_ids )
         server->connection_ids[client_index] = 0;
 

@@ -334,6 +334,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
+    // tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 

@@ -380,7 +380,8 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
-// tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened
+// tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened.
+// tla/RNReceipts.tla OpenPacket: the far end dispatches that packet, marking it opened.
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -965,7 +966,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
         return false;
     channels->pending = RN_DESCRIPTOR_NONE;
 
-    // RNChannelTypes!Enqueue: code 2 has no ordering index. Code 3 keeps its
+    // tla/RNChannelTypes.tla Enqueue: assigns the ordering and sequencing counters as the message joins the channel queue.
+    // Code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
     // takes one number; a larger block takes one number per chunk
     // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
@@ -1174,7 +1176,8 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
-// tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write
+// tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write.
+// tla/RNChannelTypes.tla WriteAny: the same packet write, any message and either attempt.
 // tla/RNBlocks.tla SendRecord: a fragment's item carries its index, k - 1 and its own ring offset
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
