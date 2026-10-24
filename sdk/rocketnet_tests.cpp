@@ -13876,6 +13876,19 @@ public:
     }
 };
 
+// The same isolation for suite-runner code that plans a case in the parent
+// process (a SUITE_CASE_RSS_BOUND function), so it plans under the
+// environment the case itself runs under, not the ambient one.
+void * rocketnet_test_environment_isolate()
+{
+    return new rocketnet_test_environment_t();
+}
+
+void rocketnet_test_environment_restore( void * isolated )
+{
+    delete static_cast<rocketnet_test_environment_t *>( isolated );
+}
+
 void rocketnet_test_suite_environment()
 {
     std::string original_server;

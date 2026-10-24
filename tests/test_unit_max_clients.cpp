@@ -118,11 +118,21 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->message_resend_delay_initial_ms = 100;
 }
 
+void * rocketnet_test_environment_isolate();
+void rocketnet_test_environment_restore( void * isolated );
+
+// The suite runner calls this in the parent, under the ambient environment;
+// the case runs isolated from it (rocketnet_unit_prepare). The public plan
+// applies environment overrides, so plan under the same isolation: an ambient
+// override neither changes the bound nor logs a parse error into the output.
 static long max_clients_server_rss_bound_mb()
 {
+    void * isolated = rocketnet_test_environment_isolate();
     rocketnet_server_config_t config;
     max_clients_server_config( &config );
-    return suite_rss_bound_mb( (uint64_t) rocketnet_server_required_memory( &config ), 32 );
+    const uint64_t planned = (uint64_t) rocketnet_server_required_memory( &config );
+    rocketnet_test_environment_restore( isolated );
+    return suite_rss_bound_mb( planned, 32 );
 }
 
 SUITE_CASE_RSS_BOUND( test_server_create_at_max_clients, max_clients_server_rss_bound_mb );
