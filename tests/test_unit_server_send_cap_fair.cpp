@@ -66,12 +66,14 @@ static void fair_message_config( rocketnet_server_config_t * server, rocketnet_c
         server->send_message_buffer_bytes = 4 * 1024 * 1024;
         server->send_queue_messages = 4096;
         server->reliable_messages_in_flight = 4096;
+        server->packets_in_flight = 4096;            // the sent map holds the window
     }
     if ( client )
     {
         client->send_message_buffer_bytes = 4 * 1024 * 1024;
         client->send_queue_messages = 4096;
         client->reliable_messages_in_flight = 4096;
+        client->packets_in_flight = 4096;            // the sent map holds the window
     }
 }
 
