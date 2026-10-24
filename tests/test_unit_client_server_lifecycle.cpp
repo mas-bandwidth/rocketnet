@@ -872,6 +872,33 @@ static void test_server_start_stop_start_again()
 }
 REGISTER_UNIT_TEST( test_server_start_stop_start_again );
 
+// tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
+// client. rocketnet_server_update returns while !server->running
+// (sdk/rocketnet_api.cpp:1797), and the transport reads only while RUNNING
+// (sdk/rocketnet_server_transport.cpp:2388).
+static void test_server_stopped_admits_no_client()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1610, 1, token );
+    const uint64_t accepted = rn_server_stats_of( world.server ).connections_accepted;
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_running( world.server ) == 0 );
+    check( rocketnet_client_connect( world.clients[0], token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( world.clients[0] ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+    {
+        check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+        lifecycle_pump( &world, 0.1 );
+    }
+    check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+    check( rn_server_stats_of( world.server ).connections_accepted == accepted );
+    check( rocketnet_client_state( world.clients[0] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_stopped_admits_no_client );
+
 static void test_server_stop_disconnects_every_client()
 {
     lifecycle_world_t world;

@@ -1,0 +1,100 @@
+# The libFuzzer dictionary for the rocketnet_fuzz target: the stateless
+# parser sweep. Every entry is a token one of its four parsers branches on
+# -- the prefilter, the fragment header and its reassembly, the base64
+# decoder and the config value parses -- spelled as the bytes the parser
+# compares against, so mutation lands on the constants the checks gate on
+# instead of rediscovering them a byte at a time.
+#
+# Every entry derives from a named constant in sdk/ -- the source is cited
+# beside each -- and an entry that drifts from its constant is a dictionary
+# bug, not a protocol change.
+
+# --- the prefilter header (sdk/rocketnet_wire.h) ---
+
+# the published test filter value, ROCKETNET_TEST_FILTER_VALUE
+packet_filter="\xb7\x59\x01\x00"
+
+# the type byte on its own: ROCKETNET_CONNECTION_REQUEST_PACKET (0) to
+# ROCKETNET_CONNECTION_FRAGMENT_PACKET (9), and the first reserved type
+type_request="\x00"
+type_denied="\x01"
+type_challenge="\x02"
+type_response="\x03"
+type_keep_alive="\x04"
+type_payload="\x05"
+type_disconnect="\x06"
+type_cookie="\x07"
+type_ack="\x08"
+type_fragment="\x09"
+type_reserved="\x0a"
+
+# full 6-byte prefilter headers at epoch 0: type, epoch, filter value
+prefilter_request="\x00\x00\xb7\x59\x01\x00"
+prefilter_denied="\x01\x00\xb7\x59\x01\x00"
+prefilter_challenge="\x02\x00\xb7\x59\x01\x00"
+prefilter_response="\x03\x00\xb7\x59\x01\x00"
+prefilter_keep_alive="\x04\x00\xb7\x59\x01\x00"
+prefilter_payload="\x05\x00\xb7\x59\x01\x00"
+prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
+prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
+prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_FILTER_EPOCH_UNKEYED is 0 and every other epoch is refused
+epoch_unkeyed="\x00"
+epoch_keyed="\x01"
+
+# --- the fragment header (sdk/rocketnet_fragment.h) ---
+
+# the payload id (u32 LE, zero invalid), the fragment index, and the
+# fragment count - 1: the first of two, the last of two, and the most
+# fragments the engine accepts (ROCKETNET_MAX_FRAGMENTS)
+fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
+fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
+fragment_max_count="\x01\x00\x00\x00\xff\xff"
+
+# the zero payload id the sender produces when it is uninitialized
+fragment_zero_payload_id="\x00\x00\x00\x00"
+
+# the payload id half the id space ahead of the newest completed one: the
+# stale id the reassembly engine refuses
+fragment_stale_id="\x00\x00\x00\x50"
+
+# --- base64 (sdk/rocketnet_base64.cpp) ---
+
+# the alphabet's ends and its two symbols outside the alphanumerics, and
+# the padding that every whole group carries
+base64_pad="="
+base64_pad2="=="
+base64_plus="+"
+base64_slash="/"
+base64_a="A"
+base64_z="Z"
+base64_nine="9"
+
+# a key's worth of bytes, base64: ROCKETNET_KEY_BYTES is 32
+base64_key_32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+# --- the config parses (sdk/rocketnet_config.cpp, sdk/rocketnet_drivers.inc) ---
+
+# the transport names the ladder knows, and the order the registry lists
+transport_portable="portable"
+transport_gso="gso"
+transport_xdp="xdp"
+transport_msgx="msgx"
+transport_iocp="iocp"
+transport_loopback="loopback"
+transport_io_uring="io_uring"
+transport_rio="rio"
+
+# the ladder's separator, and the one name that stands alone
+transport_ladder="xdp,gso,portable"
+transport_auto="auto"
+
+# the digits and the sign an integer value is written with
+config_zero="0"
+config_nine="9"
+config_minus="-"
+
+# the prefix every config field's env var name carries
+config_env_prefix="ROCKETNET_"

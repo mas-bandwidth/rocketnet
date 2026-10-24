@@ -333,6 +333,8 @@ jobs:
           TRANSPORT_MATRIX_LINUX: |
             portable portable
             gso portable
+            gso gso
+            portable gso
             io_uring portable
             loopback loopback
             xdp portable
