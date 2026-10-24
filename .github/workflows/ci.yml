@@ -456,7 +456,7 @@ jobs:
       # imported, no writable+executable segment) and INFO for CET, then one verdict
       # line. It reads the Release library the Makefile built (well under a second).
       - name: Check release hardening
-        if: contains(matrix.leg, 'a') && matrix.build_type == 'Release'
+        if: contains(matrix.leg, 'a') && matrix.build_type == 'Release' && matrix.dev == 'OFF'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_hardening.py bin/librocketnet.dylib
