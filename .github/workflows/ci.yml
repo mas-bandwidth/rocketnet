@@ -456,6 +456,20 @@ jobs:
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
 
+      # tools/check_hardening.py picks the format by magic and prints one PASS/FAIL
+      # line per required property (ELF: BIND_NOW, GNU_RELRO, __stack_chk_fail,
+      # GNU_STACK not executable; Mach-O: ___stack_chk_fail and ___stack_chk_guard
+      # imported, no writable+executable segment) and INFO for CET, then one verdict
+      # line. It reads the Release library the Makefile built (well under a second).
+      - name: Check release hardening
+        if: contains(matrix.leg, 'a') && matrix.build_type == 'Release'
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            python3 tools/check_hardening.py bin/librocketnet.dylib
+          else
+            python3 tools/check_hardening.py bin/librocketnet.so
+          fi
+
       - name: Check every driver row has transport matrix cells
         if: runner.os == 'Linux'
         run: python3 tools/check_transport_matrix.py
@@ -483,6 +497,10 @@ jobs:
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
+
+      - name: Test the hardening checker's verdicts
+        if: runner.os == 'Linux'
+        run: python3 tools/test_check_hardening.py
 
       - name: Test the MSan gate's verdicts
         if: runner.os == 'Linux'
@@ -813,6 +831,13 @@ jobs:
       - name: Check production library boundary
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
+
+      # DYNAMIC_BASE, NX_COMPAT, HIGH_ENTROPY_VA and a non-zero /GS SecurityCookie,
+      # read from the PE with struct (no dumpbin, no vcvars); GUARD_CF and
+      # CET_COMPAT are INFO lines, the owner's call
+      - name: Check release hardening
+        if: matrix.leg == 'b'
+        run: python tools/check_hardening.py bin/Release/rocketnet.dll
 
       - name: Check the library is callable from C and C++ through rocketnet.h
         if: matrix.leg == 'b'
