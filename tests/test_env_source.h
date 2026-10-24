@@ -5,7 +5,19 @@
 
 #pragma once
 
-#include "../sdk/rocketnet_platform.h"
+#include <stddef.h>
+
+// Keep this helper independent of rocketnet_platform.h. On Windows that
+// header brings in the SDK's platform headers, whose RPC compatibility macros
+// collide with ordinary unit-local names such as small and medium.
+extern "C"
+{
+int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
+void rocketnet_platform_test_environment_install( void );
+void rocketnet_platform_test_environment_set( const char * name, const char * value );
+void rocketnet_platform_test_environment_unset( const char * name );
+void rocketnet_platform_test_environment_reset( void );
+}
 
 // Every unit translation unit that changes configuration includes this file.
 // These initializers run before main and install the shared empty table. The
