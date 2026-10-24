@@ -28,6 +28,7 @@ library omits the simulator, test seams and development token minting, and
 refuses the published test packet filter, development keys and development
 connect tokens. [BUILDING.md, "Production builds"](BUILDING.md#production-builds)
 lists the production build and install commands.
+[KEYS.md](KEYS.md) covers the backend and server keys and production tokens.
 
 ## Start and stop
 
