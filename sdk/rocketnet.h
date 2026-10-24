@@ -335,7 +335,13 @@ enum rocketnet_status_t
     /// Connect refused. A production build (ROCKETNET_DEV=0) was given a
     /// connect token sealed to the published development server key.
 
-    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
+
+    /// Connect refused. The connect token names a server address with port 0,
+    /// where no server can be reached. Mint the token with the server's bound
+    /// port.
+
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31
 };
 
 
@@ -1522,6 +1528,8 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// handshake and CONNECTED states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
+/// A token naming a server address with port 0 returns
+/// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO and leaves the client DISCONNECTED.
 /// A socket or thread failure leaves the client DISCONNECTED.
 /// The connection clock starts at the next update.
 /// Returns ROCKETNET_STATUS_OK on success or a failure status.

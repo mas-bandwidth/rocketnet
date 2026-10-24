@@ -131,6 +131,8 @@ MCRNChannelTypesReset.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchannelt
 MCRNChannelTypesHold.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesUnordered.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
+MCRNChannelTypesBlocks.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
+MCRNChannelBrokenBlockInTurnHeld.cfg	MCRNChannelTypes.tla	invariant	InTurnDeliveredWhenComplete	ignore-terminal	rnchanneltypes	required	-
 MCRNSentHistory.cfg	MCRNSentHistory.tla	pass	-	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenCountEveryUnacked.cfg	MCRNSentHistory.tla	invariant	NoOverflowUnderBoundedLoss	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverRefused	check	rnsenthistory	required	-
@@ -256,7 +258,7 @@ MCRNOutgoingBuildBrokenMovesPriorRecord.cfg	MCRNOutgoingBuild.tla	action	PriorRe
 MCRNOutgoingBuildBrokenReuseCommitted.cfg	MCRNOutgoingBuild.tla	invariant	BytesUnchangedInPlace	ignore-terminal	rnoutgoingbuild	required	-
 MCRNSimFaults.cfg	MCRNSimFaults.tla	pass	-	check	rnsimfaults	required	-
 MCRNSimFaultsBrokenRestartKeepsSession.cfg	MCRNSimFaults.tla	invariant	RestartIsFresh	check	rnsimfaults	required	-
-MCRNSimFaultsBrokenCrashedSends.cfg	MCRNSimFaults.tla	invariant	CrashedPeerSilent	check	rnsimfaults	required	-
+MCRNSimFaultsBrokenCrashedSends.cfg	MCRNSimFaults.tla	invariant	CrashedEndpointSilent	check	rnsimfaults	required	-
 MCRNClientIoStepDriven.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoBrokenStepStartsThread.cfg	MCRNClientIo.tla	invariant	NoIoThreadActionInStepMode	check	rnclientio	required	-
 MCRNClientReceiveQuit.cfg	MCRNClientReceiveQuit.tla	pass	-	check	rnclientreceivequit	required	-

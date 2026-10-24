@@ -22,7 +22,7 @@
 // ----------------------------------------------------------------
 
 static_assert( sizeof(rn_channel_send_t) == 32, "channel send state is 32 bytes (14)" );
-static_assert( sizeof(rn_channel_receive_t) == 16, "channel receive state is 16 bytes (14)" );
+static_assert( sizeof(rn_channel_receive_t) == 24, "channel receive state is 24 bytes (14)" );
 static_assert( sizeof(rn_send_number_t) == 32, "the sender's per-number entry is 32 bytes (14)" );
 static_assert( sizeof(rn_receive_descriptor_t) == 32, "the receiver's descriptor is 32 bytes (14)" );
 static_assert( sizeof(rn_held_entry_t) == 16, "a held-ordered index entry is 16 bytes (14)" );
@@ -482,6 +482,7 @@ void rn_region_carve( rn_region_t * region )
         region->channel_send[c].ready_prev = RN_DESCRIPTOR_NONE;
         region->channel_send[c].ready_next = RN_DESCRIPTOR_NONE;
         region->channel_receive[c].held_sequenced = RN_DESCRIPTOR_NONE;
+        region->channel_receive[c].block_in_turn = RN_DESCRIPTOR_NONE;
     }
 
     memset( region->send_numbers, 0, sizeof(rn_send_number_t) * region->window );
@@ -1412,7 +1413,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,

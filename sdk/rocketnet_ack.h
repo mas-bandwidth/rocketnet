@@ -87,7 +87,7 @@ struct rocketnet_sent_packet_record_t
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
-    uint8_t was_keep_alive;                 // a keep-alive's ack is the peer's claim to hold its client index
+    uint8_t was_keep_alive;                 // a keep-alive's ack is the client's claim to hold its client index
     uint8_t pad[1];
 };
 
@@ -201,7 +201,7 @@ struct rocketnet_ack_endpoint_t
     // overlap, per the transports' threading contract
 
     uint64_t highest_sequence;                  // highest session sequence recorded as sent
-    uint64_t largest_acked_sequence;            // highest sent sequence the peer has acknowledged; update thread only
+    uint64_t largest_acked_sequence;            // highest sent sequence the receiver has acknowledged; update thread only
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
@@ -220,13 +220,13 @@ struct rocketnet_ack_endpoint_t
     int has_rtt_sample;                         // any first-ack sample has landed
 
     // Latched by process_block the first time a sequence recorded as a
-    // keep-alive is newly acknowledged. This is the peer's CLAIM to have
+    // keep-alive is newly acknowledged. This is the client's CLAIM to have
     // received a keep-alive -- and so to hold its client index and be
     // connected, since a keep-alive carries the index and processing one is
     // the client's only transition to _connected_. It is a claim and not a
-    // proof: an ack block is the peer's own statement about its own receive
+    // proof: an ack block is the client's own statement about its own receive
     // state, and no receiver can verify it. _Acks_ requires a block to name
-    // only sequences its sender opened; a peer that violates that latches
+    // only sequences its sender opened; a client that violates that latches
     // this bit without its index and strands only itself. It is what
     // _Keep-alive generation_ flips the suppression regime on; see
     // rocketnet_server_protocol_write_keep_alive_if_due. Cleared by reset,
@@ -324,14 +324,14 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 //
 //   RECORDED         the slot was empty or its record was acknowledged:
 //                    nothing was lost from the history.
-//   EVICTED_LOST     the evicted record was never acknowledged and the peer
+//   EVICTED_LOST     the evicted record was never acknowledged and the receiver
 //                    has acknowledged a sequence at least
 //                    ROCKETNET_LOSS_PACKET_THRESHOLD above it (RFC 9002
 //                    6.1.1): the packet is known lost on the path. An outcome,
 //                    counted on SEND_HISTORY_LOST.
 //   EVICTED_UNKNOWN  the evicted record was never acknowledged and no such
 //                    later acknowledgment exists: its fate is unknown (a
-//                    silent peer, or a window too small for the path). A
+//                    silent receiver, or a window too small for the path). A
 //                    refusal of history, counted on SEND_HISTORY_OVERFLOW.
 //   REFUSED_STALE    the write was not recorded: the slot already holds this
 //                    or a newer sequence, or the writer fell behind the

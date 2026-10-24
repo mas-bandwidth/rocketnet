@@ -920,7 +920,7 @@ static void rocketnet_server_release_mapping_claim( struct rocketnet_server_prot
 // timed-out one: CLIENT_CONNECTED = CLIENT_DISCONNECTED + CLIENT_TIMED_OUT
 // still holds, and INTEGRITY_LIMIT_REACHED says how many of the disconnects
 // were this. A connection under 2^36 forgery attempts has nothing worth
-// preserving, and the peer's own timeout ends its side. This is the read
+// preserving, and the client's own timeout ends its side. This is the read
 // path, so the check runs in every build.
 
 static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol_t * server,
@@ -1826,7 +1826,7 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // the client's ONLY transition to _connected_, so a client that
     // acknowledges one is claiming to have received the packet that would
     // have connected it. The server cannot verify the claim -- an ack block
-    // is the peer's statement about its own receive state -- and does not
+    // is the client's statement about its own receive state -- and does not
     // need to; see below.
     //
     // WHY THIS TEST AND NOT THE CONFIRMED FLAG: the defect class is "a

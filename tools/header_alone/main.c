@@ -150,7 +150,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; i-- )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
