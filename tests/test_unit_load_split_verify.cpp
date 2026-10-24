@@ -329,9 +329,56 @@ static void test_split_verify_payload_checksum()
     check( split_verify_write_payload( buffer, sizeof( buffer ), &oversize ) == 0 );
 }
 
+// The proof's rotation: offer k of client c carries the small message in
+// mode (c + k) % 8 and the fragmented message in the reliable mode
+// (c + k) % 5. The merger counts the same rotation from the sender's count,
+// so the two ends of a run must agree on every stream's count.
+static void test_split_verify_offer_rotation()
+{
+    const uint32_t offers = 600;
+    for ( uint32_t client = 0; client < 9; ++client )
+    {
+        uint32_t small[SPLIT_VERIFY_NUM_MODES] = { 0 };
+        uint32_t fragmented[SPLIT_VERIFY_NUM_MODES] = { 0 };
+        for ( uint32_t k = 0; k < offers; ++k )
+        {
+            const uint32_t small_mode = split_verify_small_mode( client, k );
+            const uint32_t fragmented_mode = split_verify_fragmented_mode( client, k );
+            check( small_mode < SPLIT_VERIFY_NUM_MODES );
+            check( fragmented_mode < SPLIT_VERIFY_NUM_MODES );
+            check( split_verify_mode_is_reliable( fragmented_mode ) );
+            if ( k > 0 )
+            {
+                check( small_mode == ( split_verify_small_mode( client, k - 1 ) + 1 ) % SPLIT_VERIFY_NUM_MODES );
+                check( fragmented_mode != split_verify_fragmented_mode( client, k - 1 ) );
+            }
+            small[small_mode]++;
+            fragmented[fragmented_mode]++;
+        }
+        // 600 offers: every mode carries 75 small messages, and only the
+        // five reliable modes carry fragmented ones, 120 each
+        for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
+        {
+            check( small[mode] == offers / SPLIT_VERIFY_NUM_MODES );
+            check( fragmented[mode] == ( split_verify_mode_is_reliable( mode ) ?
+                                         offers / SPLIT_VERIFY_FRAGMENTED_MODES : 0 ) );
+        }
+    }
+    // the five fragmented modes are the reliable ones, in the SDK's order
+    check( split_verify_fragmented_mode( 0, 0 ) == ROCKETNET_RELIABILITY_RELIABLE );
+    check( split_verify_fragmented_mode( 0, 1 ) == ROCKETNET_RELIABILITY_RELIABLE_ORDERED );
+    check( split_verify_fragmented_mode( 0, 2 ) == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED );
+    check( split_verify_fragmented_mode( 0, 3 ) == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT );
+    check( split_verify_fragmented_mode( 0, 4 ) == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT );
+    // and the small rotation reaches every mode, the unreliable ones too
+    for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
+        check( split_verify_small_mode( 3, mode ) == ( 3 + mode ) % SPLIT_VERIFY_NUM_MODES );
+}
+
 REGISTER_UNIT_TEST( test_split_verify_reliable_exactly_once );
 REGISTER_UNIT_TEST( test_split_verify_ordered_no_gaps );
 REGISTER_UNIT_TEST( test_split_verify_sequenced_never_older );
 REGISTER_UNIT_TEST( test_split_verify_unreliable_no_duplicates );
 REGISTER_UNIT_TEST( test_split_verify_receipts_match );
 REGISTER_UNIT_TEST( test_split_verify_payload_checksum );
+REGISTER_UNIT_TEST( test_split_verify_offer_rotation );

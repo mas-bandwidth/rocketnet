@@ -15,8 +15,9 @@ from unittest.mock import patch
 # or as a module.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.check_split_load import (PROOF_RECEIPT, PROOF_RELIABLE, main, proof_cell_line,  # noqa: E402
-                                    proof_expected_sent, proof_streams, strict_object, validate)
+from tools.check_split_load import (PROOF_FRAGMENTED_MODES, PROOF_MODES, PROOF_RECEIPT,  # noqa: E402
+                                    PROOF_RELIABLE, main, proof_cell_line, proof_expected_sent,
+                                    proof_streams, strict_object, validate)
 
 RUN = "0123456789abcdef"
 
@@ -527,7 +528,8 @@ def proof_receipt(role, first, count):
     fields.update(load="proof", payload_bytes="proof", wire_up=PROOF_WIRE_BYTES * count,
                   wire_down=PROOF_WIRE_BYTES * count, max_client_up_kbps=f"{rate:.6f}",
                   max_client_down_kbps=f"{rate:.6f}", aggregate_up_kbps=f"{rate * count:.6f}",
-                  aggregate_down_kbps=f"{rate * count:.6f}")
+                  aggregate_down_kbps=f"{rate * count:.6f}",
+                  transport_pin="portable" if role == "server" else "none")
     if role == "server":
         fields.update(c2s_received=proof_delivered("server", range(first, first + count)))
     else:
@@ -584,6 +586,26 @@ def proof_replace(text, prefix, old, new):
 
 
 class SplitProofTests(unittest.TestCase):
+    def test_proof_rotation_matches_the_simulation(self):
+        # The merger's count per stream must be the rotation the harness
+        # sends: offer k of client c carries the small message in mode
+        # (c + k) % 8 and the fragmented message in the reliable mode
+        # (c + k) % 5 (tools/load_split_verify.h, split_verify_small_mode).
+        for offers in (600, 601, 750):
+            for client in (0, 1, 7, 13, 999):
+                small = {mode: 0 for mode in range(PROOF_MODES)}
+                fragmented = {mode: 0 for mode in range(PROOF_MODES)}
+                for offer in range(offers):
+                    small[(client + offer) % PROOF_MODES] += 1
+                    fragmented[PROOF_FRAGMENTED_MODES[(client + offer) % len(PROOF_FRAGMENTED_MODES)]] += 1
+                for mode in range(PROOF_MODES):
+                    self.assertEqual(proof_expected_sent(client, mode, "small", offers), small[mode])
+                    if mode in PROOF_FRAGMENTED_MODES:
+                        self.assertEqual(proof_expected_sent(client, mode, "fragmented", offers),
+                                         fragmented[mode])
+                    else:
+                        self.assertEqual(fragmented[mode], 0)
+
     def check(self, server, shards):
         return validate(server, shards, RUN, 2, 60, 1000.0, server_transport="portable",
                         client_transport="portable", allocation_manifest=allocation(server, shards), load="proof")
@@ -674,6 +696,20 @@ class SplitProofTests(unittest.TestCase):
     def test_proof_transport_fallback_fails(self):
         server, shards = proof_fixture()
         server = proof_replace(server, "split_ready:", "transport_pin=portable", "transport_pin=xdp")
+        with self.assertRaisesRegex(ValueError, "transport fallback"):
+            self.check(server, shards)
+
+    def test_proof_receipt_transport_pin_fails(self):
+        # the receipt's pin must be the granted transport too: the pin at
+        # readiness and the pin at the end are the same one
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_receipt:", "transport_pin=portable", "transport_pin=xdp")
+        with self.assertRaisesRegex(ValueError, "transport fallback"):
+            self.check(server, shards)
+
+    def test_proof_proof_line_transport_pin_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_proof:", "transport_pin=portable", "transport_pin=xdp")
         with self.assertRaisesRegex(ValueError, "transport fallback"):
             self.check(server, shards)
 

@@ -474,6 +474,9 @@ def proof_role(text, role, run_id, transport):
     fields = one(text, "split_proof")
     expected(fields, role=role, run_id=run_id, transport=transport, verdict="PASS",
              small_bytes=1200, fragmented_bytes=2000, target_kbps=f"{PROOF_TARGET_KBPS:.0f}")
+    if role == "server" and fields.get("transport_pin") != transport:
+        raise ValueError(f"transport fallback: proof line pinned {fields.get('transport_pin')}, "
+                         f"granted {transport}")
     for name in ("checksum_errors", "receipt_errors", "receipts_dropped", "disconnects"):
         if integer(fields, name) != 0:
             raise ValueError(f"split_proof {role}: {name} nonzero")
@@ -538,6 +541,9 @@ def validate_proof(server_text, shard_texts, run_id, total, duration, limit, rea
         raise ValueError("server readiness transport differs from final receipt")
     if ready.get("transport_pin") != granted:
         raise ValueError(f"transport fallback: pinned {ready.get('transport_pin')}, granted {granted}")
+    if server.get("transport_pin") != granted:
+        raise ValueError(f"transport fallback: receipt pinned {server.get('transport_pin')}, "
+                         f"granted {granted}")
     if server_transport is not None and granted != server_transport:
         raise ValueError("server transport differs from requested transport")
     if integer(server, "first") != 0 or integer(server, "count") != total:

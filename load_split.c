@@ -51,24 +51,15 @@ static const char * split_payload_label( void ) { return split_proof_load ? "pro
  * offer from the client's index: 3200 payload bytes per offer at 10 Hz, an
  * offered 256 kbps per client per direction before packet overhead. Each
  * (mode, size class) stream has its own channel. Payloads are written and
- * checked by tools/load_split_verify.h. An unreliable mode has no fragmented
- * stream: the SDK sends an unreliable message too large for one packet as its
- * reliable twin. */
+ * checked by tools/load_split_verify.h, which owns the rotation
+ * (split_verify_small_mode, split_verify_fragmented_mode). An unreliable mode
+ * has no fragmented stream: the SDK sends an unreliable message too large for
+ * one packet as its reliable twin. */
 #define SPLIT_PROOF_SMALL_BYTES 1200u
 #define SPLIT_PROOF_FRAGMENTED_BYTES 2000u
 #define SPLIT_PROOF_FIRST_CHANNEL 16
 #define SPLIT_PROOF_TARGET_KBPS 256.0
 #define SPLIT_PROOF_RECEIPT_BATCH 256
-#define SPLIT_PROOF_FRAGMENTED_MODES 5u
-
-static const uint32_t split_proof_fragmented_modes[SPLIT_PROOF_FRAGMENTED_MODES] =
-{
-    ROCKETNET_RELIABILITY_RELIABLE,
-    ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
-    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
-    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
-    ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT,
-};
 
 /* One client's proof record at one end: the streams it receives, the count
  * it sent on each stream, and its receipt ledger for the direction it sends. */
@@ -464,8 +455,8 @@ static int split_proof_offer( struct split_proof_t * proof, struct rocketnet_ser
                               uint64_t run_id, struct load_timing_t * timing )
 {
     const uint32_t k = proof->offers++;
-    const uint32_t small_mode = (client + k) % SPLIT_VERIFY_NUM_MODES;
-    const uint32_t fragmented_mode = split_proof_fragmented_modes[(client + k) % SPLIT_PROOF_FRAGMENTED_MODES];
+    const uint32_t small_mode = split_verify_small_mode(client, k);
+    const uint32_t fragmented_mode = split_verify_fragmented_mode(client, k);
     const int small = split_proof_send(proof, server, slot, api, client, direction, small_mode,
                                        SPLIT_VERIFY_SMALL, run_id, timing);
     const int fragmented = split_proof_send(proof, server, slot, api, client, direction, fragmented_mode,
@@ -595,15 +586,24 @@ static const char * split_transport_pin( void )
     return pin;
 }
 
+/* The pin as a printable field: the server's pinned transport, or "none"
+ * when the variable names no single transport or the role is a shard (the
+ * pin is the server's placement, not the client's). */
+static const char * split_transport_pin_field( const char * role )
+{
+    if ( strcmp( role, "server" ) != 0 ) return "none";
+    const char * pin = split_transport_pin();
+    return pin ? pin : "none";
+}
+
 static void split_proof_role_line( const char * role, uint64_t run_id, const char * transport,
                                    const struct split_result_t * result, int disconnects, int pass )
 {
-    const char * pin = split_transport_pin();
     printf("split_proof: role=%s run_id=%016" PRIx64 " transport=%s transport_pin=%s small_bytes=%u "
            "fragmented_bytes=%u target_kbps=%.0f min_client_up_kbps=%.6f min_client_down_kbps=%.6f "
            "checksum_errors=%" PRIu64 " receipt_errors=%" PRIu64 " receipts_dropped=%" PRIu64 " "
            "disconnects=%d verdict=%s\n", role, run_id, transport ? transport : "none",
-           pin && strcmp(role, "server") == 0 ? pin : "none", SPLIT_PROOF_SMALL_BYTES,
+           split_transport_pin_field(role), SPLIT_PROOF_SMALL_BYTES,
            SPLIT_PROOF_FRAGMENTED_BYTES, SPLIT_PROOF_TARGET_KBPS, result->min_client_up_kbps,
            result->min_client_down_kbps, result->proof_checksum_errors, result->proof_receipt_errors,
            result->proof_receipts_dropped, disconnects, pass ? "PASS" : "FAIL");
@@ -912,7 +912,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "os_pool_threads=%ld "
            "term_status_code=%d resource_baseline=%s delivery_verdict=%s load_verdict=%s "
            "bandwidth_verdict=%s timing_verdict=%s timing_budget_us=100 "
-           "timing_budget_basis=server_update_send_p99_upper verdict=%s\n",
+           "timing_budget_basis=server_update_send_p99_upper verdict=%s%s%s\n",
            role, run_id, total, first, count, duration, result->connect_seconds, result->start_seconds,
            result->traffic_seconds, result->drain_seconds, result->barrier_seconds, result->startup_utc_s,
            result->traffic_start_utc_s, result->traffic_end_utc_s, result->connected,
@@ -931,9 +931,13 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            census ? "census_v1" : "phase_counts_v1", operational.threads, operational.handles,
            whole.threads, whole.handles, whole.os_pool_threads,
            (int) term_status, resources ? "PASS" : "FAIL", correctness ? "PASS" : "FAIL",
-           result->load_complete ? "PASS" : "FAIL", bandwidth ? "PASS" : "FAIL",
-           strcmp(role, "server") == 0 ? (timing ? "PASS" : "FAIL") : "NA",
-           pass ? "PASS" : "FAIL");
+            result->load_complete ? "PASS" : "FAIL", bandwidth ? "PASS" : "FAIL",
+            strcmp(role, "server") == 0 ? (timing ? "PASS" : "FAIL") : "NA",
+            pass ? "PASS" : "FAIL",
+            /* The proof's transport pin: the server's, in the receipt as well
+             * as in the readiness line, so the merger can bind the two. The
+             * default and full receipts are unchanged. */
+            split_proof_load ? " transport_pin=" : "", split_proof_load ? split_transport_pin_field(role) : "");
     if ( split_proof_load )
         split_proof_role_line(role, run_id, transport, result, result->proof_disconnected_clients,
                               correctness && result->load_complete && bandwidth && resources);

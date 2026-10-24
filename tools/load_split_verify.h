@@ -67,10 +67,38 @@
 #define SPLIT_VERIFY_NUM_MODES 8u
 #define SPLIT_VERIFY_STREAMS_PER_CLIENT ( SPLIT_VERIFY_NUM_DIRECTIONS * SPLIT_VERIFY_NUM_MODES * SPLIT_VERIFY_NUM_SIZE_CLASSES )
 
+/* The five reliable modes, in the order the proof's fragmented stream
+ * rotates them. An unreliable mode has no fragmented stream: the SDK sends
+ * an unreliable message too large for one packet as its reliable twin. */
+#define SPLIT_VERIFY_FRAGMENTED_MODES 5u
+
 /* A small unreliable message stays within the strictest unreliable limit
  * (UNRELIABLE_SEQUENCED on a channel of 256 or more, sdk/rocketnet.h), so it
  * is never sent as a reliable one. */
 #define SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES 1404u
+
+/* The proof's rotation: offer k of client c carries the small message in
+ * mode (c + k) % 8 and the fragmented message in the reliable mode
+ * (c + k) % 5 of the five. The merger counts the same rotation
+ * (tools/check_split_load.py, proof_expected_sent), so both ends of a run
+ * agree on which stream each offer belongs to. */
+static inline uint32_t split_verify_small_mode( uint32_t client, uint32_t offer )
+{
+    return ( client + offer ) % SPLIT_VERIFY_NUM_MODES;
+}
+
+static inline uint32_t split_verify_fragmented_mode( uint32_t client, uint32_t offer )
+{
+    static const uint32_t modes[SPLIT_VERIFY_FRAGMENTED_MODES] =
+    {
+        ROCKETNET_RELIABILITY_RELIABLE,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+        ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+        ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT,
+    };
+    return modes[( client + offer ) % SPLIT_VERIFY_FRAGMENTED_MODES];
+}
 
 static inline int split_verify_mode_is_reliable( uint32_t mode )
 {

@@ -326,7 +326,9 @@ sends); a run past either bound is reported, never wrapped.
 With `proof`, the server refuses to run (exit 2, `split_transport_refused:`,
 before any client connects) unless `ROCKETNET_SERVER_TRANSPORT` names one
 transport and the granted transport is that one; `split_ready:` prints
-`transport_pin=` beside `transport=`. In any mode, a pin naming one transport
+`transport_pin=` beside `transport=`, and the server's `split_receipt:` prints
+the same `transport_pin=` field, so the pin at readiness and the pin at the
+end are the same one the merger binds. In any mode, a pin naming one transport
 that is not the one granted is the same refusal. Any client disconnect
 between the end of the population window and the planned close fails the
 run, and the role prints one `split_disconnect:` line per client with its
@@ -351,7 +353,8 @@ or a delivery the sender never sent; every receipt send has one outcome, a
 reliable one ACKED, and every ACKED sequence is one the receiver recorded;
 every client is at least 256 kbps on the wire each way in both roles' raw
 records; no role reports a disconnect, a checksum failure or a dropped
-receipt; and the granted transport is the pinned one. It prints one line,
+receipt; and the granted transport is the pinned one in the readiness line,
+in the server's receipt and in the server's proof line. It prints one line,
 the cell verdict:
 
 ```text
@@ -362,3 +365,73 @@ The cell verdict is the delivery proof, and the merger exits 0 when it
 passes. The server API timing evidence is still validated and its verdict
 printed beside it (`timing_verdict`, and `overall_verdict` in the JSON line
 is FAIL when it fails); the timing budget is judged at full load, not here.
+
+### A bounded proof run
+
+One server bench and two client benches, 1000 clients in four shards of 250,
+60 seconds, the server pinned to one transport. The addresses below are
+placeholders; replace them with the benches' client-reachable IPv4
+addresses. The server runs first and its `split_ready:` line gives the
+address, the port and the public key the shards need:
+
+```text
+# on the server bench
+ROCKETNET_SERVER_TRANSPORT=portable \
+  load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
+
+# on each of the two client benches, two shards each
+load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+load_split client-shard 1000 60 0123456789abcdef 250 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+load_split client-shard 1000 60 0123456789abcdef 500 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+load_split client-shard 1000 60 0123456789abcdef 750 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+```
+
+The aggregate cap is the operator's argument: 1000 clients at 256 kbps is
+256 Mbit/s each way before packet overhead, under a 1 GbE path. The four
+shards carry disjoint client index ranges, two shards on each client bench.
+
+Keep the five logs unmodified (`server.log`, `shard0.log` ... `shard3.log`),
+the run ID, and the allocation manifest, whose `shards` array names the four
+shards in the order the merger reads them:
+
+```json
+{
+  "schema": "split_allocation_v1",
+  "run_id": "0123456789abcdef",
+  "server": {"role": "server", "total": 1000,
+             "host_id": "server-bench-id", "allocation_id": "server-lease-id",
+             "allocation_ref": "gate/server-lease-receipt", "runner_id": "server-runner-id",
+             "allocation_type": "dedicated_server", "log_sha256": "<sha256-of-server.log>"},
+  "shards": [{"role": "client-shard", "first": 0, "count": 250,
+              "host_id": "client-bench-a", "allocation_id": "client-lease-a",
+              "allocation_ref": "gate/client-lease-a", "runner_id": "client-runner-a",
+              "allocation_type": "client_host", "log_sha256": "<sha256-of-shard0.log>"},
+             {"role": "client-shard", "first": 250, "count": 250,
+              "host_id": "client-bench-b", "allocation_id": "client-lease-b",
+              "allocation_ref": "gate/client-lease-b", "runner_id": "client-runner-b",
+              "allocation_type": "client_host", "log_sha256": "<sha256-of-shard1.log>"},
+             {"role": "client-shard", "first": 500, "count": 250,
+              "host_id": "client-bench-a", "allocation_id": "client-lease-c",
+              "allocation_ref": "gate/client-lease-c", "runner_id": "client-runner-c",
+              "allocation_type": "client_host", "log_sha256": "<sha256-of-shard2.log>"},
+             {"role": "client-shard", "first": 750, "count": 250,
+              "host_id": "client-bench-b", "allocation_id": "client-lease-d",
+              "allocation_ref": "gate/client-lease-d", "runner_id": "client-runner-d",
+              "allocation_type": "client_host", "log_sha256": "<sha256-of-shard3.log>"}]
+}
+```
+
+Then the merger, with the proof cell:
+
+```text
+python3 tools/check_split_load.py --server server.log \
+  --shard shard0.log --shard shard1.log --shard shard2.log --shard shard3.log \
+  --run-id 0123456789abcdef --total 1000 --duration 60 \
+  --aggregate-limit-kbps 600000 --server-transport portable \
+  --client-transport portable --allocation-manifest allocation.json \
+  --load proof
+```
+
+The run passes only when the merger exits 0 and prints
+`split_proof_cell: verdict=PASS`. A failure names its cause on the
+`split_merge:` line and in the cell verdict's `reason=`.
