@@ -75,4 +75,40 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
 
+// A start past the send queue size is refused and counted, so the flush
+// names the queue and the count once per flush instead of the start path
+// logging a line for every refused packet. No clock, socket or thread.
+static void test_xdp_transport_send_overflow_counted_once_per_flush()
+{
+    const int limit = 1024;
+    std::atomic<int> num_packets( 0 );
+    std::atomic<uint64_t> refused( 0 );
+
+    // the first limit claims take an index of their own, the next five are
+    // refused and counted
+    for ( int i = 0; i < limit + 5; ++i )
+    {
+        const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
+        if ( i < limit )
+            rocketnet_unit_check( index == i );
+        else
+            rocketnet_unit_check( index == -1 );
+    }
+    rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
+
+    // a queue that starts over claims from zero again and counts again
+    num_packets.store( 0, std::memory_order_relaxed );
+    refused.store( 0, std::memory_order_relaxed );
+    for ( int i = 0; i < limit + 5; ++i )
+    {
+        const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
+        if ( i < limit )
+            rocketnet_unit_check( index == i );
+        else
+            rocketnet_unit_check( index == -1 );
+    }
+    rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
+}
+REGISTER_UNIT_TEST(test_xdp_transport_send_overflow_counted_once_per_flush);
+
 #endif // #if defined(__linux__)

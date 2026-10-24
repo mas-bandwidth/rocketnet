@@ -8,11 +8,13 @@
 
 // Adapters preserve the existing native backend entry points. New backends
 // can define their operations directly in their own implementation file.
-static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind )
+// A client socket asks for ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE; a server
+// socket asks for rocketnet_server_receive_buffer_request at its max_clients.
+static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes )
 {
     return rocketnet_platform_socket_create_with_pump( context, bind,
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
-        ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, name );
+        receive_buffer_bytes, name );
 }
 // The buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
@@ -386,12 +388,19 @@ static void * portable_create( void * context, const rocketnet_server_transport_
         portable_server_cleanup( server );
         return NULL;
     }
-    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    // one update's inbound packets at max_clients: the RX worker stops
+    // reading while every bank waits for main (RNPortableRx HoldOnFull), so
+    // the kernel holds whatever arrives until the next update
+    const int max_clients = config->transport && config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
+    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( max_clients );
+    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, receive_buffer_bytes );
     if ( !server->socket )
     {
         portable_server_cleanup( server );
         return NULL;
     }
+    rocketnet_server_receive_buffer_granted( config->name, receive_buffer_bytes,
+        rocketnet_platform_socket_receive_buffer_bytes( server->socket ) );
     if ( !rocketnet_platform_mutex_create( &server->mutex ) ||
          !rocketnet_platform_mutex_create( &server->rx_mutex ) )
     {
@@ -847,7 +856,7 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
     struct portable_io_client_t * client = (struct portable_io_client_t*) rocketnet_malloc( context, sizeof( *client ) );
     if ( !client )
         return NULL;
-    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     if ( !client->socket )
     {
         rocketnet_free( context, client );
@@ -922,7 +931,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
-{ return portable_socket_create( context, config->name, bind ); }
+{ return portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ); }
 static void portable_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 { rocketnet_platform_socket_send_packet( (rocketnet_platform_socket_t*) transport, to, data, bytes ); }
 static int portable_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )

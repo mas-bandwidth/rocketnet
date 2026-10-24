@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_route.h"
 #include <atomic>
 #include <limits.h>
@@ -519,6 +520,59 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
 
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// ---------------------------------------------------
+
+// Server receive buffer sizing (rocketnet_internal.h, USAGE.md "Receive
+// buffer sizing"). A server updating at update_hz must hold one update's
+// inbound packets at max_clients in its socket: the portable transport's
+// receive worker stops reading while every receive bank waits for the next
+// update (tla/RNPortableRx.tla HoldOnFull), so the kernel holds the rest.
+
+int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz )
+{
+    const uint64_t clients = max_clients > 1 ? (uint64_t) max_clients : 1u;
+    const uint64_t kbps = receive_kbps_per_client > 1 ? (uint64_t) receive_kbps_per_client : 1u;
+    const uint64_t hz = update_hz > 1 ? (uint64_t) update_hz : 1u;
+    const uint64_t bytes_per_second_per_kbps = 125u;
+    const uint64_t scale = bytes_per_second_per_kbps * (uint64_t) ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN;
+    const uint64_t rate = clients * kbps; // both below 2^31: no overflow
+    if ( rate > UINT64_MAX / scale )
+        return INT_MAX;
+    uint64_t bytes = ( rate * scale + hz - 1u ) / hz;
+    if ( bytes < (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE )
+        bytes = (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    if ( bytes > (uint64_t) INT_MAX )
+        bytes = (uint64_t) INT_MAX;
+    return (int) bytes;
+}
+
+int rocketnet_server_receive_buffer_request( int max_clients )
+{
+    return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ );
+}
+
+void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes )
+{
+    // one line per server socket: what the kernel granted and what was asked
+    // for. A grant below the request is a warning that names the limit to
+    // raise, because the kernel drops what arrives past the grant.
+    if ( granted_bytes >= requested_bytes )
+    {
+        rocketnet_info( "server %s: socket receive buffer granted %d of %d requested bytes",
+                        name ? name : "socket", granted_bytes, requested_bytes );
+        return;
+    }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const char * limit = "net.core.rmem_max";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const char * limit = "the system socket buffer limit";
+#else
+    const char * limit = "kern.ipc.maxsockbuf";
+#endif
+    rocketnet_warn( "server %s: socket receive buffer granted %d of %d requested bytes; packets arriving between updates past the grant are dropped by the kernel: raise %s",
+                    name ? name : "socket", granted_bytes, requested_bytes, limit );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 // linux and the BSDs. one POSIX section: the sockets, threads and mutexes
@@ -756,6 +810,21 @@ static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, i
         }
     }
     return false;
+}
+
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    socklen_t length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // linux doubles the request for its bookkeeping and reports the double
+    granted /= 2;
+#endif
+    return granted;
 }
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
@@ -2633,6 +2702,17 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
 
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    socklen_t length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+    return granted;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
@@ -2710,11 +2790,22 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         return NULL;
     }
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &receive_buffer_size ), sizeof( int ) ) != 0 )
+    // a request above kern.ipc.maxsockbuf is refused, not clamped: walk down
+    // by halves to what the kernel grants (a server's request is sized from
+    // its max_clients and may pass the limit); the server reads the grant
+    // back and names the limit (rocketnet_server_receive_buffer_granted)
     {
-        rocketnet_error( "failed to set socket receive buffer size" );
-        rocketnet_platform_socket_destroy( socket );
-        return NULL;
+        int size = receive_buffer_size;
+        while ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &size ), sizeof( int ) ) != 0 )
+        {
+            if ( size <= 1 )
+            {
+                rocketnet_error( "failed to set socket receive buffer size" );
+                rocketnet_platform_socket_destroy( socket );
+                return NULL;
+            }
+            size /= 2;
+        }
     }
 
     // Darwin chooses an ephemeral port for an IPv6 wildcard without checking
@@ -4621,6 +4712,17 @@ uint64_t rocketnet_platform_receive_resets()
 uint64_t rocketnet_platform_receive_empties()
 {
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
+}
+
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    int length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+    return granted;
 }
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
