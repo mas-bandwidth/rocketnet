@@ -93,6 +93,7 @@ struct rocketnet_server_send_buffer_t
 {
     int num_packets;
     rocketnet_address_t to[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    int client_index[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int packet_bytes[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_SEND_PACKETS];
 };
@@ -653,7 +654,12 @@ static bool rocketnet_server_link_active( rocketnet_server_transport_t * transpo
            rocketnet_network_simulator_patterns_active( transport->link_simulator );
 }
 
-static void rocketnet_server_link_send( rocketnet_server_transport_t * transport,
+// Returns true when the datagram went to the platform send or the simulator
+// took it (a simulated loss inside the simulator is still a datagram sent and
+// lost on the wire), and false when the simulator's lock was busy and the
+// datagram was dropped here. A datagram is counted sent only once the link
+// took it, so the callers charge the sent statistics on true alone.
+static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport,
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
 {
@@ -666,24 +672,25 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
         send.packet_data = packet_data;
         send.packet_bytes = packet_bytes;
         transport->io.operations->send_batch( transport->io.instance, &send, 1 );
-        return;
+        return true;
     }
 #if ROCKETNET_TEST_SEAMS
     if ( transport->link_busy_sends_for_test > 0 )
     {
         transport->link_busy_sends_for_test--;
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-        return;
+        return false;
     }
 #endif // #if ROCKETNET_TEST_SEAMS
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-        return;
+        return false;
     }
     rocketnet_network_simulator_send( transport->link_simulator, &transport->link_simulator_from,
                                       to, packet_data, packet_bytes, transport->time );
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+    return true;
 }
 
 // The development network simulator call on a running transport: applies at
@@ -717,8 +724,12 @@ void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_tran
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
-static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
-                                              const rocketnet_platform_send_t * sends, int num_sends, bool shutdown = false )
+// Returns the number of sends the link took and marks each one in accepted[],
+// so the caller charges every send on its own result (the per-client totals
+// stay per send). A send without the simulator goes to the platform whole.
+static int rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
+                                             const rocketnet_platform_send_t * sends, int num_sends,
+                                             bool * accepted, bool shutdown = false )
 {
     if ( !rocketnet_server_link_active( transport ) )
     {
@@ -726,10 +737,18 @@ static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * tra
             transport->io.operations->send_batch_shutdown( transport->io.instance, sends, num_sends );
         else
             transport->io.operations->send_batch( transport->io.instance, sends, num_sends );
-        return;
+        for ( int i = 0; i < num_sends; i++ )
+            accepted[i] = true;
+        return num_sends;
     }
+    int num_accepted = 0;
     for ( int i = 0; i < num_sends; i++ )
-        rocketnet_server_link_send( transport, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+    {
+        accepted[i] = rocketnet_server_link_send( transport, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+        if ( accepted[i] )
+            num_accepted++;
+    }
+    return num_accepted;
 }
 
 // Link!ReverseWindow: the window the simulator holds is emitted reversed,
@@ -784,6 +803,17 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
         rocketnet_server_transport_io_send_packets( transport );
 }
 
+// The main-thread sent charge: every control frame and every portable payload
+// lands in the current stats bucket and the cumulative totals directly.
+static void rocketnet_server_charge_send_frame( struct rocketnet_server_transport_t * server_transport,
+                                                int client_index, const rocketnet_address_t * to, int packet_bytes )
+{
+    const int stats_index = server_transport->current_stats_index;
+    server_transport->stats_frames[stats_index].packets_sent++;
+    server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( to->type ) );
+    rocketnet_server_wire_totals_add_sent( server_transport, client_index, to, packet_bytes );
+}
+
 // Control frames borrow this buffer only during synchronous send_batch.
 // Drain full batches as update fills them, so receive responses cannot
 // consume the entire maintenance budget and servers can service >256 slots.
@@ -792,6 +822,8 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
     rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
     rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    int send_client_index[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    bool accepted[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
     {
@@ -800,11 +832,20 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
             sends[num_sends].to = &server_transport->send_buffer.to[i];
             sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
             sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
+            send_client_index[num_sends] = server_transport->send_buffer.client_index[i];
             num_sends++;
         }
     }
     if ( num_sends > 0 )
-        rocketnet_server_link_send_batch( server_transport, sends, num_sends, shutdown );
+    {
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends, accepted, shutdown );
+        // a datagram is counted sent only once the link took it
+        for ( int i = 0; i < num_sends; i++ )
+        {
+            if ( accepted[i] )
+                rocketnet_server_charge_send_frame( server_transport, send_client_index[i], sends[i].to, sends[i].packet_bytes );
+        }
+    }
     server_transport->send_buffer.num_packets = 0;
 }
 
@@ -868,27 +909,27 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     // bursts -- runs on the main thread, so it lands in the current stats
     // bucket and the cumulative totals directly
 
-    const int stats_index = server_transport->current_stats_index;
-    server_transport->stats_frames[stats_index].packets_sent++;
-    server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( frame->to.type ) );
-
-    rocketnet_server_wire_totals_add_sent( server_transport, frame->client_index, &frame->to, packet_bytes );
-
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
+        bool sent = true;
         if ( rocketnet_server_link_active( server_transport ) )
         {
-            rocketnet_server_link_send( server_transport, &frame->to,
-                                        frame->data + ROCKETNET_FRAME_WIRE_OFFSET, packet_bytes );
+            sent = rocketnet_server_link_send( server_transport, &frame->to,
+                                               frame->data + ROCKETNET_FRAME_WIRE_OFFSET, packet_bytes );
             rocketnet_server_transport_io_abort_packet( server_transport, frame->packet_id, frame->data );
         }
         else
             rocketnet_server_transport_io_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
+        // a datagram is counted sent only once the link took it
+        if ( sent )
+            rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
         return;
     }
 
+    // the portable frame is charged by the control flush, once the link took it
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
+    send_buffer->client_index[send_buffer->num_packets] = frame->client_index;
     send_buffer->num_packets++;
 }
 
@@ -2785,25 +2826,40 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     return 1;
 }
 
-static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
+// The staged sent charge, from any game thread: relaxed atomics folded into
+// the current bucket by send_packets on the main thread.
+static void rocketnet_server_charge_staged_frame( struct rocketnet_server_transport_t * server_transport,
+                                                  int client_index, int address_type, int wire_bytes )
+{
+    rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
+    rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( address_type ) ) );
+    rocketnet_server_wire_totals_add_sent_atomic( server_transport, client_index, address_type, wire_bytes );
+}
+
+// Returns true when a staged frame left (the staging finished it or the link
+// took it) and is the caller's to charge with
+// rocketnet_server_charge_staged_frame; a portable frame returns false and is
+// charged by the flush, once the link took it. A frame the link was handed
+// is back in the staging either way, so its data is cleared and a later
+// withdrawal does not return it twice.
+static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
 {
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         if ( rocketnet_server_link_active( server_transport ) )
         {
-            rocketnet_server_link_send( server_transport, &frame->to,
-                                        frame->data + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
+            const bool sent = rocketnet_server_link_send( server_transport, &frame->to,
+                                                          frame->data + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
             rocketnet_server_transport_io_abort_packet( server_transport, frame->socket_packet_id, frame->data );
+            frame->data = NULL;
+            return sent;
         }
-        else
-            rocketnet_server_transport_io_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( frame->to.type ) ) );
-        rocketnet_server_wire_totals_add_sent_atomic( server_transport, frame->client_index, frame->to.type, wire_bytes );
-        return;
+        rocketnet_server_transport_io_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
+        return true;
     }
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
+    return false;
 }
 
 static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport_t * server_transport,
@@ -2875,7 +2931,9 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
             return 0;
         }
 
-        rocketnet_server_commit_fill_frame( server_transport, &frame, wire_bytes );
+        // a datagram is counted sent only once the link took it
+        if ( rocketnet_server_commit_fill_frame( server_transport, &frame, wire_bytes ) )
+            rocketnet_server_charge_staged_frame( server_transport, frame.client_index, frame.to.type, wire_bytes );
         context->frame = NULL;
         return wire_bytes;
     }
@@ -2922,6 +2980,8 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
                                                                 context->packet_id, fragment_count );
 
     int total_wire_bytes = 0;
+    int fragment_wire_bytes[ROCKETNET_MAX_FRAGMENTS];
+    bool fragment_sent[ROCKETNET_MAX_FRAGMENTS];
     for ( int i = 0; i < fragment_count; i++ )
     {
         const uint64_t sequence = base_sequence + (uint64_t) i;
@@ -2940,13 +3000,34 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
             // whole reservation withdraws
 
             const int first_withdrawn = rocketnet_server_transport_io_has( server_transport->io, ROCKETNET_TRANSPORT_FINISH_FINAL ) ? i : 0;
+
+            // a datagram is counted sent only once the link took it, and a
+            // withdrawn frame never left: charge the frames that stay
+            // committed and the ones the link already took (their data is
+            // cleared, so the withdrawal below passes over them)
+
+            for ( int j = 0; j < i; j++ )
+            {
+                if ( fragment_sent[j] && ( j < first_withdrawn || !frames[j].data ) )
+                    rocketnet_server_charge_staged_frame( server_transport, frames[j].client_index, frames[j].to.type, fragment_wire_bytes[j] );
+            }
             for ( int j = first_withdrawn; j < fragment_count; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
             context->frame = NULL;
             return 0;
         }
-        rocketnet_server_commit_fill_frame( server_transport, &frames[i], wire_bytes );
+        fragment_sent[i] = rocketnet_server_commit_fill_frame( server_transport, &frames[i], wire_bytes );
+        fragment_wire_bytes[i] = wire_bytes;
         total_wire_bytes += wire_bytes;
+    }
+
+    // a datagram is counted sent only once the link took it: the fragments
+    // are charged after the whole split is committed, so a withdrawal never
+    // leaves a charge behind
+    for ( int i = 0; i < fragment_count; i++ )
+    {
+        if ( fragment_sent[i] )
+            rocketnet_server_charge_staged_frame( server_transport, frames[i].client_index, frames[i].to.type, fragment_wire_bytes[i] );
     }
 
     context->frame = NULL;
@@ -2992,18 +3073,19 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
         const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+        bool sent = true;
         if ( rocketnet_server_link_active( server_transport ) )
         {
-            rocketnet_server_link_send( server_transport, mapped_to,
-                                        context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
+            sent = rocketnet_server_link_send( server_transport, mapped_to,
+                                               context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
             rocketnet_server_transport_io_abort_packet( server_transport, backend_id, context->frame );
         }
         else
             rocketnet_server_transport_io_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
-        rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + rocketnet_wire_header_bytes( mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE ) ) );
-        rocketnet_server_wire_totals_add_sent_atomic( server_transport, context->client_index,
-                                                      mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
+        // a datagram is counted sent only once the link took it
+        if ( sent )
+            rocketnet_server_charge_staged_frame( server_transport, context->client_index,
+                                                  mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
     }
     else
     {
@@ -3095,28 +3177,35 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         num_packets = (uint64_t) server_transport->send_capacity;
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+    int send_client_index[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+    bool accepted[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
     int num_sends = 0;
 
     for ( uint64_t i = 0; i < num_packets; i++ )
     {
         if ( ring->info[i].wire_bytes > 0 )
         {
-            // the payload accumulation rides the flush walk: the ring already
-            // holds every committed packet's wire size, so this costs nothing
-
-            server_transport->stats_frames[stats_index].packets_sent++;
-            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( ring->info[i].to.type ) );
-            rocketnet_server_wire_totals_add_sent( server_transport, ring->info[i].client_index, &ring->info[i].to, ring->info[i].wire_bytes );
-
             sends[num_sends].to = &ring->info[i].to;
             sends[num_sends].packet_data = ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
             sends[num_sends].packet_bytes = ring->info[i].wire_bytes;
+            send_client_index[num_sends] = ring->info[i].client_index;
             num_sends++;
         }
     }
 
     if ( num_sends > 0 )
-        rocketnet_server_link_send_batch( server_transport, sends, num_sends, shutdown );
+    {
+        rocketnet_server_link_send_batch( server_transport, sends, num_sends, accepted, shutdown );
+
+        // a datagram is counted sent only once the link took it: each send
+        // is charged on its own result, so the per-client totals stay per send
+
+        for ( int i = 0; i < num_sends; i++ )
+        {
+            if ( accepted[i] )
+                rocketnet_server_charge_send_frame( server_transport, send_client_index[i], sends[i].to, sends[i].packet_bytes );
+        }
+    }
 
     ring->num_packets = 0;
 
@@ -3628,7 +3717,7 @@ int rocketnet_server_transport_test_staged_simulator_flush()
         if ( rocketnet_address_parse( &to, "127.0.0.1:40000" ) )
         {
             const uint8_t packet = 0x5A;
-            rocketnet_server_link_send( transport, &to, &packet, 1 );
+            (void) rocketnet_server_link_send( transport, &to, &packet, 1 );
             rocketnet_address_t from, received_to;
             uint8_t received[ROCKETNET_RECEIVE_CEILING];
             const int before = rocketnet_network_simulator_receive_any( transport->link_simulator,
