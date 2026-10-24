@@ -80,9 +80,9 @@ bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * c
 bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
                                      struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
-// the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
-// "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
-// "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES". each transport table's field is read
+// the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
+// "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
+// "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES". each transport table's field is read
 // under its own endpoint's name, so a server and a client in one process
 // never share a variable. returns false when the buffer cannot hold it.
 
@@ -237,7 +237,8 @@ struct rocketnet_transport_ladder_t
 // transport set, an empty list element, "auto" inside a longer list, or a
 // list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder );
+// server: the endpoint whose registry column decides pin-only (auto skips it)
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:

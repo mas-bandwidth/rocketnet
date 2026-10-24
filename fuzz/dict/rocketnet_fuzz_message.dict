@@ -1,0 +1,71 @@
+# The libFuzzer dictionary for the rocketnet_fuzz_message target: the
+# message record decoder. Every entry is a token the decoder branches on --
+# the payload's form byte, a record's flags byte, the length field, the
+# channel, the ring, the 24-bit counters and the CONFIG body's head --
+# spelled as the bytes the decoder compares against, so mutation lands on
+# the constants the checks gate on.
+#
+# Every entry derives from a named constant in sdk/ -- the source is cited
+# beside each -- and an entry that drifts from its constant is a dictionary
+# bug, not a protocol change.
+
+# --- the payload's form byte (sdk/rocketnet_message.h) ---
+
+# ROCKETNET_MESSAGE_FORM_SINGLE and ROCKETNET_MESSAGE_FORM_RECORDS: the
+# form byte is the payload's LAST byte
+message_form_single="\x00"
+message_form_records="\x01"
+
+# --- a record's flags byte ---
+
+# the code in the low three bits (ROCKETNET_MESSAGE_FLAG_CODE_MASK), and
+# the three flags above it: BLOCK, WIDE and CONTROL
+message_code_unreliable="\x00"
+message_code_unreliable_sequenced="\x01"
+message_code_reliable="\x02"
+message_code_reliable_ordered="\x03"
+message_code_reliable_sequenced="\x04"
+
+# the flags a correct sender writes: BLOCK on the reliable codes, WIDE on
+# a channel of 256 or more, CONTROL on the CONFIG record
+message_flags_reliable_block="\x0a"
+message_flags_ordered_block="\x0b"
+message_flags_ordered_wide="\x13"
+message_flags_sequenced_block="\x0c"
+message_flags_config="\x22"
+
+# the reserved bits (ROCKETNET_MESSAGE_FLAG_RESERVED) and the codes 5 to 7
+# that never reach the wire
+message_flags_reserved="\x40"
+message_code_receipt="\x05"
+
+# --- the length field (u16, little-endian) ---
+
+# one byte of data, the block stride ROCKETNET_MESSAGE_FRAGMENT_BYTES
+# (1152), the CONFIG body (ROCKETNET_MESSAGE_CONFIG_BYTES, 28), and the
+# largest record (ROCKETNET_MESSAGE_MAX_RECORD_BYTES)
+message_length_one="\x01\x00"
+message_length_stride="\x80\x04"
+message_length_config="\x1c\x00"
+message_length_max="\xff\xff"
+
+# --- the fields a record carries ---
+
+# the ring, in 16-byte units (u16), and the channel (u8, or u16 when the
+# record is WIDE): the first WIDE channel is 256
+message_ring_stride="\x48\x00"
+message_channel_wide="\x00\x01"
+
+# the 24-bit counters at their wrap: the number, the sequencing and the
+# ordering (ROCKETNET_MESSAGE_U24_MASK)
+message_u24_max="\xff\xff\xff"
+
+# --- the CONFIG control body (sdk/rocketnet_message.h) ---
+
+# the head: kind 1 (ROCKETNET_MESSAGE_CONTROL_CONFIG), version 1
+# (ROCKETNET_MESSAGE_CONFIG_VERSION), the enabled codes, and the zero byte
+# version 1 requires
+message_config_head="\x01\x01\x09\x00"
+
+# the kind the reader refuses
+message_config_bad_kind="\x02"

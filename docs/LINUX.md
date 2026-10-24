@@ -177,8 +177,7 @@ The degradation is inside the transport, below the ladder (`BUILDING.md:350-353`
 
 `io_uring` (`sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`)
 uses one ring per server, touched only by the main thread, and no I/O worker
-threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). The server separately
-runs one background stats worker. It binds the same
+threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h:33-37`,
 `sdk/rocketnet_server_uring_linux.cpp:667-668`,

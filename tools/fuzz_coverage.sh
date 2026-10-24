@@ -22,6 +22,10 @@
 #                    save as covered (default 0: the pair harnesses zero
 #                    their counters once setup is done, so their numbers are
 #                    what inputs reach; ROCKETNET_FUZZ_COVERAGE_INPUTS_ONLY)
+#   FUZZ_COV_SUMMARY  a file to append the per-area table to as a Markdown
+#                    table (header row, separator row, then one row per
+#                    area), for a CI job summary; $GITHUB_STEP_SUMMARY in a
+#                    workflow. Empty/unset by default (no summary written).
 #   SLOT             a command prefix for the heavy steps, e.g. the studio's
 #                    studio-slot.sh (default empty)
 #   LLVM_PROFDATA / LLVM_COV   the tools (default xcrun's on macOS, else
@@ -107,10 +111,12 @@ if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q '^CMAKE_CXX_FLAGS:.*-DROCKETNET_F
     exit 1
 fi
 if [ ! -f "$BUILD/CMakeCache.txt" ]; then
+    # macOS's bash 3.2 treats an empty "${a[@]}" as unbound under set -u,
+    # so the generator is expanded only when ninja set it
     GENERATOR=()
     command -v ninja >/dev/null 2>&1 && GENERATOR=(-G Ninja)
     echo "configuring $BUILD with coverage instrumentation"
-    $SLOT cmake -S . -B "$BUILD" "${GENERATOR[@]}" -DCMAKE_BUILD_TYPE=Debug \
+    $SLOT cmake -S . -B "$BUILD" ${GENERATOR[@]+"${GENERATOR[@]}"} -DCMAKE_BUILD_TYPE=Debug \
         -DROCKETNET_BUILD_TESTS=ON -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=ON \
         -DROCKETNET_XDP=OFF -DROCKETNET_HARDEN=OFF \
         -DCMAKE_C_FLAGS="$COVFLAGS" -DCMAKE_CXX_FLAGS="$COVFLAGS" >"$OUT/configure.log" 2>&1
@@ -158,16 +164,34 @@ report()
 
 echo
 echo "=== fuzz coverage per area (lines covered/total, line cover, functions executed/total) ==="
+cols=()
 printf "%-32s" "area"
-for t in "${TARGETS[@]}"; do printf " | %s" "${t#rocketnet_}"; done
+for t in "${TARGETS[@]}"; do cols+=("${t#rocketnet_}"); printf " | %s" "${t#rocketnet_}"; done
+cols+=("all")
 printf " | all\n"
+rows=()
 for entry in "${AREAS[@]}"; do
     area="${entry%%:*}"
     read -r -a files <<< "${entry#*:}"
+    row="$area"
     printf "%-32s" "$area"
-    for t in "${TARGETS[@]}"; do printf " | %s" "$(report "$OUT/$t.profdata" "${files[@]}")"; done
-    printf " | %s\n" "$(report "$OUT/all.profdata" "${files[@]}")"
+    for t in "${TARGETS[@]}"; do v="$(report "$OUT/$t.profdata" "${files[@]}")"; row="$row | $v"; printf " | %s" "$v"; done
+    v="$(report "$OUT/all.profdata" "${files[@]}")"; row="$row | $v"; printf " | %s\n" "$v"
+    rows+=("$row")
 done
+if [ -n "${FUZZ_COV_SUMMARY:-}" ]; then
+    {
+        echo
+        echo "### fuzz coverage per area (lines covered/total, line cover, functions executed/total)"
+        printf "| area"
+        for c in "${cols[@]}"; do printf " | %s" "$c"; done
+        printf " |\n"
+        printf "|---"
+        for c in "${cols[@]}"; do printf " | ---"; done
+        printf " |\n"
+        for row in "${rows[@]}"; do printf "| %s |\n" "$row"; done
+    } >> "$FUZZ_COV_SUMMARY"
+fi
 
 echo
 echo "=== per target, every sdk file ==="

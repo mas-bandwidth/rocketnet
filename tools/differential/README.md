@@ -185,12 +185,55 @@ server and admits it; rocketnet refuses it (`TOKEN_CREATED_IN_FUTURE`), which
 reason classes may differ when both refuse (`raw_version_prefix`: netcode
 stops at its version string, rocketnet at the protocol id).
 
+## The differential fuzz target
+
+`fuzz/rocketnet_fuzz_differential.cpp` is the libFuzzer target that turns
+this decision gate into a fuzzer (nightly, Linux leg). The fixed gate and the
+target share the whole decision core in `decide.h`, so they run the same
+deciders on the same case model. The fuzzer never mutates packet bytes: the
+two wire formats differ, so it mutates the case. The structured case is a
+fixed 25-byte record (comment at the top of the target):
+
+| bytes | field | meaning |
+| --- | --- | --- |
+| 0 | address_mode | 0 advertised IPv4, 1 wrong IPv4, 2 IPv6 family, 3 wrong port |
+| 1 | protocol_wrong | 0 the test protocol id, nonzero a wrong id |
+| 2 | flip_authenticator | nonzero flips one signature byte (rocketnet) / MAC byte (netcode) |
+| 3 | replay | nonzero presents the same token from a second address |
+| 4 | occupied_slots | how many client slots are taken before the candidate |
+| 5-12 | create_offset | int64 little-endian seconds relative to the server's now |
+| 13-20 | expire_offset | int64 little-endian seconds relative to now |
+| 21-24 | timeout_seconds | int32 little-endian (0 and negative allowed) |
+
+The target aborts on `rocketnet-weaker` (netcode refuses, rocketnet admits —
+a finding). A `rocketnet-stricter` verdict is checked against the permitted
+stricter classes this README documents: `timeout` (the `timeout_out_of_range`
+row above) and `future` (the corpus `structured_before_create` row). A stricter
+class not on that list also aborts, listing its reason, so a new stricter
+class is never silently accepted. A mint/capture failure on either side is an
+input-encoding artifact, not a decision, and is not judged.
+
+### The netcode wall clock
+
+netcode mints and checks expiry on its own wall clock (above, "The netcode
+side, live"). To make a crash input reproduce, every case's times are
+expressed relative to the moment netcode reads the clock: `expire_offset` is
+mapped to netcode's `expire_seconds` (negative clamps to 0, already expired;
+any other maps to the same count of seconds), and `create_offset` is not
+carried by netcode at all. Seeds are one per case in `cases.tsv`, encoded in
+this structured form under `fuzz/corpus_differential/`, with the field tags
+dictionary at `fuzz/dict/rocketnet_fuzz_differential.dict`.
+
 ## Files
 
 * `cases.tsv` — the case table and the netcode reference decisions.
 * `corpus_cases.tsv` — the netcode 1.02 reference decision for each mapped
   fuzz corpus file, recorded from the live run.
-* `netcode_decisions.cpp` — the harness: drives rocketnet live and compares.
+* `decide.h` — the shared decision core (the case model, the rocketnet
+  decider, the netcode live decider, the verdict), used by the gate and the
+  fuzz target.
+* `netcode_decisions.cpp` — the fixed gate: drives rocketnet live and compares.
 * `run.sh` — builds both libraries (netcode only when `NETCODE_DIR` is given)
   and runs the harness.
+* `fuzz/rocketnet_fuzz_differential.cpp` — the differential fuzz target.
 * `README.md` — this file.
