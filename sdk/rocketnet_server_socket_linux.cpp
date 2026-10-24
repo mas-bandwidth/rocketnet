@@ -318,35 +318,34 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     FILE * file = fopen(path, "r");
     if ( !file )
     {
+        rocketnet_error( "could not open %s to read the mac address of interface %s", path, interface_name );
         return false;
     }
 
-    // xx.xx.xx.xx.xx.xx
+    // one line, read whole into a zeroed buffer wider than "xx:xx:xx:xx:xx:xx\n"
+    // so a short, empty or overlong line reaches the strict parse and is refused
 
-    char mac_address_string[18];
-
-    if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
-    {
-        fclose( file );
-        return false;
-    }
-
-    mac_address_string[2] = 0;
-    mac_address_string[5] = 0;
-    mac_address_string[8] = 0;
-    mac_address_string[11] = 0;
-    mac_address_string[14] = 0;
-    mac_address_string[17] = 0;
-
-    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
-
+    char mac_address_string[32];
+    memset( mac_address_string, 0, sizeof(mac_address_string) );
+    const bool line_read = fgets( mac_address_string, sizeof(mac_address_string), file ) != NULL;
     fclose( file );
 
+    // the shared strict parse (rocketnet_xdp_frame.h), as the gateway override uses
+    uint8_t parsed[6];
+    if ( !line_read || !rocketnet_xdp_parse_mac_address( mac_address_string, parsed ) )
+    {
+        rocketnet_error( "interface %s has no ethernet mac address in %s (an L3 device such as tun or wireguard cannot carry XDP frames)", interface_name, path );
+        return false;
+    }
+
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    if ( memcmp( parsed, zero_mac, 6 ) == 0 )
+    {
+        rocketnet_error( "interface %s reports mac address 00:00:00:00:00:00 in %s (an L3 device such as tun or wireguard cannot carry XDP frames)", interface_name, path );
+        return false;
+    }
+
+    memcpy( mac_address, parsed, 6 );
     return true;
 }
 
@@ -421,39 +420,14 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     const int gateway_ethernet_address_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
     if ( gateway_ethernet_address_found < 0 || ( gateway_ethernet_address_found > 0 && gateway_ethernet_address_env[0] != '\0' ) )
     {
-        bool valid = gateway_ethernet_address_found > 0 && strlen( gateway_ethernet_address_env ) == 17;
-        for ( int i = 0; valid && i < 17; i++ )
-        {
-            const char c = gateway_ethernet_address_env[i];
-            if ( ( i % 3 ) == 2 )
-                valid = c == ':' || c == '.';
-            else
-                valid = ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) || ( c >= 'A' && c <= 'F' );
-        }
-
-        if ( !valid )
+        // the shared strict parse (rocketnet_xdp_frame.h), as the interface address read uses
+        if ( gateway_ethernet_address_found < 0 || !rocketnet_xdp_parse_mac_address( gateway_ethernet_address_env, mac_address ) )
         {
             rocketnet_error( "could not parse ROCKETNET_GATEWAY_ETHERNET_ADDRESS=\"%s\" as a mac address (xx:xx:xx:xx:xx:xx)", gateway_ethernet_address_env );
             return false;
         }
 
         rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
-
-        char mac_address_string[18];
-        memcpy( mac_address_string, gateway_ethernet_address_env, 17 );
-        mac_address_string[2] = 0;
-        mac_address_string[5] = 0;
-        mac_address_string[8] = 0;
-        mac_address_string[11] = 0;
-        mac_address_string[14] = 0;
-        mac_address_string[17] = 0;
-
-        mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-        mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-        mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-        mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-        mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-        mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
     }
     else
     {

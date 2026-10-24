@@ -469,6 +469,50 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
     return num_cpus > 0 && num_cpus <= ROCKETNET_XDP_STATS_MAX_CPUS;
 }
 
+// MAC ADDRESS PARSE: the one strict parse for a MAC address in text, used by
+// the interface address read (/sys/class/net/<if>/address) and the
+// ROCKETNET_GATEWAY_ETHERNET_ADDRESS override. After one trailing newline is
+// stripped the text must be exactly 17 characters: six hex pairs separated
+// by ':' or '.'. Anything else returns false and leaves mac untouched.
+
+static inline int rocketnet_xdp_hex_digit_value( char c )
+{
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
+    if ( c >= 'A' && c <= 'F' )
+        return c - 'A' + 10;
+    return -1;
+}
+
+static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t mac[6] )
+{
+    if ( !text || !mac )
+        return false;
+
+    size_t length = strlen( text );
+    if ( length > 0 && text[length - 1] == '\n' )
+        length--;
+    if ( length != 17 )
+        return false;
+
+    uint8_t parsed[6];
+    for ( int i = 0; i < 6; i++ )
+    {
+        const int high = rocketnet_xdp_hex_digit_value( text[i * 3] );
+        const int low = rocketnet_xdp_hex_digit_value( text[i * 3 + 1] );
+        if ( high < 0 || low < 0 )
+            return false;
+        if ( i < 5 && text[i * 3 + 2] != ':' && text[i * 3 + 2] != '.' )
+            return false;
+        parsed[i] = (uint8_t) ( ( high << 4 ) | low );
+    }
+
+    memcpy( mac, parsed, 6 );
+    return true;
+}
+
 // REPLY MAC: the destination MAC address of a reply frame. A client's MAC is learned
 // from the source MAC of a packet the transport accepted for a connection
 // (it opened under the connection's keys), never from a packet it dropped or

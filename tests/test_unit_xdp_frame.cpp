@@ -512,6 +512,41 @@ static void test_xdp_transport_receive_ipv6_extension_dropped_counted()
 // IPv4 is unchanged: the build into a dirty buffer is the golden bytes, the
 // parse reads them back, and the receive takes them at the IPv4 offsets.
 
+// the one strict MAC parse shared by the interface address read and the
+// gateway override: exactly six hex pairs separated by ':' or '.', one
+// trailing newline allowed; a refused text leaves the output untouched.
+
+static void test_xdp_transport_mac_address_parse_is_strict()
+{
+    static const uint8_t expected[6] = { 0x02, 0x42, 0xac, 0x11, 0x00, 0x02 };
+    static const uint8_t sentinel[6] = { 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5 };
+    uint8_t mac[6];
+
+    memcpy( mac, sentinel, 6 );
+    rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02:42:ac:11:00:02\n", mac ) );
+    rocketnet_unit_check( memcmp( mac, expected, 6 ) == 0 );
+
+    memcpy( mac, sentinel, 6 );
+    rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02.42.AC.11.00.02", mac ) );
+    rocketnet_unit_check( memcmp( mac, expected, 6 ) == 0 );
+
+    const char * refused[] = {
+        "",
+        "\n",
+        "02:42:ac:11:00",
+        "02:42:ac:11:00:0g",
+        "02-42-ac-11-00-02",
+        "02:42:ac:11:00:023",
+        "02:42:ac:11:00:02\n\n",
+    };
+    for ( size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); i++ )
+    {
+        memcpy( mac, sentinel, 6 );
+        rocketnet_unit_check( !rocketnet_xdp_parse_mac_address( refused[i], mac ) );
+        rocketnet_unit_check( memcmp( mac, sentinel, 6 ) == 0 );
+    }
+}
+
 static void test_xdp_transport_frame_ipv4_unchanged()
 {
     rocketnet_address_t src, dst;
@@ -759,6 +794,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_frame_parse_ipv6_udp );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_build_ipv6_checksum_vector );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
+REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
 #if ROCKETNET_XDP
