@@ -1290,9 +1290,10 @@ struct rocketnet_server_config_t
     /// update's inbound traffic: ceil( max_clients x 1000 kbps x 125 x 2 /
     /// 10 Hz ) bytes, at least 1,000,000 and at most INT_MAX (25,000,000 at
     /// 1000 clients). Linux silently clamps it to net.core.rmem_max (about
-    /// 208 KB by default) and macOS to kern.ipc.maxsockbuf; the server logs
-    /// one warning naming the limit when the grant is below the request
-    /// (USAGE.md, "Receive buffer sizing").
+    /// 208 KB by default) and macOS to kern.ipc.maxsockbuf; the server reads
+    /// the grant back and logs one line with it, a warning naming the limit
+    /// to raise when the grant is below the request (USAGE.md, "Receive
+    /// buffer sizing").
 
     int max_clients;
 

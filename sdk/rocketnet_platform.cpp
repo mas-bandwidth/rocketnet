@@ -553,8 +553,15 @@ int rocketnet_server_receive_buffer_request( int max_clients )
 
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes )
 {
+    // one line per server socket: what the kernel granted and what was asked
+    // for. A grant below the request is a warning that names the limit to
+    // raise, because the kernel drops what arrives past the grant.
     if ( granted_bytes >= requested_bytes )
+    {
+        rocketnet_info( "server %s: socket receive buffer granted %d of %d requested bytes",
+                        name ? name : "socket", granted_bytes, requested_bytes );
         return;
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     const char * limit = "net.core.rmem_max";
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

@@ -484,8 +484,9 @@ The request is an upper bound: the kernel charges only for what it holds.
 The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
 (about 208 KB by default) without an error; macOS and the BSDs refuse a
 request above `kern.ipc.maxsockbuf` and the server walks down by halves. The
-server reads the grant back after create, and when it is below the request
-it logs one warning naming the limit to raise. On Linux, for 1000 clients:
+server reads the grant back after create and logs one line with what it
+granted and what it asked for; when the grant is below the request that line
+is a warning naming the limit to raise. On Linux, for 1000 clients:
 
 ```
 sudo sysctl -w net.core.rmem_max=25000000
@@ -494,7 +495,11 @@ sudo sysctl -w net.core.rmem_max=25000000
 A grant below one update's inbound traffic drops packets in the kernel
 before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
 update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
-1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp).
+1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp:
+3.46 MB, 1.83 MB and 1.30 MB of wire bytes per update, with 0 kernel
+receive drops). The portable server is a portable implementation with no
+performance guarantee: that case reports the kernel's receive drop count and
+never fails on it, and runs when `ROCKETNET_LOW_TICK_MEASURE=1` names it.
 
 ## Frame loop
 

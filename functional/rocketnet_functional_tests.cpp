@@ -8962,10 +8962,14 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
+// the receive buffer sizing cases (functional/server_receive_low_tick.cpp):
+// the server socket's request is the formula's value at its max_clients, the
+// grant is read back and a short grant names the limit to raise. The
+// low-tick measurement (1000 clients at 256 kbps against a server updating at
+// 10 Hz) reads the kernel drop count from procfs, so it is a Linux case; it
+// reports the counts and never gates on them.
+extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-// the low-tick receive case (functional/server_receive_low_tick.cpp): 1000
-// clients at 256 kbps against a server updating at 10 Hz. The kernel drop
-// count comes from procfs, so it is a Linux case.
 extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
 #endif
 
@@ -9634,6 +9638,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
+    { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, NULL },
 #endif

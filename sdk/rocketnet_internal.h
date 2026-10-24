@@ -659,9 +659,10 @@ double rocketnet_sleep_clamp( double seconds );
 int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
 int rocketnet_server_receive_buffer_request( int max_clients );
 
-// Logs one warning when the kernel granted a server socket less receive
-// buffer than requested, naming the limit to raise (net.core.rmem_max on
-// Linux, kern.ipc.maxsockbuf on macOS and BSD); silent otherwise.
+// Logs one line per server socket with what the kernel granted and what was
+// requested. A grant below the request is a warning naming the limit to
+// raise (net.core.rmem_max on Linux, kern.ipc.maxsockbuf on macOS and BSD);
+// a grant at or above the request is an information line.
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
 
 // The receive buffer the kernel granted a socket, in the bytes requested

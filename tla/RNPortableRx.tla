@@ -5,19 +5,16 @@
 (* portable_rx_publish, portable_rx_acquire, portable_receive and the RX   *)
 (* half of portable_stop / portable_stopped.                              *)
 (*                                                                         *)
-(* One RX worker owns the socket reads.  It appends each read into the one *)
+(* One RX worker owns the socket reads.  It reads a batch into the one     *)
 (* bank it owns (the producer) and publishes that bank onto a FIFO of      *)
-(* ready banks in exchange for a free bank only when the producer is full  *)
-(* or the socket read returns empty, so a low server update rate leaves    *)
-(* one partial bank with the worker instead of burning every bank on a     *)
-(* half-filled publish.  The main thread owns at most one consumer bank    *)
-(* and a cursor into it.  portable_receive copies from the consumer at the *)
-(* cursor within the caller's budget; only when the consumer is completely *)
-(* copied does it try-lock, return it to the free FIFO and take the oldest *)
-(* ready bank.  Only bank indices change under the mutex; the socket read, *)
-(* the copies and the producer reset run outside it.  Main never waits: a  *)
-(* failed try ends the call and the consumer, its cursor and every ready   *)
-(* bank stay where they are.                                               *)
+(* ready banks in exchange for a free bank.  The main thread owns at most  *)
+(* one consumer bank and a cursor into it.  portable_receive copies from   *)
+(* the consumer at the cursor within the caller's budget; only when the    *)
+(* consumer is completely copied does it try-lock, return it to the free   *)
+(* FIFO and take the oldest ready bank.  Only bank indices change under    *)
+(* the mutex; the socket read, the copies and the producer reset run       *)
+(* outside it.  Main never waits: a failed try ends the call and the       *)
+(* consumer, its cursor and every ready bank stay where they are.          *)
 (*                                                                         *)
 (* When no free bank exists the worker keeps its full producer, stops      *)
 (* reading the socket and waits on its wake.  Main signals that wake when  *)
@@ -28,15 +25,11 @@
 (* in order.  The checked claim is exact delivery: until stop, the         *)
 (* datagrams main has copied, then the unread consumer tail, the ready     *)
 (* banks in FIFO order, the producer and the socket, concatenated, are     *)
-(* exactly 1..arrived.  Nothing is lost, duplicated or reordered.  The     *)
-(* invariants name the three parts: ExactDelivery is no loss, duplication  *)
-(* or reorder; PublishOrder says each ready bank holds only datagrams      *)
-(* older than the next ready bank's; ExclusiveOwnership says every bank    *)
-(* has exactly one owner.                                                  *)
+(* exactly 1..arrived.  Nothing is lost, duplicated or reordered.          *)
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
 (*   HoldOnFull    a refused publish keeps the producer and waits; FALSE   *)
-(*                 appends a read over the full producer (overwrite).      *)
+(*                 reads the socket into the full producer (overwrite).    *)
 (*   ReturnWhenRead main returns the consumer only once fully copied;      *)
 (*                 FALSE returns it as soon as a call's budget ends.       *)
 (*   QuitBeforeWake stop sets quit before the wake; FALSE signals first.   *)
@@ -122,7 +115,7 @@ Arrive ==
 \* the loop test: quit ends the worker
 WTop ==
     /\ wpc = "top"
-    /\ wpc' = IF quit THEN "exited" ELSE "read"
+    /\ wpc' = IF quit THEN "exited" ELSE "publish"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
                    lock, wake, quit, stopping, mpc, budget, freed>>
 
@@ -149,7 +142,7 @@ WSwap ==
     /\ wpc = "swap"
     /\ lock' = "none"
     /\ IF free = <<>>
-       THEN /\ wpc' = IF HoldOnFull THEN "waitfull" ELSE "overwrite"
+       THEN /\ wpc' = IF HoldOnFull THEN "waitfull" ELSE "read"
             /\ UNCHANGED <<prod, free, ready>>
        ELSE /\ ready' = Append(ready, prod)
             /\ prod' = Head(free)
@@ -166,43 +159,19 @@ WReset ==
     /\ UNCHANGED <<arrived, sock, prod, cons, cursor, free, ready, delivered,
                    lock, wake, quit, stopping, mpc, budget, freed>>
 
-\* portable_rx_step's read: append up to the producer's remaining capacity.
-\* A non-empty read that does not fill the bank loops back to read again; a
-\* full bank or an empty read publishes the bank (portable_rx_publish).
+\* rocketnet_platform_socket_receive_packets into the producer: bank->count
+\* is assigned, so the read replaces whatever the bank held
 WRead ==
     /\ wpc = "read"
-    /\ \/ /\ sock # <<>>
-          /\ \E k \in 1..Cap :
-                /\ Len(data[prod]) + k <= Cap
-                /\ k <= Len(sock)
-                /\ LET grown == data[prod] \o SubSeq(sock, 1, k)
-                   IN /\ data' = [data EXCEPT ![prod] = grown]
-                      /\ wpc' = IF Len(grown) = Cap THEN "publish" ELSE "read"
-                /\ sock' = SubSeq(sock, k + 1, Len(sock))
-       \/ /\ sock = <<>>
-          /\ wpc' = IF data[prod] = <<>> THEN "waitidle" ELSE "publish"
-          /\ UNCHANGED <<sock, data>>
-       \/ /\ Len(data[prod]) = Cap
-          /\ wpc' = "publish"
-          /\ UNCHANGED <<sock, data>>
-    /\ UNCHANGED <<arrived, prod, cons, cursor, free, ready, delivered, lock,
-                   wake, quit, stopping, mpc, budget, freed>>
-
-\* the reversed HoldOnFull: a refused publish appends a read over the full
-\* producer, discarding what it held.  HoldOnFull = FALSE selects it, and
-\* ExactDelivery must fail.
-WOverwrite ==
-    /\ wpc = "overwrite"
     /\ \/ /\ sock # <<>>
           /\ \E k \in 1..Cap :
                 /\ k <= Len(sock)
                 /\ data' = [data EXCEPT ![prod] = SubSeq(sock, 1, k)]
                 /\ sock' = SubSeq(sock, k + 1, Len(sock))
-          /\ wpc' = "read"
+          /\ wpc' = "top"
        \/ /\ sock = <<>>
-          /\ data' = [data EXCEPT ![prod] = <<>>]
-          /\ wpc' = "read"
-          /\ UNCHANGED sock
+          /\ wpc' = "waitidle"
+          /\ UNCHANGED <<sock, data>>
     /\ UNCHANGED <<arrived, prod, cons, cursor, free, ready, delivered, lock,
                    wake, quit, stopping, mpc, budget, freed>>
 
@@ -350,7 +319,7 @@ MPollStopped ==
 Next ==
     \/ Arrive
     \/ WTop \/ WPublishEmpty \/ WLock \/ WSwap \/ WReset \/ WRead
-    \/ WOverwrite \/ WWaitFull \/ WWaitIdle
+    \/ WWaitFull \/ WWaitIdle
     \/ MCall \/ MCopy \/ MEnd \/ MTry \/ MTryFail \/ MSwap \/ MWake
     \/ MStop \/ MStop1 \/ MStop2
     \/ MPollStopped
@@ -358,7 +327,7 @@ Next ==
 Spec == Init /\ [][Next]_vars
 
 WorkerStep == WTop \/ WPublishEmpty \/ WLock \/ WSwap \/ WReset \/ WRead \/
-              WOverwrite \/ WWaitFull \/ WWaitIdle
+              WWaitFull \/ WWaitIdle
 
 \* The worker runs whenever it can, and its blocking acquire is granted if
 \* the mutex is free infinitely often (main holds it for an index swap
@@ -399,13 +368,6 @@ ExclusiveOwnership ==
 \* Main never reads past the consumer's count.
 CursorInBank ==
     cons = NoBank \/ cursor <= Len(data[cons])
-
-\* Publish order: every datagram in a ready bank is older than every
-\* datagram in the ready bank after it.  The append rule keeps this true
-\* because a bank is appended in arrival order and published in that order.
-PublishOrder ==
-    \A i \in 1..(Len(ready) - 1) :
-        \A a \in Range(data[ready[i]]), b \in Range(data[ready[i + 1]]) : a < b
 
 \* The producer's content, invisible while its stale count awaits the reset.
 Produced == IF wpc = "reset" THEN <<>> ELSE data[prod]
