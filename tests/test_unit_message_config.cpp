@@ -25,6 +25,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
+#include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_message_object.h"
@@ -886,8 +887,28 @@ static void test_config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
+// The fuzz seed f8 0d 00 30 applies "0" to message_resend_delay_max_ms (range
+// 10..60000, zero is not "use the default"). The harness expects validation to
+// refuse it exactly as it refuses any out-of-range INT; this pins that the
+// library does, by setting the struct field directly.
+static void test_message_config_resend_delay_max_zero_refused()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    config.message_resend_delay_max_ms = 0;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    config.message_resend_delay_max_ms = 9;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    config.message_resend_delay_max_ms = 60001;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+}
+
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
+REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
