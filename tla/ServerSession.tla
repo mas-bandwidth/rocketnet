@@ -65,12 +65,16 @@ ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"
                    "receivewhilestopping", "admitwhilestopping",
                    "disconnectallunbounded"}
 
-\* The burst and the allowance at the model's scale: two packets a burst,
-\* one burst a update (ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS = 10 and
+\* The burst and the allowance at the model's scale: one packet a burst,
+\* one packet an update, so two ended clients' bursts outrun one update's
+\* allowance as 1000 clients' 10,000 packets outrun the code's 64
+\* (ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS = 10 and
 \* ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE = 64 in the code, whose
-\* static assert keeps the allowance at least one whole burst).
-Burst == 2
-SealsPerUpdate == 2
+\* static assert keeps the allowance at least one whole burst). The
+\* smallest scale keeps MCServerSession.cfg, with the STOPPING and read
+\* steps beside the drain, inside its TLC budget.
+Burst == 1
+SealsPerUpdate == 1
 ASSUME SealsPerUpdate >= Burst
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
