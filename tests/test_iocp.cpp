@@ -1454,10 +1454,10 @@ static void test_iocp_transport_socket_sets_dont_fragment()
         CHECK(transport && bind.port != 0);
         const SOCKET socket = (SOCKET) rocketnet_server_iocp_test_socket(transport);
         int enabled = 0;
-        int bytes = sizeof(enabled);
+        int bytes = (int) sizeof(enabled);
         CHECK(getsockopt(socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
             family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char*) &enabled, &bytes) == 0);
-        CHECK(bytes == sizeof(enabled));
+        CHECK(bytes == (int) sizeof(enabled));
         printf("test_iocp_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled);
         enabled_for_both = enabled_for_both && enabled == 1;
         rn_native_backend_stop_and_destroy(transport, rocketnet_server_iocp_stop,
@@ -1479,10 +1479,10 @@ static void test_rio_transport_socket_sets_dont_fragment()
         CHECK(transport && bind.port != 0);
         const SOCKET socket = (SOCKET) rocketnet_server_rio_test_socket(transport);
         int enabled = 0;
-        int bytes = sizeof(enabled);
+        int bytes = (int) sizeof(enabled);
         CHECK(getsockopt(socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
             family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char*) &enabled, &bytes) == 0);
-        CHECK(bytes == sizeof(enabled));
+        CHECK(bytes == (int) sizeof(enabled));
         printf("test_rio_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled);
         enabled_for_both = enabled_for_both && enabled == 1;
         rn_native_backend_stop_and_destroy(transport, rocketnet_server_rio_stop,
