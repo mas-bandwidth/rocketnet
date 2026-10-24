@@ -27,11 +27,11 @@
 // most.
 #if defined(_WIN32)
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) WINDOWS_SERVER_DEV_ON )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) WINDOWS_CLIENT_DEV_ON )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523801281 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745549 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) WINDOWS_SERVER_DEV_OFF )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) WINDOWS_CLIENT_DEV_OFF )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517404917 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959745 )
 #endif
 #elif defined(__APPLE__)
 #if ROCKETNET_DEV
