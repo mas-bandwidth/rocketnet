@@ -1422,17 +1422,11 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         return 0;
 
     // 3. Packets (9.3), under the send budget (R6)
-    const int written = rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
-
-    // 4. Each resend written is counted; the delay never backs off (6.4,
-    // RNResendTiming)
-    for ( int i = 0; i < plan.count; i++ )
-    {
-        if ( items[i].taken && items[i].resend )
-            rn_channels_count( region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
-    }
-
-    return written;
+    // 4. A resend is counted when the packet carrying it is sent, at
+    // rn_packet_builder_commit, never here: a refused packet's resends are
+    // counted by the packet that carries them out. The delay never backs off
+    // (6.4, RNResendTiming).
+    return rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
 }
 
 void rn_ordered_commit( struct rn_ordered_t * ordered, int packet_index, uint64_t packet_id, double now )

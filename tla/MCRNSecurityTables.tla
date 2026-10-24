@@ -17,6 +17,14 @@ MCHolds == [tk \in Tokens |-> IF tk = "tf" THEN {"A"} ELSE {"A", "B"}]
 \* MCRNSecurityTablesBrokenGlobalLockout.cfg overrides RefuseUnremembered
 \* with this: the full failure table refuses a source it cannot remember.
 MCRefuseUnremembered == TRUE
+\* MCRNSecurityTablesBrokenReleaseKeepsSlot.cfg overrides ReleaseToFree with
+\* this: a release zeroes the claim's deadline and leaves its slot in place.
+MCReleaseToFree == FALSE
+MCClaimTokens == {"th", "tf"}
+MCClaimControlTokens == Tokens
+\* MCRNSecurityTablesBrokenReleaseTwice.cfg overrides ReleaseChecksLive with
+\* this: a release pushes the slot without unlinking it from its chain.
+MCReleaseChecksLive == FALSE
 \* MCRNSecurityTablesBrokenBackwardsWindow.cfg overrides BackwardsRollover
 \* with this: the window rolls over only when the clock passes it.
 MCNoBackwardsRollover == FALSE
