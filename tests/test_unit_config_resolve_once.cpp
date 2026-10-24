@@ -236,6 +236,59 @@ static void test_config_client_env_transport_refused_at_create()
 }
 REGISTER_UNIT_TEST( test_config_client_env_transport_refused_at_create );
 
+// An auto order longer than the candidate list is refused, never written past
+// the array, in a release build as in a debug one. The availability list is an
+// argument, so nine auto-eligible entries reach the bound with the built-in
+// registry. The debug assert on the list length is counted, not fatal.
+static int ladder_candidates_assert_count;
+static void ladder_candidates_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    ladder_candidates_assert_count++;
+}
+
+static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
+{
+    rocketnet_quiet( 1 );
+    rocketnet_assert_function( ladder_candidates_count_assert );
+
+    const int num_available = ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1;
+    int available[ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1];
+    for ( int i = 0; i < num_available; i++ )
+        available[i] = ROCKETNET_TRANSPORT_PORTABLE;
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, true ) );
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, false ) );
+
+    const char * values[] = { "auto", NULL };
+    const bool servers[] = { true, false };
+    for ( int v = 0; v < 2; v++ )
+    {
+        for ( int s = 0; s < 2; s++ )
+        {
+            rocketnet_transport_ladder_t ladder;
+            check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &ladder, servers[s] ) );
+            check( ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+            // candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES] would land on the skip list
+            check( ladder.num_skipped == 0 );
+            for ( int i = 0; i < ROCKETNET_MAX_TRANSPORT_CANDIDATES; i++ )
+                check( ladder.skipped[i] == 0 );
+        }
+    }
+
+    // exactly the maximum still fits
+    rocketnet_transport_ladder_t full;
+    check( rocketnet_transport_ladder_parse( "auto", available, ROCKETNET_MAX_TRANSPORT_CANDIDATES, &full ) );
+    check( full.num_candidates == ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+
+    rocketnet_assert_function( NULL );
+    ladder_candidates_assert_count = 0;
+    rocketnet_quiet( 0 );
+}
+REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );
+
 #if !ROCKETNET_DEV
 
 // Production posture: the struct keeps the published test filter and the

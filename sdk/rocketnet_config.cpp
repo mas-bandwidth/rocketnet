@@ -860,6 +860,27 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
+// The auto order: every available transport that is not pin-only, in
+// availability order. The count is bounded here and not only by the assert in
+// rocketnet_transport_ladder_parse, which compiles out of a release build.
+
+static bool rocketnet_transport_ladder_auto( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
+{
+    // Pin-only transports are never chosen by auto; a pin selects them.
+    for ( int i = 0; i < num_available; i++ )
+    {
+        if ( rocketnet_transport_pin_only( available[i], server ) )
+            continue;
+        if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+        {
+            rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value ? value : "auto", ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+            return false;
+        }
+        ladder->candidates[ladder->num_candidates++] = available[i];
+    }
+    return true;
+}
+
 bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
 {
     rocketnet_assert( available );
@@ -888,11 +909,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
     if ( is_auto )
     {
-        // Pin-only transports are never chosen by auto; a pin selects them.
-        for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
-        return true;
+        return rocketnet_transport_ladder_auto( value, available, num_available, ladder, server );
     }
 
     const char * cursor = value;
@@ -993,10 +1010,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         rocketnet_warn( "transport list \"%s\" names no transport for this endpoint on this platform. using auto (%s)", value, auto_names );
 
-        // Pin-only transports are never chosen by auto; a pin selects them.
-        for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        return rocketnet_transport_ladder_auto( value, available, num_available, ladder, server );
     }
 
     return true;

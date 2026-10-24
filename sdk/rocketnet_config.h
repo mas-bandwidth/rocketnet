@@ -228,6 +228,9 @@ struct rocketnet_transport_ladder_t
     int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
+// Every transport the registry defines must fit one candidate list.
+static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "the transport registry outgrows the candidate list" );
+
 // parse a candidate list against an explicit availability order --
 // explicit so tests can exercise any platform's table anywhere. value
 // NULL, empty, or "auto" expands to the availability order itself (which
