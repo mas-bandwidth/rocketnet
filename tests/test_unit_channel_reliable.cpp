@@ -382,10 +382,10 @@ static void test_reliable_record_on_a_disabled_mask_is_refused()
 
 REGISTER_UNIT_TEST( test_reliable_record_on_a_disabled_mask_is_refused );
 
-// A record whose number layer 3 never accepted is a violation
-// (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
-// PROTOCOL_VIOLATION, the error set, and no delivery.
-static void test_reliable_record_without_a_live_number_is_refused()
+// A record whose number layer 3 never accepted stands alone: code 2 fills the
+// not-live slot's descriptor from the record and delivers
+// (rn_channels_descriptor, finding 11), so no violation is counted.
+static void test_reliable_record_without_a_live_number_stands_alone()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
@@ -403,15 +403,16 @@ static void test_reliable_record_without_a_live_number_is_refused()
 
     const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
     rn_delivery_t delivery;
-    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
-    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before + 1 );
-    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
-    check( node.ordered.channels.deliveries == 0 );
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( node.ordered.channels.deliveries == 1 );
+    check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE && delivery.bytes == 16 && delivery.data == data );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     rn_arena_destroy( node.arena );
 }
 
-REGISTER_UNIT_TEST( test_reliable_record_without_a_live_number_is_refused );
+REGISTER_UNIT_TEST( test_reliable_record_without_a_live_number_stands_alone );
 
 // ---------------------------------------------------------------
 //        code-2 blocks: one delivery, linear work in the chunk count
@@ -609,3 +610,55 @@ static void test_reliable_block_chunk_with_wrong_count_is_refused()
 
 REGISTER_UNIT_TEST( test_reliable_block_chunk_with_wrong_ring_is_refused );
 REGISTER_UNIT_TEST( test_reliable_block_chunk_with_wrong_count_is_refused );
+
+// Finding 11: a code-2 single record dispatched without layer 3 fills a
+// not-live slot's descriptor from the record and delivers (rn_channels_descriptor),
+// instead of counting SLOT_COLLISION; a slot live under another number is still
+// SLOT_COLLISION.
+static void test_reliable_dispatch_stands_alone()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+    const uint64_t collision_before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION];
+
+    static const uint8_t data[16] = { 0x5A };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 7;
+    record.data = data;
+    record.bytes = 1;
+
+    // not-live slot: filled from the record, delivered once
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( node.ordered.channels.deliveries == 1 );
+    check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE && delivery.bytes == 1 && delivery.data == data );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == collision_before );
+
+    // a slot live for another number: still SLOT_COLLISION
+    const uint32_t W = node.region->window;
+    rocketnet_message_record_t occupant;
+    memset( &occupant, 0, sizeof( occupant ) );
+    occupant.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    occupant.channel = 0;
+    occupant.number = 0;
+    occupant.data = data;
+    occupant.bytes = 1;
+    uint32_t slot = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &node.ordered.receive, &occupant, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( node.region->receive_descriptors[slot].live == 1 );
+
+    record.number = W;                         // maps to the same slot as number 0
+    check( ( W & ( node.region->window - 1 ) ) == ( 0u & ( node.region->window - 1 ) ) );
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == collision_before + 1 );
+    check( node.ordered.channels.deliveries == 1 );   // no second delivery
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( test_reliable_dispatch_stands_alone );
