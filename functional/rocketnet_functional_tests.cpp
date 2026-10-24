@@ -8726,14 +8726,24 @@ extern void windows_client_drops_oversize_and_garbage_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // Windows lifecycle stress: 1000 cycles per case with handles, threads and
-// private bytes counted (functional/windows_lifecycle_stress.cpp). The portable
-// server cell is registered here; rn-win-lifecycle-1000x-native registers iocp and rio.
+// private bytes counted (functional/windows_lifecycle_stress.cpp). The
+// portable, iocp and rio server cells are registered here.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 extern void rocketnet_test_windows_init_term_1000_portable();
 extern void rocketnet_test_windows_server_create_destroy_1000_portable();
 extern void rocketnet_test_windows_client_create_destroy_1000_portable();
 extern void rocketnet_test_windows_connect_disconnect_1000_portable();
 extern void rocketnet_test_windows_server_restart_1000_portable();
+extern void rocketnet_test_windows_init_term_1000_iocp();
+extern void rocketnet_test_windows_server_create_destroy_1000_iocp();
+extern void rocketnet_test_windows_client_create_destroy_1000_iocp();
+extern void rocketnet_test_windows_connect_disconnect_1000_iocp();
+extern void rocketnet_test_windows_server_restart_1000_iocp();
+extern void rocketnet_test_windows_init_term_1000_rio();
+extern void rocketnet_test_windows_server_create_destroy_1000_rio();
+extern void rocketnet_test_windows_client_create_destroy_1000_rio();
+extern void rocketnet_test_windows_connect_disconnect_1000_rio();
+extern void rocketnet_test_windows_server_restart_1000_rio();
 #endif
 // a hard-killed client never stalls a Windows receive (functional/windows_connreset.cpp)
 extern void windows_connreset_hard_killed_client_portable_ipv4();
@@ -9631,6 +9641,16 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_portable_transport_windows_client_create_destroy_1000", rocketnet_test_windows_client_create_destroy_1000_portable, NULL },
     { "test_portable_transport_windows_connect_disconnect_1000", rocketnet_test_windows_connect_disconnect_1000_portable, NULL },
     { "test_portable_transport_windows_server_restart_1000", rocketnet_test_windows_server_restart_1000_portable, NULL },
+    { "test_iocp_transport_windows_init_term_1000", rocketnet_test_windows_init_term_1000_iocp, NULL },
+    { "test_iocp_transport_windows_server_create_destroy_1000", rocketnet_test_windows_server_create_destroy_1000_iocp, NULL },
+    { "test_iocp_transport_windows_client_create_destroy_1000", rocketnet_test_windows_client_create_destroy_1000_iocp, NULL },
+    { "test_iocp_transport_windows_connect_disconnect_1000", rocketnet_test_windows_connect_disconnect_1000_iocp, NULL },
+    { "test_iocp_transport_windows_server_restart_1000", rocketnet_test_windows_server_restart_1000_iocp, NULL },
+    { "test_rio_transport_windows_init_term_1000", rocketnet_test_windows_init_term_1000_rio, NULL },
+    { "test_rio_transport_windows_server_create_destroy_1000", rocketnet_test_windows_server_create_destroy_1000_rio, NULL },
+    { "test_rio_transport_windows_client_create_destroy_1000", rocketnet_test_windows_client_create_destroy_1000_rio, NULL },
+    { "test_rio_transport_windows_connect_disconnect_1000", rocketnet_test_windows_connect_disconnect_1000_rio, NULL },
+    { "test_rio_transport_windows_server_restart_1000", rocketnet_test_windows_server_restart_1000_rio, NULL },
     { "test_portable_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_portable_ipv4, NULL },
     { "test_portable_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_portable_ipv6, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_iocp_ipv4, NULL },
