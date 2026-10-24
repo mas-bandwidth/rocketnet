@@ -22,6 +22,14 @@ captured and dropped when it passes; set `ROCKETNET_TEST_VERBOSE=1` to skip
 the capture and watch the log live. A test that a platform does not build is
 not registered there, so it is neither run nor printed.
 
+The repository text audits that used to be unit cases — the client/server
+"says messages, not packets" scan, the environment-name documentation check,
+the counter-named-by-a-test check and the XDP counter-row check — run in the
+static source-audit binary `./bin/source_audit`, not `./bin/test`. It is a
+source-policy gate: it reads source, header and doc files through
+`ROCKETNET_SOURCE_DIR`, opens no socket, starts no thread, and CI runs it on
+a Linux leg beside `tools/check_client_server_words.py`.
+
 Functional cases run one at a time, even with `ROCKETNET_TEST_JOBS` set.
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and

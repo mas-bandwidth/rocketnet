@@ -47,6 +47,14 @@ Run the unit suite with:
 
     ./bin/test
 
+The repository text audits that used to be unit cases run in the static
+source-audit binary `./bin/source_audit` instead: the client/server
+"says messages, not packets" scan, the environment-name documentation check,
+the counter-named-by-a-test check and the XDP counter-row check. It reads
+source, header and doc files through `ROCKETNET_SOURCE_DIR`, opens no socket
+and starts no thread; CI runs it on a Linux leg beside
+`tools/check_client_server_words.py`.
+
 `./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
