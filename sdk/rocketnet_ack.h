@@ -209,11 +209,13 @@ struct rocketnet_ack_endpoint_t
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
     // published per-connection statistics. The running aggregates below keep
-    // them current as each send, receive and ack lands, exactly the numbers
-    // update_stats recomputes from the full histories, so a server slot's
-    // stats are current at every read and cost nothing per idle slot. The
-    // client still recomputes on each stats read. rtt and jitter in
-    // milliseconds, loss as a percentage.
+    // them current as each send, receive and ack lands. Every field is
+    // exactly the number update_stats recomputes from the full histories,
+    // except jitter, which matches it within floating-point rounding: the
+    // running form subtracts count * min from a double sum, the recompute
+    // sums sample - min in float. A server slot's stats are current at every
+    // read and cost nothing per idle slot. The client still recomputes on
+    // each stats read. rtt and jitter in milliseconds, loss as a percentage.
     float rtt;
     float jitter;
     float packet_loss;
