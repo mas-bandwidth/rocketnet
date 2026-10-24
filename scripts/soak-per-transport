@@ -47,6 +47,8 @@
 #   --soak PATH      the soak binary (default ../bin/soak beside this script)
 #   --log-dir DIR    keep each cell's output as DIR/<cell>.log (default: a
 #                    temporary directory, removed at exit)
+#   --clean          run without the impairment (a diagnosis of a failing
+#                    impaired cell; the record is always impaired)
 #   --xdp-memory M   the xdp guest's memory, as vng --memory takes it (default 4G)
 #   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r),
 #                    the runners' path; hulk's kit is /opt/vm-kernels/<version>/vmlinuz)
@@ -63,6 +65,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SOAK="$SCRIPT_DIR/../bin/soak"
 LOG_DIR=
 XDP_MEMORY=4G
+CLEAN=0
 VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
 
 usage()
@@ -84,6 +87,7 @@ while [ $# -gt 0 ]; do
         --log-dir)    [ $# -ge 2 ] || refuse "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
         --xdp-memory) [ $# -ge 2 ] || refuse "--xdp-memory needs a value"; XDP_MEMORY=$2; shift 2 ;;
         --vm-kernel)  [ $# -ge 2 ] || refuse "--vm-kernel needs a value"; VM_KERNEL=$2; shift 2 ;;
+        --clean)      CLEAN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)            refuse "unknown option $1" ;;
     esac
@@ -112,7 +116,7 @@ fi
 LOG_DIR=$(cd "$LOG_DIR" && pwd)
 
 IMPAIRMENT=()
-for end in SERVER CLIENT; do
+[ "$CLEAN" = 1 ] || for end in SERVER CLIENT; do
     IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_LOSS_PERCENT=5")
     IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_LATENCY_MS=30")
     IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_JITTER_MS=20")
@@ -193,7 +197,7 @@ run_xdp_cell()
         echo 'ip -n rnxdpsoak link set rnxdpsoak1 up'
         printf 'env'
         printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
-            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=warn \
+            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=2 \
             SOAK_SERVER_ADDRESS=10.77.4.1:40412 SOAK_CLIENT_NETNS=/var/run/netns/rnxdpsoak \
             "${IMPAIRMENT[@]}" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat
         printf ' > %q 2>&1\n' "$log"
