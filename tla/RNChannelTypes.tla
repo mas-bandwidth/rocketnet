@@ -96,10 +96,11 @@ EmptyReceiver == [ordered_read |-> [c \in Channels |-> 0],
     sequenced_watermark |-> [c \in Channels |-> 0],
     heldOrdered |-> {}, heldSequenced |-> {}, seen |-> {}, trace |-> <<>>,
     inTurn |-> {}, arrived |-> {}, counted |-> {}, arrivedInTurn |-> {},
-    superseded |-> {}, dropped |-> {}]
-\* The receiver's count of sequenced records dropped without a delivery is
-\* Cardinality(dropped); the set keeps the identity for the accounting check.
-DroppedCount(r) == Cardinality(r.dropped)
+    released |-> {}]
+\* The receiver's count of sequenced records released without a delivery is
+\* Cardinality(released); the set keeps the identity for the accounting check.
+\* A released record is superseded by a newer one, or refused by the drain.
+DroppedCount(r) == Cardinality(r.released)
 OrderedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Code(m) = 3 /\ Channel(m) = c)
 SequencedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Sequenced(Code(m)) /\ Channel(m) = c)
 ReliableTrace(r) == SelectSeq(r.trace, LAMBDA m : Code(m) = 2)
@@ -150,7 +151,7 @@ Drain(input,c,fuel) ==
         LET stale == {m \in r.heldSequenced : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
             staleTurn == {m \in r.inTurn : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
             s == [r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn,
-                  !.dropped = @ \cup stale]
+                  !.released = @ \cup stale]
             turn == {m \in s.heldSequenced : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
             readyS == {m \in turn : Complete(s,m)}
             openS == turn \ readyS
@@ -175,7 +176,7 @@ Drain(input,c,fuel) ==
            ELSE IF refused # {} THEN
              LET m == Min(refused)
                  t == [s EXCEPT !.heldSequenced = @ \ {m},
-                       !.dropped = IF Broken = "DrainStaleSilent" THEN @ ELSE @ \cup {m}]
+                       !.released = IF Broken = "DrainStaleSilent" THEN @ ELSE @ \cup {m}]
              IN Drain(TLCEval(t), c, fuel-1)
            ELSE IF readyO # {} THEN
              LET m == Min(readyO)
@@ -188,28 +189,28 @@ Dispatch(r,m) ==
     IF Reliable(Code(m)) /\ m \in r.seen /\ Broken # "ReliableTwice" THEN r
     ELSE LET s == IF Reliable(Code(m)) THEN [r EXCEPT !.seen = @ \cup {m}] ELSE r
          IN IF Code(m)=2 THEN DeliverMessage(s,m,FALSE)
-            ELSE IF Order(m)<s.ordered_read[Channel(m)] THEN
-              [s EXCEPT !.dropped = @ \cup {m}]
-            ELSE IF Order(m)=s.ordered_read[Channel(m)] THEN
-              IF Sequenced(Code(m)) /\ Broken # "SequencedBackwards" /\
+             ELSE IF Order(m)<s.ordered_read[Channel(m)] THEN
+               [s EXCEPT !.released = @ \cup {m}]
+             ELSE IF Order(m)=s.ordered_read[Channel(m)] THEN
+               IF Sequenced(Code(m)) /\ Broken # "SequencedBackwards" /\
                  Sequence(m) < s.sequenced_watermark[Channel(m)] THEN
                 \* in turn but behind the epoch's watermark: counted stale
-                [s EXCEPT !.dropped = @ \cup {m}]
-              ELSE IF Sequenced(Code(m)) THEN
+                [s EXCEPT !.released = @ \cup {m}]
+               ELSE IF Sequenced(Code(m)) THEN
                 \* one in-turn rule: an in-turn block at least as new
                 \* supersedes this record; an older one is released
                 LET cur == InTurnCollecting(s,Channel(m))
                 IN IF \E n \in cur : Sequence(n) >= Sequence(m)
-                   THEN [s EXCEPT !.superseded = @ \cup {m}]
+                   THEN [s EXCEPT !.released = @ \cup {m}]
                    ELSE Drain(TLCEval(DeliverMessage(ReleaseInTurn(s,cur),m,FALSE)), Channel(m), MaxMessages+1)
-              ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
-            ELSE IF Code(m)=3 THEN [s EXCEPT !.heldOrdered = @ \cup {m}]
-            ELSE LET held == {n \in s.heldSequenced : Channel(n)=Channel(m)}
-                     newest == held = {} \/ (\A n \in held : Newer(m,n))
+               ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
+             ELSE IF Code(m)=3 THEN [s EXCEPT !.heldOrdered = @ \cup {m}]
+             ELSE LET held == {n \in s.heldSequenced : Channel(n)=Channel(m)}
+                      newest == held = {} \/ (\A n \in held : Newer(m,n))
                  IN IF Broken="HoldAllSequenced" THEN [s EXCEPT !.heldSequenced = @ \cup {m}]
                     ELSE IF newest THEN [s EXCEPT !.heldSequenced = (@ \ held) \cup {m},
-                                               !.superseded = @ \cup held]
-                    ELSE [s EXCEPT !.superseded = @ \cup {m}]
+                                               !.released = @ \cup held]
+                    ELSE [s EXCEPT !.released = @ \cup {m}]
 
 \* One block fragment, r.arrived already counting it. In turn, the rule: the
 \* block is checked against the watermark and the in-turn block, never
@@ -365,8 +366,7 @@ TypeOK ==
     /\ receiver.arrived \subseteq {m \in DOMAIN queue : Block(m)} \X Fragments
     /\ receiver.counted \subseteq receiver.arrived
     /\ receiver.arrivedInTurn \subseteq receiver.arrived
-    /\ receiver.superseded \subseteq DOMAIN queue
-    /\ receiver.dropped \subseteq DOMAIN queue
+    /\ receiver.released \subseteq DOMAIN queue
     /\ missed \subseteq DOMAIN queue
     /\ receiver.trace \in Seq(Messages) /\ Len(receiver.trace)<=2*MaxMessages
     /\ referenceTrace \in [Channels -> Seq(Messages)]
@@ -419,12 +419,12 @@ InTurnNeverHeldAsFuture == \A m \in receiver.heldSequenced :
 InTurnDeliveredWhenComplete == missed = {}
 InTurnOneRule == InTurnNeverHeldAsFuture /\ InTurnDeliveredWhenComplete
 \* m7.4 (nothing is silent): every sequenced record that arrived is delivered,
-\* still held, superseded, or counted as dropped. Broken = "DrainStaleSilent"
+\* still held, superseded, or released and counted. Broken = "DrainStaleSilent"
 \* releases a drained record without delivering or counting it.
 SequencedArrivedAccounted == connected =>
     \A m \in {n \in {PacketMessage(pid) : pid \in opened} : Sequenced(Code(n)) /\ ~Block(n)} :
         m \in Values(receiver.trace) \/ m \in receiver.heldSequenced \/
-        m \in receiver.inTurn \/ m \in receiver.superseded \/ m \in receiver.dropped
+        m \in receiver.inTurn \/ m \in receiver.released
 TransportAckClearsResend == connected => resend=Values(numbers) \ acked
 AckedImpliesTransportArrival == \A m \in acked : \E pid \in opened : PacketMessage(pid)=m
 EveryReliableAckedAndDelivered == <> (~connected \/ (Len(queue)=MaxMessages /\

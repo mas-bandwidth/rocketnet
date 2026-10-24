@@ -97,11 +97,13 @@ code is this witness.
 When the ordered successor opens an epoch, `Drain` may find a held sequenced
 record the watermark refuses. That branch (`DrainStale`) releases the hold,
 delivers nothing and, after the fix, adds the record to the receiver's
-`dropped` set; `DroppedCount(r)` is its count. `SequencedArrivedAccounted`
+`released` set; `DroppedCount(r)` is its count. `released` holds every
+sequenced record that left the receiver without a delivery: one superseded
+by a newer record, and one the drain refused. `SequencedArrivedAccounted`
 (m7.4, "nothing is silent") requires every sequenced record that arrived to be
-in the delivered trace, still held, superseded, or dropped. The earlier code
-released the hold without counting it: `Broken = "DrainStaleSilent"` models
-that branch and `MCRNChannelBrokenDrainStaleSilent.cfg` fails
+in the delivered trace, still held, or released. The earlier code released
+the hold without counting it: `Broken = "DrainStaleSilent"` models that
+branch and `MCRNChannelBrokenDrainStaleSilent.cfg` fails
 `SequencedArrivedAccounted`.
 
 ## Shared delivery and comparison
@@ -190,7 +192,7 @@ runtime allocation design.
   ordered record opens the epoch and the drain releases the held record
   without delivering or counting it. `SequencedArrivedAccounted` fails.
   `MCRNChannelBrokenDrainStaleSilent.cfg` is the witness; the fixed
-  `DrainStale` branch adds it to `dropped`.
+  `DrainStale` branch adds it to `released`.
 
 ## Evaluation and measurements
 
