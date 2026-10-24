@@ -5237,6 +5237,7 @@ void rocketnet_test_client_connect_validations()
     rocketnet_check( client.server_address.port == 40000 );
 
     // create after expire is an invalid token
+    rocketnet_client_protocol_init( &client, &counters );
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS, 10 );
     rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
@@ -5248,11 +5249,13 @@ void rocketnet_test_client_connect_validations()
         rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
         signed_fields.address_flags = 0x05;
         rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        rocketnet_client_protocol_init( &client, &counters );
         rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
     }
 
     // an expired token dies before anything is sent
+    rocketnet_client_protocol_init( &client, &counters );
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 10, 10 );
     rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS + 10 ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
