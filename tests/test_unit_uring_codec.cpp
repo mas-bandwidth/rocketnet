@@ -90,7 +90,7 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
     int payload_bytes;
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), (int) sizeof( struct sockaddr_storage ), 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_OK );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_OK );
     rocketnet_unit_check( name_bytes == 16 );
     rocketnet_unit_check( name == buf + 16 );
     rocketnet_unit_check( memcmp( name, &in4, 16 ) == 0 );
@@ -116,7 +116,7 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
 
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), (int) sizeof( struct sockaddr_storage ), 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_OK );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_OK );
     rocketnet_unit_check( name_bytes == 28 );
     rocketnet_unit_check( name == buf + 16 );
     rocketnet_unit_check( memcmp( name, &in6, sizeof( in6 ) ) == 0 );
@@ -139,7 +139,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     memset( shortbuf, 0, sizeof( shortbuf ) );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         shortbuf, (int) sizeof( shortbuf ), 32, 8,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
     // name truncated: buffer is big enough but out->namelen (16) > msg_namelen (8).
     uint8_t buf[64];
@@ -150,7 +150,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_NAME_TRUNCATED );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_NAME_TRUNCATED );
 
     // payload truncated via MSG_TRUNC.
     memset( buf, 0, sizeof( buf ) );
@@ -160,7 +160,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     put_u32_native( buf + 12, (uint32_t) MSG_TRUNC );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
 
     // payload truncated: payloadlen exceeds the bytes left in the buffer (100
     // > 64-16-8=40).
@@ -171,14 +171,14 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
     put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 8, 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
 
     // a zero-length payload accepted as OK with payload_bytes 0.
     uint8_t zerobuf[16];
     memset( zerobuf, 0, sizeof( zerobuf ) );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         zerobuf, (int) sizeof( zerobuf ), 0, 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_OK );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_OK );
     rocketnet_unit_check( name_bytes == 0 );
     rocketnet_unit_check( payload_bytes == 0 );
     rocketnet_unit_check( payload == zerobuf + 16 );
@@ -200,17 +200,17 @@ static void test_io_uring_transport_codec_recvmsg_refuses_negative_lengths()
     put_u32_native( buf + 12, 0 );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), 32, -8,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
     // a negative msg_namelen must be refused the same way
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), -32, 0,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
     // both negative
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
         buf, (int) sizeof( buf ), -16, -8,
-        &name, &name_bytes, &payload, &payload_bytes ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
+        &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 }
 
 static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
@@ -416,11 +416,165 @@ static void test_uring_gso_message_stride_and_tail()
     }
 }
 
+// the multishot buffer of a UDP_GRO socket: header, a sockaddr_storage name
+// area, a ROCKETNET_URING_GRO_CONTROL_BYTES control area, then the payload.
+// cmsg_len 0 writes no cmsg. control_written is the controllen the kernel
+// reports.
+
+static int gro_buffer_build( uint8_t * buf, int buf_bytes, int control_written, uint32_t out_flags,
+                             int cmsg_level, int cmsg_type, size_t cmsg_len, int stride, int payload_bytes )
+{
+    const int name_area = (int) sizeof( struct sockaddr_storage );
+    const int control_area = (int) ROCKETNET_URING_GRO_CONTROL_BYTES;
+    memset( buf, 0, (size_t) buf_bytes );
+    put_u32_native( buf + 0, (uint32_t) sizeof( struct sockaddr_in ) );
+    put_u32_native( buf + 4, (uint32_t) control_written );
+    put_u32_native( buf + 8, (uint32_t) payload_bytes );
+    put_u32_native( buf + 12, out_flags );
+    struct sockaddr_in in4;
+    memset( &in4, 0, sizeof( in4 ) );
+    in4.sin_family = AF_INET;
+    in4.sin_port = htons( 40000 );
+    in4.sin_addr.s_addr = htonl( 0x7f000001u );
+    memcpy( buf + 16, &in4, sizeof( in4 ) );
+    if ( cmsg_len > 0 )
+    {
+        struct cmsghdr header;
+        memset( &header, 0, sizeof( header ) );
+        header.cmsg_len = cmsg_len;
+        header.cmsg_level = cmsg_level;
+        header.cmsg_type = cmsg_type;
+        memcpy( buf + 16 + name_area, &header, sizeof( header ) );
+        memcpy( buf + 16 + name_area + CMSG_LEN( 0 ), &stride, sizeof( stride ) );
+    }
+    for ( int i = 0; i < payload_bytes; ++i )
+        buf[16 + name_area + control_area + i] = (uint8_t) i;
+    return 16 + name_area + control_area + payload_bytes;
+}
+
+static void test_uring_recvmsg_gro_stride()
+{
+    const int name_area = (int) sizeof( struct sockaddr_storage );
+    const int control_area = (int) ROCKETNET_URING_GRO_CONTROL_BYTES;
+
+    uint8_t buf[1024];
+    const uint8_t * name;
+    const uint8_t * payload;
+    int name_bytes;
+    int payload_bytes;
+    int segment_bytes;
+    uint64_t faults;
+
+    // a UDP_GRO cmsg: three segments of 100, 100 and 50 in one buffer
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, 0, IPPROTO_UDP, UDP_GRO, CMSG_LEN( sizeof( int ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 100 );
+        rocketnet_unit_check( faults == 0 );
+        rocketnet_unit_check( payload_bytes == 250 );
+        rocketnet_unit_check( payload == buf + 16 + name_area + control_area );
+        rocketnet_unit_check( payload[249] == (uint8_t) 249 );
+
+        int offsets[4];
+        int lengths[4];
+        rocketnet_unit_check( rocketnet_coalesce_split( payload_bytes, segment_bytes, offsets, lengths, 4 ) == 3 );
+        rocketnet_unit_check( offsets[2] == 200 && lengths[2] == 50 );
+    }
+
+    // no cmsg: the kernel wrote no control, so one datagram, no fault
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), 0, 0, 0, 0, 0, 0, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 0 );
+        rocketnet_unit_check( payload_bytes == 250 );
+    }
+
+    // another cmsg, not UDP_GRO: no stride, no fault
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, 0, IPPROTO_IP, 1, CMSG_LEN( sizeof( int ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 0 );
+    }
+
+    // the faults, each one counted and the buffer one datagram: a UDP_GRO
+    // cmsg too short for an int, a cmsg_len under its own header, a cmsg_len
+    // past the control the kernel wrote, and a truncated control area
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, 0, IPPROTO_UDP, UDP_GRO, CMSG_LEN( sizeof( uint16_t ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 1 );
+    }
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, 0, IPPROTO_UDP, UDP_GRO, sizeof( struct cmsghdr ) - 1, 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 1 );
+    }
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), (int) CMSG_LEN( 0 ), 0, IPPROTO_UDP, UDP_GRO, CMSG_LEN( sizeof( int ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 1 );
+    }
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, (uint32_t) MSG_CTRUNC, IPPROTO_UDP, UDP_GRO, CMSG_LEN( sizeof( int ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, control_area,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 1 );
+    }
+
+    // no control area reserved: the stride is 0 and nothing is read past
+    // the name area
+
+    {
+        const int bytes = gro_buffer_build( buf, (int) sizeof( buf ), control_area, 0, IPPROTO_UDP, UDP_GRO, CMSG_LEN( sizeof( int ) ), 100, 250 );
+        segment_bytes = -1;
+        faults = 0;
+        rocketnet_unit_check( rocketnet_uring_recvmsg_parse( buf, bytes, name_area, 0,
+            &name, &name_bytes, &payload, &payload_bytes, &segment_bytes, &faults ) == ROCKETNET_URING_RECV_OK );
+        rocketnet_unit_check( segment_bytes == 0 );
+        rocketnet_unit_check( faults == 0 );
+        rocketnet_unit_check( payload == buf + 16 + name_area );
+    }
+}
+
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_tag_round_trips );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_parses_name_and_payload );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_buffers );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_negative_lengths );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped );
 REGISTER_UNIT_TEST( test_uring_gso_message_stride_and_tail );
+REGISTER_UNIT_TEST( test_uring_recvmsg_gro_stride );
 
 #endif // #if ROCKETNET_URING_CODEC_ACTIVE
