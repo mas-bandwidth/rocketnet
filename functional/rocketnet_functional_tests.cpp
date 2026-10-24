@@ -7788,22 +7788,13 @@ const char * rocketnet_xdp_veth_netns_path()
 
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
 {
-    const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-    const int far_ns = open( rocketnet_xdp_veth_netns_path(), O_RDONLY );
-    rocketnet_check( self_ns >= 0 && far_ns >= 0 );
-    rocketnet_check( setns( far_ns, CLONE_NEWNET ) == 0 );
-    FILE * file = fopen( "/sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address", "r" );
+    // setns does not switch the mounted sysfs, so the far end's address file
+    // is not visible that way. ip netns exec mounts a sysfs for that namespace.
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
+        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    rocketnet_check( lines.size() == 1 );
     unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
-    int got = 0;
-    if ( file )
-    {
-        got = fscanf( file, "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
-        fclose( file );
-    }
-    const int back = setns( self_ns, CLONE_NEWNET );
-    close( self_ns );
-    close( far_ns );
-    rocketnet_check( back == 0 );
+    const int got = sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
     rocketnet_check( got == 6 );
     for ( int i = 0; i < 6; i++ )
     {
