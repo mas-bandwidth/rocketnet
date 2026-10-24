@@ -9,6 +9,7 @@
 #define ROCKETNET_JITTER_TRACKER_H
 
 #include "rocketnet_internal.h"
+#include "rocketnet_memory_checks.h"
 
 #include <math.h>
 
