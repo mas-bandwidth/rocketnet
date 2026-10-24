@@ -253,6 +253,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | find-batchfull | `MCFragmentsAndAcksFindBatchFull.cfg` | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `DrainCap = 4`, `DeliveredCap = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, reordering on, duplication and burns off | **fails** `BatchFullNeverFires`: below-bound witness, not a code defect | required |
 | batch-at-bound | `MCFragmentsAndAcksBatchAtBound.cfg` | `MaxSeq = 8`, `MaxGen = 4`, `DeliveredCap = 3` (the bound) and `AckLinkIdle`; the pass reaches the third completion at the cap | passes `BatchFullNeverFires` | required |
 | defect | `MCFragmentsAndAcksDefect.cfg` | the small defect instance, `SpecSafety`, invariants + `CountPinned` | passes | required |
+| small-safety | `MCFragmentsAndAcksSmallSafety.cfg` | safety, `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, all invariants including `NamedOnlyIfAccepted` | passes | required |
 | wit-firstfrag | `MCFragmentsAndAcksWitFirstfrag.cfg` | safety, `Witness = "firstfrag"` | **fails** `SurfacedOnlyIfOpened` | required |
 | wit-dropfull | `MCFragmentsAndAcksWitDropfull.cfg` | safety, `Witness = "dropfull"` | **fails** `AckedMeansSurfaced` | required |
 | wit-overclaim | `MCFragmentsAndAcksWitOverclaim.cfg` | safety, `Witness = "overclaim"` | **fails** `BurnedNeverNamed` | required |

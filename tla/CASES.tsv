@@ -155,6 +155,7 @@ MCRNUringDriverBrokenNoRearmRetry.cfg	MCRNUringDriver.tla	temporal	ReceiveLivene
 MCRNUringDriverBrokenFreeRunAtSubmit.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
 MCRNUringDriverBrokenReturnBeforeSplit.cfg	MCRNUringDriver.tla	invariant	BufferReturnedAfterCopy	check	rnuringdriver	required	-
 MCFragmentsAndAcks.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-safety-over-budget
+MCFragmentsAndAcksSmallSafety.cfg	MCFragmentsAndAcks.tla	check	fragmentsandacks	required	-
 MCFragmentsAndAcksLive.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	committed-instance-liveness-over-budget
 MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
 MCFragmentsAndAcksLiveDup.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
