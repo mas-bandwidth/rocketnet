@@ -384,9 +384,17 @@ completes or is cancelled. The changes to the existing actions:
 - `IoFinishRing` marks a ring Sent only when `completed[r]` holds
   (`rocketnet_client_io_reap`, `sdk/rocketnet_client_io.h:539`, finishes a
   ring only once none of its posts is outstanding).
-- `IoWait` may block while the ring it holds is fully posted and outstanding,
-  and `IoWake` returns on its completion (the completion event in the wait
-  set, `sdk/rocketnet_platform.cpp`).
+- `IoWait` is unchanged: the modeled I/O thread does not block while the
+  ring it holds is outstanding, it stutters until `Complete`. The code does
+  wait then, with the completion event in the wait set; a lost completion
+  wake would cost at most the 50 ms guard timeout, not progress, and the
+  version of the model that let `IoWait` block on an outstanding ring and
+  `IoWake` return on its completion took the live configs past the 110 s
+  budget (LiveDestroy 87 s alone, over 110 s three at a time, against 66 s
+  without it on the same bench), so it is left out.
+- In the step-driven mode the send stays synchronous (the transport sets no
+  overlapped send for it, `sdk/rocketnet_client_transport.cpp`), so `IoSend`
+  sets `completed[r]` itself and `Complete` is never enabled there.
 - `IoExit` requires that no ring has a post outstanding (the step exits only
   after cancelling and reaping every post).
 - `Reopen` clears `completed[r]` with `sent[r]`.

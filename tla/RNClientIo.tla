@@ -78,9 +78,10 @@
 (* (Complete, an outside event,                                           *)
 (* ok or with an error: a stop's cancel ends a pending post with an       *)
 (* error, so one action models both).  `sent` is the slots posted.  A     *)
-(* ring is Sent (IoFinishRing) only once its posts have completed, the    *)
-(* I/O thread may wait while they are outstanding and a completion ends   *)
-(* that wait (IoWait, IoWake), and the thread exits only once every post  *)
+(* ring is Sent (IoFinishRing) only once its posts have completed (the   *)
+(* modeled thread stutters while they are outstanding; the code waits    *)
+(* with the completion event in its wait set, bounded by the guard), and  *)
+(* the thread exits only once every post                                  *)
 (* has completed (IoExit), so nothing is freed while the kernel may read  *)
 (* it (NoFreeBeforeComplete).  A stalled ring's posts complete once stop  *)
 (* cancels them.  Two rings bound the posts in flight to one ring here;   *)
@@ -88,7 +89,8 @@
 (* and its in-order reap is pinned by the unit case                       *)
 (* test_client_io_overlapped_ring_sent_on_completion.  SentBeforeComplete  *)
 (* is the defect that marks the ring Sent once every slot is posted, its  *)
-(* witness MCRNClientIoBrokenSentBeforeComplete.cfg.                       *)
+(* witness MCRNClientIoBrokenSentBeforeComplete.cfg.  The step-driven    *)
+(* mode keeps the synchronous send: IoSend completes the ring itself.     *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
