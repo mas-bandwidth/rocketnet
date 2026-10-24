@@ -14,13 +14,69 @@
 
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
+#include "time_scale.h"                 // ROCKETNET_FUNCTIONAL_SANITIZED
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <unistd.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
 
 #define NO_WORKER_PROTOCOL     0x5747A75D0C1E4A11ULL
 #define NO_WORKER_CLIENTS      1000
 #define NO_WORKER_CHANNEL      0
+
+// The measured updates may grow the resident set by at most this many pages
+// (sysconf(_SC_PAGESIZE) each: 4 KiB on Linux, 16 KiB on Apple silicon). The
+// case is about statistics being current on every update, so what it must
+// catch is growth while it runs, not the absolute footprint; a leak of one
+// page per slot is far over it. The smallest count that passes at head on
+// Linux and macOS: measured at head, the 64-slot case grows 64 pages on Linux
+// (4 KiB, Release and Debug) and at most 13 on macOS (16 KiB); the 1000-slot
+// case 39 and 6. One leaked page per slot adds 64 or 1000.
+#define NO_WORKER_RSS_GROWTH_PAGES  64
+
+// The page size, and this process's current resident bytes; -1 where the
+// platform gives neither (measured on Linux and macOS only), and in a
+// sanitizer build, whose shadow memory is not the case's footprint, as the
+// suite's RSS bound does: the growth check then pins nothing there.
+static int64_t no_worker_page_bytes()
+{
+#if defined(__APPLE__) || defined(__linux__)
+    return (int64_t) sysconf( _SC_PAGESIZE );
+#else
+    return -1;
+#endif
+}
+
+static int64_t no_worker_resident_bytes()
+{
+#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+    return -1;
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if ( task_info( mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t) &info, &count ) != KERN_SUCCESS )
+        return -1;
+    return (int64_t) info.resident_size;
+#elif defined(__linux__)
+    FILE * file = fopen( "/proc/self/statm", "r" );
+    if ( !file )
+        return -1;
+    long long size = 0, resident = 0;
+    const int read = fscanf( file, "%lld %lld", &size, &resident );
+    fclose( file );
+    if ( read != 2 )
+        return -1;
+    return (int64_t) resident * no_worker_page_bytes();
+#else
+    return -1;
+#endif
+}
 
 static double no_worker_now = 1000.0;
 static double no_worker_clock( void * ) { return no_worker_now; }
@@ -214,7 +270,9 @@ static void no_worker_stats_current_every_update( int clients )
         no_worker_step( world, false, 0.1 );
     check( no_worker_connected_slots( world ) == clients );
 
-    // steady traffic at 100 ms steps until every slot has samples
+    // steady traffic at 100 ms steps until every slot has samples; this is
+    // also the warm-up of the update loop: first-touch pages settle after
+    // about three steps, well inside ten
     for ( int step = 0; step < 10; step++ )
         no_worker_step( world, true, 0.1 );
 
@@ -228,6 +286,13 @@ static void no_worker_stats_current_every_update( int clients )
     // the server's last send went out at a 10 ms step; this update's acks
     // carry 10 ms samples for every slot
     no_worker_step( world, true, 0.01 );
+
+    // the resident baseline: after the warm-up and the first 10 ms step, the
+    // first update on the short-step path, which first-touches pages of its
+    // own (before the sent map of 64, about one per slot). The measured
+    // update is the next one, whose acks carry the 10 ms samples, and the
+    // statistics read of every slot after it.
+    const int64_t baseline = no_worker_resident_bytes();
     no_worker_step( world, true, 0.01 );
 
     int current = 0;
@@ -244,6 +309,16 @@ static void no_worker_stats_current_every_update( int clients )
             current++;
     }
     check( current == clients );
+
+    // the measured updates and reads grew the resident set by at most
+    // NO_WORKER_RSS_GROWTH_PAGES pages
+    const int64_t after = no_worker_resident_bytes();
+    const int64_t page = no_worker_page_bytes();
+    if ( baseline > 0 && after > 0 && page > 0 )
+    {
+        const int64_t growth = after - baseline;
+        check( growth <= (int64_t) NO_WORKER_RSS_GROWTH_PAGES * page );
+    }
 
     no_worker_world_destroy( world );
 }
