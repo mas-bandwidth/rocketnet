@@ -420,15 +420,16 @@ static void test_xdp_transport_gateway_netlink_only_the_main_unicast_default_rou
     }
 }
 
-// an IPv4 multipath default route answers with its first next hop's
-// interface and gateway, as /proc/net/route (netstat -rn) listed it
+// a multipath default route: two next hops, each an rtnexthop plus an
+// RTA_GATEWAY of the family's address size
 
-static void netlink_multipath_route( netlink_datagram_t * datagram, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
+static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
 {
+    const size_t address_bytes = family == AF_INET ? 4 : 16;
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
     struct rtmsg message;
     memset( &message, 0, sizeof(message) );
-    message.rtm_family = AF_INET;
+    message.rtm_family = (unsigned char) family;
     message.rtm_table = RT_TABLE_MAIN;
     message.rtm_type = RTN_UNICAST;
     netlink_append( datagram, &message, sizeof(message) );
@@ -441,16 +442,16 @@ static void netlink_multipath_route( netlink_datagram_t * datagram, int first_in
     {
         struct rtnexthop hop;
         memset( &hop, 0, sizeof(hop) );
-        hop.rtnh_len = (unsigned short) ( sizeof(hop) + RTA_LENGTH( 4 ) );
+        hop.rtnh_len = (unsigned short) ( sizeof(hop) + RTA_LENGTH( address_bytes ) );
         hop.rtnh_ifindex = interfaces[i];
         const uint8_t * h = (const uint8_t*) &hop;
         hops.insert( hops.end(), h, h + sizeof(hop) );
         struct rtattr attribute;
-        attribute.rta_len = (unsigned short) RTA_LENGTH( 4 );
+        attribute.rta_len = (unsigned short) RTA_LENGTH( address_bytes );
         attribute.rta_type = RTA_GATEWAY;
         const uint8_t * a = (const uint8_t*) &attribute;
         hops.insert( hops.end(), a, a + sizeof(attribute) );
-        hops.insert( hops.end(), gateways[i], gateways[i] + 4 );
+        hops.insert( hops.end(), gateways[i], gateways[i] + address_bytes );
     }
     netlink_attribute( datagram, RTA_MULTIPATH, hops.data(), hops.size() );
     netlink_end( datagram, start );
@@ -462,17 +463,40 @@ static void test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop()
     int error = -1;
 
     netlink_datagram_t ours;
-    netlink_multipath_route( &ours, server_interface, gateway_ipv4, other_interface, gateway_ipv4_other );
+    netlink_multipath_route( &ours, AF_INET, server_interface, gateway_ipv4, other_interface, gateway_ipv4_other );
     netlink_done( &ours );
     check( parse_route( ours, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 
-    // this interface only as the second next hop: not its default route
+    // this interface as the second next hop: that hop is the route
 
     netlink_datagram_t second;
-    netlink_multipath_route( &second, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
+    netlink_multipath_route( &second, AF_INET, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
     netlink_done( &second );
-    check( parse_route( second, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+    check( parse_route( second, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv6_multipath_found()
+{
+    uint8_t gateway[16];
+    int error = -1;
+    netlink_datagram_t datagram;
+    netlink_multipath_route( &datagram, AF_INET6, other_interface, gateway_ipv6_other, server_interface, gateway_ipv6 );
+    netlink_done( &datagram );
+    check( parse_route( datagram, AF_INET6, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv6, 16 ) == 0 );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop()
+{
+    uint8_t gateway[16];
+    int error = -1;
+    netlink_datagram_t datagram;
+    netlink_multipath_route( &datagram, AF_INET, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
+    netlink_done( &datagram );
+    check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 }
 
 // a gateway attribute that is not the family's address size refuses
@@ -870,6 +894,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_default_route_not_on
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_no_default_route );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_only_the_main_unicast_default_route_wins );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_multipath_found );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_lladdr_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_wrong_interface );
