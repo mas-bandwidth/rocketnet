@@ -7,8 +7,9 @@ and nothing else did. Never is a line neither executed. Lines compiled only unde
 `ROCKETNET_TEST_SEAMS` or a `ROCKETNET_*_TEST_HOOKS` macro are counted apart, as
 are lines with no mapping in the production binaries. The unit suite exited 0
 (16.5s). The functional suite exited 0 (246.2s). The examples exited 1 on
-`example_game_loop` (22.8s); the splitter recorded the example name and not the
-assertion text. Build 84.7s, report 5.7s, total 375.9s. No source, test, tool, or
+`example_game_loop` (22.8s). Running that example again on the same tree printed
+`FAIL: client->server latency is not the frame order's`. The splitter itself had
+kept only the example name. Build 84.7s, report 5.7s, total 375.9s. No source, test, tool, or
 workflow file was changed. Findings are ordered most severe first. Severity is
 bug, risk, or quality. A unit-only function with no production caller is quality
 unless a published counter depends on it. A never-reached guard on a wire, config,
