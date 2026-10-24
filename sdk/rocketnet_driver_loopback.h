@@ -48,6 +48,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVE
 // queue ceiling on send, or larger than the receive buffer on drain.
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 
+// The inbox slots an endpoint has ever used: the most datagrams it held at
+// once, since freed slots are reused before a fresh one is taken.
+uint32_t rocketnet_loopback_endpoint_slots_touched( void * instance );
+
 // The number of live endpoints in the process-wide table.
 int rocketnet_loopback_endpoints_live();
 

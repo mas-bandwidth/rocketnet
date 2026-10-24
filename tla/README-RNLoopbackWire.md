@@ -40,6 +40,13 @@ fairness. The records are in `RUNS.tsv` (group `rnloopbackwire`).
   matters is that the pin precedes the liveness check.
 - A dead receiver drops the datagram at Verify, as a send to a destroyed
   endpoint does (counted as a send failure in the code).
+- The free queue is a stack in the code: Reserve pops the slot freed last, and
+  takes a fresh slot only when the stack is empty; Release pushes. The ready
+  ring restarts at its front whenever it empties. Both only choose which slot
+  index and which ring position a datagram uses, so an endpoint touches no more
+  slots than it ever held at once
+  (`test_loopback_transport_io_touches_only_slots_in_flight`); the model's
+  sequences are the same either way.
 
 ## Reversed witnesses
 

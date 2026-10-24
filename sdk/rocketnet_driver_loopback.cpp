@@ -25,8 +25,8 @@
 // written), the ready queue (filled) and the receiver (taken, being read).
 // The inbox mutex covers the index moves alone. A send reserves a free slot
 // and appends it to the ready queue in one exchange, copies the datagram in
-// outside the mutex, then marks the slot filled (release); the receive takes
-// the filled prefix of the ready queue (acquire), copies out outside the
+// outside the mutex, then marks its ready entry filled (release); the receive
+// takes the filled prefix of the ready queue (acquire), copies out outside the
 // mutex, then frees the slots. A send therefore makes its datagram visible
 // before it returns, and the receiver's next update takes it: the same frame
 // when the sender ran first. A full inbox drops the datagram and counts it.
@@ -51,7 +51,7 @@ enum
     ROCKETNET_LOOPBACK_FIRST_PORT = 49152,
     ROCKETNET_LOOPBACK_LAST_PORT = 65535,
     ROCKETNET_LOOPBACK_TAKE_BATCH = 64,         // slots one receive exchange takes
-    ROCKETNET_LOOPBACK_ROUTES = 2048            // a sender's route cache, by port
+    ROCKETNET_LOOPBACK_ROUTES = 64              // a sender's route cache, by port; a miss is one table lookup
 };
 
 struct rocketnet_loopback_slot_t
@@ -71,61 +71,70 @@ struct rocketnet_loopback_route_t
 };
 
 // one endpoint's allocation: its inbox, and its routes as a sender (its own
-// thread only). The index queues, the filled flags and the slots follow the
-// header in the same block. Create writes the header and the index queues;
-// a slot's page is first touched by the first datagram that lands in it.
+// thread only). The free stack, the ready ring and the slots follow the
+// header in the same block, and create writes the header alone: a slot, and
+// its entries in the stack and the ring, are first touched by the datagram
+// that first needs them. Slots are handed out fresh only when the free stack
+// is empty, freed slots are reused last-freed first, and the ready ring
+// starts again at its front whenever it empties, so the slots and entries an
+// endpoint touches are the most it ever had in flight at once, however long
+// it runs (rocketnet_loopback_endpoint_slots_touched).
 struct rocketnet_loopback_storage_t
 {
     rocketnet_platform_mutex_t mutex;           // the inbox's index exchanges alone
     uint32_t capacity;                          // slots, a power of two
-    uint32_t free_head, free_count;             // the free queue
-    uint32_t ready_head, ready_count;           // the ready queue, oldest first
-    uint32_t * free_index;
-    uint32_t * ready_index;
-    std::atomic<uint32_t> * filled;             // the sender finished its write
+    uint32_t fresh;                             // slots ever handed out: 0 .. fresh-1 have been used
+    uint32_t free_top;                          // the free stack's depth
+    uint32_t ready_head, ready_count;           // the ready ring, oldest first
+    uint32_t * free_stack;
+    std::atomic<uint32_t> * ready;              // a slot index, with ROCKETNET_LOOPBACK_PENDING while its sender writes it
     rocketnet_loopback_slot_t * slots;
     rocketnet_loopback_route_t routes[ROCKETNET_LOOPBACK_ROUTES];
 };
 
+#define ROCKETNET_LOOPBACK_PENDING 0x80000000u
+
 static size_t loopback_align( size_t bytes ) { return ( bytes + 63 ) & ~(size_t) 63; }
 
-// tla/RNLoopbackWire.tla Reserve: the oldest free slot, appended to the ready
-// queue in the same exchange, or -1 when none is free. Inbox mutex held.
-static int loopback_reserve( rocketnet_loopback_storage_t * inbox )
+// tla/RNLoopbackWire.tla Reserve: a free slot, the one freed last, or a
+// fresh one when none is free, appended to the ready ring as pending in the
+// same exchange; -1 when every slot is in use. *position is its place in the
+// ring, which its sender's Fill writes. Inbox mutex held.
+static int loopback_reserve( rocketnet_loopback_storage_t * inbox, uint32_t * position )
 {
-    if ( inbox->free_count == 0 )
+    uint32_t index;
+    if ( inbox->free_top > 0 )
+        index = inbox->free_stack[--inbox->free_top];
+    else if ( inbox->fresh < inbox->capacity )
+        index = inbox->fresh++;
+    else
         return -1;
-    const uint32_t mask = inbox->capacity - 1;
-    const uint32_t index = inbox->free_index[inbox->free_head];
-    inbox->free_head = ( inbox->free_head + 1 ) & mask;
-    inbox->free_count--;
-    inbox->ready_index[( inbox->ready_head + inbox->ready_count ) & mask] = index;
+    *position = ( inbox->ready_head + inbox->ready_count ) & ( inbox->capacity - 1 );
+    inbox->ready[*position].store( index | ROCKETNET_LOOPBACK_PENDING, std::memory_order_relaxed );
     inbox->ready_count++;
     return (int) index;
 }
 
-// tla/RNLoopbackWire.tla Take: the oldest ready slot when it is filled, or
-// -1. Inbox mutex held.
+// tla/RNLoopbackWire.tla Take: the oldest ready slot when its sender has
+// filled it, or -1. An emptied ring starts again at its front. Inbox mutex
+// held.
 static int loopback_take_filled( rocketnet_loopback_storage_t * inbox )
 {
     if ( inbox->ready_count == 0 )
         return -1;
-    const uint32_t index = inbox->ready_index[inbox->ready_head];
-    if ( !inbox->filled[index].load( std::memory_order_acquire ) )
+    const uint32_t entry = inbox->ready[inbox->ready_head].load( std::memory_order_acquire );
+    if ( entry & ROCKETNET_LOOPBACK_PENDING )
         return -1;
-    inbox->ready_head = ( inbox->ready_head + 1 ) & ( inbox->capacity - 1 );
     inbox->ready_count--;
-    return (int) index;
+    inbox->ready_head = inbox->ready_count == 0 ? 0 : ( inbox->ready_head + 1 ) & ( inbox->capacity - 1 );
+    return (int) entry;
 }
 
-// tla/RNLoopbackWire.tla Release: a slot back to the front of the free queue,
-// so the next reserve reuses the slot freed last and an inbox touches only
-// the slots its traffic needs at once. Inbox mutex held.
+// tla/RNLoopbackWire.tla Release: a slot onto the free stack, so the next
+// reserve reuses the slot freed last. Inbox mutex held.
 static void loopback_release( rocketnet_loopback_storage_t * inbox, int index )
 {
-    inbox->free_head = ( inbox->free_head + inbox->capacity - 1 ) & ( inbox->capacity - 1 );
-    inbox->free_index[inbox->free_head] = (uint32_t) index;
-    inbox->free_count++;
+    inbox->free_stack[inbox->free_top++] = (uint32_t) index;
 }
 
 struct rocketnet_loopback_endpoint_t
@@ -309,7 +318,7 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
 size_t rocketnet_loopback_queue_bytes( int packets )
 {
     const size_t n = (size_t) packets;
-    return loopback_align( sizeof( rocketnet_loopback_storage_t ) ) + loopback_align( n * 2 * sizeof( uint32_t ) ) +
+    return loopback_align( sizeof( rocketnet_loopback_storage_t ) ) + loopback_align( n * sizeof( uint32_t ) ) +
            loopback_align( n * sizeof( std::atomic<uint32_t> ) ) + n * sizeof( rocketnet_loopback_slot_t );
 }
 
@@ -348,10 +357,9 @@ static void * loopback_create( void * context, rocketnet_address_t * bind, int q
     rocketnet_loopback_storage_t * storage = (rocketnet_loopback_storage_t*) block;
     const size_t n = (size_t) queue_packets;
     uint8_t * p = block + loopback_align( sizeof( rocketnet_loopback_storage_t ) );
-    storage->free_index = (uint32_t*) p;
-    storage->ready_index = storage->free_index + n;
-    p += loopback_align( n * 2 * sizeof( uint32_t ) );
-    storage->filled = (std::atomic<uint32_t>*) p;
+    storage->free_stack = (uint32_t*) p;
+    p += loopback_align( n * sizeof( uint32_t ) );
+    storage->ready = (std::atomic<uint32_t>*) p;
     p += loopback_align( n * sizeof( std::atomic<uint32_t> ) );
     storage->slots = (rocketnet_loopback_slot_t*) p;
     if ( !rocketnet_platform_mutex_create( &storage->mutex ) )
@@ -362,17 +370,12 @@ static void * loopback_create( void * context, rocketnet_address_t * bind, int q
         if ( status ) *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
         return NULL;
     }
-    // no slot is held: every one starts free
+    // no slot is held and none has been used: every one is fresh
     storage->capacity = (uint32_t) queue_packets;
-    storage->free_head = 0;
-    storage->free_count = (uint32_t) queue_packets;
+    storage->fresh = 0;
+    storage->free_top = 0;
     storage->ready_head = 0;
     storage->ready_count = 0;
-    for ( uint32_t i = 0; i < storage->capacity; ++i )
-    {
-        storage->free_index[i] = i;
-        storage->filled[i].store( 0, std::memory_order_relaxed );
-    }
     memset( storage->routes, 0, sizeof( storage->routes ) );
 
     rocketnet_loopback_state_t & state = loopback_state();
@@ -542,9 +545,10 @@ static bool loopback_deliver( rocketnet_loopback_endpoint_t * sender, const rock
         return false;
     rocketnet_loopback_storage_t * inbox = dst->storage;
     int index = -1;
+    uint32_t position = 0;
     if ( loopback_lock( &inbox->mutex, shutdown ) )
     {
-        index = loopback_reserve( inbox );
+        index = loopback_reserve( inbox, &position );
         rocketnet_platform_mutex_release( &inbox->mutex );
     }
     if ( index < 0 )
@@ -557,7 +561,7 @@ static bool loopback_deliver( rocketnet_loopback_endpoint_t * sender, const rock
     slot->from = loopback_sender_address( sender->bind, to );
     slot->bytes = bytes;
     memcpy( slot->data, data, (size_t) bytes );
-    inbox->filled[index].store( 1, std::memory_order_release );
+    inbox->ready[position].store( (uint32_t) index, std::memory_order_release );
     loopback_unpin( dst );
     return true;
 }
@@ -632,7 +636,6 @@ static int loopback_take( rocketnet_loopback_endpoint_t * receiver, rocketnet_ad
             memcpy( data + (size_t) copied * (size_t) stride, slot->data, (size_t) slot->bytes );
             ++copied;
         }
-        inbox->filled[indices[i]].store( 0, std::memory_order_relaxed );
     }
 
     if ( num_taken > 0 )
@@ -680,6 +683,13 @@ static const rocketnet_client_transport_io_operations_t loopback_client_operatio
   NULL, NULL, loopback_send_failures, NULL };
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
+
+uint32_t rocketnet_loopback_endpoint_slots_touched( void * instance )
+{
+    rocketnet_loopback_storage_t * inbox = ( (rocketnet_loopback_endpoint_t*) instance )->storage;
+    rocketnet_platform_mutex_guard( &inbox->mutex );
+    return inbox->fresh;
+}
 
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
 {

@@ -381,6 +381,59 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     printf( "test_loopback_transport_io_runtime_does_not_allocate\n" );
 }
 
+// An inbox touches only the slots its traffic holds at once: 3000 rounds of
+// up to K datagrams each way, every one drained before the next round, leave
+// both endpoints with at most K slots ever used, however many datagrams
+// passed (a fresh slot is taken only when no freed one waits, and the ready
+// ring starts again at its front when it empties). One thread, no clock.
+
+static void test_loopback_transport_io_touches_only_slots_in_flight()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t server_address, client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+
+    enum { K = 8, ROUNDS = 3000 };
+    uint8_t data[64];
+    memset( data, 0x5c, sizeof( data ) );
+    uint64_t sent = 0, received = 0;
+    for ( int round = 0; round < ROUNDS; ++round )
+    {
+        const int count = 1 + round % K;
+        for ( int i = 0; i < count; ++i )
+        {
+            client.operations->send( client.instance, &server_address, data, sizeof( data ) );
+            rocketnet_platform_send_t packet = { &client_address, data, (int) sizeof( data ) };
+            server.operations->send_batch( server.instance, &packet, 1 );
+            sent++;
+        }
+        rocketnet_address_t from[K];
+        uint8_t buffer[K * 64];
+        int bytes[K];
+        received += (uint64_t) server.operations->receive_batch( server.instance, from, buffer, 64, bytes, K );
+        uint8_t one[64];
+        while ( client.operations->receive( client.instance, &from[0], one, sizeof( one ) ) > 0 ) {}
+    }
+    rocketnet_unit_check( received == sent );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_slots_touched( server.instance ) <= K );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_slots_touched( client.instance ) <= K );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
+}
+
 static void test_loopback_transport_io_destroy_frees_the_port()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
@@ -1278,6 +1331,7 @@ static void test_server_drains_completed_queue_to_budget()
 REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
 
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
+REGISTER_UNIT_TEST( test_loopback_transport_io_touches_only_slots_in_flight );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( test_loopback_transport_io_full_queue_drops_and_counts );
