@@ -506,10 +506,12 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the handshake's response and the timers; the server's
-\* updates keep coming, and each waiting packet is sealed within one.
+\* updates keep coming, and each seals a waiting packet while one waits. One
+\* condition over every session suffices: each session ends at most once, so
+\* the packets ever left waiting are finite and every one is sealed.
 Fairness ==
     /\ \A i \in Slots : WF_vars(Establish(i) \/ Deny(i) \/ SlotTimeout(i))
-    /\ \A s \in Sessions : WF_vars(SealStep(s))
+    /\ WF_vars(\E s \in Sessions : SealStep(s))
 LiveSpec == Spec /\ Fairness
 
 TypeOK ==
