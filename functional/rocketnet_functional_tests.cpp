@@ -7886,7 +7886,7 @@ static bool rocketnet_xdp_veth_inside_virtme()
 // the cases make a namespace and a veth pair and attach XDP, so they run
 // only as root inside a virtme-ng guest, or as root with
 // ROCKETNET_TEST_XDP_VETH=1
-static bool rocketnet_test_xdp_veth_runs_here()
+bool rocketnet_test_xdp_veth_runs_here()
 {
     char opt_in[256];
     const bool opted_in = rocketnet_test_getenv( "ROCKETNET_TEST_XDP_VETH", opt_in, sizeof( opt_in ) ) && strcmp( opt_in, "1" ) == 0;
@@ -7897,7 +7897,7 @@ static bool rocketnet_xdp_veth_capture_present = false;
 
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
-static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
 
     atexit( rocketnet_xdp_veth_teardown );
@@ -8056,6 +8056,43 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) == 0 );
 
     return server;
+}
+
+void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server )
+{
+    rocketnet_xdp_veth_server = server;
+}
+
+// If destroyed is the recorded server, drop that record first. Then remove
+// the pair, and free a recorded server that is still set. The hard-killed
+// cell records NULL before it frees its own server and passes NULL here.
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed )
+{
+    if ( rocketnet_xdp_veth_server == destroyed )
+        rocketnet_xdp_veth_server = NULL;
+    rocketnet_xdp_veth_teardown();
+}
+
+const char * rocketnet_xdp_veth_netns_path()
+{
+    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
+}
+
+void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
+{
+    // setns does not switch the mounted sysfs, so the far end's address file
+    // is not visible that way. ip netns exec mounts a sysfs for that namespace.
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
+        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    rocketnet_check( lines.size() == 1 );
+    unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
+    const int got = sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
+    rocketnet_check( got == 6 );
+    for ( int i = 0; i < 6; i++ )
+    {
+        rocketnet_check( octet[i] <= 0xffu );
+        mac[i] = (uint8_t) octet[i];
+    }
 }
 
 // the portable client, its socket opened inside the far end's namespace
@@ -8384,6 +8421,18 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
 {
     rocketnet_xdp_max_size_both_ways( true, "test_xdp_transport_max_size_both_ways_ipv6" );
 }
+
+// the three hard-killed kinds on the xdp server cell. They live in the static
+// table, not the generated hard-killed count, so a host where the veth gate
+// is false omits them and an explicit --run prints the runs_here refusal.
+extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
+
+static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
+static void rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, true ); }
+static void rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, false ); }
+static void rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, true ); }
+static void rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, false ); }
+static void rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, true ); }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
@@ -9234,6 +9283,9 @@ void rocketnet_test_linux_uring_send_cqe_errors();
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
 bool rocketnet_test_linux_xdp_weather_runs_here();
+#if ROCKETNET_XDP
+bool rocketnet_test_xdp_veth_runs_here();
+#endif
 #endif
 #endif
 
@@ -9707,6 +9759,12 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv4_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv6_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
 #endif
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
@@ -9874,7 +9932,8 @@ void rocketnet_functional_prepare()
 
 // the hard-killed client and ICMP-error cases (functional/posix_hard_killed_client.cpp)
 // are a generated table of their own, one case per transport cell, after the
-// static table
+// static table. The xdp server cell is in the static table, gated by
+// rocketnet_test_xdp_veth_runs_here, and is not repeated here.
 
 int rocketnet_posix_hard_killed_client_test_count();
 const char * rocketnet_posix_hard_killed_client_test_name( int index );
