@@ -1521,9 +1521,13 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token );
 
-/// Requires rocketnet_client_disconnected(client) to be true; asserts otherwise.
-/// Synchronously joins completed workers, wipes and frees the client memory.
-/// All client pointers become invalid. NULL is allowed.
+/// Expects rocketnet_client_disconnected(client) to be true; asserts otherwise.
+/// Called early, it logs one error naming the skipped completion poll, records
+/// the misuse, requests disconnect and updates the transport a bounded number
+/// of times without sleeping. Once disconnected it joins, wipes and frees; if
+/// the worker has not exited it logs a second error and keeps the client, which
+/// stays owned by that worker. Client pointers become invalid only when destroy frees
+/// the client; on the keep path the client and its pointers stay valid. NULL is allowed.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1736,9 +1740,13 @@ ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t 
 
 ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t * server );
 
-/// Requires rocketnet_server_stopped(server) to be true; asserts otherwise.
-/// Synchronously joins completed workers, wipes and frees memory and keys.
-/// All pointers from the server become invalid.
+/// Expects rocketnet_server_stopped(server) to be true; asserts otherwise.
+/// Called early, it logs one error naming the skipped completion poll, records
+/// the misuse, requests stop and updates the transport a bounded number of times
+/// without sleeping. Once stopped it joins, wipes and frees memory and keys; if
+/// the worker has not exited it logs a second error and keeps the server, which
+/// stays owned by that worker. Pointers from the server become invalid only when destroy
+/// frees the server; on the keep path the server and its pointers stay valid.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 

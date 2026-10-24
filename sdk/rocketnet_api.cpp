@@ -731,6 +731,11 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context, con
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
+// An early destroy drives a caller-stepped transport through its stop with
+// at most this many updates; a threaded worker that has not exited by then is
+// left owning its memory rather than freed under it.
+static const int RN_DESTROY_STOP_UPDATES = 32;
+
 // End then Reset (tla/ClientSession.tla): the connection's counters move into
 // the lifetime counters, its reason is kept, and its destroy -- which sends
 // the redundant disconnects from a live state and runs the connection reset
@@ -843,7 +848,25 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_client_disconnected( client ) );
     if ( !rocketnet_client_disconnected( client ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped. Updates are bounded and never sleep: a
+        // worker that has not exited still owns the memory, so it is kept.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_client_destroy: the client is not disconnected; call rocketnet_client_disconnect and poll rocketnet_client_disconnected before destroy" );
+        rocketnet_client_disconnect( client );
+        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_client_disconnected( client ); update++ )
+        {
+            struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
+            if ( transport )
+                rocketnet_client_transport_update( transport, 0.0 );
+        }
+        if ( !rocketnet_client_disconnected( client ) )
+        {
+            rocketnet_error( "rocketnet_client_destroy: the worker has not exited; the client is kept, not freed" );
+            return;
+        }
+    }
     rn_client_end_connection( client );
     // the connection's keys were wiped by its transport's destroy; the header
     // and the block hold config and message bytes, no secret, so they are
@@ -1736,7 +1759,25 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_server_stopped( server ) );
     if ( !rocketnet_server_stopped( server ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped. Updates are bounded and never sleep: a
+        // worker that has not exited still owns the memory, so it is kept.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
+        rocketnet_server_stop( server );
+        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_server_stopped( server ); update++ )
+        {
+            struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
+            if ( transport )
+                rocketnet_server_transport_update( transport, 0.0 );
+        }
+        if ( !rocketnet_server_stopped( server ) )
+        {
+            rocketnet_error( "rocketnet_server_destroy: the worker has not exited; the server is kept, not freed" );
+            return;
+        }
+    }
     rn_server_finish_stop( server );
     // the server's secret key is the header's one secret: it is wiped, and
     // the rest of the header and the block, config and message bytes, are
