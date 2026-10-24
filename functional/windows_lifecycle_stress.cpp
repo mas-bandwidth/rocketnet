@@ -9,14 +9,16 @@
 
         handles        GetProcessHandleCount
         threads        a Toolhelp32 walk of this process's threads
-        heap_bytes     HeapSummary cbAllocated on the CRT malloc heap
+        heap_bytes     HeapSummary cbAllocated on the library's test heap
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
-    The counts are taken after one
+    The library's public allocator callbacks use a heap owned by this case.
+    That keeps SDK allocations distinct from Winsock and other Windows code
+    that can allocate from the process heap. The counts are taken after one
     warm cycle, so every path the case repeats has run once; at the end the
     handle count must equal its warm count exactly and the thread count must
     not exceed it (the system thread pool retires idle workers of its own, so
-    fewer threads pass; a thread left behind is one more). The CRT heap's
+    fewer threads pass; a thread left behind is one more). The case-owned heap's
     bytes in use, the Windows form of the POSIX file's mallinfo2 bytes, may exceed
     the warm count by at most one page for every ten minutes of run, rounded
     up, never less than one page. Private bytes also count the heap's free
@@ -100,6 +102,33 @@ struct windows_resource_counts_t
     int64_t heap_used_bytes[256];
 };
 
+static HANDLE windows_library_heap = NULL;
+
+static void * windows_library_malloc( void * context, size_t bytes )
+{
+    return HeapAlloc( (HANDLE) context, 0, bytes );
+}
+
+static void windows_library_free( void * context, void * p )
+{
+    windows_lifecycle_check( HeapFree( (HANDLE) context, 0, p ) != 0 );
+}
+
+static void windows_library_heap_begin()
+{
+    windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    windows_library_heap = HeapCreate( 0, 0, 0 );
+    windows_lifecycle_check( windows_library_heap != NULL );
+    windows_lifecycle_check( rocketnet_init( windows_library_heap, windows_library_malloc, windows_library_free ) == ROCKETNET_STATUS_OK );
+}
+
+static void windows_library_heap_end()
+{
+    windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    windows_lifecycle_check( HeapDestroy( windows_library_heap ) != 0 );
+    windows_library_heap = NULL;
+}
+
 // the run time, from the performance counter: rocketnet_platform_time
 // restarts at rocketnet_init, which the init_term case calls every cycle
 static double windows_run_clock()
@@ -113,14 +142,14 @@ static double windows_run_clock()
 
 // RocketNet's default allocator is the CRT malloc/free pair. Keep every
 // process heap's figure for diagnosis, but judge retained allocations in the
-// CRT heap only: Windows services can own a different heap beyond cleanup.
+// case-owned heap only: Windows services can allocate elsewhere beyond cleanup.
 static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
 {
     HANDLE heaps[256];
     const DWORD heap_count = GetProcessHeaps( 256, heaps );
     if ( heap_count == 0 || heap_count > 256 )
         return -1;
-    const HANDLE library_heap = (HANDLE) _get_heap_handle();
+    const HANDLE library_heap = windows_library_heap;
     counts->heap_count = (int) heap_count;
     int64_t library_bytes = -1;
     for ( DWORD i = 0; i < heap_count; i++ )
@@ -439,7 +468,7 @@ static void windows_case_result( const char * case_name, const windows_cell_t * 
             (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
             (long long) windows_memory_allowance_bytes( seconds ), (long long) before->private_bytes, (long long) after->private_bytes,
             (long long) windows_private_allowance_bytes(), seconds, flat ? "" : " FAIL resource count moved" );
-    const HANDLE library_heap = (HANDLE) _get_heap_handle();
+    const HANDLE library_heap = windows_library_heap;
     const HANDLE process_heap = GetProcessHeap();
     for ( int i = 0; i < before->heap_count; i++ )
     {
@@ -485,7 +514,7 @@ static void windows_case_result( const char * case_name, const windows_cell_t * 
 static void windows_init_term_cycle()
 {
     windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    windows_lifecycle_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    windows_lifecycle_check( rocketnet_init( windows_library_heap, windows_library_malloc, windows_library_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void windows_server_create_destroy_cycle( const windows_cell_t * cell )
@@ -595,6 +624,7 @@ static void windows_init_term_1000( const char * server_transport )
 {
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
+    windows_library_heap_begin();
     windows_init_term_cycle();
     const windows_resource_counts_t before = windows_stable_counts();
     const double start = windows_run_clock();
@@ -603,12 +633,14 @@ static void windows_init_term_1000( const char * server_transport )
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "init_term_1000", cell, &before, &after, seconds );
+    windows_library_heap_end();
 }
 
 static void windows_server_create_destroy_1000( const char * server_transport )
 {
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
+    windows_library_heap_begin();
     windows_server_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
     const double start = windows_run_clock();
@@ -617,12 +649,14 @@ static void windows_server_create_destroy_1000( const char * server_transport )
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "server_create_destroy_1000", cell, &before, &after, seconds );
+    windows_library_heap_end();
 }
 
 static void windows_client_create_destroy_1000( const char * server_transport )
 {
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
+    windows_library_heap_begin();
     windows_client_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
     const double start = windows_run_clock();
@@ -631,12 +665,14 @@ static void windows_client_create_destroy_1000( const char * server_transport )
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "client_create_destroy_1000", cell, &before, &after, seconds );
+    windows_library_heap_end();
 }
 
 static void windows_connect_disconnect_1000( const char * server_transport )
 {
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
+    windows_library_heap_begin();
     rocketnet_server_transport_t * server = windows_server_create( cell, "127.0.0.1:0", 8 );
     char server_address[64];
     windows_server_address( server, server_address, sizeof( server_address ) );
@@ -649,12 +685,14 @@ static void windows_connect_disconnect_1000( const char * server_transport )
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     rn_native_server_transport_stop_and_destroy( server );
     windows_case_result( "connect_disconnect_1000", cell, &before, &after, seconds );
+    windows_library_heap_end();
 }
 
 static void windows_server_restart_1000( const char * server_transport )
 {
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
+    windows_library_heap_begin();
     const unsigned fixed_port = windows_reserved_restart_port( cell );
     windows_lifecycle_check( fixed_port != 0 );
     char fixed_address[64];
@@ -679,6 +717,7 @@ static void windows_server_restart_1000( const char * server_transport )
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     rocketnet_server_destroy( server );
     windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
+    windows_library_heap_end();
 }
 
 // one function per case and cell, rocketnet_test_windows_<case>_<cell>
