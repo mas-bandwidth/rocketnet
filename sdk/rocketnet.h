@@ -798,7 +798,7 @@ struct rocketnet_server_client_stats_t
 
     double jitter_ms;
 
-    /// Outbound packets not yet acknowledged, as a percentage.
+    /// The loss estimate, as a percentage.
 
     double packet_loss_percent;
 
