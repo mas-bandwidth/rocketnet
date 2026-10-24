@@ -64,7 +64,7 @@ for transport in transports:
     # required_memory bounds the first cycle's peak and the second cycle takes
     # no more than the first: one block sized from the plan never runs out.
     for profile in [profiles[0], profiles[1]]:
-        server, client = run(*profile, transport, 1, '--lifecycle')
+        _, server, client = run(*profile, transport, 1, '--lifecycle')
         assert server['lifecycle'] == 'server' and client['lifecycle'] == 'client'
         for row in (server, client):
             assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
