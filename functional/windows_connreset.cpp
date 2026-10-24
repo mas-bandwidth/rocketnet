@@ -36,6 +36,12 @@
 #define WINDOWS_CONNRESET_CHILD_ENV "ROCKETNET_CONNRESET_CHILD_SERVER"
 #define WINDOWS_CONNRESET_PARENT_ENV "ROCKETNET_CONNRESET_PARENT_SERVER"
 #define WINDOWS_CONNRESET_TICK ( 1.0 / 60.0 )
+// a wait for a connection or for payloads is bounded by ticks of the
+// transport, not by wall time: a loaded host may take any wall time to
+// schedule this case. the handshake deadline the library owns is enforced by
+// the library itself, in the clock the library is given, so a case never has
+// to bound it in wall seconds.
+#define WINDOWS_CONNRESET_CONNECT_TICKS 4000
 // the 50 ms allowance over one tick is the historical Release reference; a
 // Debug or sanitizer build scales it by the suites' one time scale
 // (tests/time_scale.h). Measured
@@ -353,8 +359,10 @@ static int windows_connreset_live_slot( windows_connreset_session_t * session, i
 // one server tick: update every client, update the server, read every
 // payload (recording each live client's receive gap), send sends_per_client
 // payloads to every connected client (the dead one too, until it times out),
-// and extra_dead_sends more to the dead client's slot
-static void windows_connreset_tick( windows_connreset_session_t * session, int sends_per_client, int extra_dead_sends )
+// and extra_dead_sends more to the dead client's slot. It returns the clock
+// it gave the library: every timeout the library owns is measured in that
+// clock, so a case checks it and not the wall clock.
+static double windows_connreset_tick( windows_connreset_session_t * session, int sends_per_client, int extra_dead_sends )
 {
     const double now = rocketnet_platform_time();
     session->sequence++;
@@ -398,6 +406,7 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
                 rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
     }
     rocketnet_server_transport_send_packets( session->server );
+    return now;
 }
 
 static void windows_connreset_sleep_to( double next )
@@ -407,7 +416,7 @@ static void windows_connreset_sleep_to( double next )
         rocketnet_platform_sleep( next - now );
 }
 
-static void windows_connreset_session_start( windows_connreset_session_t * session, const windows_connreset_transport_t * transport )
+static void windows_connreset_session_start( windows_connreset_session_t * session, const windows_connreset_transport_t * transport, const char * case_name )
 {
     memset( session, 0, sizeof( *session ) );
     session->child_index = -1;
@@ -422,9 +431,14 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
         session->live_index[i] = -1;
     }
 
-    // all four connect, the child's slot is the one no live client holds
-    const double start = rocketnet_platform_time();
-    double next = start;
+    // all four connect, the child's slot is the one no live client holds.
+    // the wait is bounded by ticks of the transport, not by wall time: a
+    // loaded host may take any wall time to schedule this case, and the
+    // handshake deadline the library owns is measured in the clock the
+    // library is given. the wall cap is a hang guard that names the case.
+    double next = rocketnet_platform_time();
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name, 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
     for ( ;; )
     {
         windows_connreset_tick( session, 1, 0 );
@@ -433,7 +447,7 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
             connected = connected && rocketnet_client_transport_state( session->live[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
         if ( connected )
             break;
-        windows_connreset_require( rocketnet_platform_time() - start < 10.0 );
+        windows_connreset_require( rocketnet_bounded_wait_poll( wait ) );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -489,8 +503,10 @@ static const char * windows_connreset_label( const windows_connreset_transport_t
 static void windows_connreset_hard_killed_client( const windows_connreset_transport_t * transport )
 {
     const uint64_t resets_before = rocketnet_platform_receive_resets();
+    char case_name[128];
+    snprintf( case_name, sizeof( case_name ), "windows_connreset_hard_killed_client %s", windows_connreset_label( transport ) );
     windows_connreset_session_t session;
-    windows_connreset_session_start( &session, transport );
+    windows_connreset_session_start( &session, transport, case_name );
 
     windows_connreset_child_kill( &session.child );
     const double killed = rocketnet_platform_time();
@@ -502,10 +518,23 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
         server_received_at_kill[i] = session.server_received[i];
     }
     double next = killed;
-    while ( rocketnet_server_transport_is_client_connected( session.server, session.child_index ) )
+    // the slot's timeout is the library's own, so it is checked in the clock
+    // the library was given: the slot is freed by the update whose time
+    // first passes the timeout, and it is not freed before the update whose
+    // time is below it. the wall clock only bounds the loop against a hang.
+    const double timeout_clock = killed + ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    double last_connected_clock = killed;
+    double freed_clock = 0.0;
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "windows_connreset_hard_killed_client", 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
+    while ( freed_clock == 0.0 )
     {
-        windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
-        windows_connreset_require( rocketnet_platform_time() - killed < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS + 5.0 );
+        const double tick_clock = windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
+        if ( !rocketnet_server_transport_is_client_connected( session.server, session.child_index ) )
+            freed_clock = tick_clock;
+        else
+            last_connected_clock = tick_clock;
+        windows_connreset_require( rocketnet_bounded_wait_poll( wait ) );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -526,17 +555,21 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
                 (unsigned long long) ( session.client_received[i] - client_received_at_kill[i] ) );
     fflush( stdout );
 
-    // the slot is free: a fifth client connects within its handshake time
+    // the slot is free: a fifth client connects within its handshake time.
+    // the wait is bounded by ticks of the transport, not by wall time, and
+    // the wall cap is a hang guard that names the case.
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     windows_connreset_server_address( session.server, transport->ipv6, server_address, sizeof( server_address ) );
     struct rocketnet_client_transport_t * fifth = windows_connreset_client( server_address );
     const double fifth_start = rocketnet_platform_time();
+    rocketnet_bounded_wait_t fifth_wait;
+    rocketnet_bounded_wait_start( fifth_wait, "windows_connreset_hard_killed_client", 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
     while ( rocketnet_client_transport_state( fifth ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
         windows_connreset_client_tick( fifth, rocketnet_platform_time(), session.sequence, true, NULL, NULL );
         windows_connreset_require( rocketnet_client_transport_state( fifth ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-        windows_connreset_require( rocketnet_platform_time() - fifth_start < 5.0 );
+        windows_connreset_require( rocketnet_bounded_wait_poll( fifth_wait ) );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -547,8 +580,11 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
             windows_connreset_label( transport ), session.max_gap * 1000.0, WINDOWS_CONNRESET_GAP_REFERENCE * 1000.0, timed_out, fifth_connect, (unsigned long long) resets );
     fflush( stdout );
 
-    windows_connreset_require( timed_out >= ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS - 1.0 );
-    windows_connreset_require( timed_out <= ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS + 2.0 );
+    // the timeout the library owns is checked in the library's clock: the
+    // slot was still connected at the last update whose time was below the
+    // timeout, and it was freed by the update whose time first passed it
+    windows_connreset_require( last_connected_clock < timeout_clock );
+    windows_connreset_require( freed_clock >= timeout_clock );
     // the reports are off on every socket: the stack delivered none
     windows_connreset_require( resets == 0 );
 
@@ -590,8 +626,10 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
 static void windows_connreset_send_to_closed_port( const windows_connreset_transport_t * transport )
 {
     const uint64_t resets_before = rocketnet_platform_receive_resets();
+    char case_name[128];
+    snprintf( case_name, sizeof( case_name ), "windows_connreset_send_to_closed_port %s", windows_connreset_label( transport ) );
     windows_connreset_session_t session;
-    windows_connreset_session_start( &session, transport );
+    windows_connreset_session_start( &session, transport, case_name );
     windows_connreset_child_kill( &session.child );
 
     // counts start here, on a link drained quiet: nothing sent before is
@@ -682,6 +720,11 @@ static void windows_client_connreset_server_gone( bool ipv6 )
     uint64_t server_received = 0;
     uint64_t client_received = 0;
     uint32_t sequence = 0;
+    // the wait for the payloads is bounded by ticks of the transport, not by
+    // wall time: a loaded host may take any wall time to schedule this case.
+    // the wall cap is a hang guard that names the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "windows_client_connreset_server_gone", 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
     while ( server_received < 10 || client_received < 10 )
     {
         const double now = rocketnet_platform_time();
@@ -696,7 +739,7 @@ static void windows_client_connreset_server_gone( bool ipv6 )
         }
         rocketnet_server_transport_send_packets( server );
         windows_connreset_require( rocketnet_client_transport_state( client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-        windows_connreset_require( now - up < 5.0 );
+        windows_connreset_require( rocketnet_bounded_wait_poll( wait ) );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
