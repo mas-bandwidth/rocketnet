@@ -704,6 +704,7 @@ static void test_iocp_stop_sends_published_burst()
     rocketnet_server_iocp_test_hold_tx(transport, true);
     iocp_stage(transport, &client_address, round, 10);
     rocketnet_server_iocp_send_packets(transport);
+    CHECK(rocketnet_server_iocp_test_ready_tx_banks(transport) == 1);
     rocketnet_server_iocp_stop(transport);
     rocketnet_server_iocp_test_hold_tx(transport, false);
     wait_stopped(transport);
@@ -922,10 +923,10 @@ struct case_watchdog_t
     ~case_watchdog_t() { done.store( true ); thread.join(); }
 };
 
-// Destroy with I/O in flight: rocketnet_server_iocp_stop cancels with
-// CancelIoEx( socket, NULL ), which cancels every thread's outstanding I/O on
-// the handle, then wakes each worker; destroy joins the workers and only then
-// closes the socket. 100 idle servers are created and destroyed, then 100
+// Destroy with I/O in flight: after TX drains, completion workers cancel
+// each outstanding receive by its OVERLAPPED without cancelling sends.
+// Destroy joins the workers and only then closes the socket.
+// 100 idle servers are created and destroyed, then 100
 // more after datagrams completed, so at least one receive was re-posted by a
 // worker thread rather than the destroying one. Each destroy runs under its
 // own 10 s watchdog.
