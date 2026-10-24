@@ -8,6 +8,8 @@
 #if ROCKETNET_TEST_SEAMS
 #include "rocketnet_protocol.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_memory.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -107,6 +109,17 @@ struct rocketnet_simulator_window_entry_t
     uint8_t packet_data[ROCKETNET_RECEIVE_CEILING];
 };
 
+// The setting of one link, as the config record the caller hands over and
+// the owner takes: latency and jitter in seconds, loss and duplicate as
+// percentages.
+struct rocketnet_simulator_config_t
+{
+    double latency;
+    double jitter;
+    float packet_loss_percent;
+    float duplicate_percent;
+};
+
 struct rocketnet_network_simulator_t
 {
     void * context;
@@ -115,6 +128,16 @@ struct rocketnet_network_simulator_t
     double jitter;
     float packet_loss_percent;
     float duplicate_percent;
+    // The setting handed over by the caller and the flag that says one is
+    // waiting: the caller writes the record under the transport's tiny mutex,
+    // the thread that owns the simulator takes it and applies it outside the
+    // lock.  The setting in force above is written by that thread alone.
+    struct rocketnet_simulator_config_t pending;
+    int config_pending;
+    // Whether the setting the simulator was configured with was nonzero.  It
+    // is decided once, at create, and never changes: the transports use it to
+    // pick the path a connection runs on, and a connection's path never moves.
+    int created_active;
     uint64_t rng_state;
     int audit;
     int drop_every_nth;
@@ -256,6 +279,8 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     simulator->free_hint = 0;
     simulator->shard_count = shard_count;
     simulator->shard_mask = shard_count - 1;
+    simulator->config_pending = 0;
+    simulator->created_active = 0;
 
     simulator->used = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
     simulator->delivery_time = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) capacity );
@@ -325,6 +350,109 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
     simulator->jitter = jitter;
     simulator->packet_loss_percent = packet_loss_percent;
     simulator->duplicate_percent = duplicate_percent;
+    // The setting the simulator was configured with decides the path a
+    // connection runs on (the transports read it through
+    // rocketnet_network_simulator_created_active).  It is recorded once, at
+    // create: a live change never moves a connection's path.
+    if ( !simulator->created_active &&
+         ( latency != 0.0 || jitter != 0.0 || packet_loss_percent != 0.0f || duplicate_percent != 0.0f ) )
+        simulator->created_active = 1;
+}
+
+// The bytes a simulator of this capacity allocates, so a transport's memory
+// plan can cover it: the slot arrays, the index over them and the packet
+// data.  The window of the reverse pattern is counted when the pattern holds
+// one.
+uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window )
+{
+    if ( capacity <= 0 )
+        return 0;
+    uint64_t shard_count = 64;
+    while ( shard_count < (uint64_t) capacity )
+        shard_count *= 2;
+    const uint64_t slots = (uint64_t) capacity;
+    uint64_t bytes = rocketnet_memory_allocations( {
+        sizeof( struct rocketnet_network_simulator_t ),
+        slots * sizeof( int ),
+        slots * sizeof( double ),
+        slots * sizeof( struct rocketnet_address_t ),
+        slots * sizeof( struct rocketnet_address_t ),
+        slots * sizeof( int ),
+        slots * (uint64_t) ROCKETNET_RECEIVE_CEILING,
+        shard_count * sizeof( int ),
+        shard_count * sizeof( int ),
+        shard_count * sizeof( double ),
+        slots * sizeof( int ),
+        slots * sizeof( int )
+    } );
+    if ( reverse_window >= 2 )
+    {
+        const uint64_t window = rocketnet_memory_allocations( { (uint64_t) reverse_window * sizeof( struct rocketnet_simulator_window_entry_t ) } );
+        if ( !window || !rocketnet_memory_add( bytes, 1, window ) )
+            return 0;
+    }
+    return bytes;
+}
+
+// The live setting.  The caller hands a new setting over as a config record
+// under the simulator's own tiny mutex and returns at once; the thread that
+// owns the simulator takes it before its next send.  No simulator work
+// happens under the lock: the lock covers the record and the flag, and the
+// send, the loss roll and the delivery stay outside it.
+//
+// tla/Link.tla models the change: the setting in force at the send holds the
+// packet, and the change itself removes nothing that was already in flight
+// (LinkReconfigureHolds).
+void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator,
+                                              struct rocketnet_platform_mutex_t * mutex,
+                                              double latency,
+                                              double jitter,
+                                              float packet_loss_percent,
+                                              float duplicate_percent )
+{
+    rocketnet_assert( simulator );
+    rocketnet_assert( mutex );
+    rocketnet_platform_mutex_acquire( mutex );
+    simulator->pending.latency = latency;
+    simulator->pending.jitter = jitter;
+    simulator->pending.packet_loss_percent = packet_loss_percent;
+    simulator->pending.duplicate_percent = duplicate_percent;
+    simulator->config_pending = 1;
+    rocketnet_platform_mutex_release( mutex );
+}
+
+// The owner takes the setting that was handed over and applies it, and reads
+// whether the setting in force changes the packets.  A zero setting is a
+// pass-through: it adds no latency and copies nothing.
+bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator,
+                                                struct rocketnet_platform_mutex_t * mutex )
+{
+    rocketnet_assert( simulator );
+    rocketnet_assert( mutex );
+    rocketnet_platform_mutex_acquire( mutex );
+    if ( simulator->config_pending )
+    {
+        simulator->latency = simulator->pending.latency;
+        simulator->jitter = simulator->pending.jitter;
+        simulator->packet_loss_percent = simulator->pending.packet_loss_percent;
+        simulator->duplicate_percent = simulator->pending.duplicate_percent;
+        simulator->config_pending = 0;
+    }
+    const bool active = simulator->latency != 0.0 || simulator->jitter != 0.0 ||
+                        simulator->packet_loss_percent != 0.0f || simulator->duplicate_percent != 0.0f;
+    rocketnet_platform_mutex_release( mutex );
+    return active;
+}
+
+// Whether the simulator was configured with a setting that changes the
+// packets, patterns included.  It is decided at create and never changes: a
+// connection's path is fixed when it is created, and a live setting never
+// moves it.
+bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator )
+{
+    if ( !simulator )
+        return false;
+    return simulator->created_active || rocketnet_network_simulator_patterns_active( simulator );
 }
 
 bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t * simulator,
