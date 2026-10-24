@@ -235,7 +235,7 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
 // Records a finished case whose peak is over the bound, naming both. The
 // functional tier enforces the result; the unit tier keeps the same
 // measurement and prints the over-bound line without changing its verdict.
-inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce )
+inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce = true )
 {
     if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
         return;
