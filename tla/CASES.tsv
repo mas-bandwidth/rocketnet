@@ -242,6 +242,7 @@ MCServerSessionResetClearsHistory.cfg	MCServerSession.tla	invariant	TokenAdmitsO
 MCServerSessionReadmitAfterStart.cfg	MCServerSession.tla	invariant	NoReadmitAfterStart	ignore-terminal	serversession	required	-
 MCServerSessionSendBeforeConnected.cfg	MCServerSession.tla	invariant	NoSendUnlessConnected	ignore-terminal	serversession	required	-
 MCServerSessionBrokenReasonAcrossRestart.cfg	MCServerSession.tla	invariant	ReasonKeptWithinRun	ignore-terminal	serversession	required	-
+MCServerSessionBrokenDisconnectAllUnbounded.cfg	MCServerSession.tla	invariant	DisconnectWorkBounded	ignore-terminal	serversession	required	-
 MCRNOutgoingBuild.cfg	MCRNOutgoingBuild.tla	pass	-	ignore-terminal	rnoutgoingbuild	required	-
 MCRNOutgoingBuildReversed.cfg	MCRNOutgoingBuild.tla	invariant	NoCopy	ignore-terminal	rnoutgoingbuild	required	-
 MCRNOutgoingBuildOwnQuota.cfg	MCRNOutgoingBuild.tla	invariant	PacketQuota	ignore-terminal	rnoutgoingbuild	required	-

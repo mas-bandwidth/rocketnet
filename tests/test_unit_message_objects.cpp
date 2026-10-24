@@ -2021,9 +2021,20 @@ static void test_rnslots_witness_replays()
         pair.time += 0.01;
         check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
         check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
-        check( !rn_region_exhausted( slot->region ) );
-        check( slot->region->descriptors_free == slot->region->queue );
         check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+
+        // the slot is freed in O(1) and carved when it is bound again (the
+        // lazy reset): the next connection starts unexhausted, every
+        // descriptor back but its own CONFIG's
+        const uint64_t carves = slot->region->carves;
+        mo_net_connect( pair.net, 0 );
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+        check( slot->region->carves == carves + 1 );
+        check( !rn_region_exhausted( slot->region ) );
+        check( slot->region->descriptors_free == slot->region->queue - 1 );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
         mo_pair_teardown( &pair );
     }
 
