@@ -30,7 +30,7 @@
 // mapping in either state and governs alone once the connection is
 // established.
 
-// STANDARD.md _Half-open state_: a half-open mapping dies at whichever of
+// TRANSPORT.md t12 rule 14: a half-open mapping dies at whichever of
 // its idle and handshake deadlines comes first. The idle clock starts when
 // the mapping is created and every request from its address refreshes it.
 #define ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS 10.0
