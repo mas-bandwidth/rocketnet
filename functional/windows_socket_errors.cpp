@@ -306,13 +306,20 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
         rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) instance, counters );
-        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED];
+        // Size drops now also enter the server's public prefilter counters.
+        // Keep this aggregate one event per datagram while retaining the
+        // transport's legacy RECEIVE_DROPPED total for its direct readers.
+        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
+               counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
+               counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
     }
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {
         uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
         rocketnet_server_rio_counters( (rocketnet_server_rio_t*) instance, counters );
-        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] + counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
+        // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
+        // failed completions are still transport-only drops.
+        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
     }
     return 0;
 }
