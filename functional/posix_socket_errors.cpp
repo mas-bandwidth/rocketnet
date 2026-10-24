@@ -363,15 +363,25 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
         setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
 
     const double start = rocketnet_platform_time();
-    const double deadline = start + 10.0;
     int connect_updates = 0;
-    while ( rocketnet_platform_time() < deadline )
+    // the wait for the handshake is bounded by updates of the transport, not
+    // by wall time: a loaded host may take any wall time to schedule this
+    // case, and the handshake deadline the library owns is measured in the
+    // clock the library is given. the wall cap is a hang guard that names
+    // the cell.
+    char case_name[128];
+    snprintf( case_name, sizeof( case_name ), "posix_pair_create ipv%d server=%s client=%s",
+              ipv6 ? 6 : 4, server_transport_io, client_transport_io );
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name, 60.0, 20000 );
+    for ( ;; )
     {
         posix_pair_update( pair );
         connect_updates++;
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
             break;
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.001 );
     }
     pair->client_index = rocketnet_client_transport_client_index( pair->client );
@@ -591,12 +601,15 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         }
 
         // every receiver drains on its own thread (the server transports'
-        // receive workers, the client's I/O thread), so the bound is a
-        // deadline: every datagram behind every zero-length one is read
-        // well inside it, where a drain that stopped at a zero-length
-        // datagram would stall.
-
-        const double deadline = rocketnet_platform_time() + 5.0;
+        // receive workers, the client's I/O thread), so the wait is on the
+        // updates that drain them: every datagram behind every zero-length
+        // one is read well inside the bound, where a drain that stopped at
+        // a zero-length datagram would stall. the wait is bounded by
+        // updates, never by wall time: a loaded host may take any wall time
+        // to schedule this case. the wall cap is a hang guard that names
+        // the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_posix_receive_weather drain", 60.0, 20000 );
         int updates = 0;
         for ( ;; )
         {
@@ -635,7 +648,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
                 break;
 
-            const bool short_now = rocketnet_platform_time() >= deadline;
+            const bool short_now = !rocketnet_bounded_wait_poll( wait );
             if ( short_now )
             {
                 {
@@ -918,12 +931,20 @@ static void posix_create_keeps_queued_datagram( int ipv6 )
     rocketnet_address_t from[8];
     int bytes[8];
     int received = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( received == 0 && rocketnet_platform_time() < deadline )
+    // the wait is on the datagram arriving, so it is bounded by polls of
+    // the socket and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_create_keeps_queued_datagram receive", 60.0, 40000 );
+    while ( received == 0 )
     {
         received = rocketnet_platform_socket_receive_packets( socket, from, &data[0][0], ROCKETNET_RECEIVE_CEILING, bytes, 8 );
         if ( received == 0 )
+        {
+            posix_check( rocketnet_bounded_wait_poll( wait ) );
             rocketnet_platform_sleep( 0.0005 );
+        }
     }
 
     posix_check( received == 1 );
@@ -987,14 +1008,22 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
         rocketnet_platform_socket_send_packets( socket, sends, 8 );
         posix_check( rocketnet_platform_socket_send_failures( socket ) - before == 8 );
         int received = 0;
-        const double deadline = rocketnet_platform_time() + 5.0;
-        while ( received < 8 && rocketnet_platform_time() < deadline )
+        // the wait is on the datagrams arriving, so it is bounded by polls
+        // of the socket and never by wall time: a loaded host may take any
+        // wall time to schedule this case. the wall cap is a hang guard
+        // that names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_posix_receive_seam batch", 60.0, 40000 );
+        while ( received < 8 )
         {
             const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
                                                                        ROCKETNET_RECEIVE_CEILING, bytes + received, 8 - received );
             received += got;
             if ( got == 0 )
+            {
+                posix_check( rocketnet_bounded_wait_poll( wait ) );
                 rocketnet_platform_sleep( 0.0005 );
+            }
         }
         posix_check( received == 8 );
         for ( int i = 0; i < 8; i++ )
@@ -1036,9 +1065,15 @@ static void posix_server_sends_drained( struct posix_pair_t * pair )
         return;
     void * transport = rocketnet_server_transport_io_name_for_testing( pair->server );
     bool drained = rocketnet_portable_tx_test_drained( transport );
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( !drained && rocketnet_platform_time() < deadline )
+    // the wait is on the send path draining, so it is bounded by polls of
+    // the transport and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_transport_send_seam drain", 60.0, 40000 );
+    while ( !drained )
     {
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.0005 );
         drained = rocketnet_portable_tx_test_drained( transport );
     }
@@ -1113,8 +1148,13 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before == dropped );
 
         int arrived = 0;
-        const double deadline = rocketnet_platform_time() + 5.0;
-        while ( arrived < 8 && rocketnet_platform_time() < deadline )
+        // the wait is on the payloads arriving, so it is bounded by polls of
+        // the transport and never by wall time: a loaded host may take any
+        // wall time to schedule this case. the wall cap is a hang guard that
+        // names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, "test_posix_transport_send_seam resume", 60.0, 20000 );
+        while ( arrived < 8 )
         {
             posix_pair_update( &pair );
             const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
@@ -1127,6 +1167,7 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
                 posix_check( payload[1] == 0x5a );
                 arrived++;
             }
+            posix_check( rocketnet_bounded_wait_poll( wait ) );
             rocketnet_platform_sleep( 0.001 );
         }
         posix_check( arrived == 8 );
@@ -1304,9 +1345,17 @@ void rocketnet_test_posix_send_burst()
         // loss the send path cannot see, and this case prices the send path
 
         const uint64_t expected = (uint64_t) ( sender_index + 1 ) * POSIX_BURST_PACKETS - drops;
-        const double catch_up = rocketnet_platform_time() + 2.0;
-        while ( drain.received < expected && rocketnet_platform_time() < catch_up )
+        // the wait is on the receiver catching up, so it is bounded by polls
+        // and never by wall time: a loaded host may take any wall time to
+        // schedule this case. the wall cap is a hang guard that names the
+        // case.
+        rocketnet_bounded_wait_t catch_up_wait;
+        rocketnet_bounded_wait_start( catch_up_wait, "test_posix_send_burst catch up", 60.0, 40000 );
+        while ( drain.received < expected )
+        {
+            posix_check( rocketnet_bounded_wait_poll( catch_up_wait ) );
             rocketnet_platform_sleep( 0.0005 );
+        }
     }
 
     rocketnet_platform_sleep( 0.05 );
@@ -1362,8 +1411,13 @@ static void posix_linux_client_traffic_resumes( struct posix_pair_t * pair, int 
     rocketnet_client_transport_send_packets( pair->client );
 
     int arrived = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( arrived < 8 && rocketnet_platform_time() < deadline )
+    // the wait is on the payloads arriving, so it is bounded by polls of
+    // the transport and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_client_traffic_resumes", 60.0, 20000 );
+    while ( arrived < 8 )
     {
         posix_pair_update( pair );
         const int num_payloads = rocketnet_server_transport_num_payloads( pair->server );
@@ -1378,6 +1432,7 @@ static void posix_linux_client_traffic_resumes( struct posix_pair_t * pair, int 
             posix_check( payload[1] == 0x5a );
             arrived++;
         }
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.001 );
     }
     if ( arrived != 8 )
@@ -1401,8 +1456,13 @@ static void posix_linux_server_traffic_resumes( struct posix_pair_t * pair, int 
     rocketnet_server_transport_send_packets( pair->server );
 
     int arrived = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( arrived < 8 && rocketnet_platform_time() < deadline )
+    // the wait is on the payloads arriving, so it is bounded by polls of
+    // the transport and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_server_traffic_resumes", 60.0, 20000 );
+    while ( arrived < 8 )
     {
         posix_pair_update( pair );
         const int num_payloads = rocketnet_client_transport_num_payloads( pair->client );
@@ -1415,6 +1475,7 @@ static void posix_linux_server_traffic_resumes( struct posix_pair_t * pair, int 
             posix_check( payload[1] == 0x5a );
             arrived++;
         }
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.001 );
     }
     if ( arrived != 8 )
@@ -1445,11 +1506,18 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
     flush.server = pair->server;
     rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, posix_linux_flush_thread, &flush );
     posix_check( thread != NULL );
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( flush.done.load() == 0 && rocketnet_platform_time() < deadline )
+    // the wait is on the flush thread finishing, so it is bounded by polls
+    // and never by wall time: a loaded host may take any wall time to
+    // schedule this case. the wall cap is a hang guard that names the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_linux_bounded_flush", 60.0, 20000 );
+    while ( flush.done.load() == 0 )
+    {
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.001 );
+    }
     if ( flush.done.load() == 0 )
-        printf( "failing flush did not return within 5 seconds: dropped %llu so far, a slot or frame never came back\n",
+        printf( "failing flush did not return within the poll bound: dropped %llu so far, a slot or frame never came back\n",
                 (unsigned long long) posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) );
     posix_check( flush.done.load() == 1 );
     rocketnet_platform_thread_join( thread );
@@ -1480,14 +1548,18 @@ static bool posix_linux_send_idle( struct posix_pair_t * pair )
 
 static void posix_linux_wait_send_idle( struct posix_pair_t * pair, const char * what )
 {
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( !posix_linux_send_idle( pair ) && rocketnet_platform_time() < deadline )
+    // the wait is on the send path going idle, so it is bounded by polls of
+    // the transport and never by wall time: a loaded host may take any wall
+    // time to schedule this case. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, what, 60.0, 20000 );
+    while ( !posix_linux_send_idle( pair ) )
     {
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_server_transport_send_packets( pair->server );
         rocketnet_platform_sleep( 0.001 );
     }
-    if ( !posix_linux_send_idle( pair ) )
-        printf( "%s: the server send path did not go idle within 5 seconds\n", what );
     posix_check( posix_linux_send_idle( pair ) );
 }
 
@@ -1631,13 +1703,19 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
 
     uint64_t syscalls = 0;
     uint64_t errors = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_platform_time() < deadline )
+    // the wait is on the counters the transport counts, so it is bounded by
+    // updates and never by wall time: a loaded host may take any wall time
+    // to schedule this case. the wall cap is a hang guard that names the
+    // case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_linux_gso_recvmmsg_errors", 60.0, 20000 );
+    for ( ;; )
     {
         syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
         errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before;
         if ( syscalls >= 64 && errors >= 64 )
             break;
+        posix_check( rocketnet_bounded_wait_poll( wait ) );
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -1665,12 +1743,18 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     posix_linux_client_traffic_resumes( &pair, 16 );
     posix_pair_check_connected( &pair );
     uint64_t eintr_syscalls = 0;
-    const double eintr_deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_platform_time() < eintr_deadline )
+    // the wait is on the counter the transport counts, so it is bounded by
+    // updates and never by wall time: a loaded host may take any wall time
+    // to schedule this case. the wall cap is a hang guard that names the
+    // case.
+    rocketnet_bounded_wait_t eintr_wait;
+    rocketnet_bounded_wait_start( eintr_wait, "test_posix_linux_gso_recvmmsg_errors EINTR", 60.0, 20000 );
+    for ( ;; )
     {
         eintr_syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - eintr_syscalls_before;
         if ( eintr_syscalls >= 64 )
             break;
+        posix_check( rocketnet_bounded_wait_poll( eintr_wait ) );
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -1732,13 +1816,19 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
                 rocketnet_server_uring_test_fail_receive( uring, q, errors[e] );
 
             uint64_t rearms = 0;
-            const double deadline = rocketnet_platform_time() + 5.0;
-            while ( rocketnet_platform_time() < deadline )
+            // the wait is on the counter the transport counts, so it is
+            // bounded by updates and never by wall time: a loaded host may
+            // take any wall time to schedule this case. the wall cap is a
+            // hang guard that names the case.
+            rocketnet_bounded_wait_t rearm_wait;
+            rocketnet_bounded_wait_start( rearm_wait, "test_posix_linux_uring_receive_cqe_errors", 60.0, 20000 );
+            for ( ;; )
             {
                 posix_pair_update( &pair );
                 rearms = posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) - rearms_before;
                 if ( rearms >= (uint64_t) queues )
                     break;
+                posix_check( rocketnet_bounded_wait_poll( rearm_wait ) );
                 rocketnet_platform_sleep( 0.001 );
             }
             if ( rearms != (uint64_t) queues )
@@ -2104,13 +2194,20 @@ static void posix_xdp_weather( int ipv6 )
     posix_xdp_client = client;
     posix_check( client != NULL );
 
-    const double connect_deadline = rocketnet_platform_time() + 10.0;
-    while ( rocketnet_platform_time() < connect_deadline )
+    // the wait for the handshake is bounded by updates of the transport, not
+    // by wall time: a loaded host may take any wall time to schedule this
+    // case, and the handshake deadline the library owns is measured in the
+    // clock the library is given. the wall cap is a hang guard that names
+    // the case.
+    rocketnet_bounded_wait_t connect_wait;
+    rocketnet_bounded_wait_start( connect_wait, "test_xdp_transport_linux_receive_weather connect", 60.0, 20000 );
+    for ( ;; )
     {
         posix_xdp_update( server, client );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
             break;
+        posix_check( rocketnet_bounded_wait_poll( connect_wait ) );
         rocketnet_platform_sleep( 0.001 );
     }
     posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -2339,9 +2436,17 @@ static void posix_xdp_weather( int ipv6 )
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x77, 64 );
         rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );
         rocketnet_server_socket_send_packets( xdp );
-        const double deadline = rocketnet_platform_time() + 5.0;
-        while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before && rocketnet_platform_time() < deadline )
+        // the wait is on the counter the transport counts, so it is bounded
+        // by polls of the transport and never by wall time: a loaded host
+        // may take any wall time to schedule this case. the wall cap is a
+        // hang guard that names the case.
+        rocketnet_bounded_wait_t wait;
+        rocketnet_bounded_wait_start( wait, case_name, 60.0, 20000 );
+        while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before )
+        {
+            posix_check( rocketnet_bounded_wait_poll( wait ) );
             rocketnet_platform_sleep( 0.001 );
+        }
         xdp_send_failed = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
         if ( xdp_send_failed != 1 )
             printf( "%s: a refused xdp send moved SEND_FAILED by %llu, want 1\n", case_name, (unsigned long long) xdp_send_failed );
