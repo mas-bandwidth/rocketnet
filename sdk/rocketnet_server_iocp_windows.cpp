@@ -800,7 +800,8 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
-    (void) frame;
+    // an id this backend did not issue for this frame writes nothing, asserts or not
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     iocp->sends[packet_id].packet_bytes = packet_bytes;
 }
 
@@ -808,7 +809,8 @@ void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp, uint64_
 {
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
-    (void) frame;
+    // an id this backend did not issue for this frame writes nothing, asserts or not
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     iocp->sends[packet_id].packet_bytes = 0;
 }
 
