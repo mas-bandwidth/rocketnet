@@ -89,20 +89,26 @@ On Windows the libFuzzer runtime ships with Visual Studio's ClangCL toolset
 `VC/Tools/Llvm/x64/bin`, and `clang_rt.fuzzer-x86_64.lib` with the
 AddressSanitizer runtime in `lib/windows` of its resource directory
 (`clang-cl -print-resource-dir`). Build the development library once with
-that toolset, instrumented, on the release C runtime (clang-cl refuses
-AddressSanitizer with the debug runtime, `/MDd`), then compile each target
-at the tree's warning floor and link it against the library. From Git Bash
-at the checkout root:
+that toolset, instrumented, on the static release C runtime (`/MT`) with
+the STL's ASan string and vector annotations off: Visual Studio's
+`clang_rt.fuzzer-x86_64.lib` is built that way, and its link refuses any
+object that differs (`/failifmismatch` on `RuntimeLibrary` and
+`annotate_string`). Then compile each target the same way at the tree's
+warning floor and link it against the library. CMake's compiler check
+builds a static library, since a test program linked with the sanitizer
+flags has no runtime. From Git Bash at the checkout root:
 
 ```sh
-cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL \
-    "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -fsanitize=address -fsanitize=fuzzer-no-link" \
-    "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
+cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+    "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -fsanitize=address -fsanitize=fuzzer-no-link" \
+    "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
 CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
-"$CLANG_CL" -nologo -Zi -O1 -std:c++17 -EHsc -utf-8 -fp:precise \
+"$CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
     -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
-    -DWIN32 -D_WINDOWS -DROCKETNET_DEV=1 -fsanitize=fuzzer,address \
+    -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
+    -fsanitize=fuzzer,address \
     -Isodium -Isdk -Itest fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
     -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe
 cp "$("$CLANG_CL" -print-resource-dir)/lib/windows/clang_rt.asan_dynamic-x86_64.dll" bin/

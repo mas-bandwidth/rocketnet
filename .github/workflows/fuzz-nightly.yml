@@ -322,8 +322,12 @@ jobs:
   # set CMakeLists.txt adds for clang-cl) and linked against it with
   # -fsanitize=fuzzer,address. The link set is the replay targets' one:
   # rocketnet_dev.lib alone, whose platform source names WS2_32, IPHLPAPI,
-  # Qwave and winmm itself. Debug keeps the asserts, on the release C runtime
-  # (/MD): clang-cl refuses AddressSanitizer with the debug runtime (/MDd).
+  # Qwave and winmm itself. Debug keeps the asserts, on the static release C
+  # runtime (/MT) with the STL's ASan string and vector annotations off,
+  # because Visual Studio's clang_rt.fuzzer-x86_64.lib is built that way and
+  # its link refuses any object that differs (/failifmismatch on
+  # RuntimeLibrary and annotate_string); clang-cl refuses AddressSanitizer
+  # with a debug runtime.
   # No UndefinedBehaviorSanitizer: clang-cl links it only as the standalone
   # runtime, which cannot share a process with ASan's dynamic runtime.
   # The netcode differential target stays on the Linux leg.
@@ -410,9 +414,9 @@ jobs:
         run: >
           cmake -B build-fuzz -T ClangCL -A x64
           -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
-          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
-          "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -fsanitize=address -fsanitize=fuzzer-no-link"
-          "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -fsanitize=address -fsanitize=fuzzer-no-link"
+          "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 
       - name: Build the instrumented library
         run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
@@ -421,9 +425,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bin
-          "$ROCKETNET_FUZZ_CLANG_CL" -nologo -Zi -O1 -std:c++17 -EHsc -utf-8 -fp:precise \
+          "$ROCKETNET_FUZZ_CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
             -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
-            -DWIN32 -D_WINDOWS -DROCKETNET_DEV=1 \
+            -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/Debug/rocketnet_dev.lib \
             -fuse-ld=lld "-Fe:bin/${{ fromJSON(matrix.leg).target }}.exe"
