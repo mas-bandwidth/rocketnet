@@ -13,7 +13,7 @@
 (* under its old generation) and must fail RestartIsFresh;                 *)
 (* MCRNSimFaultsBrokenCrashedSends.cfg sets                                *)
 (* CrashSilences <- CrashSilencesBroken (a crash flips the phase and       *)
-(* leaves the peer running) and must fail CrashedPeerSilent.               *)
+(* leaves the endpoint running) and must fail CrashedEndpointSilent.       *)
 (***************************************************************************)
 EXTENDS RNSimFaults
 

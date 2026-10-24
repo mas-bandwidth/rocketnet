@@ -171,7 +171,7 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | Kernel replay protection with a read-only high-water map | ✅ | — | — | — | — | — | — | — |
 | The standard sizes the kernel replay map apart from the userspace replay window | ✅ | — | — | — | — | — | — | — |
 | AF_XDP bind requests zero-copy | ✅ | — | — | — | — | — | — | — |
-| Replies go to the peer's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
+| Replies go to the client's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
 | AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
@@ -461,7 +461,7 @@ Current limits accepted for the preview-2 cut. These rows describe preview-2; th
 | AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server. | ❌ | — | ❌ |
 | The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified. | — | ❌ | — |
 | The big-endian full-system run has no single all-green run yet: at 9232be69 the unit suite and the portable rung pass on s390x and the auto rung failed only test_server_port_zero_transport, whose compiled-out xdp refusal 8bbc8e41 now accepts (the case passes alone on the guest three of three); a full auto-rung guest run at that head is still owed. | ❌ | — | — |
-| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. The AF_XDP cell and full soak are incomplete; no OOM cause is claimed. | ❌ | — | — |
+| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. Cause: the fixed 16G virtme-ng guest is under the default profile's 16.96 GiB create-only plan, so the guest OOM-kills the load process (exit 137). | ❌ | — | — |
 | Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
 | The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
 | Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |
@@ -481,7 +481,7 @@ Historical preview-1 planning retained for context. Some fixes listed here lande
 | Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
 | Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |
 | Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ❌ | ❌ | ❌ |
-| The default configuration needs about 13.3 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The final deliverable adds a light-client profile sized for 1000 players at 10 Hz. | ❌ | ❌ | ❌ |
+| The default configuration needs about 13.4 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 955,710,336 bytes (955,710 bytes per slot) for 1000 players at 10 Hz and a client at 3,063,168 bytes. | ❌ | ❌ | ❌ |
 | The server's send loop walks every slot on each round, so its cost grows with rounds times max clients. The final deliverable walks only the connections that have packets due. | ❌ | ❌ | ❌ |
 | The server decrypts and seals packets on the game thread; the client already decrypts on its I/O thread. The final deliverable moves server decrypt and seal off the game thread. | ❌ | ❌ | ❌ |
 | Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ❌ | — | — |
@@ -541,7 +541,7 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | Every Windows transport, every address family, fifty times clean | — | — | ❌ |
 | Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ❌ | — | — |
 | Linux: 1000 light clients on every transport | ❌ | — | — |
-| Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
+| Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
 | macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary | — | ❌ | — |
 | macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ❌ | — |
 | Linux: the nightly soak jobs green at the branch | ❌ | — | — |

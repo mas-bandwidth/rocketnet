@@ -68,6 +68,16 @@ void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t 
     rocketnet_read_bytes( &p, output->sealed_private_block, ROCKETNET_SEALED_BLOCK_BYTES );
 }
 
+bool rocketnet_signed_connect_data_names_port_zero( const struct rocketnet_signed_connect_data_t * signed_fields )
+{
+    rocketnet_assert( signed_fields );
+    // each port is the address's last two bytes, little-endian
+    const bool ipv4_port_zero = signed_fields->ipv4_address[4] == 0 && signed_fields->ipv4_address[5] == 0;
+    const bool ipv6_port_zero = signed_fields->ipv6_address[16] == 0 && signed_fields->ipv6_address[17] == 0;
+    return ( ( signed_fields->address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ipv4_port_zero ) ||
+           ( ( signed_fields->address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 && ipv6_port_zero );
+}
+
 // crypto_box_seal's construction with the ephemeral secret supplied rather than
 // drawn: the test-only deterministic writer's seal, and nothing else's. Output
 // is epk || crypto_box_easy(m), crypto_box_SEALBYTES longer than m. 0 on
@@ -226,7 +236,7 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( protocol_id == 0 )
         return ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
-    // every peer refuses these: a production server refuses a timeout of zero or below (t13.2),
+    // every endpoint refuses these: a production server refuses a timeout of zero or below (t13.2),
     // and a token whose expire is at or before its create is already expired when it is made
     if ( timeout_seconds <= 0 || expire_timestamp <= create_timestamp )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;

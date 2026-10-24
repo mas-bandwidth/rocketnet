@@ -415,9 +415,13 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
     }
 
-    // check 9: reliable and CONTROL records ride only unfragmented payloads (L2.2, L2.4)
+    // check 9: reliable and CONTROL records ride only unfragmented payloads (L2.2, L2.4),
+    // and no record is longer than this end's max_message_bytes, the limit
+    // the block path holds a whole block to (a fragment is at most F, below it)
 
     if ( ( rocketnet_message_code_has_number( code ) || control ) && payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+        return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
+    if ( length > limits->max_message_bytes )
         return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
 
     record->data = record_start + header;
@@ -441,9 +445,12 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
 
     if ( form == ROCKETNET_MESSAGE_FORM_SINGLE )
     {
-        // one UNRELIABLE message, any size the transport carried (L2.3)
+        // one UNRELIABLE message: check 6, then check 9's limit, so a
+        // SINGLE message is held to max_message_bytes as a block is
         if ( ( limits->enabled_codes & ( 1u << ROCKETNET_MESSAGE_CODE_UNRELIABLE ) ) == 0 )
             return ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED;
+        if ( bytes - 1 > limits->max_message_bytes )
+            return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
         return ROCKETNET_MESSAGE_VIOLATION_NONE;
     }
 

@@ -12,14 +12,19 @@
 //     reached on a forged denied. rocketnet_client_set_state runs the
 //     connection reset on every state <= 0 (sdk/rocketnet_client_protocol.cpp:56-57),
 //     and the reset zeroes the ephemeral secret (sdk/rocketnet_connection_reset.cpp:40).
-//   - the client's and the server's memory at destroy: a message's bytes,
-//     planted through the public API, are gone from the block when
-//     rocketnet_client_destroy and rocketnet_server_destroy free it
-//     (sdk/rocketnet_api.cpp).
-//   - a message arena at its destroy, owned or in a caller's block: the
-//     planted bytes in a region are gone (sdk/rocketnet_allocator.cpp,
-//     rn_arena_destroy). This is the message layer's own destroy, beneath
-//     the public objects' wipe.
+//   - the client's and the server's keys at destroy, and only the keys: when
+//     rocketnet_client_destroy and rocketnet_server_destroy free the public
+//     objects and their transports, each object's secret spans are zero and
+//     no allocation has more than a handful of bytes (handles, keys) written
+//     by the destroy. Message bytes are not secrets and are not wiped: the OS
+//     zero-fills a page before another process gets it, and a wipe would
+//     touch every page of a plan that can reach gigabytes (sdk/rocketnet_api.cpp).
+//   - the connect token's user data, which can carry the game's secrets: the
+//     server's mapping and slot copies, at the client's leaving and at a
+//     destroy with the client still connected.
+//   - a message arena at its destroy, owned or in a caller's block: nothing is
+//     written, so a planted message is still there when the block is freed or
+//     handed back (sdk/rocketnet_allocator.cpp, rn_arena_destroy).
 //   - the base64 staging of a BYTES config field parsed from the environment,
 //     on the parse and the refused exit (sdk/rocketnet_config.cpp, the
 //     ROCKETNET_CONFIG_KIND_BYTES case of rocketnet_config_apply_env).
@@ -43,7 +48,12 @@
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_protocol.h"
 #include "../sdk/rocketnet_keys.h"
+#include "../sdk/rocketnet_client_slots.h"
+#include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_test_vectors.h"
+#include "../sdk/rocketnet_memory.h"
+#include "../sdk/rocketnet_driver_loopback.h"
+#include "suite_runner.h"
 
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #include <sodium.h>
@@ -57,6 +67,7 @@
 #include <string.h>
 
 #include <map>
+#include <vector>
 
 #define check rocketnet_unit_check
 
@@ -190,35 +201,78 @@ static void secrets_wiped_message( uint8_t * message )
         message[i] = (uint8_t) ( 0x96 ^ ( i * 13 + 7 ) );
 }
 
+// the connect token's user data: no run of 32 of its bytes occurs in a block
+// by chance, and none matches the planted message
+static void secrets_wiped_user_data( uint8_t * user_data )
+{
+    for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES; i++ )
+        user_data[i] = (uint8_t) ( 0x3C ^ ( i * 29 + 11 ) );
+}
+
+// how many times the first 32 bytes of a pattern occur in a block
+static int secrets_wiped_count( const uint8_t * block, size_t bytes, const uint8_t * pattern )
+{
+    int found = 0;
+    for ( size_t i = 0; i + SECRETS_WIPED_PATTERN_BYTES <= bytes; i++ )
+        if ( block[i] == pattern[0] && memcmp( block + i, pattern, SECRETS_WIPED_PATTERN_BYTES ) == 0 )
+            found++;
+    return found;
+}
+
 // how many times the first 32 bytes of the planted message occur in a block
 static int secrets_wiped_pattern_count( const uint8_t * block, size_t bytes )
 {
     uint8_t message[SECRETS_WIPED_MESSAGE_BYTES];
     secrets_wiped_message( message );
-    int found = 0;
-    for ( size_t i = 0; i + SECRETS_WIPED_PATTERN_BYTES <= bytes; i++ )
-        if ( block[i] == message[0] && memcmp( block + i, message, SECRETS_WIPED_PATTERN_BYTES ) == 0 )
-            found++;
-    return found;
+    return secrets_wiped_count( block, bytes, message );
 }
 
-// the counting allocator: it keeps each block's size, and on the free of a
-// block that holds the watched client or server it counts the planted
-// message's occurrences still in the block. Its blocks start zeroed: the
-// count reads every byte, including bytes the SDK never wrote, and an
-// unwritten byte has no value to compare
+// the counting allocator: it keeps each block's size, and, once armed, a copy
+// of every live block taken just before the destroys. At each free of a copied
+// block it counts the bytes the destroy wrote: outside a watched object's
+// secret spans (secrets_wiped_written_outside), and inside them left nonzero
+// (secrets_wiped_secret_left).
+struct secrets_wiped_watch_t
+{
+    const void * block;
+    size_t offsets[8];
+    size_t bytes[8];
+    int spans;
+    int freed;
+};
+
 static std::map<void *, size_t> * secrets_wiped_sizes = NULL;
+static std::map<void *, std::vector<uint8_t> > * secrets_wiped_copies = NULL;
+static secrets_wiped_watch_t secrets_wiped_watches[3];
+static int secrets_wiped_num_watches = 0;
+static size_t secrets_wiped_written_most = 0;       // the most bytes a destroy wrote outside the spans of one block
+static int secrets_wiped_secret_left = 0;
 static const void * secrets_wiped_watched[2] = { NULL, NULL };
 static int secrets_wiped_watched_frees = 0;
 static int secrets_wiped_watched_pattern = 0;
+static bool secrets_wiped_user_data_armed = false;   // count the user data in every block freed
+static int secrets_wiped_user_data_freed = 0;
 
 static void * secrets_wiped_malloc( void * context, size_t bytes )
 {
     (void) context;
-    void * p = calloc( 1, bytes );
+    void * p = malloc( bytes );
+    // a canary, not zeros: the SDK may not rely on zeroed memory, and the
+    // copies and comparisons below read every byte of a block, so every byte
+    // is defined (memcheck reads them as written)
+    if ( p )
+        memset( p, 0xC5, bytes );
     if ( p && secrets_wiped_sizes )
         ( *secrets_wiped_sizes )[p] = bytes;
     return p;
+}
+
+static bool secrets_wiped_in_span( const secrets_wiped_watch_t * watch, size_t offset )
+{
+    for ( int s = 0; watch && s < watch->spans; s++ )
+        if ( offset >= watch->offsets[s] && offset < watch->offsets[s] + watch->bytes[s] )
+            return true;
+    return false;
 }
 
 static void secrets_wiped_free( void * context, void * p )
@@ -231,6 +285,12 @@ static void secrets_wiped_free( void * context, void * p )
         {
             const uint8_t * begin = (const uint8_t *) p;
             const uint8_t * end = begin + it->second;
+            if ( secrets_wiped_user_data_armed )
+            {
+                uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+                secrets_wiped_user_data( user_data );
+                secrets_wiped_user_data_freed += secrets_wiped_count( begin, it->second, user_data );
+            }
             for ( int i = 0; i < 2; i++ )
             {
                 const uint8_t * watched = (const uint8_t *) secrets_wiped_watched[i];
@@ -238,6 +298,30 @@ static void secrets_wiped_free( void * context, void * p )
                 {
                     secrets_wiped_watched_frees++;
                     secrets_wiped_watched_pattern += secrets_wiped_pattern_count( begin, it->second );
+                }
+            }
+            if ( secrets_wiped_copies )
+            {
+                std::map<void *, std::vector<uint8_t> >::iterator copy = secrets_wiped_copies->find( p );
+                if ( copy != secrets_wiped_copies->end() )
+                {
+                    secrets_wiped_watch_t * watch = NULL;
+                    for ( int w = 0; w < secrets_wiped_num_watches; w++ )
+                        if ( secrets_wiped_watches[w].block == p )
+                            watch = &secrets_wiped_watches[w];
+                    size_t written = 0;
+                    for ( size_t i = 0; i < it->second; i++ )
+                    {
+                        if ( secrets_wiped_in_span( watch, i ) )
+                            secrets_wiped_secret_left += begin[i] != 0;
+                        else
+                            written += begin[i] != copy->second[i];
+                    }
+                    if ( written > secrets_wiped_written_most )
+                        secrets_wiped_written_most = written;
+                    if ( watch )
+                        watch->freed++;
+                    secrets_wiped_copies->erase( copy );
                 }
             }
             secrets_wiped_sizes->erase( it );
@@ -276,7 +360,7 @@ static void secrets_wiped_pump( secrets_wiped_pair_t * pair )
 
 // a connected pair over the loopback transport, in blocks from the
 // allocator, then one planted message each way, received and released
-static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
+static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint8_t * user_data = NULL )
 {
     memset( pair, 0, sizeof(*pair) );
     pair->time = 1000.0;
@@ -307,7 +391,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity.backend_secret, identity.server_public,
-        SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
+        SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, user_data,
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
@@ -371,10 +455,48 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair )
     check( at_server == 1 && at_client == 1 );
 }
 
-// Owned memory: the counting allocator sees the free of the block that holds
-// the client and of the block that holds the server, and neither still holds
-// the planted message.
-static void test_secrets_wiped_destroy_owned_blocks()
+// the allocator's block that holds p (rocketnet_malloc places the object
+// past its own header, inside the block the allocator returned)
+static void * secrets_wiped_containing( const void * p )
+{
+    for ( std::map<void *, size_t>::iterator it = secrets_wiped_sizes->begin(); it != secrets_wiped_sizes->end(); ++it )
+        if ( (const uint8_t *) p >= (const uint8_t *) it->first && (const uint8_t *) p < (const uint8_t *) it->first + it->second )
+            return it->first;
+    return NULL;
+}
+
+static void secrets_wiped_watch( const void * object, int ( * spans )( size_t *, size_t *, int ) )
+{
+    check( object != NULL );
+    void * block = secrets_wiped_containing( object );
+    check( block != NULL );
+    secrets_wiped_watch_t * watch = &secrets_wiped_watches[secrets_wiped_num_watches++];
+    memset( watch, 0, sizeof( *watch ) );
+    watch->block = block;
+    watch->spans = spans( watch->offsets, watch->bytes, 8 );
+    check( watch->spans > 0 );
+    const size_t delta = (size_t) ( (const uint8_t *) object - (const uint8_t *) block );
+    for ( int s = 0; s < watch->spans; s++ )
+        watch->offsets[s] += delta;
+}
+
+// how many bytes of a live object's secret spans are nonzero now
+static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
+{
+    int nonzero = 0;
+    for ( int s = 0; s < watch->spans; s++ )
+        for ( size_t i = 0; i < watch->bytes[s]; i++ )
+            nonzero += ( (const uint8_t *) watch->block )[watch->offsets[s] + i] != 0;
+    return nonzero;
+}
+
+// Owned memory, stopped and disconnected: the destroys wipe the server's
+// secret key in its header, the server transport's secret and cookie keys and
+// the client transport's keys, and write nothing else of note: no block,
+// arena included, has more than a handful of bytes (handles, mutex state)
+// written by a destroy. The planted message is still in the blocks: message
+// bytes are not secrets.
+static void test_secrets_wiped_destroy_writes_only_keys()
 {
     rocketnet_term();
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -383,24 +505,170 @@ static void test_secrets_wiped_destroy_owned_blocks()
 
     secrets_wiped_pair_t pair;
     secrets_wiped_pair_exchange( &pair );
+
+    rocketnet_client_disconnect( pair.client );
+    rn_test_client_wait_disconnected( pair.client );
+    rocketnet_server_stop( pair.server );
+    rn_test_server_wait_stopped( pair.server );
+
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_watch( pair.server, rocketnet_server_secret_spans_for_test );
+    secrets_wiped_watch( rocketnet_message_server_transport( rocketnet_server_message_server( pair.server ) ), rocketnet_server_transport_secret_spans_for_test );
+    secrets_wiped_watch( rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) ), rocketnet_client_transport_secret_spans_for_test );
+    // the server's secret key and its first cookie key are live until destroy
+    const int server_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
+    const int transport_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[1] );
+
+    std::map<void *, std::vector<uint8_t> > copies;
+    for ( std::map<void *, size_t>::iterator it = sizes.begin(); it != sizes.end(); ++it )
+        copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
+    secrets_wiped_copies = &copies;
+    secrets_wiped_written_most = 0;
+    secrets_wiped_secret_left = 0;
     secrets_wiped_watched[0] = pair.client;
     secrets_wiped_watched[1] = pair.server;
     secrets_wiped_watched_frees = 0;
     secrets_wiped_watched_pattern = 0;
 
-    rn_test_client_stop_and_destroy( pair.client );
-    rn_test_server_stop_and_destroy( pair.server );
+    rocketnet_client_destroy( pair.client );
+    rocketnet_server_destroy( pair.server );
 
+    const size_t written_most = secrets_wiped_written_most;
+    const int secret_left = secrets_wiped_secret_left;
     const int watched_frees = secrets_wiped_watched_frees;
     const int watched_pattern = secrets_wiped_watched_pattern;
+    int watches_freed = 0;
+    for ( int w = 0; w < secrets_wiped_num_watches; w++ )
+        watches_freed += secrets_wiped_watches[w].freed;
+    secrets_wiped_copies = NULL;
     secrets_wiped_watched[0] = NULL;
     secrets_wiped_watched[1] = NULL;
     secrets_wiped_sizes = NULL;
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
+    check( server_secret_before > 0 );
+    check( transport_secret_before > 0 );
+    check( watches_freed == 3 );
+    check( secret_left == 0 );
+    check( written_most <= 256 );
     check( watched_frees == 2 );
-    check( watched_pattern == 0 );
+    check( watched_pattern > 0 );
+}
+
+// how many times the user data occurs in the live blocks now
+static int secrets_wiped_user_data_live()
+{
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    int found = 0;
+    for ( std::map<void *, size_t>::iterator it = secrets_wiped_sizes->begin(); it != secrets_wiped_sizes->end(); ++it )
+        found += secrets_wiped_count( (const uint8_t *) it->first, it->second, user_data );
+    return found;
+}
+
+// The connect token's user data comes out of the token's private part and
+// can carry the game's secrets: the server's encryption mapping and client
+// slot hold copies. No block is freed with it in, whether the client left
+// before the server stopped (the mapping removed and the slot released) or
+// the server stopped and was destroyed with the client still connected (the
+// mapping live at destroy).
+static void secrets_wiped_user_data_case( bool server_first )
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+    secrets_wiped_user_data_freed = 0;
+
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    secrets_wiped_pair_t pair;
+    secrets_wiped_pair_exchange( &pair, user_data );
+    const int live_connected = secrets_wiped_user_data_live();
+    secrets_wiped_user_data_armed = true;
+
+    if ( server_first )
+    {
+        rocketnet_server_stop( pair.server );
+        rn_test_server_wait_stopped( pair.server );
+        rocketnet_server_destroy( pair.server );
+        rocketnet_client_disconnect( pair.client );
+        rn_test_client_wait_disconnected( pair.client );
+        rocketnet_client_destroy( pair.client );
+    }
+    else
+    {
+        rocketnet_client_disconnect( pair.client );
+        for ( int i = 0; i < 100 && rocketnet_server_client_connected( pair.server, 0 ); i++ )
+            secrets_wiped_pump( &pair );
+        check( !rocketnet_server_client_connected( pair.server, 0 ) );
+        // wiped at the leaving, not only at destroy: the mapping removed
+        // and the slot released hold no copy
+        check( secrets_wiped_user_data_live() == 0 );
+        rn_test_client_wait_disconnected( pair.client );
+        rocketnet_client_destroy( pair.client );
+        rocketnet_server_stop( pair.server );
+        rn_test_server_wait_stopped( pair.server );
+        rocketnet_server_destroy( pair.server );
+    }
+
+    const int freed = secrets_wiped_user_data_freed;
+    secrets_wiped_user_data_armed = false;
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
+    check( live_connected >= 2 );   // the mapping's copy and the slot's
+    check( freed == 0 );
+}
+
+// The slots and the map at their destroy, each holding the user data: the
+// server's paths release a slot and remove a mapping before destroy, so
+// these are the destroys' own wipes, driven directly.
+static void test_secrets_wiped_user_data_at_slots_and_map_destroy()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+    secrets_wiped_user_data_freed = 0;
+
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
+    check( slots != NULL );
+    check( rocketnet_client_slots_assign( slots, 0x5EED, 0, user_data ) >= 0 );
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    check( map != NULL );
+    struct rocketnet_address_t address;
+    check( rocketnet_address_parse( &address, "10.0.0.1:30000" ) );
+    const int index = rocketnet_encryption_map_add( map, &address, 1000.0 );
+    check( index >= 0 );
+    memcpy( rocketnet_encryption_map_entry( map, index )->user_data, user_data, sizeof( user_data ) );
+    const int live = secrets_wiped_user_data_live();
+
+    secrets_wiped_user_data_armed = true;
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
+    const int freed = secrets_wiped_user_data_freed;
+    secrets_wiped_user_data_armed = false;
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
+    check( live == 2 );
+    check( freed == 0 );
+}
+
+static void test_secrets_wiped_user_data_after_client_leaves()
+{
+    secrets_wiped_user_data_case( false );
+}
+
+static void test_secrets_wiped_user_data_with_client_connected()
+{
+    secrets_wiped_user_data_case( true );
 }
 
 static uint8_t * secrets_wiped_aligned( uint8_t * raw )
@@ -417,9 +685,9 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
     secrets_wiped_message( region->receive_ring );
 }
 
-// An owned arena: the counting allocator sees its block freed, and the block
-// no longer holds the planted message.
-static void test_secrets_wiped_arena_destroy_owned()
+// An owned arena: destroy frees the block without writing it, so the
+// planted message is still there at the free.
+static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
 {
     rocketnet_term();
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -431,52 +699,98 @@ static void test_secrets_wiped_arena_destroy_owned()
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
     check( arena != NULL );
     secrets_wiped_plant_in_arena( arena );
+    std::map<void *, std::vector<uint8_t> > copies;
+    void * block = secrets_wiped_containing( arena );
+    check( block != NULL );
+    copies[block].assign( (const uint8_t *) block, (const uint8_t *) block + sizes[block] );
+    secrets_wiped_copies = &copies;
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_written_most = 0;
     secrets_wiped_watched[0] = arena;
     secrets_wiped_watched_frees = 0;
     secrets_wiped_watched_pattern = 0;
     rn_arena_destroy( arena );
 
+    const size_t written_most = secrets_wiped_written_most;
     const int watched_frees = secrets_wiped_watched_frees;
     const int watched_pattern = secrets_wiped_watched_pattern;
+    const bool copied_freed = copies.empty();
+    secrets_wiped_copies = NULL;
     secrets_wiped_watched[0] = NULL;
     secrets_wiped_sizes = NULL;
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
+    check( copied_freed );
+    check( written_most == 0 );
     check( watched_frees == 1 );
-    check( watched_pattern == 0 );
+    check( watched_pattern == 1 );
 }
 
-// An arena in a caller's block: destroy gives the block back without the
-// planted message.
-static void test_secrets_wiped_arena_destroy_in_block()
+// An arena in a caller's block: destroy hands the block back unwritten.
+static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
 {
     const uint64_t bytes = rn_arena_required_bytes( NULL, 2 );
     check( bytes > 0 );
     uint8_t * raw = (uint8_t *) malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw != NULL );
+    memset( raw, 0xC5, (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     uint8_t * block = secrets_wiped_aligned( raw );
-
-    // the scan below reads every byte of the block, including bytes the arena
-    // never writes, so the block starts zeroed: an unwritten byte has no value
-    memset( raw, 0, (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
 
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create_in_block( block, bytes, NULL, 2, &counters );
     check( arena != NULL );
     secrets_wiped_plant_in_arena( arena );
-    check( secrets_wiped_pattern_count( block, (size_t) bytes ) == 1 );
+    std::vector<uint8_t> copy( block, block + bytes );
     rn_arena_destroy( arena );
 
-    const int pattern = secrets_wiped_pattern_count( block, (size_t) bytes );
+    const bool unwritten = memcmp( block, copy.data(), (size_t) bytes ) == 0;
     free( raw );
-    check( pattern == 0 );
+    check( unwritten );
 }
 
-REGISTER_UNIT_TEST( test_secrets_wiped_destroy_owned_blocks );
-REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned );
-REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block );
+// test_secrets_wiped_destroy_writes_only_keys's peak resident bound. The case
+// copies every live block of its connected pair before destroy, so its peak
+// is twice the pair's memory. The server transport's fixed tables grow with
+// the build's ROCKETNET_MAX_CLIENTS whatever the case's max_clients
+// (BUILDING.md, "Maximum clients"), so a 10000-client build puts the doubled
+// pair over the suite-wide bound. The bound is twice the pair's plan:
+// rocketnet_server_transport_memory_plan's total for one client, planned
+// with the portable transport because the plan has no row for the loopback
+// transport, the client's rocketnet_client_required_memory and its portable
+// transport's rocketnet_client_transport_required_memory, and the two
+// loopback endpoints' create-time queues; plus a stated 64 MiB margin for
+// the process and the two block maps.
+static long secrets_wiped_destroy_rss_bound_mb()
+{
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config( &server_config );
+    server_config.protocol_id = SECRETS_WIPED_PROTOCOL;
+    server_config.max_clients = 1;
+    rocketnet_server_memory_plan_t plan;
+    if ( !rocketnet_server_transport_memory_plan( &server_config, "portable", plan ) )
+        return 0;
+    rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    const uint64_t client_bytes = (uint64_t) rocketnet_client_required_memory( &client_config );
+    rocketnet_client_transport_config_t client_transport_config;
+    rocketnet_client_transport_default_config( &client_transport_config );
+    const uint64_t client_transport_bytes = rocketnet_client_transport_required_memory( &client_transport_config, "portable" );
+    if ( client_bytes == 0 || client_transport_bytes == 0 )
+        return 0;
+    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + 2 * endpoint ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_secrets_wiped_destroy_writes_only_keys, secrets_wiped_destroy_rss_bound_mb );
+
+REGISTER_UNIT_TEST( test_secrets_wiped_destroy_writes_only_keys );
+REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );
+REGISTER_UNIT_TEST( test_secrets_wiped_user_data_after_client_leaves );
+REGISTER_UNIT_TEST( test_secrets_wiped_user_data_with_client_connected );
+REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned_writes_nothing );
+REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
 #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
 
@@ -641,3 +955,46 @@ REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_open );
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 
 #endif // #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+
+// Unassigned token-user-data storage has no secret to erase. Only live slots
+// are wiped at destroy; released slots were already wiped at release.
+static void test_secrets_wiped_slots_touch_only_live_user_data()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+    auto * slots = rocketnet_client_slots_create( NULL, 32 );
+    check( slots );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    const int first = rocketnet_client_slots_assign( slots, 1, 0, user_data );
+    const int second = rocketnet_client_slots_assign( slots, 2, 1, user_data );
+    check( first == 0 && second == 1 );
+    const uint8_t * data = rocketnet_client_slots_user_data( slots, first );
+    bool unused_untouched = true;
+    for ( size_t i = 2 * sizeof(user_data); i < 32 * sizeof(user_data); ++i )
+        unused_untouched &= data[i] == 0xC5;
+    rocketnet_client_slots_release( slots, first );
+    const bool released_wiped = secrets_wiped_all_zero( data, sizeof(user_data) );
+    std::map<void *, std::vector<uint8_t> > copies;
+    for ( auto it = sizes.begin(); it != sizes.end(); ++it )
+        copies[it->first].assign( (const uint8_t *)it->first, (const uint8_t *)it->first + it->second );
+    secrets_wiped_copies = &copies;
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_written_most = 0;
+    secrets_wiped_user_data_freed = 0;
+    secrets_wiped_user_data_armed = true;
+    rocketnet_client_slots_destroy( slots );
+    const size_t changed = secrets_wiped_written_most;
+    const int secrets_left = secrets_wiped_user_data_freed;
+    secrets_wiped_copies = NULL;
+    secrets_wiped_user_data_armed = false;
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    check( unused_untouched && released_wiped );
+    check( secrets_left == 0 );
+    check( changed > 0 && changed <= sizeof(user_data) );
+}
+REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );

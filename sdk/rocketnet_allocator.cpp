@@ -22,7 +22,7 @@
 // ----------------------------------------------------------------
 
 static_assert( sizeof(rn_channel_send_t) == 32, "channel send state is 32 bytes (14)" );
-static_assert( sizeof(rn_channel_receive_t) == 16, "channel receive state is 16 bytes (14)" );
+static_assert( sizeof(rn_channel_receive_t) == 24, "channel receive state is 24 bytes (14)" );
 static_assert( sizeof(rn_send_number_t) == 32, "the sender's per-number entry is 32 bytes (14)" );
 static_assert( sizeof(rn_receive_descriptor_t) == 32, "the receiver's descriptor is 32 bytes (14)" );
 static_assert( sizeof(rn_held_entry_t) == 16, "a held-ordered index entry is 16 bytes (14)" );
@@ -60,6 +60,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
     "channel send state",
     "channel receive state",
     "sender per-number table",
+    "sender first sends",
     "receiver descriptors",
     "received bitset",
     "held-ordered index",
@@ -78,7 +79,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] =
 {
-    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W", "SR",
+    "32C", "16C", "32W", "8W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W", "SR",
 };
 
 const char * rn_region_part_name( int part )
@@ -141,6 +142,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_CHANNEL_SEND] = sizeof(rn_channel_send_t) * C;
     layout->bytes[RN_PART_CHANNEL_RECEIVE] = sizeof(rn_channel_receive_t) * C;
     layout->bytes[RN_PART_SEND_NUMBERS] = sizeof(rn_send_number_t) * W;
+    layout->bytes[RN_PART_SEND_FIRST_SENDS] = sizeof(double) * W;
     layout->bytes[RN_PART_RECEIVE_DESCRIPTORS] = sizeof(rn_receive_descriptor_t) * W;
     layout->bytes[RN_PART_RECEIVED_BITS] = W / 8;                                   // W is a power of two, at least 64: whole u64 words
     layout->bytes[RN_PART_HELD_INDEX] = sizeof(rn_held_entry_t) * 2 * W;
@@ -230,10 +232,10 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
         rocketnet_assert( cls->num_chunks < RN_LINK_END );
         cls->data = memory + (uint64_t) c * third;
         cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
-            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
-        cls->free_head = cls->num_chunks > 0 ? 0 : RN_LINK_END;
+        // tla/RNLazyPool.tla Reset: nothing taken, no link written
+        cls->free_head = RN_LINK_END;
         cls->free_count = cls->num_chunks;
+        cls->fresh = 0;
     }
 }
 
@@ -249,12 +251,21 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
         cls->num_chunks = counts[c];
         cls->data = memory + offset;
         cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
-            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
-        cls->free_head = cls->num_chunks ? 0 : RN_LINK_END;
+        // tla/RNLazyPool.tla Reset: nothing taken, no link written
+        cls->free_head = RN_LINK_END;
         cls->free_count = cls->num_chunks;
+        cls->fresh = 0;
         offset += rn_align64( (uint64_t) cls->num_chunks * ( cls->chunk_bytes + sizeof(uint32_t) ) );
     }
+}
+
+bool rn_send_store_fits( const rn_send_store_t * store, int bytes )
+{
+    rocketnet_assert( store );
+    if ( bytes <= 0 )
+        return false;
+    // the smallest class that fits, and only that class, holds the block whole
+    return store->classes[rn_send_store_class_for( bytes )].free_count >= rn_send_store_chunks_needed( bytes );
 }
 
     // tla/RNSendStore.tla Alloc
@@ -269,17 +280,28 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     rn_store_class_t * cls = &store->classes[c];
 
     // all or none (CHANNELS section 4): a block the class cannot hold whole takes nothing
-    if ( cls->free_count < needed )
+    if ( !rn_send_store_fits( store, bytes ) )
         return RN_CHUNK_NONE;
 
     uint32_t first = RN_LINK_END;
     uint32_t previous = RN_LINK_END;
     for ( uint32_t n = 0; n < needed; n++ )
     {
-        const uint32_t i = cls->free_head;
-        rocketnet_assert( i < cls->num_chunks );
-        rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
-        cls->free_head = cls->link[i];
+        // tla/RNLazyPool.tla Take: the free list first, then the first chunk
+        // never taken
+        uint32_t i;
+        if ( cls->free_head != RN_LINK_END )
+        {
+            i = cls->free_head;
+            rocketnet_assert( i < cls->fresh );
+            rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
+            cls->free_head = cls->link[i];
+        }
+        else
+        {
+            i = cls->fresh++;
+            rocketnet_assert( i < cls->num_chunks );
+        }
         cls->link[i] = RN_LINK_IN_USE | RN_LINK_END;
         if ( previous == RN_LINK_END )
         {
@@ -297,7 +319,8 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     return ( (uint32_t) c << 30 ) | first;
 }
 
-    // tla/RNSendStore.tla Free
+    // tla/RNSendStore.tla Free and FreeAgain: a chain's head frees the whole
+    // chain, and a second free of it is refused with nothing changed
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
@@ -308,7 +331,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
         return false;
     rn_store_class_t * cls = &store->classes[c];
     uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                  // never taken: its link is unwritten, and it is not held
         return false;
 
     // only a chain's head, still allocated, frees (CHANNELS section 4):
@@ -322,6 +345,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
         const uint32_t next = cls->link[i] & RN_LINK_INDEX;
         // the in-use flag clears in the same store that pushes the chunk:
         // no state where a chunk is both free-listed and in use
+        // (tla/RNLazyPool.tla Release: the chunk pushed on the free list head)
         cls->link[i] = cls->free_head;
         cls->free_head = i;
         cls->free_count++;
@@ -343,15 +367,15 @@ uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t hand
 
     // the same rule as rn_send_store_free_checked: a handle the store did not
     // issue -- a class at or past RN_STORE_NUM_CLASSES (class 3, which includes
-    // RN_CHUNK_NONE) or an index at or past the class's chunk count -- reads
-    // nothing. A refusal, not an assert, so a debug build answers alike.
+    // RN_CHUNK_NONE) or an index the store has not issued -- reads nothing. A
+    // refusal, not an assert, so a debug build answers alike.
 
     const int c = rn_send_store_chunk_class( handle );
     if ( c >= RN_STORE_NUM_CLASSES )
         return NULL;
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                 // never taken: its data is unwritten
         return NULL;
     return cls->data + (uint64_t) i * cls->chunk_bytes;
 }
@@ -369,7 +393,7 @@ uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handl
         return RN_CHUNK_NONE;
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->num_chunks )
+    if ( i >= cls->fresh )                  // never taken: its link is unwritten
         return RN_CHUNK_NONE;
     const uint32_t next = cls->link[i] & RN_LINK_INDEX;
     return next == RN_LINK_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
@@ -415,6 +439,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->channel_send = (rn_channel_send_t*) ( base + layout->offset[RN_PART_CHANNEL_SEND] );
     region->channel_receive = (rn_channel_receive_t*) ( base + layout->offset[RN_PART_CHANNEL_RECEIVE] );
     region->send_numbers = (rn_send_number_t*) ( base + layout->offset[RN_PART_SEND_NUMBERS] );
+    region->send_first_sends = (double*) ( base + layout->offset[RN_PART_SEND_FIRST_SENDS] );
     region->receive_descriptors = (rn_receive_descriptor_t*) ( base + layout->offset[RN_PART_RECEIVE_DESCRIPTORS] );
     region->received_bits = (uint64_t*) ( base + layout->offset[RN_PART_RECEIVED_BITS] );
     region->held_index = (rn_held_entry_t*) ( base + layout->offset[RN_PART_HELD_INDEX] );
@@ -457,9 +482,13 @@ void rn_region_carve( rn_region_t * region )
         region->channel_send[c].ready_prev = RN_DESCRIPTOR_NONE;
         region->channel_send[c].ready_next = RN_DESCRIPTOR_NONE;
         region->channel_receive[c].held_sequenced = RN_DESCRIPTOR_NONE;
+        region->channel_receive[c].block_in_turn = RN_DESCRIPTOR_NONE;
     }
 
     memset( region->send_numbers, 0, sizeof(rn_send_number_t) * region->window );
+    // send_first_sends is not cleared: an entry is read only after its
+    // number first send writes it (rn_window_ack_record_first_send), and
+    // numbering sets last_send to RN_SEND_NUMBER_NEVER_SENT
     for ( uint32_t n = 0; n < region->window; n++ )
     {
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
@@ -470,14 +499,14 @@ void rn_region_carve( rn_region_t * region )
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof(rn_held_entry_t) * region->held_entries );
 
-    // the send descriptor pool: an intrusive LIFO free list through next
-    memset( region->send_descriptors, 0, sizeof(rn_send_descriptor_t) * region->queue );
-    for ( uint32_t d = 0; d < region->queue; d++ )
-        region->send_descriptors[d].next = d + 1 < region->queue ? d + 1 : RN_DESCRIPTOR_NONE;
-    region->descriptors_free_head = region->queue > 0 ? 0 : RN_DESCRIPTOR_NONE;
+    // the send descriptor pool: an intrusive LIFO free list through next,
+    // lazy (tla/RNLazyPool.tla Reset): nothing taken, no descriptor written.
+    // A take initializes its descriptor whole.
+    region->descriptors_free_head = RN_DESCRIPTOR_NONE;
     region->descriptors_free = region->queue;
+    region->descriptors_fresh = 0;
 
-    // the store's free lists, rethreaded in place
+    // the store's free lists, emptied in place (lazy, as the descriptors)
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
         store_chunks[c] = region->store.classes[c].num_chunks;
@@ -514,9 +543,16 @@ void rn_region_carve( rn_region_t * region )
 
 void rn_region_reset( rn_region_t * region )
 {
-    // tla/RNConnectionMemory.tla, Reuse: the slot's region is carved again
-    // before its next client, so ReusedSlotStartsClean holds -- used room,
-    // the exhausted state and every record of the previous client are gone
+    // tla/RNConnectionMemory.tla, Connect after Reuse: the slot's region is
+    // carved again before its next client, so ReusedSlotStartsClean holds --
+    // used room, the exhausted state and every record of the previous client
+    // are gone. The server resets lazily: a slot whose connection ended is
+    // freed in O(1) and its region is carved here only when the slot is bound
+    // to its next connection (rn_message_connection_release,
+    // sdk/rocketnet_message_server.cpp; tla/RNSlots.tla ResetFree, Observe),
+    // never for the whole population in the update after a mass disconnect.
+    // The region holds message bytes only; session keys are wiped by the
+    // transport when the slot ends.
     rn_region_carve( region );
 }
 
@@ -553,6 +589,80 @@ int rn_connection_memory_decide( const rn_region_t * region )
     return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
+// tla/RNLazyPool.tla Take: a descriptor off the free list, or the first one
+// never taken since the carve. The caller checked descriptors_free and
+// initializes the descriptor whole.
+static uint32_t rn_region_descriptor_take( rn_region_t * region )
+{
+    rocketnet_assert( region->descriptors_free > 0 );
+    uint32_t d;
+    if ( region->descriptors_free_head != RN_DESCRIPTOR_NONE )
+    {
+        d = region->descriptors_free_head;
+        rocketnet_assert( d < region->descriptors_fresh );
+        rocketnet_assert( !region->send_descriptors[d].in_use );
+        region->descriptors_free_head = region->send_descriptors[d].next;
+    }
+    else
+    {
+        d = region->descriptors_fresh++;
+        rocketnet_assert( d < region->queue );
+    }
+    region->descriptors_free--;
+    return d;
+}
+
+int rn_region_send_fit_store( const rn_region_t * region, int bytes )
+{
+    // tla/RNConnectionMemory.tla, Use's guard: the decision rn_region_send_alloc
+    // acts on, read alone by the room query
+    rocketnet_assert( region );
+
+    // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
+    if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
+        return RN_SEND_FIT_REFUSED;
+
+    // sticky exhaustion: once exhausted, every send is refused until reset
+    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
+    if ( region->exhausted )
+        return RN_SEND_FIT_EXHAUSTED;
+
+    if ( region->descriptors_free == 0 )
+        return RN_SEND_FIT_QUEUE_FULL;
+
+    if ( !rn_send_store_fits( &region->store, bytes ) )
+        return RN_SEND_FIT_STORE_FULL;
+
+    return RN_SEND_FIT_OK;
+}
+
+// A refused allocation's effects, by its decision. Exhaustion is a counted
+// refusal, never growth (R1, 4), and nothing is taken from either pool when
+// one of them refuses. It is also the end of the connection: the region is
+// exhausted (tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
+// the next decision. A send refused while the region stays exhausted is
+// counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names this refusal,
+// on every refused send, not just at the transition to exhausted.
+static void rn_region_send_refuse( rn_region_t * region, int fit )
+{
+    switch ( fit )
+    {
+        case RN_SEND_FIT_EXHAUSTED:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+            break;
+        case RN_SEND_FIT_QUEUE_FULL:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+            rn_region_exhaust( region );
+            break;
+        case RN_SEND_FIT_STORE_FULL:
+            rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+            rn_region_exhaust( region );
+            break;
+        default:
+            break;                                              // RN_SEND_FIT_REFUSED: the caller's to count
+    }
+}
+
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
@@ -561,47 +671,18 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
     // again), Kick (disconnect) and Reuse (reset).
     rocketnet_assert( region );
 
-    // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
-    if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
-        return RN_DESCRIPTOR_NONE;
-
-    // sticky exhaustion: once exhausted, every send is refused until reset
-    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted).
-    // The refusal is counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names
-    // this refusal, on every refused send, not just at the transition to exhausted.
-    if ( region->exhausted )
+    const int fit = rn_region_send_fit_store( region, bytes );
+    if ( fit != RN_SEND_FIT_OK )
     {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
-        return RN_DESCRIPTOR_NONE;
-    }
-
-    // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
-    // taken from either pool when one of them refuses. It is also the end of
-    // the connection: the region is exhausted (tla/RNConnectionMemory.tla,
-    // Exhaust) and its owner kicks it on the next decision.
-
-    if ( region->descriptors_free == 0 )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-        rn_region_exhaust( region );
+        rn_region_send_refuse( region, fit );
         return RN_DESCRIPTOR_NONE;
     }
 
     const uint32_t chunk = rn_send_store_alloc( &region->store, bytes );
-    if ( chunk == RN_CHUNK_NONE )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-        rn_region_exhaust( region );
-        return RN_DESCRIPTOR_NONE;
-    }
+    rocketnet_assert( chunk != RN_CHUNK_NONE );                 // the decision found its chunks
 
-    const uint32_t d = region->descriptors_free_head;
-    rocketnet_assert( d < region->queue );
+    const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    rocketnet_assert( !descriptor->in_use );
-    region->descriptors_free_head = descriptor->next;
-    region->descriptors_free--;
-
     memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = chunk;
     descriptor->bytes = (uint32_t) bytes;
@@ -728,48 +809,65 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     descriptor->span_next = RN_DESCRIPTOR_NONE;
 }
 
-uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
+int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start )
 {
-    // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
-    // is tla/RNRing.tla's PlaceSingle on the sender's side
+    // tla/RNConnectionMemory.tla, UseSpan's guard: the decision
+    // rn_region_send_alloc_span acts on, read alone by the room query
     rocketnet_assert( region );
 
     if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
-        return RN_DESCRIPTOR_NONE;
+        return RN_SEND_FIT_REFUSED;
 
-    // sticky exhaustion, the same guard as rn_region_send_alloc: Use (and
+    // sticky exhaustion, the same guard as rn_region_send_fit_store: Use (and
     // UseSpan) in tla/RNConnectionMemory.tla require ~exhausted, so an
     // exhausted region takes no span until rn_region_reset, even when acks
-    // have returned room; every refused send counts MESSAGE_MEMORY_EXHAUSTED
+    // have returned room
     if ( region->exhausted )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
-        return RN_DESCRIPTOR_NONE;
-    }
+        return RN_SEND_FIT_EXHAUSTED;
 
     if ( region->descriptors_free == 0 )
-    {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-        rn_region_exhaust( region );
-        return RN_DESCRIPTOR_NONE;
-    }
+        return RN_SEND_FIT_QUEUE_FULL;
 
-    const uint64_t len16 = rn_span_round16( (uint64_t) bytes );
     uint32_t start = 0;
-    if ( !rn_span_place( region, len16, &start ) )
+    if ( !rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start ) )
+        return RN_SEND_FIT_STORE_FULL;
+
+    if ( out_start )
+        *out_start = start;
+    return RN_SEND_FIT_OK;
+}
+
+int rn_region_send_fit( const rn_region_t * region, int bytes )
+{
+    return rn_region_send_is_span( bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes );
+}
+
+uint32_t rn_region_send_take( rn_region_t * region, int bytes )
+{
+    return rn_region_send_is_span( bytes ) ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
+}
+
+uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
+{
+    // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
+    // is tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
+    // for a send of more than one fragment: one contiguous span, both bounds
+    // checked once, fragment i at start + i * F (rn_region_send_data).
+    // tla/RNSendSpans.tla Exhaust: no descriptor or no place for the span,
+    // so rn_region_send_refuse exhausts the region.
+    rocketnet_assert( region );
+
+    uint32_t start = 0;
+    const int fit = rn_region_send_fit_span( region, bytes, &start );
+    if ( fit != RN_SEND_FIT_OK )
     {
-        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-        rn_region_exhaust( region );
+        rn_region_send_refuse( region, fit );
         return RN_DESCRIPTOR_NONE;
     }
+    const uint64_t len16 = rn_span_round16( (uint64_t) bytes );
 
-    const uint32_t d = region->descriptors_free_head;
-    rocketnet_assert( d < region->queue );
+    const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    rocketnet_assert( !descriptor->in_use );
-    region->descriptors_free_head = descriptor->next;
-    region->descriptors_free--;
-
     memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = RN_CHUNK_NONE;
     descriptor->bytes = (uint32_t) bytes;
@@ -786,7 +884,7 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
     rocketnet_assert( region );
     if ( out_bytes )
         *out_bytes = 0;
-    if ( d >= region->queue )
+    if ( d >= region->descriptors_fresh )   // never taken since the carve: not in use, and unwritten
         return NULL;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( !descriptor->in_use )
@@ -820,7 +918,7 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
 uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
 {
     rocketnet_assert( region );
-    if ( d >= region->queue || !region->send_descriptors[d].in_use )
+    if ( d >= region->descriptors_fresh || !region->send_descriptors[d].in_use )
         return NULL;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
@@ -834,12 +932,15 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
     // tla/RNConnectionMemory.tla, Release: allowed on an exhausted region (an
     // ack or an abort between Exhaust and Kick), it only returns room, and
-    // both allocators refuse to take it again until rn_region_reset
+    // both allocators refuse to take it again until rn_region_reset.
+    // tla/RNLazyPool.tla Release: the descriptor pushed on the free list head.
     rocketnet_assert( region );
-    rocketnet_assert( d < region->queue );
+    rocketnet_assert( d < region->descriptors_fresh );
+    if ( d >= region->descriptors_fresh )
+        return;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );
-    if ( d >= region->queue || !descriptor->in_use )
+    if ( !descriptor->in_use )
         return;
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
         rn_span_unlink( region, d );
@@ -856,8 +957,8 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
 {
     // tla/RNConnectionMemory.tla, Release (one fragment's room)
     rocketnet_assert( region );
-    rocketnet_assert( d < region->queue );
-    if ( d >= region->queue )
+    rocketnet_assert( d < region->descriptors_fresh );
+    if ( d >= region->descriptors_fresh )
         return;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );
@@ -976,22 +1077,18 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
     rocketnet_assert( region );
     uint64_t free_room = 0;
     uint64_t pool = 0;
-    int fits = 0;
     if ( bytes >= 1 && (uint32_t) bytes <= region->max_message_bytes )
     {
-        if ( bytes >= (int) RN_SPAN_MIN_BYTES )
+        if ( rn_region_send_is_span( bytes ) )
         {
             free_room = region->span_bytes - rn_span_used( region );
             pool = region->span_bytes;
-            uint32_t start = 0;
-            fits = rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start );
         }
         else
         {
             const rn_store_class_t * cls = &region->store.classes[rn_send_store_class_for( bytes )];
             free_room = (uint64_t) cls->free_count * cls->chunk_bytes;
             pool = (uint64_t) cls->num_chunks * cls->chunk_bytes;
-            fits = cls->free_count >= rn_send_store_chunks_needed( bytes );
         }
     }
     if ( free_bytes )
@@ -1000,7 +1097,7 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
         *pool_bytes = pool;
     if ( free_messages )
         *free_messages = region->descriptors_free;
-    return fits && region->descriptors_free > 0 && !region->exhausted;
+    return rn_region_send_fit( region, bytes ) == RN_SEND_FIT_OK;      // the allocation's own decision
 }
 
 int rn_region_send_room_watch( rn_region_t * region )
@@ -1231,14 +1328,12 @@ void rn_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
         return;
-    // the regions hold message bytes: the whole arena, header to the last
-    // region, is wiped before it is freed or handed back. a caller's block
-    // stays the caller's
-    void * context = arena->context;
-    const int owns_memory = arena->owns_memory;
-    sodium_memzero( arena, (size_t) arena->bytes );
-    if ( owns_memory )
-        rocketnet_free( context, arena );
+    // the regions hold message bytes, never keys: nothing is wiped. The OS
+    // zero-fills a page before another process gets it, and wiping would
+    // touch every page of a plan that can reach gigabytes, most of them never
+    // used. A caller's block stays the caller's, as it is.
+    if ( arena->owns_memory )
+        rocketnet_free( arena->context, arena );
 }
 
 int rn_arena_num_regions( const rn_arena_t * arena )
@@ -1325,7 +1420,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,

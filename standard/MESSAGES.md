@@ -77,8 +77,8 @@ implementation, stated here because RN-2 is the party that relies on it.
    row `payload capacity` of [RN-1 t3 Constants and registries](TRANSPORT.md#t3)
    as exactly one type 5 packet, never fragmented.
 2. **An acknowledged packet was delivered once.** When the connection layer
-   reports a type 5 packet acknowledged, the peer's connection layer MUST have
-   handed its payload to the peer's message layer exactly once. A connection
+   reports a type 5 packet acknowledged, the receiver's connection layer MUST have
+   handed its payload to the receiver's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
    The receiver MUST finish successful message-layer processing before ACK publication.
    If a reliable record cannot reserve receive storage, the receiver MUST leave
@@ -103,7 +103,7 @@ implementation, stated here because RN-2 is the party that relies on it.
    identify that connection by a value that differs for every connection a
    slot has held, not only by the slot index, and MUST attach the same
    identification to every payload it delivers.
-6. **Replies open later.** When the peer sends a packet in reply to a packet
+6. **Replies open later.** When the remote endpoint sends a packet in reply to a packet
    this endpoint's connection layer opened in one update, the connection
    layer MUST open the reply in a later update, never in the same one.
 7. **Replay window depth.** The connection layer's replay window MUST refuse
@@ -162,7 +162,7 @@ A payload ends with one form byte. A sender MUST write exactly one form byte, an
 
 A sender MAY use SINGLE only for a message whose reliability is UNRELIABLE and whose length is at most the row `SINGLE message limit`. The message starts at payload offset 0 and the form byte follows it. A receiver MUST deliver a SINGLE payload as one UNRELIABLE message on channel 0.
 
-A fitting unreliable message is written in place in the packet buffer, with no copy between the message layer and the connection layer. A message is fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and its data, its record header when it has one, and the form byte fit in one payload: UNRELIABLE travels in the SINGLE form and the other two as the one record of a RECORDS payload. A sender MUST write a fitting message in place, except that it MAY copy one into a shared RECORDS payload when the connection layer gives no packet buffer large enough for it, when messages queued before it would otherwise be overtaken by it, when the send budget cannot pay it, or when the update's packet allowance is spent; a sender counts each such message once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both alike.
+A fitting unreliable message is written in place in the packet buffer, with no copy between the message layer and the connection layer. A message is fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and its data, record header and form byte fit in one payload. A sender MUST aggregate fitting messages into back-to-back records of a shared RECORDS payload when room remains. Start reserves the declared maximum after the committed prefix; finish commits only the actual length, and abort leaves the prefix unchanged. Neither operation moves committed payloads. Seal the payload when the next reservation cannot fit, a receipt-reference bound is reached, or send_packets or update closes the build. A sender MAY use SINGLE for an otherwise fitting plain UNRELIABLE message that cannot fit with a record header. A sender MUST write a fitting message in place, except that it MAY copy one into a shared RECORDS payload when the connection layer gives no packet buffer large enough for it, when messages queued before it would otherwise be overtaken by it, when the send budget cannot pay it, or when the update's packet allowance is spent; a sender counts each such message once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both forms alike.
 
 A sender MUST encode every other message as one or more records in a RECORDS payload. The records MUST be written back to back, with no padding, and MUST fill the body exactly. An unreliable message that exceeds its one-record limit MUST be sent under its reliable twin as the promotion rule states; it MUST NOT be fragmented and MUST NOT be split across payloads.
 
@@ -1730,7 +1730,10 @@ The constants this section names are:
     fragment; a fragment that is not the last is measured as the shortest block
     it could belong to. Counter: `MESSAGE_BAD_RING`.
 9. A reliable or CONTROL record MUST NOT lie in a payload longer than
-   `payload capacity`. Counter: `MESSAGE_BAD_SIZE`.
+   `payload capacity`. A record's length, and a SINGLE payload's message
+   length, MUST be at most the receiver's maximum message size; check 7 holds a
+   block to the same limit. A SINGLE payload takes checks 1, 6 and this one.
+   Counter: `MESSAGE_BAD_SIZE`.
 10. A reliable record MUST have a number less than W ahead of the receiver's
      next number. Counter: `MESSAGE_NUMBER_OUTSIDE_WINDOW`. A record whose
      receive slot is live for a different number MUST be refused. Counter:
@@ -1888,6 +1891,100 @@ counter: `MESSAGE_BAD_SIZE`
 00 00 00 00 00 00 00 00 01
 ```
 
+```vector m4.check-9-over-maximum
+input: a SINGLE message of 1416 bytes at a receiver whose maximum message size is 1415
+counter: `MESSAGE_BAD_SIZE`
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
 ```vector m4.check-10-number-outside-window
 input: a code 2 record numbered one window above the next number
 counter: MESSAGE_NUMBER_OUTSIDE_WINDOW
@@ -2010,7 +2107,7 @@ n     = R + delta
 | ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
 | fragment bytes | `1152` | bytes | the block stride |
 | window messages default | `1024` | records | the default of `reliable_messages_in_flight` |
-| receive ring bytes default | `262144` | bytes | the default of `receive_message_buffer_bytes` |
+| receive ring bytes default | `1048576` | bytes | the default of `receive_message_buffer_bytes` |
 | window messages limit | `1048576` | records | the largest valid `reliable_messages_in_flight` |
 | replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
 | replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
@@ -2574,7 +2671,7 @@ f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
 
 ### m9.1. Acknowledgement mapping
 
-The connection layer reports which of a sender's packets the peer
+The connection layer reports which of a sender's packets the receiver
 acknowledged. The message layer keeps its own reliable numbering, so it MUST
 translate each report into the reliable numbers and receipt serials that
 packet carried.
@@ -2584,6 +2681,16 @@ each send to the reliable numbers and receipt serials that send carries. Every
 send, a resend included, MUST take a fresh sequence, so an acknowledgement
 names exactly one send. A sender MUST ignore an acknowledgement whose sequence
 the map does not hold.
+
+The map MUST hold at least `W` entries, where `W` is the connection's
+`reliable_messages_in_flight`. Every entry names a send carrying at least one
+reliable number, and a window of `W` numbers may be in flight one to a send,
+all written inside one round trip; a smaller map would drop an entry whose
+acknowledgement is still on its way, and the numbers it carried would be
+resent. A sender whose map is full MUST drop its oldest entry to record a new
+send; the numbers the dropped entry carried stay unacknowledged and in their
+resend queues. With at least `W` entries and a resend delay above the round
+trip, the dropped entry is one whose acknowledgement can no longer arrive.
 
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from
@@ -2810,7 +2917,7 @@ configuration: build-specific maximum at least 301; num_channels 301
 4. An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update
    is at or after the start of the CONFIG wait plus the reliable timeout
    ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
-   accepted the peer's CONFIG.
+   accepted the remote endpoint's CONFIG.
 5. An endpoint MUST accept a CONFIG record only when its body length is the
    body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
    version is its version row, both reserved fields are zero.
@@ -2824,7 +2931,7 @@ configuration: build-specific maximum at least 301; num_channels 301
    `fragment_bytes` fields of the body with its own values.
 9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
    compared field differs.
-10. An endpoint MAY receive message records before the peer's CONFIG, and
+10. An endpoint MAY receive message records before the remote endpoint's CONFIG, and
     when it does it MUST process them against its own configuration.
 
 <a id="m11.1"></a>
@@ -2892,7 +2999,7 @@ differ in any compared field end the connection with `CONFIG_MISMATCH`.
 | version | `1` | none |
 | enabled default | `0xFF` | mask |
 | num channels default | `32` | channels |
-| max message bytes default | `262144` | bytes |
+| max message bytes default | `1048576` | bytes |
 | form | `1` | none |
 
 `enabled` with bit r set permits the application to send reliability r; the
@@ -2930,7 +3037,7 @@ for each of the others.
 ```vector m11.config-defaults
 config: library defaults
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2938,7 +3045,7 @@ config: library defaults
 field: version
 value: 2
 22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2946,7 +3053,7 @@ value: 2
 field: enabled
 value: 0x01
 22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2954,7 +3061,7 @@ value: 0x01
 field: num_channels
 value: 16
 22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2962,7 +3069,7 @@ value: 16
 field: reliable_messages_in_flight
 value: 512
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2970,7 +3077,7 @@ value: 512
 field: receive_message_buffer_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 02 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2978,7 +3085,7 @@ value: 131072
 field: max_message_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 02 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2986,7 +3093,7 @@ value: 131072
 field: fragment_bytes
 value: 1024
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 00 04 00 00 00 00
 00 00 01
 ```
 
@@ -3008,9 +3115,17 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
    every block fragment is acknowledged.
 3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
-   when its carrying packet is acknowledged and LOSS when it is lost, refused
-   by the send budget, or expires without an acknowledgement. These outcomes
-   are API semantics and are not carried on the wire.
+   when its carrying packet is acknowledged. It reports LOSS when it is
+   refused by the send budget or by the transport, at once, since it was
+   never sent; and otherwise only when no acknowledgement arrived by its
+   receipt deadline. The receipt deadline is the packet's send time plus the
+   sender's maximum resend delay (`message_resend_delay_max_ms`), a fixed
+   bound that does not move with the adaptive resend delay. A sender MUST NOT
+   report LOSS for a sent type-5 message before its receipt deadline, with
+   one exception: when the sender's sent-packet map evicts the entry that
+   carries the message, the message can no longer be acknowledged and the
+   sender reports LOSS at the eviction. These outcomes are API semantics and
+   are not carried on the wire.
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)
@@ -3040,17 +3155,17 @@ packet: second payload of the promoted code-2 block
 <a id="m13"></a>
 ## m13. Security considerations
 
-The transport seals every payload; this section bounds what a peer can do
+The transport seals every payload; this section bounds what the remote endpoint can do
 within the message layer of a sealed connection.
 
 1. **Violations end the connection.** A payload that breaks a rule of RN-2 is
    a violation. A receiver MUST refuse the whole payload, MUST NOT hand up any
    record of it, and MUST end the connection. A correct sender never sends a
-   violation, so one is evidence of a faulty or hostile peer. Each violation has
+   violation, so one is evidence of a faulty or hostile sender. Each violation has
    its own counter.
-2. **No live growth.** Every table a peer can influence is fixed at connection
+2. **No live growth.** Every table the remote endpoint can influence is fixed at connection
    creation from configuration. A receiver MUST NOT allocate memory after
-   connection creation, so a peer MUST NOT be able to make a receiver hold more
+   connection creation, so a sender MUST NOT be able to make a receiver hold more
    than the configured region. The checks of [m4 Receiver checks](#m4) run
    before a record is held or delivered.
 3. **Bounds.** A record whose channel, number, span or size falls outside the
@@ -3060,7 +3175,7 @@ within the message layer of a sealed connection.
    range the transport delivers.
 4. **Amplification.** The checks run over a payload once. A receiver MUST
    complete them in time bounded by the payload's own length, with no
-   allocation, so a peer MUST NOT be able to grow a receiver's work or memory.
+   allocation, so a sender MUST NOT be able to grow a receiver's work or memory.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors

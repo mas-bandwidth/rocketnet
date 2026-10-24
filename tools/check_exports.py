@@ -82,7 +82,7 @@ DEVELOPMENT_SYMBOL_PARTS = (
     "_for_test", "network_simulator", "dev_server_secret_key", "dev_backend_secret_key",
     "server_transport_dev_config", "set_test_timestamp", "client_create_testing",
     "test_stall_destroy", "test_bound_port", "create_step_driven_at_timestamp",
-    "create_dev_connect_token", "write_test_connect_token",
+    "create_dev_connect_token", "write_test_connect_token", "ack_visit_count",
 )
 
 

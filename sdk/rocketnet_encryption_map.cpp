@@ -6,10 +6,14 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
+#include <stdlib.h>
 
 struct rocketnet_encryption_map_t
 {
@@ -27,7 +31,38 @@ struct rocketnet_encryption_map_t
     int * live;                                             // hot: parallel to address
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
+#if ROCKETNET_TEST_SEAMS
+    mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
+#endif // #if ROCKETNET_TEST_SEAMS
 };
+
+#if ROCKETNET_TEST_SEAMS
+static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
+{
+    char text[64];
+    const int found = rocketnet_platform_getenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
+    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+        return 1;
+    char * end = NULL;
+    errno = 0;
+    const unsigned long long parsed = found == 1 ? strtoull( text, &end, 0 ) : 0;
+    if ( found != 1 || end == text || *end != '\0' || errno != 0 || text[0] == '-' ||
+         parsed == 0 || parsed > ROCKETNET_DEV_SESSION_SEQUENCE_START_MAX )
+    {
+        rocketnet_error( "ROCKETNET_DEV_SESSION_SEQUENCE_START=\"%s\" refused: expected 1 .. 2^62; using 1", text );
+        return 1;
+    }
+    return (uint64_t) parsed;
+}
+
+// one read per process, at the first caller; a function-local static is
+// initialized once even when two threads create at once
+uint64_t rocketnet_dev_session_sequence_start( void )
+{
+    static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
+    return start;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
 
 uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
 {
@@ -58,6 +93,9 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     map->capacity = capacity;
     map->num_buckets = capacity * 2;
     randombytes_buf( map->hash_key, sizeof(map->hash_key) );
+#if ROCKETNET_TEST_SEAMS
+    (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
+#endif // #if ROCKETNET_TEST_SEAMS
 
     map->bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) map->num_buckets );
     map->next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
@@ -85,19 +123,34 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
         map->next[i] = i + 1 < capacity ? i + 1 : -1;
     map->free_head = 0;
 
-    memset( map->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
+    // live is the state: every reader of an entry's address, control or
+    // mapping reaches it through live (the bucket chains hold live entries
+    // only), and add writes the entry whole, so those three arrays (3.4 KB an
+    // entry) are never zeroed here
     memset( map->live, 0, sizeof(int) * (size_t) capacity );
-    memset( map->control, 0, sizeof(struct rocketnet_encryption_mapping_control_t) * (size_t) capacity );
-    memset( map->mapping, 0, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) capacity );
 
     return map;
+}
+
+// the mapping's secrets, and only those: the session keys, the session
+// nonce they were derived with, and the connect token's user data, which
+// came out of the token's private part and can carry the game's secrets
+// (tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
+static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encryption_mapping_t * mapping )
+{
+    sodium_memzero( &mapping->keys, sizeof(mapping->keys) );
+    sodium_memzero( mapping->session_nonce, sizeof(mapping->session_nonce) );
+    sodium_memzero( mapping->user_data, sizeof(mapping->user_data) );
 }
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
-    sodium_memzero( map->mapping, sizeof(struct rocketnet_encryption_mapping_t) * (size_t) map->capacity );
-    sodium_memzero( map->control, sizeof(struct rocketnet_encryption_mapping_control_t) * (size_t) map->capacity );
+    // a removed mapping was wiped by its remove; a live one still holds its
+    // secrets, and those are the only secrets here
+    for ( int i = 0; i < map->capacity; i++ )
+        if ( map->live[i] )
+            rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
     rocketnet_free( map->context, map->bucket_head );
     rocketnet_free( map->context, map->next );
     rocketnet_free( map->context, map->address );
@@ -115,6 +168,9 @@ static int rocketnet_encryption_map_bucket( const struct rocketnet_encryption_ma
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, map->hash_key );
+#if ROCKETNET_TEST_SEAMS
+    map->test_hashes++;
+#endif // #if ROCKETNET_TEST_SEAMS
     uint64_t value;
     memcpy( &value, hash, 8 );
     return (int) ( value % (uint64_t) map->num_buckets );
@@ -140,6 +196,7 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->free_head == -1;
 }
 
+// tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
@@ -164,7 +221,11 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     mapping->control->client_index = -1;
     mapping->control->handshake_deadline = handshake_deadline;
     mapping->send_sequence_handshake = 1;
+#if ROCKETNET_TEST_SEAMS
+    mapping->send_sequence_session = rocketnet_dev_session_sequence_start();    // 1 unless the DEV seam moves it
+#else // #if ROCKETNET_TEST_SEAMS
     mapping->send_sequence_session = 1;
+#endif // #if ROCKETNET_TEST_SEAMS
     mapping->send_fragment_payload_id = 1;
 
     int bucket = rocketnet_encryption_map_bucket( map, address );
@@ -200,6 +261,7 @@ const struct rocketnet_address_t * rocketnet_encryption_map_address( const struc
     return &map->address[index];
 }
 
+// tla/RNDestroyWipe.tla Remove: drops the mapping from live and wipes its secrets.
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );
@@ -227,9 +289,9 @@ void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, i
         (void) found;
     }
 
-    sodium_memzero( &map->mapping[index], sizeof(struct rocketnet_encryption_mapping_t) );
-    memset( &map->control[index], 0, sizeof(struct rocketnet_encryption_mapping_control_t) );
-    memset( &map->address[index], 0, sizeof(struct rocketnet_address_t) );
+    // the secrets are wiped; the rest of the entry is unreachable once it is
+    // not live, and the next add writes it whole
+    rocketnet_encryption_mapping_wipe_secrets( &map->mapping[index] );
     map->live[index] = 0;
 
     map->next[index] = map->free_head;
@@ -259,3 +321,11 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
     rocketnet_assert( map );
     return map->num_mappings;
 }
+
+#if ROCKETNET_TEST_SEAMS
+uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->test_hashes;
+}
+#endif // #if ROCKETNET_TEST_SEAMS

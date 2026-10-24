@@ -123,16 +123,18 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 (precedence default < struct < env, `BUILDING.md:330-332`;
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
-- A one-element list is a pin: that transport or a loud failure, never a fall.
+- A list with at least one name that is not skipped (below) is a strict pin:
+  those transports in that order, or a loud failure, never a fall to `auto`.
 - A server pin of `portable` is available in both development and production.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`
-  (`sdk/rocketnet_config.cpp:899-913`); a list whose every name is skipped
+  (`sdk/rocketnet_config.cpp:947-961`); a list whose every name is skipped
   falls to the endpoint's own `auto` with a warning
-  (`sdk/rocketnet_config.cpp:930-941`).
+  (`sdk/rocketnet_config.cpp:969-995`), so one fleet-wide line deploys
+  unchanged to mixed machines (ruled on the #110 review).
 - An unknown name, an empty element, or `auto` inside a list fails create
-  (`sdk/rocketnet_config.cpp:861-878`).
+  (`sdk/rocketnet_config.cpp:909-926`).
 
 Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet_config.cpp:344-375`), for example
@@ -175,8 +177,7 @@ The degradation is inside the transport, below the ladder (`BUILDING.md:350-353`
 
 `io_uring` (`sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`)
 uses one ring per server, touched only by the main thread, and no I/O worker
-threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). The server separately
-runs one background stats worker. It binds the same
+threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h:33-37`,
 `sdk/rocketnet_server_uring_linux.cpp:667-668`,
@@ -222,9 +223,14 @@ stay in the completion queue for a later call and are counted
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
-  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
-  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB;
-  on kernel 6.8 they create at 64 KiB. These are single-server measurements.
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 16 io_uring 0'`:
+  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
+  (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
+  for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are
+  single-server measurements. The probe uses 4 clients because the ring and the
+  provided buffers are fixed per queue and do not grow with `max_clients`, and
+  the transport's operator memory budget (section 10) refuses a 1000-client
+  16-slot geometry before any ring is created (`tools/check_memlock.sh`).
   On kernel 7.0, io_uring charges locked pages across processes of the same
   user and checks that total against the creating process's limit
   ([kernel accounting](https://github.com/torvalds/linux/blob/v7.0/io_uring/rsrc.c#L36-L52)).
@@ -426,8 +432,16 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
-`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
+`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_client`
 and `xdp_create_fails_part_way_tears_down`.
+
+The nightly 1,000-client xdp load cell needs a far larger guest: the server
+and its 1,000 default-profile clients share one process, and the plan alone is
+16.96 GiB and the measured peak RSS is 26.1 GiB. The step sizes the guest from
+`LOAD_PLAN_ONLY=1 ./bin/load 1000 60` plus a measured per-client run reserve,
+as `(plan + 1000 * 9848630) * 5 / 4 + 1 GiB` (34G today), so the runner needs
+that much `MemAvailable`; a 16G guest is OOM-killed and a 24G guest is killed at the
+shutdown wipe (`docs/LOAD.md`, "The nightly AF_XDP cell's guest memory").
 
 ## 7. Socket errors and ICMP
 
@@ -439,7 +453,7 @@ set `IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp:310`,
 `sdk/rocketnet_server_gso_linux.cpp:276` and
 `sdk/rocketnet_server_uring_linux.cpp:203`, and send with `sendto`,
 `sendmmsg` or `SENDMSG` to an address per packet. So a dead or unreachable
-peer produces no error on a server's receive path on `portable`, `gso` or
+client produces no error on a server's receive path on `portable`, `gso` or
 `io_uring`. A client's portable socket is connected to its one server
 (`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
 the server), so the kernel drops datagrams from any other source and does
@@ -488,8 +502,8 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp:623-624`).
 
-`functional/posix_hard_killed_peer.cpp` and `functional/posix_socket_errors.cpp`
-cover a hard-killed peer and the socket error paths per transport cell.
+`functional/posix_hard_killed_client.cpp` and `functional/posix_socket_errors.cpp`
+cover a hard-killed client and the socket error paths per transport cell.
 
 ## 8. Limits for 1000 clients
 
@@ -511,7 +525,51 @@ under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 `io_uring` needs some, kernel-dependent (section 5). An 8192 KiB limit covers
 the single-server measurements in section 10, but is not a concurrency budget.
 Check the running process's soft and hard limits in `/proc/<pid>/limits`, and
-budget for all io_uring servers running under that user. For systemd services,
+budget for all io_uring servers running under that user.
+
+**The functional suite and the CI runners.** Measured on kernel 7.0.0-38
+(amd-1, 2026-10-23) with `ulimit -l` steps: a single io_uring case passes
+alone at 464 to 656 KiB, and a create and destroy loop needs more, since a
+destroyed ring's pages are released by kernel work after the loop moves on
+(`test_io_uring_transport_posix_server_create_destroy_1000` at 2064 KiB,
+`test_io_uring_transport_posix_server_restart_same_port_100` at 2048 KiB). At
+the fleet runners' 8192 KiB, 26 io_uring cases started at once (each of 13
+cases twice, `./bin/functional --run <case>`) refused 5 at create with
+`Cannot allocate memory`. So `./bin/functional` bounds the io_uring cases it
+runs at once to `floor(RLIMIT_MEMLOCK soft limit / per-case need)`, capped at
+its one job, where the per-case need is 4096 KiB on kernels after 6.8 and
+128 KiB on 6.8 and older (`tests/suite_runner.h`,
+`ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB` overrides it); a limit under one case
+fails the suite before any case runs, naming the limit. A suite cannot see the
+other processes of its user, so every CI runner of the user on a host shares
+the budget: `tools/check_memlock.sh`, which CI runs before the functional
+suite on the Linux legs, prints the limit, the per-server need on this kernel
+and PASS when the limit is at least the user's runners times the per-case
+need, else FAIL. **The runner limit is 1048576 KiB (`LimitMEMLOCK=1G`)** on
+every fleet host whose kernel is after 6.8; a host already higher (the 6.8
+hosts carry about 8 to 16 GiB) keeps its limit. The same 26 cases at once,
+with the fleet's other work of that user on the host, refused 5 at 8192 KiB
+in each of two runs, 6 at 65536 KiB in one of five runs, and none at
+1048576 KiB in three runs (2026-10-23, amd-1; the only failures there were
+the two copies of `test_io_uring_transport_server_probe` taking one port).
+The kernel's count is invisible from user space, so the limit is sized well
+past the formula. Set it on the runner services and on the user manager that
+starts them, since a user service cannot exceed its manager's hard limit:
+
+```
+# /etc/systemd/system/user@<uid>.service.d/memlock.conf
+[Service]
+LimitMEMLOCK=1G
+
+# ~/.config/systemd/user/nova-runner-.service.d/memlock.conf
+# (a prefix drop-in: every nova-runner-*.service of that user)
+[Service]
+LimitMEMLOCK=1G
+```
+
+then `systemctl daemon-reload`, `systemctl --user daemon-reload`, and in a
+maintenance window `systemctl restart user@<uid>.service` (it restarts the
+runners) and confirm `Max locked memory` in `/proc/<runner pid>/limits`. For systemd services,
 `LimitMEMLOCK=` controls this limit. A user service cannot raise its hard limit
 above the user manager's; configure `user@<uid>.service` when that inherited
 limit is too small. See [systemd's resource-limit documentation](https://www.freedesktop.org/software/systemd/man/systemd.exec.html#Process%20Properties).

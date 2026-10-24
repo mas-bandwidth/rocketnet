@@ -8,7 +8,7 @@
 // public C export.
 //
 // The process-wide endpoint table is guarded by one mutex. Each live endpoint
-// allocates its full ROCKETNET_LOOPBACK_QUEUE_PACKETS queue at create and frees
+// allocates its full queue at create (a server's sized from its plan) and frees
 // it at destroy. Send and receive never allocate or grow storage. A datagram
 // arriving at the queue ceiling is dropped and counted; queued datagrams keep
 // their arrival order. Production local play must budget this capacity for
@@ -25,9 +25,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// A client endpoint's queue: the server-wide send staging (2048 at 1000
+// clients). A server endpoint's queue is sized from its plan at create
+// (rocketnet_loopback_server_queue_packets).
 enum
 {
-    ROCKETNET_LOOPBACK_QUEUE_PACKETS = 2048
+    ROCKETNET_LOOPBACK_QUEUE_PACKETS = ROCKETNET_SERVER_SEND_STAGING_PACKETS
 };
 
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_LOOPBACK_QUEUE_PACKETS & ( ROCKETNET_LOOPBACK_QUEUE_PACKETS - 1 ) ) == 0,
@@ -46,6 +49,12 @@ int rocketnet_loopback_endpoints_live();
 // The bytes a queue of this many datagrams allocates, before the allocator
 // header rocketnet_malloc adds.
 size_t rocketnet_loopback_queue_bytes( int packets );
+
+// The datagrams a server endpoint's queue holds for a server of this many
+// clients: one update's receive budget, a power of two, at least
+// ROCKETNET_LOOPBACK_QUEUE_PACKETS. A client endpoint's queue holds
+// ROCKETNET_LOOPBACK_QUEUE_PACKETS.
+int rocketnet_loopback_server_queue_packets( int max_clients );
 
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
 // Deterministic send-lock contention seam; test library only.

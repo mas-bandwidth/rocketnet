@@ -135,6 +135,11 @@ uint32_t rn_channels_enabled_codes( const struct rn_channels_t * channels );
 
 int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t channel );
 
+// The same decision, counted nowhere: what rn_channels_send_check returns,
+// for the room query (rn_endpoint_send_room), which changes no state.
+
+int rn_channels_send_allowed( const struct rn_channels_t * channels, int type, uint32_t channel );
+
 // RNChannel!Enqueue, the ordered half: ordering = ordered_write++, then
 // sequenced_write = 0. The reset runs although no sequenced type is enabled,
 // so enabling one changes no ordered trace (7.1).
@@ -229,7 +234,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 // Every delivery, this record's or one released from a hold, is appended to
 // the region's delivery table in order; `out` is a copy of the first one this
 // call appended. A wire violation sets the channels' sticky error, counts it,
-// and the owner disconnects the peer.
+// and the owner disconnects the other side of the connection.
 //
 // RNChannel actions: OpenPacket (the arrival gate and the hold), DeliverMessage
 // (the coupling, once per delivery).
@@ -242,9 +247,42 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel );
 
+// A block's chunk, for codes 2 and 3 (CHANNELS.md 8): the first chunk seen
+// anchors the block in the held index under (key_channel, key_index); every
+// chunk after it must agree with the anchor on its count, first number and
+// base, or it is MESSAGE_BAD_BLOCK. The chunk is copied to ring + index * F and
+// counted in the anchor, so a block completes when the anchor's count does,
+// with no rescan. Returns the anchor, or NULL with the violation counted or
+// the region exhausted. tla/RNBlocks.tla Receive.
+
+#define RN_HELD_RELIABLE_BLOCK      0xFFFFFFFFu     // code 2's key channel: above every channel index
+
+struct rn_receive_descriptor_t * rn_channels_block_collect( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record,
+                                                            uint32_t key_channel, uint32_t key_index, uint32_t slot,
+                                                            uint32_t first_number, int64_t base_units, uint32_t * out_held );
+
+// Every chunk is in: the first number's descriptor takes the block, and the
+// anchor gives it up. keep leaves it in the held index, complete, for its turn
+// (code 3); otherwise the held entry is erased (code 2 delivers it now).
+
+void rn_channels_block_settle( struct rn_channels_t * channels, uint32_t held, struct rn_receive_descriptor_t * anchor,
+                               uint32_t first_slot, uint32_t count, uint32_t total, uint32_t base_units, bool keep );
+
 // Code 2's case (sdk/rocketnet_channel_reliable.cpp).
 
 int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
+
+#if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
+// Present only in the unit-test library: the receive descriptors a code-2
+// block's chunks visit on their way to one delivery, counted as work done.
+struct rn_block_cost_t
+{
+    uint64_t chunks;
+    uint64_t descriptor_visits;
+};
+void rn_channels_block_cost_reset();
+rn_block_cost_t rn_channels_block_cost_read();
+#endif
 
 // Codes 1 and 4's case (sdk/rocketnet_channel_sequenced.cpp).
 
@@ -325,7 +363,7 @@ struct rn_ordered_t
     // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
     struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
     int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
-    int config_received;                            // the peer's CONFIG was taken and equals this end's (RNEndpoint peerCfg # NoCfg)
+    int config_received;                            // the remote endpoint's CONFIG was taken and equals this end's (RNEndpoint remoteCfg # NoCfg)
 };
 
 // Binds the whole path to one connection's carved region. `config` is the
@@ -378,7 +416,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 
 // tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
-// the peer's CONFIG record, already accepted by layer 3, read and compared
+// the remote endpoint's CONFIG record, already accepted by layer 3, read and compared
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line
 // naming the first differing field and both values and sets the sticky error

@@ -241,7 +241,7 @@ static const struct rocketnet_counters_t * live_matrix_sender_counters( struct l
 
 // A start message the region has no room for ends the connection
 // (MESSAGE_MEMORY_EXHAUSTED), and the region frees a message only when the
-// peer acks it (or, for an unreliable one, writes it), so the sender asks the
+// receiver acks it (or, for an unreliable one, writes it), so the sender asks the
 // library for its room before each start message: a send is admitted only
 // while it fits and leaves at least half of the pool it takes from free, the
 // store class for a message up to one block stride, the send spans above it.
@@ -263,7 +263,13 @@ static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uin
 {
     const int fits = direction == 0 ? rn_message_client_send_fits( m->client, (int) length, free_bytes, pool_bytes, free_messages )
                                     : rn_message_server_send_fits( m->server, 0, (int) length, free_bytes, pool_bytes, free_messages );
-    return fits && *free_bytes >= (uint64_t) length && *free_bytes - length >= *pool_bytes / 2 && *free_messages >= 1;
+    // Keep half the pool free for ordinary traffic, but admit a message larger
+    // than half the pool when it is otherwise empty. A fixed half-pool reserve
+    // would permanently starve the new 1 MiB default's largest messages.
+    if ( !fits || *free_bytes < (uint64_t) length || *pool_bytes < (uint64_t) length || *free_messages < 1 )
+        return 0;
+    const uint64_t reserve = (uint64_t) length > *pool_bytes / 2 ? *pool_bytes - length : *pool_bytes / 2;
+    return *free_bytes - length >= reserve;
 }
 
 // ---------------------------------------------------------------
@@ -939,13 +945,13 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                 {
                     rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_client_send_fits( m->client, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_client_send_fits( m->client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 else
                 {
                     rn_message_server_send_fits( m->server, 0, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_server_send_fits( m->server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
                 printf( "disconnect %s region: store_c0=%llu/%llu store_c1=%llu/%llu spans=%llu/%llu free_messages=%u "
@@ -1107,14 +1113,14 @@ void live_message_matrix_loopback()
     memset( live_matrix_table_received, 0, sizeof( live_matrix_table_received ) );
 
     // the run's config (section 4): the message defaults, so the reliable
-    // maximum is 262,144, with room for every stream at once: a deeper
+    // maximum is 1 MiB, with bounded room shared by every stream: a deeper
     // send region and queue, more packets per update, and receive lists
     // sized so nothing is dropped for want of room
     rocketnet_message_default_config( &m->message_config );
     m->message_config.num_channels = LIVE_MATRIX_CHANNELS;
     m->message_config.send_message_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
-    m->message_config.packets_in_flight = 2048;
+    m->message_config.packets_in_flight = 4096;                 // at least the window below
     m->message_config.packets_per_update = 64;
     m->message_config.unreliable_messages_per_update = 8192;
     m->message_config.max_message_receipts = 4096;
@@ -1123,7 +1129,6 @@ void live_message_matrix_loopback()
 
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;
-    m->live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );

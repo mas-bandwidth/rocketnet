@@ -231,14 +231,14 @@ static void channels_test_vectors()
 
     {
         static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
-                                            0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+                                            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
         struct rocketnet_message_config_body_t body;
         body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
         body.enabled = 0xff;
         body.num_channels = 32;
         body.reliable_messages_in_flight = 1024;
-        body.receive_message_buffer_bytes = 262144;
-        body.max_message_bytes = 262144;
+        body.receive_message_buffer_bytes = 1048576;
+        body.max_message_bytes = 1048576;
         body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         uint8_t config[ROCKETNET_MESSAGE_CONFIG_BYTES];
         rocketnet_message_write_config_body( config, &body );
@@ -628,7 +628,8 @@ static void channels_test_round_trip_and_never_overreads()
             struct rocketnet_message_writer_t writer;
             rocketnet_message_writer_begin( &writer, payload, sizeof( payload ) );
             struct rocketnet_message_record_t record;
-            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, ROCKETNET_MESSAGE_MAX_RECORD_BYTES ) );
+            // at most the receiver's max_message_bytes (check 9)
+            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, limits.max_message_bytes ) );
             for ( size_t i = 0; i < big.size(); i++ )
                 big[i] = pool[( i * 13 + (size_t) iteration ) & 4095];
             record = channels_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, big.data(), (int) big.size() );
@@ -1010,25 +1011,25 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 1,588,480 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 6,574,080 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     check( config.num_channels == 32 );
     check( config.reliable_messages_in_flight == 1024 );
-    check( config.receive_message_buffer_bytes == 262144 );
-    check( config.max_message_bytes == 262144 );
+    check( config.receive_message_buffer_bytes == 1048576 );
+    check( config.max_message_bytes == 1048576 );
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 1606912 );
-    check( layout.region_bytes == 1606912 );
-    check( rocketnet_message_connection_bytes( &config ) == 1606912 );
-    check( rocketnet_message_connection_bytes( NULL ) > 1606912 );
+    check( layout.formula_bytes == 6680832 );
+    check( layout.region_bytes == 6680832 );
+    check( rocketnet_message_connection_bytes( &config ) == 6680832 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6680832 );
 
-    const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 1024, Ru = 16, Rq = 256;
-    check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
+    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
+    check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 56 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVED_BITS] == W / 8 );
@@ -1059,10 +1060,10 @@ static void test_channels_allocator_layout()
     // the store's classes at the defaults, as section 4 records them: 64-aligned
     // thirds of S, each chunk with its u32 link inside its third
 
-    check( layout.store_chunks[RN_STORE_SMALL] == 2019 );
-    check( layout.store_chunks[RN_STORE_MEDIUM] == 516 );
-    check( layout.store_chunks[RN_STORE_LARGE] == 230 );
-    check( layout.store_chunks[RN_STORE_LARGE] >= ( 262144 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    check( layout.store_chunks[RN_STORE_SMALL] == 10591 );
+    check( layout.store_chunks[RN_STORE_MEDIUM] == 2709 );
+    check( layout.store_chunks[RN_STORE_LARGE] == 1209 );
+    check( layout.store_chunks[RN_STORE_LARGE] >= ( 1048576 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
 
     // odd shapes pad, and the padding is all the region adds to the formula
 
@@ -1107,7 +1108,7 @@ static void test_channels_allocator_validation()
         { "window not a power of two",              (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 1000 },
         { "window below its minimum",               (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 32 },
         { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_message_buffer_bytes ), 262144 + 8 },
-        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
+        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), ROCKETNET_MAX_MESSAGE_BYTES + 16 },
         { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_message_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, message_resend_delay_initial_ms ), 3000 },
@@ -1168,7 +1169,7 @@ static void test_channels_allocator_validation()
     config.receive_message_buffer_bytes = 32768;
     config.send_message_buffer_bytes = 65536;
     config.send_queue_messages = 256;
-    config.packets_in_flight = 64;
+    config.packets_in_flight = 256;                 // at least W (the sent-map rule of 14)
     config.unreliable_messages_per_update = 128;
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
@@ -1191,7 +1192,7 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
     config.send_message_buffer_bytes = 12288;
     config.send_queue_messages = 16;
-    config.packets_in_flight = 16;
+    config.packets_in_flight = 64;                  // the window's 64: the sent map holds no fewer than W entries
     config.packets_per_update = 1;
     config.unreliable_messages_per_update = 1;
     config.sequenced_messages_held = 0;
@@ -1202,6 +1203,15 @@ static void test_channels_allocator_validation()
     config.reliable_message_timeout_ms = 1000;
     check( rocketnet_message_validate_config( &config ) == 1 );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
+
+    // the sent map holds at least the window (14): a map one entry short of W
+    // is refused, a map of W entries is taken
+
+    rocketnet_message_default_config( &config );
+    config.packets_in_flight = config.reliable_messages_in_flight - 1;
+    check( rocketnet_message_validate_config( &config ) == 0 );
+    config.packets_in_flight = config.reliable_messages_in_flight;
+    check( rocketnet_message_validate_config( &config ) == 1 );
 
     check( rocketnet_message_validate_config( NULL ) == 1 );       // NULL is the defaults
 }
@@ -1243,11 +1253,11 @@ static void test_channels_allocator_send_store()
     // fill every class to refusal, with nothing else taken; the chunks are
     // distinct, inside the store and 16-aligned
 
-    static uint32_t handles[RN_STORE_NUM_CLASSES][4096];
+    std::vector<uint32_t> handles[RN_STORE_NUM_CLASSES];
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const uint32_t total = rn_send_store_total_chunks( &store, c );
-        check( total <= 4096 );
+        handles[c].resize( total );
         for ( uint32_t i = 0; i < total; i++ )
         {
             handles[c][i] = rn_send_store_alloc( &store, class_bytes[c] );
@@ -1348,8 +1358,8 @@ static void test_channels_allocator_send_store()
 
 // The store's accessors answer the checked free's rule
 // (rocketnet_allocator.cpp, rn_send_store_free_checked): a handle the store did
-// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index at or past
-// the class's chunk count -- reads nothing. A handle the store did issue still
+// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index the store
+// has not issued -- reads nothing. A handle the store did issue still
 // answers its data and its next exactly as before.
 
 static void test_channels_send_store_refuses_bad_handle()
@@ -1374,6 +1384,12 @@ static void test_channels_send_store_refuses_bad_handle()
     memset( valid_data, 0xA5, 100 );
     check( valid_data[0] == 0xA5 && valid_data[99] == 0xA5 );
     check( rn_send_store_chunk_next( &store, valid ) == RN_CHUNK_NONE );
+
+    // an in-range chunk the lazy store has not issued reads nothing
+
+    const uint32_t never_issued = ( (uint32_t) RN_STORE_SMALL << 30 ) | ( rn_send_store_total_chunks( &store, RN_STORE_SMALL ) - 1 );
+    check( rn_send_store_chunk_data( &store, never_issued ) == NULL );
+    check( rn_send_store_chunk_next( &store, never_issued ) == RN_CHUNK_NONE );
 
     // a real chain still walks whole
 
@@ -1463,10 +1479,13 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
     const uint32_t large = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
-    const uint32_t blocks = large / 29;
+    const int block_bytes = 131072; // exhaust the store before the 16 descriptors
+    const uint32_t chunks = ( (uint32_t) block_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t blocks = large / chunks;
+    check( blocks < 16 );
     for ( uint32_t i = 0; i < blocks; i++ )
-        check( rn_region_send_alloc( region, 32768 ) != RN_DESCRIPTOR_NONE );
-    check( rn_region_send_alloc( region, 32768 ) == RN_DESCRIPTOR_NONE );
+        check( rn_region_send_alloc( region, block_bytes ) != RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc( region, block_bytes ) == RN_DESCRIPTOR_NONE );
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
     check( region->descriptors_free == 16 - blocks );
 
@@ -1536,9 +1555,9 @@ static void test_channels_allocator_arena()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
     check( rn_region_ring_span_valid( region, 0, 16 ) );
-    check( rn_region_ring_span_valid( region, 262144 - 1152, 1152 ) );
-    check( !rn_region_ring_span_valid( region, 262144 - 1152, 1153 ) );
-    check( !rn_region_ring_span_valid( region, 262144, 1 ) );
+    check( rn_region_ring_span_valid( region, region->ring_bytes - 1152, 1152 ) );
+    check( !rn_region_ring_span_valid( region, region->ring_bytes - 1152, 1153 ) );
+    check( !rn_region_ring_span_valid( region, region->ring_bytes, 1 ) );
     check( !rn_region_ring_span_valid( region, 8, 16 ) );                  // placements are multiples of 16
     check( !rn_region_ring_span_valid( region, 0xFFFFFFFFFFFFFFF0ULL, 32 ) ); // no wrap past 2^64
 
@@ -1571,10 +1590,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 1606912" ) != NULL );
-    check( strstr( text, "formula bytes 1606912" ) != NULL );
-    check( strstr( text, "1000 connections 1606912000" ) != NULL );
+    check( strstr( text, "56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 6680832" ) != NULL );
+    check( strstr( text, "formula bytes 6680832" ) != NULL );
+    check( strstr( text, "1000 connections 6680832000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1678,7 +1697,9 @@ static void rn_soak_check_accounting( const rn_region_t * region )
 
     uint32_t used[RN_STORE_NUM_CLASSES] = { 0, 0, 0 };
     uint32_t descriptors_used = 0;
-    for ( uint32_t d = 0; d < region->queue; d++ )
+    // a descriptor at or past the lazy pool's watermark was never taken
+    // (tla/RNLazyPool.tla): not in use, and its bytes are not state
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !descriptor->in_use )
@@ -3168,10 +3189,18 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 
 static void test_channels_window_eviction_keeps_numbers_resendable()
 {
+    // The map holds at least W entries (packets_in_flight >= reliable_messages_in_flight,
+    // tla/RNSentMap.tla), so W numbers sent one to a packet never evict one
+    // another. What the map does evict is a packet whose numbers have since been
+    // resent: here 20 numbers are written four times, a resend delay apart,
+    // and the fourth pass evicts the first pass's oldest 16 entries.
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.packets_in_flight = 16; // P = 16, 16P = 256
+    config.reliable_messages_in_flight = 64;
+    config.packets_in_flight = 64;                  // P = W = 64, 16P = 1024
+    config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     config.message_resend_delay_initial_ms = 200;
+    check( rocketnet_message_validate_config( &config ) == 1 );
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3185,7 +3214,6 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rn_window_ack_init( &ack, &send, region, &config );
 
     // Send 20 packets (packet_id 1..20, carrying n = 0..19) at t = 1.00.
-    // Packets 1..4 are evicted when packets 17..20 are committed.
     for ( uint32_t i = 0; i < 20; i++ )
     {
         uint64_t n = 0, p = 0;
@@ -3193,33 +3221,33 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
         check( n == i );
         rn_window_ack_commit_packet( &ack, (uint64_t) ( i + 1 ), &n, 1, 1.00 );
     }
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 0 );
 
-    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 4 );
-    check( rn_window_ack_entries_in_flight( &ack ) == 16 );
-    check( ack.resend_count == 20 );
-
-    // Evicted packet_ids 1..4 are no longer in sent_index.
-    for ( uint64_t id = 1; id <= 4; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.05 ) == 0 );
-
-    // Yet all 20 numbers remain in the resend FIFO and resend on resend delay at t = 1.25!
+    // Nothing is acked. Three resend passes at t = 1.25, 1.50 and 1.75 write
+    // packets 100..159; the third fills the map past 64 and evicts packets 1..16.
     uint64_t next_pkt = 100;
     uint64_t resent[32];
-    const uint32_t count = rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 32 );
-    check( count == 20 );
-    for ( uint32_t i = 0; i < 20; i++ )
-        check( resent[i] == i );
+    const double pass_time[3] = { 1.25, 1.50, 1.75 };
+    for ( int pass = 0; pass < 3; pass++ )
+    {
+        const uint32_t count = rn_window_ack_resend( &ack, pass_time[pass], &next_pkt, resent, 32 );
+        check( count == 20 );
+        for ( uint32_t i = 0; i < 20; i++ )
+            check( resent[i] == i );
+    }
+    check( next_pkt == 160 );
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 16 );
+    check( rn_window_ack_entries_in_flight( &ack ) == 64 );
+    check( ack.resend_count == 20 );
 
-    // Acking the last 16 resent packets (104..119) plus resending the first 4 (0..3)
-    // brings U all the way to 20.
-    for ( uint64_t id = 104; id < 120; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.30 ) == 1 );
-    check( send.U == 0 && ack.resend_count == 4 );
+    // Evicted packet_ids 1..4 are no longer in sent_index: a late ack of one is ignored.
+    for ( uint64_t id = 1; id <= 4; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.80 ) == 0 );
+    check( send.U == 0 );
 
-    const uint32_t count2 = rn_window_ack_resend( &ack, 1.65, &next_pkt, resent, 32 );
-    check( count2 == 4 );
-    for ( uint64_t id = 120; id < 124; id++ )
-        check( rn_window_ack_on_ack( &ack, id, 1.70 ) == 1 );
+    // The numbers stayed resendable: acking the last pass (140..159) brings U to 20.
+    for ( uint64_t id = 140; id < 160; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.80 ) == 1 );
     check( send.U == 20 && send.U_prime == 20 && ack.resend_count == 0 );
 
     rn_arena_destroy( arena );
@@ -3507,7 +3535,7 @@ static void channels_lossy_soak_send_wire_packet( rocketnet_network_simulator_t 
 static void test_channels_window_lossy_soak_leg( float loss_percent )
 {
     const uint32_t W = 64;
-    const uint32_t P = 16;
+    const uint32_t P = 64;                          // at least W (the sent-map rule of 14)
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t B = 8 * F;
     const int total_messages = 140;
@@ -3598,8 +3626,8 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         // 2. Resend due numbers from the resend FIFO, one packet per tick: the
         //    per-update packet limit the writers keep (packets_per_update),
         //    so the packets written in one RTT stay under P and acks land on
-        //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
-        //    back-off an unbounded resend walk at P = 16 evicts every entry
+        //    live sent-map entries (standard/MESSAGES.md m9.1). With no
+        //    back-off an unbounded resend walk at a small P evicts every entry
         //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
         const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 1 );
@@ -3858,7 +3886,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     config.max_message_bytes = (int) ( 3 * F );
     config.send_message_buffer_bytes = 262144;
     config.send_queue_messages = 256;
-    config.packets_in_flight = 16;
+    config.packets_in_flight = 64;                  // at least W (the sent-map rule of 14)
     config.message_resend_delay_min_ms = 20;
     config.message_resend_delay_initial_ms = 50;
     config.message_resend_delay_max_ms = 400;
@@ -3943,9 +3971,9 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
 
         // 3. the product's write: its resend FIFO walk and its new numbers, one
         //    packet per tick, so the packets written in one RTT stay under P and
-        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
-        //    P"). With no back-off (6.4, RNResendTiming) a write of every due
-        //    number at P = 16 evicts each entry before its ack returns, and the
+        //    acks land on live sent-map entries (standard/MESSAGES.md m9.1).
+        //    With no back-off (6.4, RNResendTiming) a write of every due
+        //    number at a small P evicts each entry before its ack returns, and the
         //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
         //    (resent first next update, 6.4).
         const int written = rn_ordered_write( sender, now, pointers, 1 );
@@ -4046,6 +4074,7 @@ struct channels_window_witness_rig_t
 {
     rn_region_t region;
     rn_send_number_t send_numbers[8];
+    double send_first_sends[8];
     rn_sent_packet_t sent_packets[8];
     rn_sent_index_t sent_index[16];
     uint32_t sent_refs[128];
@@ -4068,6 +4097,7 @@ static void channels_window_witness_setup( channels_window_witness_rig_t * rig, 
     rig->region.sent_index_entries = 16;
     rig->region.sent_ref_entries = 128;
     rig->region.send_numbers = rig->send_numbers;
+    rig->region.send_first_sends = rig->send_first_sends;
     rig->region.sent_packets = rig->sent_packets;
     rig->region.sent_index = rig->sent_index;
     rig->region.sent_refs = rig->sent_refs;

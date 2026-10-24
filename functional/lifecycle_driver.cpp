@@ -13,6 +13,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_memory.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif
@@ -84,7 +85,6 @@ void rocketnet_test_lifecycle_transport()
         rocketnet_server_transport_dev_config(&config);
         config.max_clients = 1000;
         config.max_fragmented_messages = 256;
-        config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
         snprintf(config.transport, sizeof(config.transport), "%s", "portable");
         check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));
         check(state.calls == before);

@@ -355,7 +355,7 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--fetch', action='store_true', help='fetch missing pinned inputs over HTTPS')
     args = parser.parse_args()
-    manifest = json.loads((ROOT / 'sodium/manifest.json').read_text())
+    manifest = json.loads((ROOT / 'sodium/manifest.json').read_bytes().decode('utf-8'))
     if args.fetch:
         downloads = {
             **{f'netcode/{name}': (f"https://raw.githubusercontent.com/mas-bandwidth/netcode/{manifest['baseline_commit']}/sodium/{name}", digest)
@@ -371,13 +371,13 @@ def main():
                     raise SystemExit(f"download SHA256 mismatch: {name}")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
-    baseline = {name: checked(args.inputs / 'netcode' / name, digest).decode()
+    baseline = {name: checked(args.inputs / 'netcode' / name, digest).decode('utf-8')
                 for name, digest in manifest['baseline_sha256'].items()}
     archive = checked(args.inputs / f"libsodium-{manifest['upstream_version']}.tar.gz",
                       manifest['archive_sha256'])
     prefix = f"libsodium-{manifest['upstream_version']}/src/libsodium/"
     with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as tar:
-        files = {m.name[len(prefix):]: tar.extractfile(m).read().decode()
+        files = {m.name[len(prefix):]: tar.extractfile(m).read().decode('utf-8')
                  for m in tar.getmembers() if m.isfile() and m.name.startswith(prefix)}
     for path, replacements in UPSTREAM_ADAPTATIONS.items():
         files[path] = adapt(files[path], replacements, path)
@@ -409,7 +409,10 @@ def main():
 
         def inline(match):
             name = match[1]
-            candidates = [posixpath.normpath(str(Path(path).parent / name)), public_root + name]
+            # Archive member names are POSIX on every host; resolve with
+            # posixpath, never the host's Path, whose separator on Windows
+            # is a backslash no member name contains.
+            candidates = [posixpath.normpath(posixpath.join(posixpath.dirname(path), name)), public_root + name]
             target = next((x for x in candidates if x in files), None)
             if target is None:
                 raise SystemExit(f"unresolved include {name} from {path}")

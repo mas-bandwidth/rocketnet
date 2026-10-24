@@ -1,6 +1,6 @@
 ------------------------------- MODULE Link -------------------------------
 (***************************************************************************)
-(* rocketnet: one direction of a UDP path between two peers.               *)
+(* rocketnet: one direction of a UDP path between client and server.       *)
 (*                                                                         *)
 (* The shared lossy link every other rocketnet model drives its            *)
 (* transitions through.  A model instantiates it once per direction:       *)
@@ -199,7 +199,7 @@ Age ==
     /\ UNCHANGED <<sent, pulse>>
 
 \* Everything the link does on its own, for a model that wants it as one
-\* disjunct.  Send and Deliver are the peers' and stay with the model.
+\* disjunct.  Send and Deliver are the endpoints' and stay with the model.
 Environment ==
     \/ \E i \in DOMAIN wire : Drop(i) \/ Duplicate(i) \/ Reorder(i) \/ Delay(i)
     \/ (MaxDelay > 0 /\ Age)

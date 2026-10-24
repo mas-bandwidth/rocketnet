@@ -101,7 +101,8 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     memset( slots->client_id, 0, sizeof(uint64_t) * (size_t) max_clients );
     memset( slots->connected, 0, sizeof(int) * (size_t) max_clients );
     memset( slots->confirmed, 0, sizeof(int) * (size_t) max_clients );
-    memset( slots->user_data, 0, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) max_clients );
+    // Assignment writes the entire user-data record before the slot is read.
+    // Unassigned records have no secret and do not need their pages touched.
 
     for ( int i = 0; i < max_clients; i++ )
         slots->mapping_index[i] = -1;
@@ -119,6 +120,13 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
 void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
 {
     rocketnet_assert( slots );
+    // A released slot was wiped at release. Only connected slots can still
+    // hold token secrets; never write unused records. num_connected is zero
+    // during partial-create cleanup, before connected[] has been initialized.
+    if ( slots->num_connected && slots->user_data && slots->connected )
+        for ( int i = 0; i < slots->max_clients; ++i )
+            if ( slots->connected[i] )
+                sodium_memzero( slots->user_data + (size_t) i * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
     rocketnet_free( slots->context, slots->bucket_head );
     rocketnet_free( slots->context, slots->next );
     rocketnet_free( slots->context, slots->client_id );
@@ -169,6 +177,7 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
     return -1;
 }
 
+// tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -257,6 +266,7 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
     slots->confirmed[client_index] = 1;
 }
 
+// tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
@@ -290,7 +300,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     slots->confirmed[client_index] = 0;
     slots->client_id[client_index] = 0;
     slots->mapping_index[client_index] = -1;
-    memset( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, 0, ROCKETNET_USER_DATA_BYTES );
+    sodium_memzero( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
 
     // the free list takes the index back: pushed on disconnect, popped on
     // the next connect, so the slot is immediately available for reuse and

@@ -16,6 +16,15 @@
 #include <stdio.h>
 #include <string.h>
 
+void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( &client->token, sizeof(client->token) );
+    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
+}
+
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
 {
     rocketnet_assert( client );
@@ -36,11 +45,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
     // Key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( &client->token, sizeof(client->token) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
-    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
-    memset( client, 0, sizeof(*client) );
+    rocketnet_client_protocol_wipe_secrets( client );
+    rocketnet_client_protocol_zero_state( client );
 
     memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
     client->send_rate = send_rate;
@@ -60,6 +66,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
         rocketnet_reassembly_set_reset_connection( reassembly, 0 );
 }
 
+// tla/RNXdpReplay.tla Release: ends the session for this slot.
+// tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
 void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index )
 {
     rocketnet_assert( server );
@@ -73,9 +81,9 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
 
     /*
-        Remove first: rocketnet_encryption_map_remove wipes the session keys,
-        nonce, challenge and token record while the slot still identifies the
-        mapping. The slot identity and user data are cleared only afterwards.
+        Remove first: rocketnet_encryption_map_remove wipes the session keys
+        and nonce, and takes the entry out of live, while the slot still
+        identifies the mapping. The slot identity and user data are cleared only afterwards.
     */
     if ( mapping_index >= 0 && server->encryption_map )
         rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
@@ -83,6 +91,7 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );
 
+    // tla/RNSlots.tla Disconnect: the slot's connection id returns to none.
     if ( server->connection_ids )
         server->connection_ids[client_index] = 0;
 
@@ -111,6 +120,7 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
+    memset( &connection->unreliable_build, 0, sizeof(connection->unreliable_build) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
     memset( connection->hot->cursors, 0,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );

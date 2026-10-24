@@ -99,6 +99,26 @@ Att   == 1..MaxAttempts
 Nonce == 1..MaxNonces
 Id    == 1..MaxIds
 
+(***************************************************************************)
+(* The family race (TRANSPORT.md t11 rule 3; RocketnetClientRace in        *)
+(* sdk/rocketnet_client_transport.cpp).  A token naming both families on a *)
+(* host with both puts both families in flight (RaceFamilies): the         *)
+(* requesting-cookie request goes to every family in flight, the server    *)
+(* answers a cookie only on a family that reaches it (ReachableFamilies:   *)
+(* a broken IPv6 route reaches nothing), and the first valid cookie        *)
+(* commits the attempt to the family it arrived on (cFam).  From then on   *)
+(* the request, with its cookie, goes to that family only, and a cookie    *)
+(* from the other family is dropped.  The default races one family, the   *)
+(* one-address client every other run checks.  CommitBeforeAnswer is the  *)
+(* reversed witness: the client commits while requesting a cookie, before *)
+(* any answer (ClientCommitEarly).  Definitions, replaced with <- in the   *)
+(* race cfgs, so every other run keeps its cfg.                            *)
+(***************************************************************************)
+Families           == {"ipv4", "ipv6"}
+RaceFamilies       == {"ipv4"}
+ReachableFamilies  == {"ipv4"}
+CommitBeforeAnswer == FALSE
+
 NoKeys == [att |-> 0, nonce |-> 0]
 Keys   == [att : Att, nonce : Nonce]
 
@@ -110,11 +130,11 @@ Keys   == [att : Att, nonce : Nonce]
 SessionTypes == {"keepalive", "disconnect"} \cup (IF ServerPayloads THEN {"payload"} ELSE {})
 
 ClientPackets ==
-    [type : {"request"}, att : Att, cookie : BOOLEAN]
+    [type : {"request"}, att : Att, cookie : BOOLEAN, fams : (SUBSET Families) \ {{}}]
     \cup [type : {"response", "keepalive", "disconnect"}, att : Att, nonce : Nonce]
 
 ServerPackets ==
-    [type : {"cookie"}, att : Att]
+    [type : {"cookie"}, att : Att, fam : Families]
     \cup [type : {"challenge"}, att : Att, nonce : Nonce]
     \cup [type : {"denied"}, att : Att, nonce : Nonce \cup {0}]
     \cup [type : SessionTypes, att : Att, nonce : Nonce, id : Id]
@@ -137,6 +157,8 @@ VARIABLES
     cDiscPending,  \* disconnect copies still to send after an app disconnect
     cDiscKeys,     \* the keys those copies are sealed under
     cLostKinds,    \* KindLoss bookkeeping: types whose first send was lost
+    cFam,          \* the family the race committed to; "none" before the first cookie
+    cReqFams,      \* ghost: the families a request carrying a cookie went to, this attempt
     \* the server, as far as the client can see it
     sMap,          \* the encryption mapping for the client's address
     sOthers,       \* slots held by other clients
@@ -148,8 +170,9 @@ VARIABLES
     c2sWire, c2sSent, c2sPulse,
     s2cWire, s2cSent, s2cPulse
 
+raceVars   == <<cFam, cReqFams>>
 clientVars == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
-                cSinceRecv, cAge, cSeen, cReasm, cDiscPending, cDiscKeys, cLostKinds>>
+                cSinceRecv, cAge, cSeen, cReasm, cDiscPending, cDiscKeys, cLostKinds, raceVars>>
 serverVars == <<sMap, sOthers, sReasm, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
 c2sVars    == <<c2sWire, c2sSent, c2sPulse>>
 s2cVars    == <<s2cWire, s2cSent, s2cPulse>>
@@ -212,6 +235,7 @@ Init ==
     /\ cEph = FALSE /\ cIndex = FALSE
     /\ cSinceSend = 0 /\ cSinceRecv = 0 /\ cAge = 0 /\ cSeen = {}
     /\ cDiscPending = 0 /\ cDiscKeys = NoKeys /\ cLostKinds = {} /\ cReasm = FALSE
+    /\ cFam = "none" /\ cReqFams = {}
     /\ sMap = NoMap /\ sOthers = Others /\ sReasm = FALSE
     /\ sDiscPending = 0 /\ sDiscKeys = NoKeys /\ sDiscId = 0 /\ sLostKinds = {}
     /\ C2S!Init /\ S2C!Init
@@ -230,7 +254,21 @@ AppConnect ==
     /\ cReasm' = FALSE
     /\ cSinceSend' = SendInterval        \* "the first update sends immediately"
     /\ cSinceRecv' = 0 /\ cAge' = 0 /\ cSeen' = {}
+    /\ cFam' = "none" /\ cReqFams' = {}  \* every family in flight again
     /\ UNCHANGED <<cDiscPending, cDiscKeys, cLostKinds, serverVars, c2sVars, s2cVars>>
+
+\* the pre-fix retry, only in SpecRetryKeepsAttempt: a connect from a failure
+\* state (cstate < 0) that starts the new attempt but keeps the earlier
+\* attempt's cookie and replay window. Not a disjunct of Next.
+AppConnectKeepsAttempt ==
+    /\ cstate < 0 /\ cAttempt < MaxAttempts
+    /\ cstate' = 1 /\ cAttempt' = cAttempt + 1
+    /\ cKeys' = NoKeys /\ cEph' = TRUE /\ cIndex' = FALSE /\ cReasm' = FALSE
+    /\ cSinceSend' = SendInterval
+    /\ cSinceRecv' = 0 /\ cAge' = 0
+    /\ cFam' = "none" /\ cReqFams' = {}
+    /\ UNCHANGED <<cHasCookie, cSeen, cDiscPending, cDiscKeys, cLostKinds,
+                   serverVars, c2sVars, s2cVars>>
 
 \* rocketnet_client_protocol_disconnect: in 3 or 4 a burst of sealed
 \* disconnects, then state 0 and the keys and ephemeral zeroed; from any
@@ -243,14 +281,18 @@ AppDisconnect ==
          ELSE UNCHANGED <<cDiscPending, cDiscKeys>>
     /\ cstate' = 0 /\ cKeys' = NoKeys /\ cEph' = FALSE /\ cReasm' = FALSE
     /\ UNCHANGED <<cAttempt, cHasCookie, cIndex, cSinceSend, cSinceRecv, cAge, cSeen,
-                   cLostKinds, serverVars, c2sVars, s2cVars>>
+                   cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
 (***************************************************************************)
 (* The client's scheduled send: rocketnet_client_protocol_update, the one   *)
 (* sending rule.  Nothing is sent because a packet arrived.                *)
 (***************************************************************************)
+\* the families the request goes to: every family in flight until the
+\* first cookie commits the attempt, then the committed family alone
+InFlight == IF cFam = "none" THEN RaceFamilies ELSE {cFam}
+
 ClientPacket ==
-    CASE cstate \in {1, 2} -> [type |-> "request", att |-> cAttempt, cookie |-> cHasCookie]
+    CASE cstate \in {1, 2} -> [type |-> "request", att |-> cAttempt, cookie |-> cHasCookie, fams |-> InFlight]
       [] cstate = 3        -> [type |-> "response", att |-> cKeys.att, nonce |-> cKeys.nonce]
       [] cstate = 4        -> [type |-> "keepalive", att |-> cKeys.att, nonce |-> cKeys.nonce]
 
@@ -258,8 +300,18 @@ ClientSend ==
     /\ cstate \in 1..4 /\ cSinceSend = SendInterval
     /\ ClientSendPacket(ClientPacket)
     /\ cSinceSend' = 0
+    /\ cReqFams' = IF cstate \in {1, 2} /\ cHasCookie THEN cReqFams \cup InFlight ELSE cReqFams
     /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceRecv, cAge,
-                   cSeen, cReasm, cDiscPending, cDiscKeys, serverVars, s2cVars>>
+                   cSeen, cReasm, cDiscPending, cDiscKeys, cFam, serverVars, s2cVars>>
+
+\* the reversed witness only (CommitBeforeAnswer): the client commits to a
+\* family of its own choosing in requesting cookie, before any answer
+ClientCommitEarly ==
+    /\ CommitBeforeAnswer /\ cstate = 1 /\ cFam = "none" /\ Cardinality(RaceFamilies) > 1
+    /\ \E f \in RaceFamilies : cFam' = f
+    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
+                   cAge, cSeen, cReasm, cDiscPending, cDiscKeys, cLostKinds, cReqFams,
+                   serverVars, c2sVars, s2cVars>>
 
 \* one copy of the disconnect burst; the burst is never retransmitted
 ClientDiscCopy ==
@@ -267,7 +319,7 @@ ClientDiscCopy ==
     /\ ClientSendPacket([type |-> "disconnect", att |-> cDiscKeys.att, nonce |-> cDiscKeys.nonce])
     /\ cDiscPending' = cDiscPending - 1
     /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
-                   cAge, cSeen, cReasm, cDiscKeys, serverVars, s2cVars>>
+                   cAge, cSeen, cReasm, cDiscKeys, raceVars, serverVars, s2cVars>>
 
 (***************************************************************************)
 (* The client receives.  Every server packet has a receive step in every   *)
@@ -275,7 +327,14 @@ ClientDiscCopy ==
 (* discarded.  No receive sends.                                           *)
 (***************************************************************************)
 clientRecvUnchanged == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cLostKinds,
-                         serverVars, c2sVars>>
+                         cReqFams, serverVars, c2sVars>>
+
+\* the cookie gate on family: before the commit a cookie from any family in
+\* flight is the first answer; after it only the committed family's cookie
+\* is processed (the other family's socket is closed at the commit, and a
+\* late answer that was already received fails the source check and is
+\* counted, sdk/rocketnet_client_transport.cpp)
+CookieFamilyAccepted(p) == p.fam \in InFlight
 
 \* rocketnet_client_process_cookie: states 1 and 2, salt must match; store,
 \* 1 -> 2. The client trusts only the server: the salt is in the clear, so
@@ -283,9 +342,9 @@ clientRecvUnchanged == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cL
 ClientRecvCookie(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
-    /\ IF cstate \in {1, 2} /\ p.att = cAttempt
-         THEN cHasCookie' = TRUE /\ cstate' = 2
-         ELSE UNCHANGED <<cHasCookie, cstate>>
+    /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
+         THEN cHasCookie' = TRUE /\ cstate' = 2 /\ cFam' = p.fam
+         ELSE UNCHANGED <<cHasCookie, cstate, cFam>>
     /\ UNCHANGED <<cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED clientRecvUnchanged
 
@@ -294,9 +353,9 @@ ClientRecvCookie(p) ==
 ClientRecvCookieRefreshes(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
-    /\ IF cstate \in {1, 2} /\ p.att = cAttempt
-         THEN cHasCookie' = TRUE /\ cSinceRecv' = 0 /\ cstate' = 2
-         ELSE UNCHANGED <<cHasCookie, cSinceRecv, cstate>>
+    /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
+         THEN cHasCookie' = TRUE /\ cSinceRecv' = 0 /\ cstate' = 2 /\ cFam' = p.fam
+         ELSE UNCHANGED <<cHasCookie, cSinceRecv, cstate, cFam>>
     /\ UNCHANGED <<cKeys, cEph, cIndex, cSeen, cReasm>>
     /\ UNCHANGED clientRecvUnchanged
 
@@ -311,7 +370,7 @@ ClientRecvChallenge(p) ==
               /\ cstate' = 3 /\ cSeen' = {}
          ELSE UNCHANGED <<cKeys, cEph, cSinceRecv, cstate, cSeen>>
     /\ UNCHANGED <<cHasCookie, cIndex, cReasm>>
-    /\ UNCHANGED clientRecvUnchanged
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* rocketnet_client_process_denied: state 2 (temporary keys from the carried
 \* nonce) or 3 (the held handshake keys). A denial is
@@ -328,7 +387,7 @@ ClientRecvDenied(p) ==
               /\ cEph' = FALSE
          ELSE UNCHANGED <<cstate, cKeys, cEph>>
     /\ UNCHANGED <<cHasCookie, cIndex, cSinceRecv, cSeen, cReasm>>
-    /\ UNCHANGED clientRecvUnchanged
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* the pre-fix denial, only in SpecDeniedKeepsKeys: state -1, and the keys
 \* and the ephemeral stay. Not a disjunct of Next.
@@ -340,7 +399,7 @@ ClientRecvDeniedKeepsKeys(p) ==
          THEN cstate' = -1
          ELSE UNCHANGED cstate
     /\ UNCHANGED <<cHasCookie, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
-    /\ UNCHANGED clientRecvUnchanged
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* rocketnet_client_open_session_packet then the per-type action: states 3
 \* and 4, the session keys, the replay window; an accepted packet refreshes
@@ -364,7 +423,7 @@ ClientRecvSession(p) ==
                    [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
          ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cReasm>>
     /\ UNCHANGED <<cHasCookie, cKeys, cEph>>
-    /\ UNCHANGED clientRecvUnchanged
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* the pre-fix behaviour, kept only as the reversed witness's step: a
 \* payload accepted in sending-connection-response (state 3) as well.
@@ -375,7 +434,7 @@ ClientRecvEarlyPayload(p) ==
     /\ cstate = 3 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
     /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
     /\ UNCHANGED <<cIndex, cstate, cReasm, cHasCookie, cKeys, cEph>>
-    /\ UNCHANGED clientRecvUnchanged
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* a fragment (type 9), modelled at the receive step itself: the sealed
 \* packet's journey is the session packets' journey, so the action is the
@@ -386,7 +445,7 @@ ClientFragmentReceive ==
     /\ cReasm' = TRUE
     /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
                    cSinceRecv, cAge, cSeen, cDiscPending, cDiscKeys, cLostKinds,
-                   serverVars, c2sVars, s2cVars>>
+                   raceVars, serverVars, c2sVars, s2cVars>>
 
 \* the pre-fix behaviour, kept only as the reversed witness's step: a
 \* fragment accepted in sending-connection-response (state 3) as well.
@@ -396,7 +455,7 @@ ClientFragmentReceiveEarly ==
     /\ cReasm' = TRUE
     /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
                    cSinceRecv, cAge, cSeen, cDiscPending, cDiscKeys, cLostKinds,
-                   serverVars, c2sVars, s2cVars>>
+                   raceVars, serverVars, c2sVars, s2cVars>>
 
 ClientRecv(p) ==
     \/ ClientRecvCookie(p) \/ ClientRecvChallenge(p)
@@ -407,7 +466,7 @@ ClientRecv(p) ==
 (* request and the sealed-packet ladder, as far as they answer the client. *)
 (***************************************************************************)
 serverRecvUnchanged == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
-                         cSinceRecv, cAge, cReasm, cDiscPending, cDiscKeys, cLostKinds,
+                         cSinceRecv, cAge, cReasm, cDiscPending, cDiscKeys, cLostKinds, raceVars,
                          sOthers, sDiscPending, sDiscKeys, sDiscId>>
 
 \* a request: a connected address is ignored; a half-open mapping answers
@@ -417,13 +476,15 @@ serverRecvUnchanged == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSin
 ServerRecvRequest(p) ==
     /\ p.type = "request"
     /\ C2S!Deliver(p)
-    /\ CASE ServerMute \/ (sMap.live /\ sMap.slot) ->
+    /\ CASE ServerMute \/ (sMap.live /\ sMap.slot) \/ p.fams \cap ReachableFamilies = {} ->
                 UNCHANGED <<sMap, s2cVars, sLostKinds, cSeen>>
          [] sMap.live ->
                 /\ ServerSendPacket([type |-> "challenge", att |-> sMap.att, nonce |-> sMap.nonce])
                 /\ UNCHANGED <<sMap, cSeen>>
          [] ~p.cookie ->
-                /\ ServerSendPacket([type |-> "cookie", att |-> p.att])
+                \* the stateless answer, on a family the request reached
+                /\ \E f \in p.fams \cap ReachableFamilies :
+                       ServerSendPacket([type |-> "cookie", att |-> p.att, fam |-> f])
                 /\ UNCHANGED <<sMap, cSeen>>
          [] FreeSlots = 0 ->
                 /\ ServerSendPacket([type |-> "denied", att |-> p.att, nonce |-> 0])
@@ -490,7 +551,7 @@ ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSess
 (* The server's own sends.                                                 *)
 (***************************************************************************)
 serverSendUnchanged == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
-                         cSinceRecv, cAge, cReasm, cDiscPending, cDiscKeys, cLostKinds, c2sVars>>
+                         cSinceRecv, cAge, cReasm, cDiscPending, cDiscKeys, cLostKinds, raceVars, c2sVars>>
 
 \* rocketnet_server_protocol_write_keep_alive_if_due: paced off the
 \* keep-alive's own clock until one is acknowledged, off the last send of
@@ -597,7 +658,7 @@ Tick ==
                  /\ sReasm' = IF expired \/ stimed THEN FALSE ELSE sReasm
          ELSE UNCHANGED <<sMap, sReasm>>
     /\ UNCHANGED <<cAttempt, cHasCookie, cKeys, cIndex, cSeen, cDiscPending, cDiscKeys,
-                   cLostKinds, sOthers, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
+                   cLostKinds, raceVars, sOthers, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
@@ -605,6 +666,7 @@ S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars
 Next ==
     \/ AppConnect \/ AppDisconnect
     \/ ClientSend \/ ClientDiscCopy \/ ClientFragmentReceive \/ ServerFragmentReceive
+    \/ ClientCommitEarly
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
     \/ ServerKeepAlive \/ ServerPayload \/ ServerAppDisconnect \/ ServerDiscCopy \/ ServerCrash
@@ -626,7 +688,7 @@ Next ==
 (* link (Reordering = FALSE, MaxDelay = 0, Duplication = FALSE; with       *)
 (* reordering or latency on, Link's Reorder or Delay can hold a copy from  *)
 (* the head forever, and with duplication on the path can keep a wire at   *)
-(* Capacity exactly when the peer must send, where Link blocks the send    *)
+(* Capacity exactly when the sender must send, where Link blocks the send  *)
 (* rather than losing it; TLC produced both, README-ClientConnection.md):  *)
 (*                                                                         *)
 (*   DeliveryFairHead: the head of each wire is delivered (strong          *)
@@ -704,6 +766,10 @@ SpecDeniedKeepsKeys ==
 SpecCookieRefreshes ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvCookieRefreshes(p))]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix retry that keeps the
+\* earlier attempt's cookie and replay window
+SpecRetryKeepsAttempt == Init /\ [][Next \/ AppConnectKeepsAttempt]_vars /\ Fairness
+
 (***************************************************************************)
 (* Safety.                                                                 *)
 (***************************************************************************)
@@ -718,6 +784,7 @@ TypeOK ==
     /\ sMap \in Mapping /\ sOthers \in 0..MaxSlots
     /\ sDiscPending \in 0..DisconnectCopies /\ sDiscKeys \in Keys \cup {NoKeys}
     /\ sDiscId \in Id \cup {0}
+    /\ cFam \in Families \cup {"none"} /\ cReqFams \subseteq Families
     /\ C2S!TypeOK /\ S2C!TypeOK
 
 \* never connected without a completed handshake: connected holds a cookie,
@@ -753,6 +820,19 @@ DisconnectIsTerminal ==
 \* that is not already DISCONNECTED (sdk/rocketnet.h).
 TerminalAbsorbing ==
     [][(cstate < 0 /\ cstate' # cstate) => cstate' \in {0, 1}]_vars
+
+\* a connect from a failure state (-7..-1) is a fresh attempt: a new
+\* attempt index, which is what gives it a fresh salt, a fresh ephemeral and
+\* fresh keys, and nothing of the earlier attempt carried: no keys, no
+\* cookie, no client index, no reassembly, an empty replay window and fresh
+\* timers (rocketnet_client_protocol_connect runs
+\* rocketnet_client_connection_reset first; rocketnet_client_connect accepts
+\* every state at or below DISCONNECTED)
+FreshAttemptFromFailure ==
+    [][(cstate < 0 /\ cstate' = 1) =>
+         /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ ~cHasCookie' /\ cEph'
+         /\ ~cIndex' /\ ~cReasm' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0
+         /\ cFam' = "none" /\ cReqFams' = {}]_vars
 
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
@@ -810,6 +890,14 @@ EphemeralErasedOutsideHandshake == cstate \notin {1, 2} => ~cEph
 \* is the observation, see README-ClientConnection.md
 KeysErasedWhenDown == cstate <= 0 => cKeys = NoKeys
 
+\* the family race: a request carrying a cookie goes to one family only,
+\* never to two in one attempt (the cookie commits the attempt first)
+OneRequestFamily == Cardinality(cReqFams) <= 1
+
+\* the commit follows an answer: only a family that can answer (one the
+\* route reaches) is ever committed to.  CommitBeforeAnswer breaks it.
+CommitsOnAnswer == cFam # "none" => cFam \in ReachableFamilies
+
 (***************************************************************************)
 (* Liveness.                                                               *)
 (***************************************************************************)
@@ -828,7 +916,7 @@ SilentServerTimesOut == (cstate = 1) ~> (cstate = -2)
 CrashedServerTimesOut ==
     (cstate = 4 /\ ~sMap.live /\ sDiscPending = 0) ~> (cstate \in {-5, 0})
 
-\* neither peer is left waiting for a packet nobody will send again: the
+\* neither side is left waiting for a packet nobody will send again: the
 \* server's half-open mapping is answered or dies, and an unacknowledged
 \* slot is acknowledged or released
 ServerNotStranded ==

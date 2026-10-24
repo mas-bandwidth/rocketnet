@@ -21,7 +21,7 @@ naming `<struct>.<member>`.
 |---|---|---|---|---|
 | `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
-| | `token`, `signed_fields`, `server_address` | parsed attempt and peer | RESET | belongs to one attempt |
+| | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
 | | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
@@ -35,7 +35,7 @@ naming `<struct>.<member>`.
 | | current record verdict and sequence | input record | RESET | no record is live after reset |
 | `rocketnet_reassembly_set_t` | `slots[0]`, `newest_completed[0]` | fragment slots and stale watermark | RESET | partial payloads never cross sessions |
 | | geometry, arenas and delivered capacity | fixed allocation | KEEP | client object storage |
-| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new peer starts with no packet history |
+| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
@@ -55,7 +55,7 @@ other session state.
 
 | Struct | Field | What it is | Decision | Reason |
 |---|---|---|---|---|
-| `rocketnet_encryption_mapping_t` | keys, salt, nonce and ephemeral public keys | session cryptography | RESET | mapping removal zeroes the mapping |
+| `rocketnet_encryption_mapping_t` | keys, salt, nonce and ephemeral public keys | session cryptography | RESET | mapping removal wipes secrets and unlinks the entry; assignment initializes the next mapping |
 | | challenge packet and token record | challenge/cookie/token state | RESET | one handshake |
 | | client id, user data | slot identity | RESET | identity cannot leak to reuse |
 | | control pointer | parallel timeout-control allocation | KEEP | map owner retains the indexed allocation |
@@ -81,7 +81,7 @@ other session state.
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |
 
-The server reset removes and zeroes the encryption mapping while the slot still
+The server reset wipes the encryption mapping's secrets and removes it while the slot still
 names it, releases identity and user data, clears the connection id, compacts
 the slot's pending ack rows, resets its ack endpoint, and finally resets only
 that slot's fragment slice. Message storage resets when the message object
@@ -100,4 +100,30 @@ observes the transport connection-id change.
 The client and encryption mapping reset `accepted_session` independently of
 `replay_session`. ACK eligibility never survives connection reuse. The client
 keeps `defer_payload_acks`, because message-layer ACK admission is a transport
-binding policy, not state learned from the previous peer.
+binding policy, not state learned from the previous remote endpoint.
+
+## Reset state without clearing bulk storage
+
+RESET means a fresh logical state, not zeroing every byte of an allocation.
+Reset counters, validity bits, queue heads, generation tags, ownership and
+per-connection configuration state before the next client can use a slot.
+Payload buffers, unused descriptors and ACK history records may retain bytes;
+readers must consult initialized counts or validity bits before reading them,
+and a new record must initialize every field its readers use.
+
+Destroy does not wipe entire client/server blocks, message arenas, packet
+buffers or statistics storage. It wipes keys, tokens and other secret-bearing
+fields. Slot assignment writes the complete connect-token user-data record;
+release wipes that record, and destroy wipes only records still connected.
+Unused slots are never cleared just to free them. A server's next start builds
+fresh state, so destroy does not reset each message slot before freeing it.
+
+`test_connection_reset_dirty_slot_discards_open_aggregate` reuses a server slot
+after an unfinished unreliable aggregate and pending reservation. It keeps
+canaries in the receive ring and send store across reset, checks that no old
+receipts or aggregate survive, and verifies exact single delivery in both
+directions for all eight delivery modes. The existing reset inventory and
+slot-reuse tests cover field decisions, ACK/replay state, partial fragments,
+timeout exits and isolation from other connected slots. The secret-wipe tests
+use a nonzero allocator and inspect memory before freeing it; they verify both
+secret erasure and the absence of whole-arena writes.

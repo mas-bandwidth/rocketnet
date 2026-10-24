@@ -670,7 +670,6 @@ static void run_matrix( opts_t * o )
     st.status = status;
     st.cfg.seed = (uint32_t) o->seed;
     st.cfg.max_message_bytes = 262144;
-    st.cfg.max_payload_bytes = 16384;
     st.streams = (stream_t *) calloc( ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS, sizeof(stream_t) );
     st.cells = (cell_counts_t *) calloc( 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS, sizeof(cell_counts_t) );
     st.rtt = (double *) calloc( 200000, sizeof(double) );
@@ -895,7 +894,7 @@ static void run_matrix( opts_t * o )
             // section 4: the over-maximum send, once per window per mode
             over_maximum( &st, client, window );
 
-            /* drain: stop sending, wait for the peer's progress (bounded) */
+            /* drain: stop sending, wait for the server's progress (bounded) */
             double drain_timeout = 10.0;
             double d0 = rocketnet_time();
             while ( !quit && rocketnet_time() - d0 < drain_timeout )
@@ -941,7 +940,7 @@ static void run_matrix( opts_t * o )
         sample_counters( &st, client, rocketnet_time() - st.run_start );
 
         /* Every in-process cycle uses orderly request/completion shutdown.
-           Silent peer loss needs a separate process-kill experiment. */
+           Silent client loss needs a separate process-kill experiment. */
         const int ended = !aborted ? rocketnet_client_state( client ) : ROCKETNET_CLIENT_STATE_CONNECTED;
         if ( !aborted && ended < 0 )
         {

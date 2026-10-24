@@ -240,6 +240,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
         case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
         case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION: return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
+        case ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO:        return "CONNECT_TOKEN_PORT_ZERO";
         default:
             break;
     }
@@ -549,14 +550,6 @@ void rocketnet_sleep( double seconds )
     const double clamped = rocketnet_sleep_clamp( seconds );
     if ( clamped > 0.0 )
         rocketnet_platform_sleep( clamped );
-}
-
-void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
-{
-    if ( !p )
-        return;
-    sodium_memzero( p, p_size );
-    rocketnet_free( context, p );
 }
 
 // -------------------------------------------------------------

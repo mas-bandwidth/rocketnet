@@ -158,7 +158,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; i-- )
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
@@ -223,13 +223,14 @@ int main( void )
         CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
         CHECK( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, NULL, &status ) == NULL );
         CHECK( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-        // server required_memory runs create's config check, so it refuses
-        // the same defaults with 0
+        // required_memory runs create's config check, so it refuses the same
+        // defaults with 0
+        CHECK( rocketnet_client_required_memory( NULL ) == 0 );
         CHECK( rocketnet_server_required_memory( NULL ) == 0 );
         rocketnet_quiet( false );
 #endif
-        CHECK( rocketnet_client_required_memory( NULL ) > 0 );
 #if ROCKETNET_DEV
+        CHECK( rocketnet_client_required_memory( NULL ) > 0 );
         CHECK( rocketnet_server_required_memory( NULL ) > 0 );
 #endif
 

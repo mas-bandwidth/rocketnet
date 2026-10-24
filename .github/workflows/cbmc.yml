@@ -13,8 +13,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: cbmc-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: cbmc-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read

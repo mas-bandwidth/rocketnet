@@ -31,8 +31,15 @@ extern "C" {
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
 #define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    ROCKETNET_MAX_PACKET_PAYLOAD_BYTES
 
+/// The largest payload the transport sends fragmented and reassembles. Not
+/// a config field: the message layer sends at most one packet's payload per
+/// transport payload (larger messages ride its own reliable fragments), so
+/// this bounds only the transport layer's own callers. It sizes the
+/// reassembly arena, max_clients x slots x this, so it stays at the size the
+/// 1000-client plan was budgeted for.
+#define ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES              16384
+
 /// The defaults the public header states as numbers in each field's comment.
-#define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
 /// The largest message one packet carries, written in place: the payload
@@ -241,9 +248,6 @@ void * rocketnet_malloc( void * context, size_t bytes );
 /** @brief Releases storage returned by rocketnet_malloc. @param context Ignored; the allocation's original context and deallocator are retained. @param p Pointer to release; NULL is a no-op. Do not use p after this call. */
 void rocketnet_free( void * context, void * p );
 
-/** @brief Clears a buffer before releasing it through rocketnet_free. @param context Opaque allocator context; allocation metadata selects the original deallocator. @param p Pointer to release; NULL is a no-op. @param p_size Number of bytes to clear. The caller ensures p_size does not exceed the allocation. */
-void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
-
 // -----------------------------------------
 //                   transport config
 // -----------------------------------------
@@ -316,10 +320,8 @@ const char * rocketnet_client_transport_state_name( int state );
  */
 struct rocketnet_client_transport_config_t
 {
-    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
+    /** @brief Per-title 4-byte packet filter; clients with a different value cannot connect. */
     uint8_t packet_filter[4];
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -480,8 +482,8 @@ void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t
  */
 int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity );
 
-// the configured maximum payload this transport sends and reassembles --
-// the config's max_payload_bytes after defaulting -- so a caller can size
+// the maximum payload this transport sends and reassembles --
+// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES -- so a caller can size
 // its receive buffers without carrying the config around
 
 // a NULL client_transport is a counted no-op that returns 0.
@@ -716,10 +718,10 @@ struct rocketnet_address_t
 // transport and refused loudly at create, never clamped: the xdp transport takes any
 // count from 1, the gso transport refuses past 32.
 //
-// The fragmentation shape rides max_payload_bytes and
+// The fragmentation shape rides ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES and
 // max_fragmented_messages: the largest payload this server sends and
-// reassembles, and the per-client reassembly slot count. zero means the
-// defaults. budget arithmetic, all spent once at create, approximately --
+// reassembles, and the per-client reassembly slot count. zero slots means
+// the default. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
 // (max payload + 1413 staging) per the standard; the delivered mirror of
 // slots x max payload per client -- the per-update home of completed
@@ -745,7 +747,7 @@ struct rocketnet_server_transport_config_t
     uint64_t protocol_id;
     /** @brief Maximum simultaneous clients; 1 through ROCKETNET_MAX_CLIENTS, default 1000. */
     int max_clients;                                // 1 .. ROCKETNET_MAX_CLIENTS; default 1000
-    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
+    /** @brief Per-title 4-byte packet filter; clients with a different value cannot connect. */
     uint8_t packet_filter[4];
     /** @brief 32-byte key used to verify connect-token signatures. */
     uint8_t backend_public_key[32];
@@ -757,8 +759,6 @@ struct rocketnet_server_transport_config_t
     int num_xdp_queues;                             // 1 .. 1024; 0 is the transport default
     /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
-    /** @brief Largest sent and reassembled payload in bytes; zero selects the default, otherwise ROCKETNET_MAX_PACKET_PAYLOAD_BYTES through 361728. */
-    int max_payload_bytes;                          // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; 0 is ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES
     /** @brief Concurrent fragmented payloads per client; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
     /** @brief Ordered transport candidate list; defaults to auto. */
@@ -901,7 +901,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
  * @param status [out] Optional status destination; receives OK or the specific refusal code.
- * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. The ACK stats worker is created before success is returned; its allocation or thread refusal has no synchronous update fallback. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_PRODUCTION, TEST_PACKET_FILTER_IN_PRODUCTION, INVALID_TRANSPORT_LIST, INVALID_ADDRESS, TRANSPORT_PORT_ZERO_UNSUPPORTED, TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. TRANSPORT_FAMILIES_UNSUPPORTED is the status when every candidate that opened refused because it cannot serve both named families. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate; nothing the create allocated stays live. Correct the reported cause before retrying. Every failure logs an error line except two: when a simulated loss, latency, jitter, or duplicate setting is non-zero, a failed link-simulator allocation (OUT_OF_MEMORY) or a failed link-simulator mutex creation (MUTEX_CREATE_FAILED) returns without logging.
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -1288,8 +1288,8 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
 // a NULL server_transport is a counted no-op that returns NULL.
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
-// the configured maximum payload this transport sends and reassembles --
-// the config's max_payload_bytes after defaulting -- so a caller can size
+// the maximum payload this transport sends and reassembles --
+// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES -- so a caller can size
 // the buffers it copies payloads into
 
 // a NULL server_transport is a counted no-op that returns 0.
@@ -1398,24 +1398,6 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
-#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS) || defined(ROCKETNET_STATS_MANUAL_TEST_HOOKS)
-// Deterministic internal seam: step computes one submitted immutable batch of
-// an inline stats worker; only a later update publishes. A build with
-// ROCKETNET_STATS_MANUAL_TEST_HOOKS creates every server's worker inline.
-bool rocketnet_server_transport_stats_worker_step_for_test( struct rocketnet_server_transport_t * server_transport );
-bool rocketnet_server_transport_stats_worker_status_for_test( const struct rocketnet_server_transport_t * server_transport,
-    uint64_t * submitted, uint64_t * completed, uint64_t * published, uint64_t * busy_skips );
-#endif
-
-#if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
-struct rocketnet_ack_endpoint_t;
-// The next create uses an inline stats worker (true) or the native one (false).
-void rocketnet_server_transport_set_stats_worker_manual_for_test( bool enabled );
-void rocketnet_server_transport_fail_stats_worker_thread_for_test( void );
-struct rocketnet_ack_endpoint_t * rocketnet_server_transport_stats_endpoint_for_test(
-    struct rocketnet_server_transport_t * server_transport, int client_index );
-#endif
-
 // -----------------------------------------
 //                         frame sync
 // -----------------------------------------
@@ -1504,7 +1486,7 @@ struct rocketnet_message_receipt_t
 // rules of docs/CHANNELS.md section 14, and refuses, never clamps.
 
 /** @brief Memory, wire, and timing settings for the message layer.
- * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between peers. The caller owns this value; validation and sizing do not allocate.
+ * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between client and server. The caller owns this value; validation and sizing do not allocate.
  */
 struct rocketnet_message_config_t
 {
@@ -1512,16 +1494,16 @@ struct rocketnet_message_config_t
     int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
     int reliable_messages_in_flight;                // WIRE, power of two; 64 .. 1 << 20; default 1024
-    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
-    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 262144
-    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
-    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
+    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 1048576. */
+    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 1048576
+    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 1048576. */
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 1048576
+    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 4194304. */
+    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 4194304
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
-    /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
-    int packets_in_flight;              // 16 .. 1 << 16; default 256
+    /** @brief Tracked unacknowledged packets; 64 through 1<<20 and at least reliable_messages_in_flight, default 1024. */
+    int packets_in_flight;              // 64 .. 1 << 20, >= reliable_messages_in_flight; default 1024
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
     int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
@@ -1642,7 +1624,7 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, and ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 // a type a caller's own mask leaves out is refused (counted
 // MESSAGE_SEND_TYPE_NOT_ENABLED). Plain
-// UNRELIABLE is one record in one packet, up to 1411 bytes. UNRELIABLE_SEQUENCED
+// UNRELIABLE uses records packed together in a frame, up to 1411 bytes per message. UNRELIABLE_SEQUENCED
 // can use the transport's fragments for one larger unreliable RECORDS payload.
 // Receipt-bearing UNRELIABLE uses the code-0 wire form at single-packet size and promotes a larger
 // message to a reliable code-2 block with an ACKED-only receipt. Both are

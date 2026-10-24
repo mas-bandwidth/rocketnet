@@ -13,6 +13,9 @@ foreach( example_source IN LISTS ROCKETNET_EXAMPLE_SOURCES )
     endif()
 endforeach()
 
+# The soak allocator telemetry uses a native lock across callback threads.
+target_link_libraries( example_soak PRIVATE Threads::Threads )
+
 # backend_check_token runs the library's own token checks on a token one of
 # the backends in examples/backend/ minted (tools/run_backend_examples.py). It
 # is a test of the backends, not an example, so it may use the library's

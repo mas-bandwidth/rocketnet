@@ -12,8 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: tlc-records-${{ github.ref }}
-  cancel-in-progress: true
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: tlc-records-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   stale:
@@ -26,7 +30,7 @@ jobs:
           persist-credentials: false
       - name: Model coverage rows are true
         shell: bash
-        run: python3 tools/check_tla_coverage.py --all
+        run: python3 tools/check_tla_coverage.py --all --actions-strict
       - name: Coverage checker tests pass
         shell: bash
         run: python3 tools/test_check_tla_coverage.py

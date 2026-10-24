@@ -469,7 +469,7 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
     return num_cpus > 0 && num_cpus <= ROCKETNET_XDP_STATS_MAX_CPUS;
 }
 
-// REPLY MAC: the destination MAC address of a reply frame. A peer is learned
+// REPLY MAC: the destination MAC address of a reply frame. A client's MAC is learned
 // from the source MAC of a packet the transport accepted for a connection
 // (it opened under the connection's keys), never from a packet it dropped or
 // answered without authenticating; a reply goes to the newest MAC learned for
@@ -489,8 +489,17 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 // replaces the entry learned longest ago; a forget leaves a tombstone. No
 // allocation, no clock and no lock: its owner serialises writes.
 
-#define ROCKETNET_XDP_REPLY_MAC_ENTRIES     4096
+// The table holds a learned MAC for every client at most a quarter full:
+// four slots per client, rounded up to a power of two for the index mask
+// (4096 at 1000 clients).
+
+#define ROCKETNET_XDP_REPLY_MAC_ENTRIES     ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_MAX_CLIENTS )
 #define ROCKETNET_XDP_REPLY_MAC_PROBES      16
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_REPLY_MAC_ENTRIES >= 4 * ROCKETNET_MAX_CLIENTS,
+                         "the reply MAC table holds every client's MAC at most a quarter full" );
+ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 ) ) == 0,
+                         "the reply MAC table size is a power of two for its index mask" );
 
 #define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
 #define ROCKETNET_XDP_REPLY_MAC_LIVE        1

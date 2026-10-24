@@ -65,6 +65,13 @@ struct rn_packet_item_t
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: a resend, counted and backed off by the caller
     uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
+
+    // The builder's own links, written by rn_packet_builder_write at the start
+    // of every call before it reads them, so the caller never sets them: the
+    // caller owns this memory and the builder owns none (R2).
+    int32_t next_in_channel;        // the next writable item of this item's channel and class, in the caller's order, or -1
+    int32_t next_head;              // the next channel head of this item's class, or -1
+    uint8_t channel_level;          // the best priority from this item to its channel's last writable item of the class: the boost (9.2)
 };
 
 struct rn_packet_builder_t
@@ -80,6 +87,7 @@ struct rn_packet_builder_t
     uint32_t round_robin;                       // the channel the last item was taken from
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
+    uint32_t visits;                            // items the last call looked at (ROCKETNET_TEST_SEAMS builds count it, others leave it 0)
 
     uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (the level weights)
     uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
@@ -122,7 +130,9 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 // class, so a priority boosts the whole channel and never reorders it (17.3
 // item 3). The caller lists each channel's items in the order the
 // application queued them. An item whose priority is not 0 to 3 is never
-// taken. Several small records pack per packet (9.3). A record that does not
+// taken. Taking items is linear in the plan: one pass links each channel's
+// items of a class through the items' own link fields, and each take looks at
+// one head per channel. Several small records pack per packet (9.3). A record that does not
 // fit ends the packet; it is never split. When every item is taken the clocks
 // reset to their seeds.
 //

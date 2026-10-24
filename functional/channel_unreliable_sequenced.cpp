@@ -94,7 +94,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
         write[i] = (uint8_t) ( i * 37 + 11 );
     sequenced_functional_check( rocketnet_message_client_finish( client, message_bytes ) != 0, "large client finish" );
     uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
-                                                         ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+                                                         ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
     if ( promoted )
         rocketnet_message_client_abort( client );

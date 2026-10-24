@@ -63,7 +63,7 @@ struct rn_message_object_t;
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
     X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
-    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
+    X( KEEP, client_stats ) X( KEEP, stats_frame_time ) X( KEEP, stats_frame_number ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
     X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
@@ -93,7 +93,7 @@ struct rn_message_object_t;
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
 
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( KEEP, hot ) X( KEEP, disconnect_reason )
+    X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
     X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
@@ -119,6 +119,10 @@ struct rn_message_object_t;
 */
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client );
+// the client protocol's secrets, and only those: the session keys, the
+// token (its private connect data holds the keys), the ephemeral secret and
+// the session nonce. Every terminal state and the transport's destroy run it.
+void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client );
 void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * client );
 void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index );
 

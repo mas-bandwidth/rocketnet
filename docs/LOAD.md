@@ -12,10 +12,11 @@ at 1000 clients each client updates at 10 Hz; for 1–100 clients each client
 updates at 100 Hz, with intermediate rates determined by the number of slices
 per round. `LOAD_PROFILE=default` (the default)
 keeps the SDK's default message and transport sizing. `LOAD_PROFILE=light`
-uses the same traffic and checks with message and transport capacities sized
-for this harness's 32-byte payloads, eight reliability cases and one-fragment
-messages. It does not change public defaults or make a general memory promise
-for other applications.
+uses the same traffic and checks with the SDK's public light-client profile,
+`rocketnet_server_light_config` and `rocketnet_client_light_config`, sized for
+one `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` payload (one 1,500-byte MTU packet) per
+100 ms in each direction at 10 Hz. It does not change public defaults; the
+`default` profile remains the stock acceptance.
 
 ## Low-bandwidth population ladder
 
@@ -72,6 +73,35 @@ source head, OS, transport and population, but cannot verify that the reserve
 was measured correctly or that the host can supply that capacity. The plan and
 reserve are planning inputs, not machine-verifiable proof of total runtime
 memory or link capacity.
+
+### The nightly AF_XDP cell's guest memory
+
+The nightly many-client step (`.github/workflows/nightly-soak.yml`) runs the
+xdp cell as root inside a virtme-ng guest, with the server and all 1,000
+default-profile clients in one `bin/load` process. That guest must hold the
+whole run, not just the create-only plan. At `830c5437` the plan reports
+`total_public_required_bytes=18214470336` (16.96 GiB: 13.32 GB server, 4.90 MB
+per client), and the xdp server's start adds about 1.87 GB of allocator memory
+and 1.88 GB of UMEM on top. A fixed 16G guest is OOM-killed (exit 137,
+anon-rss 15.9 GB) and a 24G guest is killed at the shutdown wipe. The step now
+runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first
+and sizes the guest from the plan plus a measured run reserve: `need = plan + 1000 * reserve_per_client_bytes`, and the guest is `need * 5 / 4 + 1 GiB` (the
+1 GiB is the guest kernel's own), rounded up to whole GiB. It prints `LOAD cell=xdp FAIL runner has ... MiB available` when the runner's `MemAvailable` is
+below that. The guest's load exit status, peak RSS, `/proc/meminfo` totals and
+`dmesg | tail -n 50` go into `vm.log` on every run, so an early end names its
+cause, and the step prints `guest_peak_rss_kib` beside `need_bytes`, with a
+WARN line when the peak passes the need.
+
+The reserve was measured at `a40897f3` in an unconstrained 48G guest on a
+121 GB runner: peak RSS 27397952 kB at 1,000 clients and 13703716 kB at 500,
+against plans of 18214470336 and 9108290368 bytes. That is 9841033 and 9848630
+bytes of reserve per client; the step uses the larger. The peak is 1.54 times
+the plan at both counts, so an earlier `plan * 3 / 2 + 2 GiB` sizing sat below
+the peak in its ratio term and passed only on its 2 GiB constant (28G guest,
+27.4 GiB `MemTotal`, 1.3 GiB over the 26.1 GiB peak). For the default profile
+the need is 28063100336 bytes (26.1 GiB) and the guest is 34G, about 7.9 GiB
+above the measured peak. A profile change, or a WARN line, means the reserve
+must be re-measured.
 
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
@@ -136,17 +166,24 @@ with the actual host link capacity separately. The fixed-rate workload has
 `timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
 share rate, population, transport and measurement scope.
 
-The light profile sets eight channels, a 64-message in-flight reliability
-window, 4096-byte receive buffers, a 1415-byte maximum message, 12288-byte send
-buffers, 16-message send queues, 16 packets in flight, and one 1416-byte
-transport fragment slot. Its 64-kbps per-client send budget is 25 times the
-2.56-kbps payload-only rate per direction at 1000 clients. At 1–100 clients,
-the 100-Hz schedule is 25.6 kbps of payload, leaving 2.5 times that rate.
-Intermediate populations follow the slice cadence. These ratios are
-configuration calculations, not measured wire usage. The summary reports each endpoint's
+The light profile is the SDK's public light-client geometry: eight channels, a
+256-message in-flight reliability window, a 142,400-byte receive buffer, a
+1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message, a
+141,500-byte send buffer, a 128-message send queue, 256 packets in flight, 4
+packets and 4 unreliable messages per update, 100 sequenced messages held, 128
+receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
+256-kbps per-client send budget is 2.13 times the roughly 120-kbps wire rate
+of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
+120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
+`max_clients` 1000 the server's `rocketnet_server_required_memory` is
+955,710,336 bytes (955,710 bytes per slot on average), and
+`rocketnet_client_required_memory` for the client profile is 3,063,168 bytes.
+These are configuration calculations and measured create-block sizes, not
+measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` public block size. Those figures exclude the
 transport allocations made at connect/start, native resources and process
-overhead, so they are not whole-session memory estimates.
+overhead, so they are not whole-session memory estimates. The harness's own
+payloads are 32 bytes, so its wire rates stay far below the profile's budget.
 
 The summary also reports per-call Release timing samples during the traffic and
 drain window. Each public frame API call is bracketed by the monotonic clock;

@@ -28,7 +28,7 @@ static const int PORTABLE_RX_BANKS = 3;
 // server needs.
 static int portable_rx_capacity( const rocketnet_server_transport_config_t * config )
 {
-    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * max_clients;
 }
 static uint64_t portable_rx_storage_bytes( int capacity )
@@ -212,9 +212,10 @@ static void portable_tx_worker( void * arg )
 // read, the copies and the producer reset run outside it, and main only ever
 // tries the mutex.
 
-// RNPortableRx WLock and WSwap: true when the producer is empty or was
-// queued for a free bank. Without a free bank the worker keeps its full
-// producer (HoldOnFull) and stops reading the socket.
+// tla/RNPortableRx.tla WPublishEmpty, WLock, WSwap and WReset: true when
+// the producer is empty or was queued for a free bank. Without a free bank
+// the worker keeps its full producer (HoldOnFull) and stops reading the
+// socket.
 static bool portable_rx_publish( portable_server_t * server )
 {
     if ( server->rx_bank[server->rx_producer].count == 0 ) return true;
@@ -235,10 +236,10 @@ static bool portable_rx_publish( portable_server_t * server )
     return true;
 }
 
-// RNPortableRx MTry, MSwap and MWake: true while main owns a consumer with
-// datagrams left to copy. A completely copied consumer is returned and the
-// oldest ready bank taken under one try; a failed try keeps the consumer and
-// its cursor. Main wakes the worker only when it returns a bank to an empty
+// tla/RNPortableRx.tla MTry, MTryFail, MSwap and MWake: true while main
+// owns a consumer with datagrams left to copy. A completely copied consumer
+// is returned and the oldest ready bank taken under one try; a failed try
+// keeps the consumer and its cursor and ends the call. Main wakes the worker only when it returns a bank to an empty
 // free FIFO: only then can the worker be waiting for one (WakeOnReturn).
 static bool portable_rx_acquire( portable_server_t * server )
 {
@@ -275,7 +276,7 @@ enum portable_rx_step_t
     PORTABLE_RX_WAIT_IDLE,
 };
 
-// One pass of the RX worker loop, without its waits (RNPortableRx WTop,
+// One pass of the RX worker loop, without its waits (tla/RNPortableRx.tla WTop,
 // publish and WRead). Quit is read at the top of every pass, so a stop that
 // sets quit before its wake (QuitBeforeWake) always ends the worker.
 static portable_rx_step_t portable_rx_step( portable_server_t * server )
@@ -297,6 +298,9 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 }
 
 #if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+// tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
+// alone when every bank is full, and on the wake or socket readability
+// after an empty read.
 static void portable_rx_worker( void * arg )
 {
     portable_server_t * server = (portable_server_t*) arg;
@@ -347,10 +351,12 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->mutex.ok ) rocketnet_platform_mutex_destroy( &server->mutex );
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
+    // the receive banks hold datagrams, never a secret: freed as they are,
+    // so destroy touches no bank page the run did not (tla/RNDestroyWipe.tla)
     if ( server->rx_storage )
-        rocketnet_clear_and_free( context, server->rx_storage, (size_t) portable_rx_storage_bytes( server->rx_capacity ) );
+        rocketnet_free( context, server->rx_storage );
     server->~portable_server_t();
-    rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
+    rocketnet_free( context, server );
 }
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -462,6 +468,9 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
     }
     portable_tx_publish( server );
 }
+// tla/RNPortableRx.tla MCall, MCopy and MEnd: a call copies datagrams from
+// the consumer at its cursor within the caller's count and returns when the
+// count is spent or no consumer is left; a stopping server returns nothing.
 static int portable_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -489,6 +498,8 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
     }
     return received;
 }
+// tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
+// the RX wake (QuitBeforeWake).
 static void portable_stop( void * transport )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -506,6 +517,8 @@ static void portable_stop( void * transport )
     rocketnet_platform_wake_set( server->wake );
     if ( server->rx_wake ) rocketnet_platform_wake_set( server->rx_wake );
 }
+// tla/RNPortableRx.tla MPollStopped: main polls between frames, and nothing
+// changes until the workers have exited.
 static bool portable_stopped( void * transport )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -950,6 +963,7 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_se
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
+#include "rocketnet_client_gso.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif // #if ROCKETNET_XDP
@@ -991,7 +1005,8 @@ static const rocketnet_server_transport_io_operations_t gso_operations =
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL
 };
-extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_operations, NULL };
+// the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
+extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_operations, &rocketnet_client_gso_operations };
 
 #include "rocketnet_server_uring.h"
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // sdk/rocketnet_server_uring_linux.cpp:1223
@@ -1069,9 +1084,9 @@ static void xdp_replay_commit( void * transport )
 {
     rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) transport );
 }
-static void xdp_peer_accepted( void * transport, int view_index )
+static void xdp_client_accepted( void * transport, int view_index )
 {
-    rocketnet_server_socket_peer_accepted( (rocketnet_server_socket_t*) transport, view_index );
+    rocketnet_server_socket_client_accepted( (rocketnet_server_socket_t*) transport, view_index );
 }
 static uint64_t xdp_send_failures( void * transport )
 {
@@ -1082,7 +1097,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL
 };
 #else
 // Keep a refusing rung: removing this known row would make an all-skipped
@@ -1112,9 +1127,10 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
-static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
+static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
-    return rocketnet_server_iocp_create( context, bind, config->transport->num_xdp_queues );
+    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS );
 }
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t*) transport ); }
 static void iocp_stop( void * transport )
@@ -1235,9 +1251,9 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if (strcmp(transport, "iocp") == 0)
     {
-        const int workers = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes(workers);
-        plan.worker_threads = workers + 1; plan.sockets = 1;
+        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker.
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes(ROCKETNET_IOCP_DEFAULT_WORKERS);
+        plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1; plan.sockets = 1;
     }
     else if (strcmp(transport, "rio") == 0)
     {

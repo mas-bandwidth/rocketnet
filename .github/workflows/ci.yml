@@ -102,8 +102,12 @@ on:
 # a superseded commit's run is not a gate on anything -- the gate is the head
 # of the branch -- so it yields its runners to the run that replaced it
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Every job sets timeout-minutes: 3, the per-commit law above (one to two
 # minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
@@ -166,6 +170,12 @@ jobs:
     steps:
 
       - uses: actions/checkout@v4
+
+      # One SDK source list for the library and every vendoring application;
+      # first, so a later red step cannot skip it.
+      - name: Every SDK source is in cmake/RocketnetSources.cmake
+        if: contains(matrix.leg, 'a')
+        run: python3 tools/check_sdk_sources.py
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -242,8 +252,12 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test_sodium
 
+      # The committed sodium pair from its SHA-256 pinned inputs, byte for
+      # byte, on the Linux Release (b) leg and the macOS Release leg; the
+      # Windows (b) leg runs the same step (sodium/README.md, "Reproducing
+      # the vendored inputs").
       - name: Reproduce the committed sodium pair
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
@@ -255,13 +269,21 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         if: runner.os == 'macOS'
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
+            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             cmake --build build --target "fuzz_replay_${harness}" --parallel 2
           done
           ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
           ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
           ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
           ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+          ./bin/fuzz_replay_rocketnet_fuzz_token_private fuzz/corpus_token_private/*
+          ./bin/fuzz_replay_rocketnet_fuzz_round_trip fuzz/corpus_round_trip/*
+          ./bin/fuzz_replay_rocketnet_fuzz_config fuzz/corpus_config/*
+          ./bin/fuzz_replay_rocketnet_fuzz_server_transport fuzz/corpus_server_transport/*
+          ./bin/fuzz_replay_rocketnet_fuzz_client_transport fuzz/corpus_client_transport/*
+          ./bin/fuzz_replay_rocketnet_fuzz_session fuzz/corpus_session/*
 
       - name: Run unit tests
         if: contains(matrix.leg, 'b')
@@ -284,6 +306,14 @@ jobs:
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
+
+      # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
+      # on the host at once: the check prints the limit, the per-server need
+      # on this kernel and PASS or FAIL before the suite runs
+      # (tools/check_memlock.sh, docs/LINUX.md section 8).
+      - name: Locked-memory limit covers the io_uring cases
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: bash tools/check_memlock.sh
 
       - name: Run functional suite (auto ladder — the fall, on Linux)
         if: contains(matrix.leg, 'b')
@@ -323,6 +353,8 @@ jobs:
           TRANSPORT_MATRIX_LINUX: |
             portable portable
             gso portable
+            gso gso
+            portable gso
             io_uring portable
             loopback loopback
             xdp portable
@@ -428,6 +460,20 @@ jobs:
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
 
+      # tools/check_hardening.py picks the format by magic and prints one PASS/FAIL
+      # line per required property (ELF: BIND_NOW, GNU_RELRO, __stack_chk_fail,
+      # GNU_STACK not executable; Mach-O: ___stack_chk_fail and ___stack_chk_guard
+      # imported, no writable+executable segment) and INFO for CET, then one verdict
+      # line. It reads the Release library the Makefile built (well under a second).
+      - name: Check release hardening
+        if: contains(matrix.leg, 'a') && matrix.build_type == 'Release'
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            python3 tools/check_hardening.py bin/librocketnet.dylib
+          else
+            python3 tools/check_hardening.py bin/librocketnet.so
+          fi
+
       - name: Check every driver row has transport matrix cells
         if: runner.os == 'Linux'
         run: python3 tools/check_transport_matrix.py
@@ -441,9 +487,24 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: python3 tools/check_platform_policy.py
 
+      # tools/check_client_server_words.py exits 1 when a tracked file's path
+      # or text names a client-to-client party outside its listed exceptions
+      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
+      # hold the red controls. It reads files only, so one leg per Linux row
+      # runs it.
+      - name: Check client/server words
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/test_check_client_server_words.py
+          python3 tools/check_client_server_words.py
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
+
+      - name: Test the hardening checker's verdicts
+        if: runner.os == 'Linux'
+        run: python3 tools/test_check_hardening.py
 
       - name: Test the MSan gate's verdicts
         if: runner.os == 'Linux'
@@ -699,6 +760,12 @@ jobs:
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
+      # The same reproduction as the Linux and macOS Release legs, from a
+      # Windows checkout (sodium/README.md, "Reproducing the vendored inputs").
+      - name: Reproduce the committed sodium pair
+        if: matrix.leg == 'b'
+        run: python tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
+
       # leg (a) runs the suites on the default development library
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
       # (ROCKETNET_DEV=OFF) as a consumer sees it.
@@ -717,13 +784,21 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
+            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
           done
           ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_token_private.exe fuzz/corpus_token_private/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_round_trip.exe fuzz/corpus_round_trip/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_config.exe fuzz/corpus_config/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_server_transport.exe fuzz/corpus_server_transport/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_client_transport.exe fuzz/corpus_client_transport/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_session.exe fuzz/corpus_session/*
 
       # ---- leg (a): the suite as the runner executes it ----
 
@@ -766,6 +841,13 @@ jobs:
       - name: Check production library boundary
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
+
+      # DYNAMIC_BASE, NX_COMPAT, HIGH_ENTROPY_VA and a non-zero /GS SecurityCookie,
+      # read from the PE with struct (no dumpbin, no vcvars); GUARD_CF and
+      # CET_COMPAT are INFO lines, the owner's call
+      - name: Check release hardening
+        if: matrix.leg == 'b'
+        run: python tools/check_hardening.py bin/Release/rocketnet.dll
 
       - name: Check the library is callable from C and C++ through rocketnet.h
         if: matrix.leg == 'b'
@@ -1112,6 +1194,12 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
+      # the same locked-memory check as build-and-test; this leg does not
+      # build transport_memory, so it checks the limit without measuring
+      - name: Locked-memory limit covers the io_uring cases
+        if: matrix.leg == 'functional suite'
+        run: bash tools/check_memlock.sh
+
       - name: Run functional suite under sanitizers
         if: matrix.leg == 'functional suite'
         env:
@@ -1287,7 +1375,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # THE NDEBUG LEG: the same four fuzzers compiled with -DNDEBUG, so every
+  # THE NDEBUG LEG: every fuzzer under fuzz/ compiled with -DNDEBUG, so every
   # assertion in the harnesses is compiled out, and the corpora replayed. The
   # fuzz oracles deliberately do not rely on assert -- each fires its own
   # fprintf/abort helper (rocketnet_fuzz_require) -- so a bound that only
@@ -1295,7 +1383,7 @@ jobs:
   # it. This leg is what keeps those oracles NDEBUG-proof.
 
   fuzz-smoke-ndebug:
-    name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
+    name: fuzz smoke NDEBUG (every fuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 3
     steps:
@@ -1347,9 +1435,11 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet_dev --parallel
 
-      - name: Build the four fuzzers with NDEBUG
+      - name: Build every fuzzer with NDEBUG
         run: |
-          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message; do
+          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
+                   rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -1367,6 +1457,12 @@ jobs:
           ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
           ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
           ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
+          ./bin/rocketnet_fuzz_token_private_ndebug fuzz/corpus_token_private/*
+          ./bin/rocketnet_fuzz_round_trip_ndebug fuzz/corpus_round_trip/*
+          ./bin/rocketnet_fuzz_config_ndebug fuzz/corpus_config/*
+          ./bin/rocketnet_fuzz_server_transport_ndebug fuzz/corpus_server_transport/*
+          ./bin/rocketnet_fuzz_client_transport_ndebug fuzz/corpus_client_transport/*
+          ./bin/rocketnet_fuzz_session_ndebug fuzz/corpus_session/*
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the
@@ -1982,3 +2078,5 @@ jobs:
           persist-credentials: false
       - name: Every runs-on selects the fleet
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
+      - name: Every main commit gets its own concurrency group
+        run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh

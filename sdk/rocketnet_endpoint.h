@@ -68,9 +68,9 @@ struct rn_endpoint_config_t
     X( unreliable_limit, uint32_t unreliable_limit ) /* the largest UNRELIABLE message: one record in one packet */                                   \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
     X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
-    /* CONFIG (10.3): the wait for the peer's CONFIG */                                                                                               \
-    X( config_wait_start, double config_wait_start ) /* when this end began waiting for the peer's CONFIG, or -1 before its transport is connected */ \
-    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
+    /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
+    X( config_wait_start, double config_wait_start ) /* when this end began waiting for the remote endpoint's CONFIG, or -1 before its transport is connected */ \
+    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the remote endpoint's CONFIG is past reliable_timeout, else NONE */     \
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */                                                             \
     /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \
@@ -144,6 +144,13 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 // and returns its serial (serial 0: the next), abort returns the room.
 // transport_max_payload_bytes is the transport's payload cap now.
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+
+// The room query: true when rn_endpoint_start with these arguments, now,
+// would be given its room in the region; false when it would be refused or
+// would find no room (and so end the connection, R5). It shares the start's
+// route and the region's allocation decision (rn_region_send_fit), so the two
+// never disagree. Pure: changes nothing, counts nothing, allocates nothing.
+bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 
@@ -206,13 +213,15 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
 bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
                              rn_delivery_t * out, int out_capacity, int * out_count, double now );
 
-// The receipts' LOSS sweep and the end of the update's receipt list.
+// The receipts' LOSS sweep, the end of the update's receipt list, and the
+// reliable timeout, which rn_endpoint_error then reports. Called once per
+// update for every connected endpoint, whether or not its write pass runs.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
 // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,
 // after the update's payloads. The first call with transport_connected set
-// starts the wait for the peer's CONFIG; from then on, a call at
-// reliable_timeout or more after it, with the peer's CONFIG still not taken,
+// starts the wait for the remote endpoint's CONFIG; from then on, a call at
+// reliable_timeout or more after it, with the remote endpoint's CONFIG still not taken,
 // sets RELIABLE_TIMEOUT, which rn_endpoint_error reports. Whether the
 // transport is connected is the caller's to say (a seam: the endpoint never
 // calls the transport).

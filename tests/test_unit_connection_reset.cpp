@@ -153,7 +153,18 @@ static void reset_walk_passes( bool passed, const char * failure )
 static void reset_field_holds( const char * structure, const char * member, const char * decision,
                                const void * value, const void * expected, size_t bytes )
 {
-    const bool holds = memcmp( value, expected, bytes ) == 0;
+    // Two RESET members are reset by their state, never their bytes: the ack
+    // history's record rings by its written bits (its state compares through
+    // rocketnet_ack_endpoint_state_equal), and the acked packet ids by
+    // num_acked, which is compared as its own member; the ids' bytes are
+    // unreachable below a zero count and are not state.
+    bool holds;
+    if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "ack" ) == 0 )
+        holds = rocketnet_ack_endpoint_state_equal( (const rocketnet_ack_endpoint_t *) value, (const rocketnet_ack_endpoint_t *) expected );
+    else if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "acked_packet_ids" ) == 0 )
+        holds = true;
+    else
+        holds = memcmp( value, expected, bytes ) == 0;
     if ( !holds )
     {
         printf( "reset %s field %s.%s does not hold after the reset\n", decision, structure, member );
@@ -821,9 +832,6 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
     const rocketnet_ack_endpoint_t fresh_ack = f.server.acks->endpoints[a];
     memset( &f.server.acks->endpoints[a], 0xA5, sizeof(f.server.acks->endpoints[a]) );
-    // The stats producer binding belongs to the transport lifetime. Poison
-    // connection state, but retain the valid binding that reset must keep.
-    f.server.acks->endpoints[a].stats_delta = fresh_ack.stats_delta;
     rocketnet_reassembly_slot_t fresh_slots[2];
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof(fresh_slots) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof(fresh_slots) );
@@ -831,8 +839,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     rocketnet_server_connection_reset( &f.server, a );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
-    check( f.server.acks->endpoints[a].stats_delta == fresh_ack.stats_delta );
-    check( memcmp( &f.server.acks->endpoints[a], &fresh_ack, sizeof(fresh_ack) ) == 0 );
+    check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof(fresh_slots) ) == 0 );
     check( f.server.reassembly->newest_completed[a] == 0 );
@@ -954,6 +961,122 @@ static void test_connection_reset_client_disconnect_is_clean()
 }
 REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 
+// A connect from each failure state (CONNECTION_DENIED down to
+// CONNECT_TOKEN_EXPIRED) is a fresh attempt: rocketnet_client_protocol_connect
+// runs rocketnet_client_connection_reset first, so no key, cookie, sequence,
+// replay window, ack, reassembly slot or fragment id of the earlier attempt
+// is carried, the salt and the ephemeral keypair are new, the sequences are
+// at one, and what the client keeps across attempts (counters, filter, send
+// rate, reassembly set) is kept. tla/ClientConnection.tla
+// FreshAttemptFromFailure, MCClientConnectionRetryFromFailure.cfg.
+static void test_connection_reset_connect_from_each_failure_state()
+{
+    const reset_loopback_keys_t * keys = reset_loopback_keys();
+    const char * addresses[] = { "127.0.0.1:40000" };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
+                                                     RESET_LOOPBACK_PROTOCOL_ID, addresses, 1,
+                                                     0xF00D, 1000, 1030, 10, NULL,
+                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+
+    for ( int state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
+          state >= ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED; state-- )
+    {
+        rocketnet_counters_t counters;
+        memset( &counters, 0, sizeof(counters) );
+        rocketnet_client_protocol_t client;
+        rocketnet_client_protocol_init( &client, &counters );
+        client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
+        check( client.reassembly );
+        rocketnet_reassembly_set_t * const reassembly = client.reassembly;
+        rocketnet_reassembly_slot_t fresh_slots[2];
+        memcpy( fresh_slots, client.reassembly->slots, sizeof(fresh_slots) );
+
+        // what the client keeps across attempts
+        counters.values[0] = 17;
+        memset( client.packet_filter, 0x3C, sizeof(client.packet_filter) );
+        client.send_rate = 20.0;
+        rocketnet_counters_t kept_counters;
+        memcpy( &kept_counters, &counters, sizeof(kept_counters) );
+        uint8_t kept_filter[ROCKETNET_FILTER_VALUE_BYTES];
+        memcpy( kept_filter, client.packet_filter, sizeof(kept_filter) );
+
+        // every per-connection field of the earlier attempt dirtied
+        memset( &client.keys, 0xA5, sizeof(client.keys) );
+        memset( client.session_nonce, 0xA5, sizeof(client.session_nonce) );
+        memset( client.connection_salt, 0xA5, sizeof(client.connection_salt) );
+        memset( client.client_ephemeral_public_key, 0xA5, sizeof(client.client_ephemeral_public_key) );
+        memset( client.client_ephemeral_secret_key, 0xA5, sizeof(client.client_ephemeral_secret_key) );
+        memset( client.return_cookie, 0xA5, sizeof(client.return_cookie) );
+        client.has_cookie = 1;
+        memset( client.stored_response, 0xA5, sizeof(client.stored_response) );
+        client.client_index = 3;
+        client.send_sequence_handshake = 7;
+        client.send_sequence_session = 9;
+        client.next_fragment_payload_id = 12;
+        memset( &client.replay_handshake, 0xA5, sizeof(client.replay_handshake) );
+        memset( &client.replay_session, 0xA5, sizeof(client.replay_session) );
+        memset( &client.accepted_session, 0xA5, sizeof(client.accepted_session) );
+        client.received_session_sequence = 99;
+        client.integrity_failures = 5;
+        client.rtt_estimate = 0.25;
+        client.ack.highest_sequence = 101;
+        client.num_acked = 2;
+        memset( client.reassembly->slots, 0xA5, sizeof(fresh_slots) );
+        client.reassembly->newest_completed[0] = 8;
+        uint8_t dirty_salt[ROCKETNET_CONNECTION_SALT_BYTES];
+        memcpy( dirty_salt, client.connection_salt, sizeof(dirty_salt) );
+        uint8_t dirty_public[ROCKETNET_KEY_BYTES];
+        memcpy( dirty_public, client.client_ephemeral_public_key, sizeof(dirty_public) );
+        client.state = state;
+
+        check( rocketnet_client_protocol_connect( &client, token, 1000.0, 1000 ) == 1 );
+        check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+        // nothing of the earlier attempt
+        rocketnet_connection_keys_t no_keys;
+        memset( &no_keys, 0, sizeof(no_keys) );
+        check( memcmp( &client.keys, &no_keys, sizeof(no_keys) ) == 0 );
+        uint8_t zeros[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        memset( zeros, 0, sizeof(zeros) );
+        check( memcmp( client.session_nonce, zeros, sizeof(client.session_nonce) ) == 0 );
+        check( memcmp( client.return_cookie, zeros, sizeof(client.return_cookie) ) == 0 );
+        check( client.has_cookie == 0 );
+        check( memcmp( client.stored_response, zeros, sizeof(client.stored_response) ) == 0 );
+        check( client.client_index == -1 );
+        rocketnet_replay_protection_t no_replay;
+        memset( &no_replay, 0, sizeof(no_replay) );
+        check( memcmp( &client.replay_handshake, &no_replay, sizeof(no_replay) ) == 0 );
+        check( memcmp( &client.replay_session, &no_replay, sizeof(no_replay) ) == 0 );
+        check( memcmp( &client.accepted_session, &no_replay, sizeof(no_replay) ) == 0 );
+        check( client.received_session_sequence == 0 );
+        check( client.integrity_failures == 0 );
+        check( client.rtt_estimate == 0.0 );
+        check( client.ack.highest_sequence == 0 && client.num_acked == 0 );
+        check( client.next_fragment_payload_id == 1 );
+        check( client.reassembly->newest_completed[0] == 0 );
+        check( memcmp( client.reassembly->slots, fresh_slots, sizeof(fresh_slots) ) == 0 );
+
+        // a fresh attempt: new salt and ephemeral keypair, sequences at one,
+        // timers from the connect time
+        check( client.send_sequence_handshake == 1 && client.send_sequence_session == 1 );
+        check( memcmp( client.connection_salt, dirty_salt, sizeof(dirty_salt) ) != 0 );
+        check( memcmp( client.client_ephemeral_public_key, dirty_public, sizeof(dirty_public) ) != 0 );
+        check( client.attempt_start_time == 1000.0 && client.last_receive_time == 1000.0 );
+
+        // kept across attempts
+        check( client.counters == &counters );
+        check( memcmp( &counters, &kept_counters, sizeof(counters) ) == 0 );
+        check( memcmp( client.packet_filter, kept_filter, sizeof(kept_filter) ) == 0 );
+        check( client.send_rate == 20.0 );
+        check( client.reassembly == reassembly );
+
+        rocketnet_client_connection_reset( &client );
+        rocketnet_reassembly_set_destroy( reassembly );
+    }
+}
+REGISTER_UNIT_TEST( test_connection_reset_connect_from_each_failure_state );
+
 static void reset_loopback_client_disconnect_state_scenario( int state, int mid_fragment )
 {
     reset_loopback_t f;
@@ -1045,7 +1168,7 @@ static void test_connection_reset_each_state_leaves_a_clean_slot()
         reset_loopback_client_disconnect_state_scenario( handshake_and_connected[i], 0 );
 
     // Mid-fragment is a connected state with fragments already flushed into
-    // the loopback wire but not yet consumed by the peer.
+    // the loopback wire but not yet consumed by the server.
     reset_loopback_client_disconnect_state_scenario( ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, 1 );
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
@@ -1175,3 +1298,167 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
     reset_loopback_client_reliable_timeout_reason_scenario( &config );
 }
 REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );
+
+// Reuse the same server slot with deliberately dirty payload storage and an
+// unsealed aggregate from the former client. Reset must clear ownership/state,
+// not the payload bytes. Each delivery mode must work for the replacement.
+static void test_connection_reset_dirty_slot_discards_open_aggregate()
+{
+    reset_loopback_t f = {};
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    const int slot = reset_loopback_connect( &f, 0, 0xA010 );
+    // Settle CONFIG before reserving an in-place unreliable packet.
+    for ( int i = 0; i < 20; ++i ) reset_loopback_step( &f );
+    rn_message_object_t * object = &f.server->object;
+    rn_region_t * region = object->connections[slot].region;
+    for ( int i = 0; i < 4; ++i )
+    {
+        uint8_t * out = rn_message_object_start( object, slot, 0,
+            ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 64 );
+        check( out );
+        memset( out, 0xA7, 64 );
+        check( rn_message_object_finish( object, slot, 64 ) );
+    }
+    check( object->connections[slot].unreliable_build.writer.records == 4 );
+    uint8_t * pending = rn_message_object_start( object, slot, 0,
+        ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
+    check( pending );
+    memset( pending, 0xA8, 64 );
+    // These buffers belong only to this idle receive path and to an empty
+    // send store. Their dirty bytes must survive metadata reset unchanged.
+    memset( region->receive_ring, 0xB9, region->ring_bytes );
+    memset( region->store_memory, 0xCA, (size_t) region->store_bytes );
+    rn_message_object_kick( object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
+    reset_loopback_step( &f );
+    check( object->connections[slot].unreliable_build.writer.payload == NULL );
+    check( object->connections[slot].pending_type == -1 );
+    check( region->receive_ring[region->ring_bytes - 1] == 0xB9 );
+    check( region->store_memory[region->store_bytes - 1] == 0xCA );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
+    f.clients[0] = NULL;
+    check( reset_loopback_connect( &f, 1, 0xB010 ) == slot );
+    check( object->connections[slot].unreliable_build.writer.payload == NULL );
+    check( object->connections[slot].pending_type == -1 );
+    check( region->receive_ring[region->ring_bytes - 1] == 0xB9 );
+    check( region->store_memory[region->store_bytes - 1] == 0xCA );
+    rocketnet_message_receipt_t receipts[16];
+    check( rocketnet_message_server_receipts( f.server, slot, receipts, 16 ) == 0 );
+    check( rocketnet_message_client_receipts( f.clients[1], receipts, 16 ) == 0 );
+    for ( int mode = 0; mode < 8; ++mode )
+    {
+        uint8_t payload[128];
+        memset( payload, 0xD0 + mode, sizeof(payload) );
+        check( rocketnet_message_client_send( f.clients[1], 0, mode, payload, sizeof(payload) ) );
+        check( rocketnet_message_server_send( f.server, slot, 0, mode, payload, sizeof(payload) ) );
+        int c2s = 0, s2c = 0;
+        for ( int step = 0; step < 40; ++step )
+        {
+            reset_loopback_step( &f );
+            const uint8_t * data = NULL;
+            int bytes = 0, from = -1, channel = -1;
+            while ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
+            {
+                check( from == slot && channel == 0 );
+                check( bytes == sizeof(payload) && memcmp( data, payload, sizeof(payload) ) == 0 );
+                check( ++c2s == 1 );
+                rocketnet_message_server_release( f.server, data );
+            }
+            while ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
+            {
+                check( channel == 0 );
+                check( bytes == sizeof(payload) && memcmp( data, payload, sizeof(payload) ) == 0 );
+                check( ++s2c == 1 );
+                rocketnet_message_client_release( f.clients[1], data );
+            }
+        }
+        check( c2s == 1 && s2c == 1 );
+    }
+    reset_loopback_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_dirty_slot_discards_open_aggregate );
+// A transport with no send capacity left this update: the send pass goes
+// straight to its flush and no connection's write pass runs.
+static int reset_loopback_no_send_capacity( void * transport )
+{
+    (void) transport;
+    return 0;
+}
+
+// The reliable timeout (6.4 "Giving up") is checked by every update for every
+// connected slot, not only by a write pass that reaches its reliable phase.
+// The message is sent once; then every send pass is starved and the receiver
+// never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
+// or past first send + reliable_message_timeout_ms, and not before.
+static void test_reliable_timeout_fires_while_send_pass_starved()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.message_resend_delay_initial_ms = 100;
+    config.message_resend_delay_max_ms = 1000;
+    config.reliable_message_timeout_ms = 1000;
+    const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
+    const uint8_t payload[] = { 's', 't', 'a', 'r', 'v', 'e', 'd' };
+
+    // the server's connection
+    {
+        reset_loopback_t f;
+        memset( &f, 0, sizeof(f) );
+        f.now = 1000.0;
+        f.server = reset_loopback_server_create( f.now, &config );
+        check( f.server );
+        const int slot = reset_loopback_connect( &f, 0, 0xE301, &config );
+        reset_loopback_settle_messages( &f );
+
+        check( rocketnet_message_server_send( f.server, slot, 0,
+                                      ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
+        f.now += 0.01;
+        check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_server_send_packets( f.server );
+        const double first_send = f.now;
+
+        f.server->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+        for ( int i = 0; i < 30; i++ )
+        {
+            f.now = first_send + 0.025 + 0.05 * i;
+            check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+            rocketnet_message_server_send_packets( f.server );
+            const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
+            check( rocketnet_message_server_disconnect_reason( f.server, slot ) == expected );
+        }
+        check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+        reset_loopback_destroy( &f );
+    }
+
+    // the client's connection
+    {
+        reset_loopback_t f;
+        memset( &f, 0, sizeof(f) );
+        f.now = 1000.0;
+        f.server = reset_loopback_server_create( f.now, &config );
+        check( f.server );
+        reset_loopback_connect( &f, 0, 0xE302, &config );
+        reset_loopback_settle_messages( &f );
+
+        check( rocketnet_message_client_send( f.clients[0], 0,
+                                      ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
+        f.now += 0.01;
+        check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_client_send_packets( f.clients[0] );
+        const double first_send = f.now;
+
+        f.clients[0]->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+        for ( int i = 0; i < 30; i++ )
+        {
+            f.now = first_send + 0.025 + 0.05 * i;
+            check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+            rocketnet_message_client_send_packets( f.clients[0] );
+            const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
+            check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == expected );
+        }
+        check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+        reset_loopback_destroy( &f );
+    }
+}
+REGISTER_UNIT_TEST( test_reliable_timeout_fires_while_send_pass_starved );

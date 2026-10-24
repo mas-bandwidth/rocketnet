@@ -18,10 +18,29 @@ transport retains the selected operations and opaque instance for its lifetime.
 Factories, resources and platform decisions stay in the transport layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
+The `transport` config value is an ordered candidate list
+(`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp:858-998`).
+A known name absent from this build's availability list for the endpoint on
+this platform (`gso` or `io_uring` on macOS, `io_uring` on a client or built without
+liburing) is skipped with one info line (`:947-961`). A list with at least
+one name left after skipping is a strict pin: only those candidates are tried,
+in order, and if every one refuses, the ladder is exhausted and connect or
+start fails. A list whose every name is skipped falls back to the endpoint's
+`auto` order with a warning (`:969-995`): ruled on the #110 review, so one
+fleet-wide line such as `ROCKETNET_SERVER_TRANSPORT=gso` deploys unchanged to
+mixed machines. A row that is compiled out but kept as a refusing rung (`xdp`
+in a build without XDP) is not skipped: its pin refuses at start with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. An unknown name, an empty element or
+`auto` inside a list refuses the create.
+
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
-one pin-only row. It is in-process, carries datagrams through memory with no
+one row pin-only on both endpoints. The pin-only check reads the
+endpoint's own column, so a transport can rank in one endpoint's `auto` order
+and be pin-only on the other: the `gso` client is pin-only
+(`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
+server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
@@ -35,6 +54,20 @@ and `rocketnet_server_uring_leaked_transports` are internal transport helpers
 (`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
+
+## Client transports
+
+A client transport fills `rocketnet_client_transport_io_operations_t`
+(`sdk/rocketnet_driver.h`) and runs on the client I/O thread of
+[docs/CLIENT-IO.md](docs/CLIENT-IO.md): the I/O thread owns the socket, and the
+game thread hands it rings of sealed packets through the N-buffer handoff. The
+client ladder is `portable` on every platform and `msgx` on macOS, ahead of
+portable there. `msgx` and `portable` share one client table, and the pump is
+the socket's, chosen at create from the transport name: `msgx` the Darwin
+`sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
+the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
+pins and its degrade path are in [docs/MACOS.md](docs/MACOS.md), "The msgx
+client".
 
 ## Server capabilities and ownership
 
@@ -94,7 +127,7 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 | msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
 | loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
 | gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
-| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:49`,`sdk/rocketnet_server_uring.h:70`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:55`,`sdk/rocketnet_server_uring.h:69`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:54`,`sdk/rocketnet_server_uring.h:79`) | 4096 receive buffers of 66 KiB per queue;16000 bank (`sdk/rocketnet_server_uring.h:64`,`sdk/rocketnet_server_uring.h:78`) |
 | xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
 | iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
 | rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
@@ -107,7 +140,22 @@ one size with at most one shorter tail. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
-- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
+- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive. The server
+  (`sdk/rocketnet_server_gso_linux.cpp`) does both. The client
+  (`sdk/rocketnet_client_gso_linux.cpp`) sends every datagram to its one
+  connected server, so each send batch is one `sendmmsg` call and each run
+  leaves as one message with a `UDP_SEGMENT` cmsg at the run's stride. It
+  probes `UDP_SEGMENT` at create as the server does; a refused probe is the
+  plain tier, one datagram per message. A live `EINVAL`, `EIO` or `EOPNOTSUPP`
+  on a segmented message moves the client to the plain tier for good and
+  resends from that message's first datagram, so no datagram is lost. On
+  receive the client turns `UDP_GRO` on at create (a refused probe is the
+  plain tier, the platform's `recvmmsg`); each `recvmmsg` then takes one
+  message into a 64 KiB coalesce buffer allocated at create, and
+  `rocketnet_coalesce_split` cuts it at the `UDP_GRO` stride into the I/O
+  thread's receive slots, in arrival order. Segments past the receive
+  buffer's room are dropped and counted; a truncated control area or a
+  short `UDP_GRO` cmsg is one counted fault and the message one datagram.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
   `UDP_SEND_MSG_SIZE` socket option, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
@@ -120,6 +168,10 @@ the create log line names each feature as yes or no.
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
+  and by RIO: IOCP runs one completion worker plus one send worker and RIO one
+  I/O worker, so a client's datagrams are not reordered by several workers
+  dequeuing one completion port.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
@@ -182,7 +234,7 @@ completion, joins that one client thread, and releases backend-owned work.
 
 ## ICMP errors
 
-A UDP send to a peer that died hard comes back as ICMP port or host
+A UDP send to a remote endpoint that died hard comes back as ICMP port or host
 unreachable. A BSD stack reports such an error to the next receive or send on a
 connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. A client's
 portable or msgx socket is connected to its one server
@@ -198,9 +250,30 @@ pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
 receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
-contract: one peer's death never stalls or degrades another peer's traffic.
-The functional cases in functional/posix_hard_killed_peer.cpp hold this per
-transport cell, and an injected-errno seam covers each receive arm.
+contract: one client's death never stalls or degrades another client's traffic.
+The functional cases in functional/posix_hard_killed_client.cpp hold this per
+transport cell, and an injected-errno seam covers each receive arm. The macOS
+cells are the portable and msgx servers with the portable and msgx clients;
+the seam cases are macOS only. The Linux cells are the portable, gso and
+io_uring servers (io_uring where `rocketnet_server_uring_available()` is true)
+with the portable client, IPv4 and IPv6: `test_posix_hard_killed_client_*`,
+`test_posix_send_to_closed_port_*` and `test_posix_client_server_gone_*`.
+Linux reports ICMP port unreachable to an unconnected UDP socket only with
+`IP_RECVERR`, which no server socket sets, so the kernel drops the answers to
+the server's sends to a killed client or a closed port: the Linux server cells
+prove those sends never stall or degrade the other clients, the dead slot
+times out and frees, and a fifth client connects. The client socket is
+connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
+`test_posix_client_server_gone_*` proves the portable client's receive takes
+each ECONNREFUSED as weather. The three hard-killed kinds also have an xdp
+server cell with the portable client, IPv4 and IPv6
+(`test_posix_hard_killed_client_xdp_ipv4_client_portable`,
+`test_posix_hard_killed_client_xdp_ipv6_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv4_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv6_client_portable`,
+`test_posix_client_server_gone_xdp_ipv4_client_portable`,
+`test_posix_client_server_gone_xdp_ipv6_client_portable`). That cell runs only
+as root inside a virtme-ng guest.
 
 ## Server network threads and their priority
 
@@ -215,13 +288,10 @@ and `:3573`):
 |---|---|---|
 | GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | one worker per completion thread plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| IOCP (Windows) | one completion worker plus one transmit worker; ignores `num_xdp_queues` | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
 | portable/msgx socket | one receive worker and one transmit worker | nothing |
 | io_uring | none | nothing |
-
-Every server also runs one background stats worker. It uses a socket-free wake
-and does not receive the network-thread priority override described above.
 
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
@@ -281,7 +351,7 @@ three send phases and four receive banks are implemented in
 
 ## Windows connection reset
 
-When a UDP send reaches a port no socket holds, the peer's stack answers with
+When a UDP send reaches a port no socket holds, the remote host's stack answers with
 an ICMP port unreachable. Winsock, unlike other stacks, reports that answer to
 the sending socket's next receive as `WSAECONNRESET` (or `WSAENETRESET` for a
 network unreachable), and an overlapped or registered receive completes with
@@ -314,13 +384,56 @@ went to a closed port.
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, with no I/O worker threads. The server still has its separate
-background stats worker. An `SO_REUSEPORT` socket group, bound the
+main thread, with no I/O worker threads. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
-batched `SENDMSG` per staged slot, in chunks no larger than the free submission
-queue space. Each `send_packets` and `receive_packets` call reaps at most a
+batched `SENDMSG` per send run, in chunks no larger than the free submission
+queue space.
+
+Send segmentation is the GSO transport's tier, probed at create: every socket
+of the group must accept `UDP_SEGMENT` (set to 0), all or nothing, and the
+create info line names the result (`UDP_SEGMENT yes`, or `no (one SENDMSG per packet)`). With it, a run of consecutive staged slots to one destination whose
+wire bytes are equal, the last allowed to be shorter, found by
+`rocketnet_coalesce_send_run` and bounded by `ROCKETNET_GSO_MAX_SEGMENTS` and
+`ROCKETNET_GSO_MAX_SUPER_BYTES`, goes out as one `SENDMSG` whose msghdr
+(`rocketnet_uring_gso_message`, `sdk/rocketnet_uring_codec.h`) holds one iovec
+per slot frame and a `UDP_SEGMENT` cmsg with the stride. The run's first slot
+owns the msghdr, the name and the control bytes, and the run's slots their
+iovecs, all allocated with the transport; the run's one completion retires
+every slot of the run (`GSO_SENDS` counts segmented sends). Without it, or
+created with `ROCKETNET_SERVER_URING_DISABLE_SEGMENT` (through
+`rocketnet_server_uring_create_flags`, for tests), a run is one slot. A live
+refusal, a segmented send's completion of `-EINVAL`, `-EIO` or `-EOPNOTSUPP`,
+turns segmentation off for the transport with one warning (`GSO_FALLBACKS`) and
+counts that run's packets as `SEND_DROPPED`: unlike the GSO transport's
+`sendmmsg`, the run cannot be resent after its completion has handed the slots
+back, so the degradation is to plain sends from the next flush, not lossless.
+`rocketnet_server_uring_features` reports `ROCKETNET_SERVER_URING_FEATURE_SEGMENT`
+while it is in use.
+
+Receive coalescing is the GSO transport's tier too, probed at create: every
+socket of the group must accept `UDP_GRO` (set to 1), all or nothing, the
+sockets that accepted rolled back otherwise, and the create info line names
+the result (`UDP_GRO yes`, or `no (one datagram per receive buffer)`). With
+it each queue's multishot msghdr reserves a control area for the `UDP_GRO`
+cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
+a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
+returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
+segment is size-checked and copied into the fill bank before the buffer goes
+back to the ring (`tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
+bank that fills mid-split drops and counts the rest as
+`RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
+taken as one datagram (the GSO transport's fault). Created with
+`ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a
+buffer is one datagram; `rocketnet_server_uring_features` reports
+`ROCKETNET_SERVER_URING_FEATURE_GRO` while it is on. A coalesced receive is
+up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES`):
+4096 buffers are 264 MiB of address space per queue, allocated at create
+(8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
+create, so a page is resident only once the kernel writes it: small datagrams
+keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
 fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
 `ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
 update returns under sustained traffic; completions past a budget stay queued
@@ -342,14 +455,16 @@ submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
-(`SEND_DEFERRED`), and receive completions that named no provided buffer
-(`RECEIVE_DROPPED_NO_BUFFER`). Stop requests cancellation, and stopped remains
+(`SEND_DEFERRED`), receive completions that named no provided buffer
+(`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
+segmentation refusals (`GSO_FALLBACKS`). Stop requests cancellation, and stopped remains
 false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
 completion, not a timeout, authorizes reclamation.
-The send staging, the two receive banks, the per-call completion budget and
-destroy are modelled in `tla/RNUringDriver.tla`.
+The send staging (a send run as one send whose completion frees every slot of
+the run), the two receive banks, the per-call completion budget and destroy are
+modelled in `tla/RNUringDriver.tla`.
 
 ## The XDP receive filter
 
@@ -432,21 +547,33 @@ started). `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
 A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
 address not of its family, on another port, or that does not parse is one
-log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1059-1079`).
+log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1396-1424`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
-off (`sdk/rocketnet_server_transport.cpp:1086`). `portable`
-(`sdk/rocketnet_platform.cpp:585`), `msgx` through that same socket, `gso`
-(`sdk/rocketnet_server_gso_linux.cpp:334`), `io_uring`
-(`sdk/rocketnet_server_uring_linux.cpp:230`), `iocp`
-(`sdk/rocketnet_server_iocp_windows.cpp:513`) and `rio`
-(`sdk/rocketnet_server_rio_windows.cpp:489`) serve both from that bind. Port 0
+off (`sdk/rocketnet_server_transport.cpp:1426-1433`). `portable`
+(`sdk/rocketnet_platform.cpp:797-805`), `msgx` through that same socket, `gso`
+(`sdk/rocketnet_server_gso_linux.cpp:491`), `io_uring`
+(`sdk/rocketnet_server_uring_linux.cpp:400`), `iocp`
+(`sdk/rocketnet_server_iocp_windows.cpp:678`) and `rio`
+(`sdk/rocketnet_server_rio_windows.cpp:623`) serve both from that bind. Port 0
 writes the granted port onto both addresses
-(`sdk/rocketnet_server_transport.cpp:1406`). The protocol advertises the named
-IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1460`).
+(`sdk/rocketnet_server_transport.cpp:1758-1761`). The protocol advertises the named
+IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1816-1850`).
 `TokenAddressAdvertised` accepts a request when the token's address of the
-arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:177`). A
+arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:206`). A
 v4-mapped source is canonicalised to IPv4 first. The token's other-family
 address is not consulted.
+
+The given addresses are advertised addresses, not bind restrictions. With one
+address, the server binds that family's wildcard (`0.0.0.0` or `[::]`) on the
+given port, even when the address names a specific IP
+(`sdk/rocketnet_server_transport.cpp:1435-1441`), and every transport except
+`xdp` opens its sockets on that wildcard: `xdp` alone carries
+`ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS` and attaches to the interface that
+carries the given address. The `server transport started on` log line names
+the wildcard for a socket transport and the given address for `xdp`
+(`sdk/rocketnet_server_transport.cpp:1749`). Connect tokens must name the
+given address, the one clients reach; a socket transport still receives the
+server's port on every local address of the family.
 
 `portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
 with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp:20`).
@@ -470,10 +597,12 @@ per-CPU totals each time the transport counter surface is read. Only a
 transport with a kernel prefilter fills them; a transport with none leaves them
 zero.
 
-The replay map is read-only to the kernel: it drops a session packet 16 or
-more behind the high-water the userspace window sets, and never writes the
-map. The transport marks each connected client after every update, and the
-userspace window stays 4096.
+The replay map is read-only to the kernel: it drops a session packet a whole
+replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
+the high-water the userspace window sets, and never writes the map. The
+kernel window is the userspace window, so a reordered packet that every other
+transport accepts is accepted on XDP too. The transport marks each connected
+client after every update.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
@@ -481,7 +610,7 @@ returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
 DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
 reads the stats map back after each frame. It needs root, or CAP_BPF and
 CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
-`xdp_on_link_reply_reaches_the_peer`, attaches the program to a veth pair and
+`xdp_on_link_reply_reaches_the_client`, attaches the program to a veth pair and
 runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
@@ -497,7 +626,7 @@ vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irq
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
-that peer address that the transport accepted for a connection on this
+that client address that the transport accepted for a connection on this
 interface, and the gateway's MAC for an address with none learned. With no
 default route the server still starts, a direct response to an unlearned
 address goes to the source MAC of the frame it answers, and any other reply
@@ -599,7 +728,7 @@ client, with a minimum of 256 slots. A lower test capacity exercises contention.
 The message send pass starts after the last served connection and offers one
 frame per connection per round. Full capacity leaves queued reliable work due
 for the next update. In-place unreliable writes use only surplus capacity above
-a complete round of connected peers; otherwise they join the queue so application call order cannot
+a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path.
 

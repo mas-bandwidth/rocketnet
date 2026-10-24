@@ -331,6 +331,101 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
 
 REGISTER_UNIT_TEST( test_violation_reader_and_window_checks_move_their_own_counters );
 
+// A message above the receiver's max_message_bytes is a violation on every
+// path (STANDARD.md _Messages_ check 9), not only on the block path (check 7).
+// An unreliable payload may be larger than one packet (the transport carries
+// it in fragments), so a SINGLE message or an unreliable record of 2000 bytes
+// reaches a receiver configured for 1416: it is refused and counted
+// MESSAGE_BAD_SIZE, exactly as a block that adds up past the limit is refused
+// and counted MESSAGE_BAD_BLOCK. A message at the limit is still delivered.
+static void violation_over_max_config( rocketnet_message_config_t * config )
+{
+    violation_config( config, 8 );
+    config->max_message_bytes = 1416;
+}
+
+static void test_violation_single_message_over_max_message_bytes_is_refused()
+{
+    static uint8_t data[4096];
+    memset( data, 0x5A, sizeof( data ) );
+    alignas( 16 ) static uint8_t payload[4096];
+
+    // the SINGLE form, one byte over the limit and well over it
+    const int over[2] = { 1417, 2000 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_over_max_config( &config );
+        violation_init( &receiver, &config );
+        memcpy( payload, data, (size_t) over[i] );
+        const int bytes = rocketnet_message_single_finish( payload, (int) sizeof( payload ), over[i] );
+        check( bytes == over[i] + 1 );
+        violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // the SINGLE form at the limit is delivered
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_over_max_config( &config );
+        violation_init( &receiver, &config );
+        memcpy( payload, data, 1416 );
+        const int bytes = rocketnet_message_single_finish( payload, (int) sizeof( payload ), 1416 );
+        check( rn_ordered_receive( &receiver.ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+        check( receiver.ordered.channels.deliveries == 1 );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // one UNRELIABLE or UNRELIABLE_SEQUENCED record over the limit, in RECORDS form
+    const int codes[2] = { ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED };
+    for ( int i = 0; i < 2; i++ )
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_over_max_config( &config );
+        violation_init( &receiver, &config );
+        rocketnet_message_record_t record;
+        memset( &record, 0, sizeof( record ) );
+        record.code = codes[i];
+        record.data = data;
+        record.bytes = 2000;
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+        check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+        const int bytes = rocketnet_message_writer_finish( &writer );
+        violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
+        rn_arena_destroy( receiver.arena );
+    }
+
+    // the block path refuses a message over the limit the same way: three
+    // fragments of F cannot add up to at most 1416 bytes
+    {
+        violation_node_t receiver;
+        rocketnet_message_config_t config;
+        violation_over_max_config( &config );
+        violation_init( &receiver, &config );
+        rocketnet_message_record_t record;
+        memset( &record, 0, sizeof( record ) );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        record.block = 1;
+        record.fragment = 0;
+        record.fragments = 2;
+        record.data = data;
+        record.bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+        const int bytes = rocketnet_message_writer_finish( &writer );
+        violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        rn_arena_destroy( receiver.arena );
+    }
+}
+
+REGISTER_UNIT_TEST( test_violation_single_message_over_max_message_bytes_is_refused );
+
 // Append one code 3 (RELIABLE_ORDERED) record: flags, length 1, number, ring 0,
 // ordering, channel, then its one data byte.
 static int violation_put_ordered( uint8_t * p, uint32_t number, uint32_t ordering, uint8_t channel, uint8_t data )
@@ -356,7 +451,7 @@ static int violation_finish_records( uint8_t * p )
     return 1;
 }
 
-// A hostile peer sends two RELIABLE_ORDERED records with one channel and
+// A hostile sender sends two RELIABLE_ORDERED records with one channel and
 // ordering index but different numbers: the second is refused at the held
 // index (rn_channels_dispatch, sdk/rocketnet_channel.cpp), counted
 // MESSAGE_DUPLICATE_ORDERING and, once for the ended connection,

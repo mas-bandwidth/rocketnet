@@ -18,8 +18,13 @@
 // the gso transport binds its group) shards receives across queues; each queue
 // has a provided buffer ring and one multishot RECVMSG, so the kernel fills
 // receive buffers with no syscall per datagram, and send_packets submits one
-// SENDMSG per staged slot in chunks no larger than the free submission queue
-// space. each send_packets and receive_packets call reaps at most a fixed
+// SENDMSG per send run in chunks no larger than the free submission queue
+// space: with UDP_SEGMENT (probed at create, the gso transport's tier) a run
+// of consecutive staged slots to one destination, equal sizes but for one
+// shorter tail, goes out as one segmented SENDMSG; without it a run is one
+// slot; with UDP_GRO (probed at create, all or nothing) one receive buffer
+// holds a coalesced receive that is split by its stride into the receive
+// bank. each send_packets and receive_packets call reaps at most a fixed
 // completion budget, so a call returns under sustained traffic.
 // tla/RNUringDriver.tla models the send staging, the two receive banks, the
 // per-call budget and destroy; the functions that implement a model action
@@ -50,10 +55,14 @@ struct rocketnet_server_uring_t;
 
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
-// area and the payload, so a buffer is larger than the receive ceiling.
+// area, the UDP_GRO control area and the payload, which with UDP_GRO is one
+// coalesced receive of up to 64 KiB (the 16-bit UDP payload), so a buffer is
+// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create (2 KiB
+// buffers, 8 MiB per queue, before UDP_GRO). memory is spent so that one
+// completion carries a whole coalesced run of datagrams.
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
-#define ROCKETNET_URING_RECV_BUFFER_BYTES                                 2048
+#define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 66 * 1024 )
 
 // the per-call completion budgets: receive_packets takes at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
@@ -73,6 +82,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEN
                          "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
                          "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
+
+// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
+// clients spread over the queues, and the most queues stage two packets for
+// every client (BUILDING.md, "Maximum clients")
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
+                         "the io_uring queues together can stage two packets for every client" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 
@@ -92,7 +108,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 13
+#define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
+#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // a segmented send's CQE refused with EINVAL, EIO or EOPNOTSUPP: segmentation is off for the transport from then on
+#define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
+#define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
+
+// feature bits reported by rocketnet_server_uring_features: what the create
+// probe found and the transport is using now
+
+#define ROCKETNET_SERVER_URING_FEATURE_SEGMENT                          (1<<0)      // UDP_SEGMENT accepted: send runs go out as segmented SENDMSGs
+#define ROCKETNET_SERVER_URING_FEATURE_GRO                              (1<<1)      // UDP_GRO enabled on every socket: a receive buffer may hold a coalesced run, split by its stride
+
+// create flags: force a probe result off, so the plain tier is testable on
+// kernels where the real probe would say yes (ROCKETNET_SERVER_GSO_DISABLE_SEGMENT
+// and ROCKETNET_SERVER_GSO_DISABLE_GRO for the gso transport)
+
+#define ROCKETNET_SERVER_URING_DISABLE_SEGMENT                          (1<<0)
+#define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the transport needs. the probe
@@ -110,6 +143,15 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues );
 // selects the default; a count past ROCKETNET_URING_MAX_QUEUES refuses.
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
+
+// create with flags, the DISABLE set above; create is create_flags with 0
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags );
+
+// the FEATURE bits in use now: a live refusal of a segmented send clears
+// ROCKETNET_SERVER_URING_FEATURE_SEGMENT
+
+int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring );
 
 // Stop requests cancellation; stopped services a bounded batch of currently
 // ready completions and returns false while the kernel still owns any buffer.
