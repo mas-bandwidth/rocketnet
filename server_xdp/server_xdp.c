@@ -129,7 +129,10 @@ static void server_xdp_count( __u32 counter )
 
 // The IPv6 next header values that name an extension header (RFC 8200
 // section 4): hop-by-hop options, routing, fragment, destination options,
-// AH and ESP. The program does not walk the chain behind any of them.
+// AH and ESP. These are the headers the extension walk in server_xdp_filter
+// starts from: it steps over hop-by-hop, routing, destination options, AH and
+// a first fragment, up to SERVER_XDP_IPV6_EXTENSION_WALK headers or the frame
+// end; only ESP and a non-first fragment stop it unopened.
 
 static __always_inline int server_xdp_is_ipv6_extension( __u8 next_header )
 {
@@ -294,12 +297,24 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
+    // a UDP length below the UDP header, or an IP length the caller found
+    // malformed (ip_udp_bytes 0), is too small; a UDP length past the IP
+    // datagram or the frame end is too large, so an operator can tell a
+    // truncated sender from a forged length
+
     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
     const __u32 udp_len = __builtin_bswap16( udp->len );
-    if ( udp_len < sizeof(struct udphdr) || udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
+    if ( udp_len < sizeof(struct udphdr) || ip_udp_bytes == 0 )
     {
-        debug_printf( "packet udp length is too small or exceeds bounds" );
+        debug_printf( "packet udp length is below the udp header or the ip length is malformed" );
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+        return XDP_DROP;
+    }
+
+    if ( udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
+    {
+        debug_printf( "packet udp length is past the ip datagram or the frame end" );
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
         return XDP_DROP;
     }
 

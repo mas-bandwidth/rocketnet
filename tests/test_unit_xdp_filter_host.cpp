@@ -1690,7 +1690,7 @@ static void test_xdp_transport_host_udp_length_drops()
 
         xdp_host_row_t past_end = xdp_host_row( "UDP header length field exceeds frame end", families[f] );
         past_end.frame.override_udp_len = 8 + past_end.frame.payload_bytes + 20;
-        rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
     }
     for ( int f = 0; f < 2; f++ )
     {
@@ -1702,12 +1702,13 @@ static void test_xdp_transport_host_udp_length_drops()
         rows.push_back( padded );
 
         // the IP length names fewer bytes than the UDP length, and the
-        // padding makes the frame long enough for the UDP length
+        // padding makes the frame long enough for the UDP length: the UDP
+        // length is past the IP datagram, so it drops as too large
 
         xdp_host_row_t ip_short = xdp_host_row( "IP length shorter than the UDP length", families[f] );
         ip_short.frame.pad_bytes = 6;
         ip_short.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_short.frame.payload_bytes - 4;
-        rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
 
         // an IP length that names less than a UDP header, or one byte more
         // than the frame holds, is malformed: the datagram to this server
@@ -1778,6 +1779,34 @@ static void test_xdp_transport_host_udp_length_drops()
 
 }
 
+// A UDP length past either bound counts DROPPED_TOO_LARGE, apart from a
+// length below the UDP header (DROPPED_TOO_SMALL), so an operator can tell a
+// forged length from a truncated sender: one frame whose UDP length runs past
+// the IP datagram (the padding keeps it inside the frame) and one whose UDP
+// length runs past the frame end, in both families.
+
+static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+    for ( int f = 0; f < 2; f++ )
+    {
+        xdp_host_row_t past_ip = xdp_host_row( "UDP length past the IP datagram, inside the frame", families[f] );
+        past_ip.frame.pad_bytes = 6;
+        past_ip.frame.override_udp_len = 8 + past_ip.frame.payload_bytes + 4;
+        rows.push_back( xdp_host_expect( past_ip, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
+
+        xdp_host_row_t past_frame = xdp_host_row( "UDP length past the frame end", families[f] );
+        past_frame.frame.override_udp_len = 8 + past_frame.frame.payload_bytes + 1;
+        rows.push_back( xdp_host_expect( past_frame, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
+
+        xdp_host_row_t below_header = xdp_host_row( "UDP length below the UDP header", families[f] );
+        below_header.frame.override_udp_len = 7;
+        rows.push_back( xdp_host_expect( below_header, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+    }
+    xdp_host_run_rows( rows );
+}
+
 #endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 
 // The xdp transport's default queue rule: create and the memory plan take the
@@ -1842,6 +1871,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
+REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
 #endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 
 #if defined(ROCKETNET_XDP) && ROCKETNET_XDP
