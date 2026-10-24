@@ -103,7 +103,7 @@ static int rocketnet_functional_test_group( const char * name )
     };
     for ( const char * prefix : nightly )
         if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
-            return rocketnet_posix_hard_killed_peer_test_group( name ) | SUITE_GROUP_NIGHTLY;
+            return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
