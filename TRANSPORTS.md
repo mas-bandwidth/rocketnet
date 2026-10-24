@@ -215,7 +215,20 @@ receive errno pauses the msgx pump with one warning per pause
 already classes the same errnos as weather. A backend's receive keeps the same
 contract: one peer's death never stalls or degrades another peer's traffic.
 The functional cases in functional/posix_hard_killed_peer.cpp hold this per
-transport cell, and an injected-errno seam covers each receive arm.
+transport cell, and an injected-errno seam covers each receive arm. The macOS
+cells are the portable and msgx servers with the portable and msgx clients;
+the seam cases are macOS only. The Linux cells are the portable, gso and
+io_uring servers (io_uring where `rocketnet_server_uring_available()` is true)
+with the portable client, IPv4 and IPv6: `test_posix_hard_killed_client_*`,
+`test_posix_send_to_closed_port_*` and `test_posix_client_server_gone_*`.
+Linux reports ICMP port unreachable to an unconnected UDP socket only with
+`IP_RECVERR`, which no server socket sets, so the kernel drops the answers to
+the server's sends to a killed client or a closed port: the Linux server cells
+prove those sends never stall or degrade the other clients, the dead slot
+times out and frees, and a fifth client connects. The client socket is
+connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
+`test_posix_client_server_gone_*` proves the portable client's receive takes
+each ECONNREFUSED as weather. The xdp cell is a separate case.
 
 ## Server network threads and their priority
 
