@@ -8,6 +8,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
 #include "../tests/plan_rss.h"
