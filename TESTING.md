@@ -204,3 +204,19 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
 | Holistic review: six independent whole-system reviewers | planned for the final deliverable |
 | complete | 0% |
+
+## How a functional case waits for the library
+
+A functional case never waits for the library in wall-clock seconds, because a
+loaded host may take any amount of wall time to schedule the case that waits
+and the library itself keeps its own clock. A timeout the library owns (the
+slot's idle timeout, the handshake deadline) is checked in the clock the
+library is given: the slot is still there at the last update whose time was
+below the timeout, and it is gone at the update whose time first passed it. A
+wait for a packet, a payload or a counter is bounded by a count of updates or
+polls, never by a deadline; the wall cap that remains is a hang guard only: it
+fires when the polls stop making progress, and it names the case that hung. A
+case that exists to measure wall time (the frame-sync pacing case) measures
+the operating system, so the suite runs it alone, in a group of its own, with
+its bound kept exactly as written.
+
