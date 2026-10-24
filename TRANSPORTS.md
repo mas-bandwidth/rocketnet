@@ -260,7 +260,14 @@ prove those sends never stall or degrade the other clients, the dead slot
 times out and frees, and a fifth client connects. The client socket is
 connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
 `test_posix_client_server_gone_*` proves the portable client's receive takes
-each ECONNREFUSED as weather. The xdp cell is a separate case.
+each ECONNREFUSED as weather. The xdp server cell runs the same three kinds
+with the portable client, IPv4 and IPv6, registered only where the xdp
+lifecycle cells are (root inside a virtme-ng guest, or root with
+`ROCKETNET_TEST_XDP_VETH=1`): the server binds the near end of a veth pair and
+every client, the SIGKILLed child included, opens its socket in the far end's
+namespace. Its sends to the killed client and to a closed port leave the
+server's AF_XDP queue and the far end answers each with ICMP port unreachable,
+which the XDP program passes to the kernel, where no socket takes it.
 
 ## Server network threads and their priority
 
