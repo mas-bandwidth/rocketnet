@@ -246,8 +246,10 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test_sodium
 
+      # The same reproduction on Linux and macOS; the Windows job runs it on
+      # its leg (b). sodium/README.md, "Reproducing the vendored inputs".
       - name: Reproduce the committed sodium pair
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
@@ -784,6 +786,12 @@ jobs:
         run: python tools/check_memory.py ./bin/Release/transport_memory.exe
 
       # ---- leg (b): the SDK as a consumer sees it, and the driver contract ----
+
+      # The committed sodium pair from its pinned inputs, as on Linux and
+      # macOS: a Windows checkout must give the same bytes (about 1 s).
+      - name: Reproduce the committed sodium pair
+        if: matrix.leg == 'b'
+        run: python tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Check production library boundary
         if: matrix.leg == 'b'

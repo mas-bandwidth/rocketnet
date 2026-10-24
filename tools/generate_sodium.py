@@ -355,7 +355,9 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--fetch', action='store_true', help='fetch missing pinned inputs over HTTPS')
     args = parser.parse_args()
-    manifest = json.loads((ROOT / 'sodium/manifest.json').read_text())
+    # Explicit UTF-8: read_text() otherwise decodes with the locale's code
+    # page, which on Windows is not UTF-8.
+    manifest = json.loads((ROOT / 'sodium/manifest.json').read_text(encoding='utf-8'))
     if args.fetch:
         downloads = {
             **{f'netcode/{name}': (f"https://raw.githubusercontent.com/mas-bandwidth/netcode/{manifest['baseline_commit']}/sodium/{name}", digest)
@@ -409,7 +411,9 @@ def main():
 
         def inline(match):
             name = match[1]
-            candidates = [posixpath.normpath(str(Path(path).parent / name)), public_root + name]
+            # Archive member names are POSIX on every host; pathlib would join
+            # them with backslashes on Windows and miss every relative include.
+            candidates = [posixpath.normpath(posixpath.join(posixpath.dirname(path), name)), public_root + name]
             target = next((x for x in candidates if x in files), None)
             if target is None:
                 raise SystemExit(f"unresolved include {name} from {path}")

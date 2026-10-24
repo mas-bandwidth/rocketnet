@@ -128,6 +128,23 @@ AEAD inputs under UBSan. The fixed-vector test executes that call explicitly.
 These are amalgamation adaptations;
 cryptographic arithmetic and protocol encodings are unchanged.
 
+## Reproducing the vendored inputs
+
+The release library is built from two vendored inputs that are generated, not
+written by hand. CI reproduces each from its pinned inputs and fails when the
+committed bytes differ.
+
+| Input | Reproduced by | Runs on | Does not apply |
+| --- | --- | --- | --- |
+| `sodium/sodium.c`, `sodium/sodium.h` (compiled into the library everywhere) | `python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check` (`python` on Windows), CI step "Reproduce the committed sodium pair" | Linux Release (b), macOS Release, Windows (b) | none |
+| The embedded XDP object `server_xdp.o`, compiled from the sources `cmake/XdpSources.cmake` lists and embedded in the Linux library | `python3 tools/check_xdp_archive.py`, CI step "Embedded XDP object is reproducible and current": two builds give the same object, and the build tree's object equals a fresh compile | Linux | macOS and Windows embed no XDP object; there the same tool (`--committed-only` on Windows) only checks that every listed source exists |
+
+`tests/xdp_host/linux` and `tests/xdp_host/bpf` are test-only host shims that
+compile the XDP filter as ordinary C for the unit suite; they are written in
+the tree, never enter the release library, and have nothing to reproduce.
+`.gitattributes` forces LF on every checkout, so a Windows checkout compares
+the same bytes as Linux and macOS.
+
 ## Check
 
 ```sh
