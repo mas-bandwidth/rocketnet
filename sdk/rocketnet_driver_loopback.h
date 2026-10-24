@@ -7,9 +7,9 @@
 // declarations below are for the unit suite only; none of this file is a
 // public C export.
 //
-// Each live endpoint allocates its inbox of ROCKETNET_LOOPBACK_QUEUE_PACKETS
-// datagrams at create and frees it at destroy. Datagrams move on the caller
-// threads of the two endpoints, with no thread of the transport's own
+// Each live endpoint allocates its inbox at create (a server's sized from its
+// plan) and frees it at destroy. Datagrams move on the caller threads of the
+// two endpoints, with no thread of the transport's own
 // (tla/RNLoopbackWire.tla): a send fills a slot of the receiver's inbox and
 // marks it before it returns, and the receiver's next update takes it. Only
 // slot indices cross threads, under the inbox mutex. Send and receive never
@@ -30,8 +30,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// One endpoint's queue: the server-wide send staging, since the server's
-// endpoint receives from every client (2048 at 1000 clients).
+// A client endpoint's queue: the server-wide send staging (2048 at 1000
+// clients). A server endpoint's queue is sized from its plan at create
+// (rocketnet_loopback_server_queue_packets).
 enum
 {
     ROCKETNET_LOOPBACK_QUEUE_PACKETS = ROCKETNET_SERVER_SEND_STAGING_PACKETS
@@ -51,9 +52,15 @@ uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 int rocketnet_loopback_endpoints_live();
 
 // The bytes an endpoint with an inbox of this many datagrams allocates at
-// create (the inbox, its mutex and the endpoint's route cache), before the
-// allocator header rocketnet_malloc adds.
+// create (the inbox, its index queues and the endpoint's route cache), before
+// the allocator header rocketnet_malloc adds.
 size_t rocketnet_loopback_queue_bytes( int packets );
+
+// The datagrams a server endpoint's queue holds for a server of this many
+// clients: one update's receive budget, a power of two, at least
+// ROCKETNET_LOOPBACK_QUEUE_PACKETS. A client endpoint's queue holds
+// ROCKETNET_LOOPBACK_QUEUE_PACKETS.
+int rocketnet_loopback_server_queue_packets( int max_clients );
 
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
 // Deterministic send-lock contention seam; test library only.

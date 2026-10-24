@@ -5,8 +5,9 @@ caller threads. In a multiplayer game over loopback the client and the server
 usually run on different threads, so nothing a send does may touch the
 receiver's state beyond its inbox, and the transport runs no thread of its own.
 
-Every endpoint owns an inbox of `ROCKETNET_LOOPBACK_QUEUE_PACKETS` one-datagram
-slots with the free and ready queues of `sdk/rocketnet_buffer_handoff.h`. Each
+Every endpoint owns an inbox of one-datagram slots (`ROCKETNET_LOOPBACK_QUEUE_PACKETS`
+for a client, sized from the plan for a server) with free and ready index
+queues in the shape of `sdk/rocketnet_buffer_handoff.h`. Each
 slot has one owner: the free queue, one sender (reserved, being written), the
 ready queue (filled) or the receiver (taken, being read). Only indices move, in
 one exchange under the inbox mutex; the datagram is written and read outside it.
@@ -14,9 +15,9 @@ one exchange under the inbox mutex; the datagram is written and read outside it.
 | step | thread | code |
 |---|---|---|
 | Pin, Verify | sender | `loopback_route`, `loopback_pin` |
-| Reserve | sender | `rocketnet_buffer_handoff_reserve` in `loopback_deliver` |
+| Reserve | sender | `loopback_reserve` in `loopback_deliver` |
 | Fill | sender | the write and the release store of `filled` in `loopback_deliver` |
-| Take, Copy, Release | receiver | `loopback_take` |
+| Take, Copy, Release | receiver | `loopback_take`, `loopback_take_filled`, `loopback_release` |
 | Destroy, Free | receiver | `loopback_destroy` |
 | Leave | sender | the sender's own destroy, which leaves its datagrams in the inbox |
 

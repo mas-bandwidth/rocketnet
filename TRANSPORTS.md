@@ -44,8 +44,9 @@ server order; rn-client-transport-ranking sets the client order. The loopback tr
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 64 bytes each (64,064 bytes) under one mutex. Each live endpoint
-allocates its full inbox of `ROCKETNET_LOOPBACK_QUEUE_PACKETS` datagrams at
-create, so runtime sends never allocate or grow it. A process using loopback
+allocates its full inbox at create (`ROCKETNET_LOOPBACK_QUEUE_PACKETS`
+datagrams for a client, a server's sized from its plan), so runtime sends
+never allocate or grow it. A process using loopback
 must budget for every live endpoint's complete inbox. The cost is paid only by
 a process that selects loopback by name.
 
