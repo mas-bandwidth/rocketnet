@@ -40,16 +40,17 @@
     THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
     warm cycle is the first planned reconnect cycle: 30 s of the first client,
     long enough for its sequence numbers to wrap every history and window the
-    connection indexes by sequence (so every page of them has been touched),
-    then the disconnect, destroy, create and connect of the second client. The
-    post-warmup sample is taken when the second client has sent one full
-    sweep of payload sizes, then one sample every 10 s while a client is
-    connected, and the end sample after the bound, before the teardown. Each
-    count prints as "soak resources: <name> start=<n> end=<n> peak=<n>" (fds,
-    threads, resident_bytes; handles, threads, private_bytes on Windows); a
-    run that ends inside the warm cycle has no post-warmup sample and prints
-    "soak resources: none (the run ended inside the warm cycle)", as every
-    run under about 32 s does.
+    connection indexes by sequence, then its disconnect and destroy. Every
+    sample of the comparison is taken between clients, with the last client
+    destroyed and the server still running, so each sees the same objects
+    alive: the post-warmup sample at the first planned reconnect, a peak
+    sample at every later reconnect and every 10 s, and the end sample after
+    the bound, once the last client is destroyed and before the server is.
+    Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
+    (fds, threads, resident_bytes; handles, threads, private_bytes on
+    Windows); a run that ends inside the warm cycle, as every run under 30 s
+    does, has no post-warmup sample and prints
+    "soak resources: none (the run ended inside the warm cycle)".
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
