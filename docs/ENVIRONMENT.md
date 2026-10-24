@@ -6,9 +6,13 @@ the config at the documented lifecycle point, and invalid or out-of-range
 values are refused rather than clamped. `docs/ABI-EVOLUTION.md` describes the
 config-size rules.
 
-The transport reads these variables at client connect or server start. The
-`ROCKETNET_DEV_` variables are read at create. None of them is a field of the
-public config structs:
+`rocketnet_client_create` and `rocketnet_server_create` read every variable
+once: the defaults, then the config struct, then the environment, before the
+config is validated and the endpoint's memory is sized. Client connect and
+server start use that resolved config and never read the environment again,
+so a variable changed after create has no effect on that endpoint. The
+variables below are read the same way, at create. None of them is a field of
+the public config structs:
 
 | Variable | Meaning |
 | --- | --- |
