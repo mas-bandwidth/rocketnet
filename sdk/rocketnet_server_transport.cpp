@@ -93,7 +93,6 @@ struct rocketnet_server_send_buffer_t
 {
     int num_packets;
     rocketnet_address_t to[ROCKETNET_SERVER_MAX_SEND_PACKETS];
-    int client_index[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int packet_bytes[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_SEND_PACKETS];
 };
@@ -822,7 +821,6 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
     rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
     rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
-    int send_client_index[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     bool accepted[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
@@ -832,20 +830,13 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
             sends[num_sends].to = &server_transport->send_buffer.to[i];
             sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
             sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
-            send_client_index[num_sends] = server_transport->send_buffer.client_index[i];
             num_sends++;
         }
     }
+    // a portable control frame is charged at its commit (the disconnect
+    // burst's count is read before the flush), so the results are not read
     if ( num_sends > 0 )
-    {
         rocketnet_server_link_send_batch( server_transport, sends, num_sends, accepted, shutdown );
-        // a datagram is counted sent only once the link took it
-        for ( int i = 0; i < num_sends; i++ )
-        {
-            if ( accepted[i] )
-                rocketnet_server_charge_send_frame( server_transport, send_client_index[i], sends[i].to, sends[i].packet_bytes );
-        }
-    }
     server_transport->send_buffer.num_packets = 0;
 }
 
@@ -926,10 +917,10 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
         return;
     }
 
-    // the portable frame is charged by the control flush, once the link took it
+    // the portable frame is charged here, at its commit, as before
+    rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
-    send_buffer->client_index[send_buffer->num_packets] = frame->client_index;
     send_buffer->num_packets++;
 }
 
