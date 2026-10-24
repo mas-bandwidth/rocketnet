@@ -45,8 +45,10 @@ are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
   first in the next commit, ahead of that commit's marks. The stale entry
   then outlives the released slot only by the commits the forget took to
   land; a reconnect from the same address inside that time is dropped in
-  the kernel until it does. The buffer's own refusals (a full buffer) are
-  added to the socket's commit failure count.
+  the kernel until it does. A forget the sink cannot queue (a full buffer)
+  keeps its slot record, so the next walk asks again and the mark pass does
+  not replace the old address until it lands. The buffer's own refusals (a
+  full buffer) are added to the socket's commit failure count.
 - Sizing: the kernel window is the userspace window,
   `ROCKETNET_XDP_REPLAY_WINDOW` = `ROCKETNET_REPLAY_WINDOW_BITS`
   (`ROCKETNET_HISTORY_PACKETS`, 4096 by default; a static_assert ties them).

@@ -21,11 +21,14 @@
 // connected slot whose session replay window's highest_opened is nonzero and
 // differs from what it last marked. All forgets come before any mark. The
 // kernel map lags the truth by at most one update and is never ahead of it.
+// A forget the sink cannot queue leaves its slot record in place, so the next
+// walk forgets the same address again and no new address replaces it until it
+// lands (tla/RNXdpReplay.tla, ForgetOwedUntilApplied).
 
 struct rocketnet_server_replay_sink_t
 {
     void * context;
-    void ( *forget )( void *, const struct rocketnet_address_t * );
+    bool ( *forget )( void *, const struct rocketnet_address_t * );
     void ( *mark )( void *, const struct rocketnet_address_t *, uint32_t high_water );
 };
 
@@ -44,7 +47,9 @@ bool rocketnet_server_replay_marks_reset_witness_for_test();
 // tla/RNXdpReplay.tla Walk: PASS 1 forgets the marked address of every slot
 // with a mark that is no longer connected or whose mapping address differs;
 // PASS 2 marks every connected slot whose highest_opened is nonzero and
-// differs from the value it last marked. The sink sees all forgets first.
+// differs from the value it last marked. The sink sees all forgets first. A
+// refused forget keeps its record, and PASS 2 skips that slot while the old
+// address is still pending.
 
 void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t * marks,
                                          const struct rocketnet_client_slots_t * slots,

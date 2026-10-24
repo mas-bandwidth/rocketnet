@@ -1072,9 +1072,9 @@ static void xdp_prefilter_counters( void * transport, uint64_t * values )
 {
     rocketnet_server_socket_xdp_counters( (rocketnet_server_socket_t*) transport, values );
 }
-static void xdp_replay_forget( void * transport, const rocketnet_address_t * address )
+static bool xdp_replay_forget( void * transport, const rocketnet_address_t * address )
 {
-    rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) transport, address );
+    return rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) transport, address );
 }
 static void xdp_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
 {

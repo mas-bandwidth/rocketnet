@@ -50,6 +50,7 @@ struct server_replay_marks_call_t
 struct server_replay_marks_recording_t
 {
     int count;
+    int forget_refusals;
     struct server_replay_marks_call_t calls[ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS];
 };
 
@@ -96,7 +97,7 @@ static struct server_replay_marks_client_t server_replay_marks_add_client( struc
     return client;
 }
 
-static void server_replay_marks_record_forget( void * context, const struct rocketnet_address_t * address )
+static bool server_replay_marks_record_forget( void * context, const struct rocketnet_address_t * address )
 {
     struct server_replay_marks_recording_t * recording = (struct server_replay_marks_recording_t *) context;
     rocketnet_unit_check( recording->count < ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS );
@@ -104,6 +105,10 @@ static void server_replay_marks_record_forget( void * context, const struct rock
     call->kind = SERVER_REPLAY_MARKS_FORGET;
     call->address = *address;
     call->high_water = 0;
+    if ( recording->forget_refusals == 0 )
+        return true;
+    recording->forget_refusals--;
+    return false;
 }
 
 static void server_replay_marks_record_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
@@ -256,6 +261,57 @@ static void test_server_replay_marks_follow_an_address_change()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+// A forget the sink refuses stays owed: the slot keeps the old address, the
+// second pass does not replace it with the new mapping, and the next walk
+// forgets the old address again before marking the new one.
+
+static void test_server_replay_marks_refused_forget_keeps_the_slot()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t b = server_replay_marks_address( "198.51.100.8:50000" );
+
+    const struct server_replay_marks_client_t client_a = server_replay_marks_add_client( &fixture, &a, 100, 5 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof(recording) );
+
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
+
+    rocketnet_client_slots_release( fixture.slots, client_a.slot );
+    rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
+
+    const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 9 );
+    rocketnet_unit_check( client_b.slot == client_a.slot );
+
+    // the buffer refuses the forget: only the forget is asked for, the new
+    // address is not marked while the old one is still owed
+
+    memset( &recording, 0, sizeof(recording) );
+    recording.forget_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+
+    // the retry lands the old forget and only then marks the new address
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
 // A connected slot may hold mapping index -1 (rocketnet_client_slots_assign
 // accepts it): the forget pass treats that as a changed address, so the old
 // mark is forgotten before the mapping array is ever indexed, and the mark
@@ -300,4 +356,5 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
 REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
+REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_keeps_the_slot );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );

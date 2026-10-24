@@ -111,8 +111,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         if ( forget )
         {
-            sink->forget( sink->context, &slot->marked_address );
-            memset( slot, 0, sizeof(*slot) );
+            // a forget the sink cannot queue stays owed: keep the record so
+            // the next walk asks again (tla/RNXdpReplay.tla Walk)
+            if ( sink->forget( sink->context, &slot->marked_address ) )
+                memset( slot, 0, sizeof(*slot) );
         }
     }
 
@@ -139,6 +141,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             continue;
 
         const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
+
+        // a pending forget for the old address blocks marking the new one
+        // until a later walk forgets it (tla/RNXdpReplay.tla Walk)
+        if ( slot->has_mark && !rocketnet_address_equal( address, &slot->marked_address ) )
+            continue;
+
         sink->mark( sink->context, address, high_water );
         slot->has_mark = 1;
         slot->marked_value = high_water;
@@ -147,9 +155,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 }
 
 #if ROCKETNET_TEST_SEAMS
-static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
+static bool rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
     (*(int *) context)++;
+    return true;
 }
 
 static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}

@@ -2290,13 +2290,14 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // applies them to the pinned map and resets the buffer keeping every forget
 // the kernel refused, failures counted and named by call, never by key.
 
-void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
+bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
 {
     rocketnet_assert( server_socket );
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
-    rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
+    const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
     rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
+    return queued;
 }
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
