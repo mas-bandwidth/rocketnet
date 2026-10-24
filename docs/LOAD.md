@@ -176,13 +176,15 @@ receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-955,710,336 bytes (955,710 bytes per slot on average), and
-`rocketnet_client_required_memory` for the client profile is 3,063,168 bytes.
-These are configuration calculations and measured create-block sizes, not
+3,233,438,755 bytes, and `rocketnet_client_required_memory` for the client
+profile is 22,745,708 bytes (Linux x86-64, development build, io_uring and
+XDP built; each is the lifecycle peak the caller's allocator sees, for the
+largest transport the ladder can grant).
+These are configuration calculations and planned allocator peaks, not
 measured wire usage. The summary reports each endpoint's
-`rocketnet_*_required_memory` public block size. Those figures exclude the
-transport allocations made at connect/start, native resources and process
-overhead, so they are not whole-session memory estimates. The harness's own
+`rocketnet_*_required_memory` figure. Those figures exclude the memory the
+operating system owns (thread stacks, XDP UMEM, io_uring rings, kernel socket
+buffers) and process overhead, so they are not whole-process memory estimates. The harness's own
 payloads are 32 bytes, so its wire rates stay far below the profile's budget.
 
 The summary also reports per-call Release timing samples during the traffic and

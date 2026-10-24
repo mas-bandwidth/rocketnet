@@ -905,10 +905,11 @@ struct rocketnet_platform_wake_layout_t
 #endif
 #endif
 
-// The memory plan seam allocates this mirror of the platform thread_shim_data_t
-// that rocketnet_platform_thread_create allocates beside the thread, so the seam
-// allocates the bytes rocketnet_platform_thread_allocation_bytes counts. The
-// Windows shim carries no thread pointer; the POSIX shims do.
+// The memory plan seam allocates this mirror of the platform thread_record_t
+// (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
+// rocketnet_platform_thread_create allocates, so the seam allocates the bytes
+// rocketnet_platform_thread_allocation_bytes counts. The Windows shim carries
+// no thread pointer; the POSIX shims do.
 struct rocketnet_thread_shim_layout_t
 {
     void * context;
@@ -917,6 +918,11 @@ struct rocketnet_thread_shim_layout_t
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     void * thread;
 #endif
+};
+struct rocketnet_thread_record_layout_t
+{
+    rocketnet_platform_thread_t thread;
+    rocketnet_thread_shim_layout_t shim;
 };
 
 // Test seam for socket-free, thread-free client memory plan unit testing.
@@ -1826,9 +1832,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
         if ( rocketnet_client_memory_plan_seam_enabled )
         {
-            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
-            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
-            rocketnet_free( context, shim_mem );
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_record_layout_t) );
             client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
         }
         else
@@ -1840,9 +1844,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     {
         if ( rocketnet_client_memory_plan_seam_enabled )
         {
-            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
-            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
-            rocketnet_free( context, shim_mem );
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_record_layout_t) );
             client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
         }
         else

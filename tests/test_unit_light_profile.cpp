@@ -14,12 +14,42 @@
 
 #define check rocketnet_unit_check
 
-// USAGE.md "Server memory footprint" and docs/LOAD.md record these exact
-// figures, measured with rocketnet_server_required_memory at max_clients
-// 1000 and rocketnet_client_required_memory under the profile. The bound
-// is that figure; the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 955710336 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 3063168 )
+// USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
+// required_memory is the lifecycle peak the caller's allocator sees (create,
+// connect or start, stop or disconnect, again, destroy) for the largest
+// transport the default ladder can grant, so it differs by platform and by
+// ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
+// bound is the figure this test read at rn-no-alloc-after-create.w9 (merge of
+// f61bb5d9 and main 5805e488): rocketnet_server_required_memory at
+// max_clients 1000 and rocketnet_client_required_memory under the profile,
+// Release, on hetzner2 (Linux x86-64, io_uring and XDP built), mini-m5
+// (macOS arm64) and captain (Windows x64, MSVC). A host whose ladder grants
+// fewer transports reports less; the check is at most.
+#if defined(_WIN32)
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) WINDOWS_SERVER_DEV_ON )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) WINDOWS_CLIENT_DEV_ON )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) WINDOWS_SERVER_DEV_OFF )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) WINDOWS_CLIENT_DEV_OFF )
+#endif
+#elif defined(__APPLE__)
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523801591 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745716 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517405227 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959912 )
+#endif
+#else
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3233438755ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745708 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3227042391ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959904 )
+#endif
+#endif
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
