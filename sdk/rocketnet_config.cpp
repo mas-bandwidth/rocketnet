@@ -325,19 +325,13 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
-// the public name of a config field's env var: every row is its own name.
-
-static const char * rocketnet_config_env_field_name( const char * field_name )
-{
-    return field_name;
-}
+// the public name of a config field's env var: ROCKETNET_<FIELD>, the row's
+// own name uppercased.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
 {
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
-
-    field_name = rocketnet_config_env_field_name( field_name );
 
     const char * prefix = "ROCKETNET_";
     const int prefix_length = (int) strlen( prefix );
@@ -363,8 +357,6 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     rocketnet_assert( transport_name );
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
-
-    field_name = rocketnet_config_env_field_name( field_name );
 
     char prefix[64];
     const int written = snprintf( prefix, sizeof(prefix), "ROCKETNET_%s_", transport_name );
@@ -706,7 +698,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a row whose max is above its min has that range (the
-                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                // step_driven row's 0 .. 1); a 0 .. 0 row takes any value
                 if ( field->max_value > field->min_value )
                 {
                     uint64_t value;

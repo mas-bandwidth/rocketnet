@@ -146,9 +146,13 @@ struct rocketnet_network_simulator_t
     // simulator's lock and read without it, so a drain of an empty simulator
     // takes no lock.
     volatile uint64_t held_count;
-    // Whether the setting the simulator was configured with was nonzero.  It
-    // is decided once, at create, and never changes: the transports use it to
-    // pick the path a connection runs on, and a connection's path never moves.
+    // Whether any config call has set a nonzero setting.  It latches on the
+    // first active config and is never cleared, not even by a later all-zero
+    // config.  Production configures once, at create, so there it records the
+    // create-time setting; a live change goes through the hand-over
+    // (rocketnet_network_simulator_reconfigure and the take), which never
+    // touches it.  The transports use it to pick the path a connection runs
+    // on, and a connection's path never moves.
     int created_active;
     uint64_t rng_state;
     int audit;
@@ -198,9 +202,9 @@ static double rocketnet_simulator_random_float( struct rocketnet_network_simulat
 // The shard hash folds EXACTLY the fields rocketnet_address_equal compares,
 // and nothing else. That equivalence is the index's load-bearing property:
 // two addresses that compare equal must land in the same shard, or a packet
-// becomes unreachable. Note the degenerate types -- equal() considers two
-// addresses of a type that is neither IPv4 nor IPv6 equal on the type alone,
-// so the hash must ignore their payload bytes for the same reason.
+// becomes unreachable. Note the degenerate types -- equal() never considers
+// two addresses of a type that is neither IPv4 nor IPv6 equal, so folding
+// only their type is merely conservative: equal still implies same shard.
 
 static uint32_t rocketnet_simulator_address_hash( const struct rocketnet_address_t * address )
 {
@@ -364,8 +368,10 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
     simulator->duplicate_percent = duplicate_percent;
     // The setting the simulator was configured with decides the path a
     // connection runs on (the transports read it through
-    // rocketnet_network_simulator_created_active).  It is recorded once, at
-    // create: a live change never moves a connection's path.
+    // rocketnet_network_simulator_created_active).  The flag latches on the
+    // first active config and is never cleared here.  Production calls config
+    // only at create; a live change goes through the hand-over, which never
+    // moves the flag, so a connection's path never moves.
     const bool active = latency != 0.0 || jitter != 0.0 || packet_loss_percent != 0.0f || duplicate_percent != 0.0f;
     if ( !simulator->created_active && active )
         simulator->created_active = 1;
@@ -467,9 +473,10 @@ bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulato
 }
 
 // Whether the simulator was configured with a setting that changes the
-// packets, patterns included.  It is decided at create and never changes: a
-// connection's path is fixed when it is created, and a live setting never
-// moves it.
+// packets, patterns included.  The configured part latches on the first
+// active config and is never cleared; production configures once, at create,
+// and a live change through the hand-over never moves it, so a connection's
+// path is fixed when it is created.
 bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator )
 {
     if ( !simulator )

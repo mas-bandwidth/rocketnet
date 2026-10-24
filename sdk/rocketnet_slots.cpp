@@ -16,10 +16,13 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients )
 {
     if ( !slots )
         return;
-    if ( max_clients < 0 )
+    // An out-of-range count is refused as zero slots, never clamped to a working machine of the wrong size.
+    if ( max_clients < 0 || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_assert( max_clients >= 0 && max_clients <= ROCKETNET_MAX_CLIENTS );
+        rocketnet_error( "slots init refused: max_clients %d is outside 0..%d; using zero slots", max_clients, ROCKETNET_MAX_CLIENTS );
         max_clients = 0;
-    if ( max_clients > ROCKETNET_MAX_CLIENTS )
-        max_clients = ROCKETNET_MAX_CLIENTS;
+    }
     memset( slots, 0, sizeof( *slots ) );
     slots->max_clients = max_clients;
 }
