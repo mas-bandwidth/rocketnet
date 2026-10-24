@@ -8,7 +8,7 @@
     difficult problems. Run ./bin/soak and leave it; pass --seconds S or a
     number of iterations to bound it: ./bin/soak --seconds 60 or ./bin/soak 10000
 
-    usage: soak [--seconds S] [positive iteration count]
+    usage: soak [--seconds S] [--assert-flat] [positive iteration count]
 
     --seconds S ends the run after S seconds of wall clock (S a positive
     integer); beside an iteration count the run ends at whichever bound comes
@@ -36,7 +36,46 @@
     ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
+
+    THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
+    first client reconnects once it has sent and received one full sweep of
+    payload sizes, so the create, connect, disconnect and destroy paths have
+    each run once; the post-warmup sample is taken when the second client has
+    finished its own first sweep, then one sample every 10 s while a client is
+    connected, and the end sample after the bound, before the teardown. Each
+    count prints as "soak resources: <name> start=<n> end=<n> peak=<n>" (fds,
+    threads, resident_bytes; handles, threads, private_bytes on Windows); a
+    run that ends inside the warm cycle has no post-warmup sample and prints
+    "soak resources: none (the run ended inside the warm cycle)". The planned
+    reconnect cycle after the warm one is every 30 s.
+
+    --assert-flat holds the counts to process_resources.h's flat rule: the
+    fd (handle) and thread counts at the end equal their post-warmup counts,
+    and the memory count grows by at most one page per ten minutes of run
+    since the post-warmup sample (at least one page). A count that is not
+    flat prints "soak: --assert-flat FAILED: <name> start=<n> end=<n>" and
+    the run exits 1; so does a run that ends inside the warm cycle. A second
+    --assert-flat, or one given a value (--assert-flat=...), is refused with
+    exit 2 like the other malformed arguments.
+
+    The granted transports print as "soak transport: server <name>" and
+    "soak transport: client <name>" (rocketnet_server_transport_io_name and
+    rocketnet_client_transport_io_name), and again as the summary lines
+    server_transport_io and client_transport_io, so a pin
+    (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT) is proven by the
+    run rather than assumed. A client granted a transport other than the
+    first client's is a failure.
+
+    SOAK_SERVER_ADDRESS=<address>:<port> binds the server there instead of
+    127.0.0.1 on a kernel-granted port (xdp discovers no port, so its cell
+    names one), and on Linux SOAK_CLIENT_NETNS=/var/run/netns/<name> opens
+    every client in that namespace, as load.c's LOAD_SERVER_ADDRESS and
+    LOAD_CLIENT_NETNS do: the xdp cell of scripts/soak-per-transport.
 */
+
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE     /* setns, for SOAK_CLIENT_NETNS */
+#endif
 
 #include "tests/native_shutdown.h"
 #include "rocketnet.h"
@@ -49,6 +88,12 @@
 #include <time.h>
 #include <stdlib.h>
 #include <signal.h>
+#include "tests/process_resources.h"
+#if defined(__linux__)
+#include <fcntl.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 // Internal transport tools mint the binary development token directly.
 static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
@@ -199,6 +244,7 @@ int main( int argc, char ** argv )
     uint64_t max_seconds = 0;
     int have_iterations = 0;
     int have_seconds = 0;
+    int assert_flat = 0;
 
     for ( int i = 1; i < argc; i++ )
     {
@@ -206,37 +252,51 @@ int main( int argc, char ** argv )
         {
             if ( have_seconds )
             {
-                fprintf( stderr, "soak: duplicate --seconds flag (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: duplicate --seconds flag (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
                 return 2;
             }
             if ( i + 1 >= argc )
             {
-                fprintf( stderr, "soak: missing argument for --seconds (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: missing argument for --seconds (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
                 return 2;
             }
             i++;
             if ( !parse_positive_uint64( argv[i], &max_seconds ) )
             {
-                fprintf( stderr, "soak: --seconds S must be a positive integer (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: --seconds S must be a positive integer (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
                 return 2;
             }
             have_seconds = 1;
         }
+        else if ( strcmp( argv[i], "--assert-flat" ) == 0 )
+        {
+            if ( assert_flat )
+            {
+                fprintf( stderr, "soak: duplicate --assert-flat flag (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
+                return 2;
+            }
+            assert_flat = 1;
+        }
+        else if ( strncmp( argv[i], "--assert-flat=", 14 ) == 0 )
+        {
+            fprintf( stderr, "soak: --assert-flat takes no value (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
+            return 2;
+        }
         else if ( argv[i][0] == '-' && ( argv[i][1] < '0' || argv[i][1] > '9' ) )
         {
-            fprintf( stderr, "soak: unknown flag '%s' (usage: soak [--seconds S] [positive iteration count])\n", argv[i] );
+            fprintf( stderr, "soak: unknown flag '%s' (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n", argv[i] );
             return 2;
         }
         else
         {
             if ( have_iterations )
             {
-                fprintf( stderr, "soak: unexpected second positional argument '%s' (usage: soak [--seconds S] [positive iteration count])\n", argv[i] );
+                fprintf( stderr, "soak: unexpected second positional argument '%s' (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n", argv[i] );
                 return 2;
             }
             if ( !parse_positive_uint64( argv[i], &max_iterations ) )
             {
-                fprintf( stderr, "soak: iteration count must be a positive integer (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: iteration count must be a positive integer (usage: soak [--seconds S] [--assert-flat] [positive iteration count])\n" );
                 return 2;
             }
             have_iterations = 1;
@@ -268,16 +328,56 @@ int main( int argc, char ** argv )
     // returns NULL and the run exits 1, which reads as a soak failure rather
     // than as a busy port.
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    char server_bind[64];
+    if ( !rocketnet_test_getenv( "SOAK_SERVER_ADDRESS", server_bind, sizeof( server_bind ) ) || server_bind[0] == '\0' )
+        snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config);
     if ( !server )
     {
-        printf( "soak: failed to create the server transport\n" );
+        printf( "soak: failed to create the server transport on %s\n", server_bind );
         rocketnet_term();
         return 1;
     }
 
-    char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    // the token names the host bound and the port granted, or the port the
+    // address named when the transport reports none (xdp discovers no port)
+
+    char server_host[64];
+    snprintf( server_host, sizeof( server_host ), "%s", server_bind );
+    char * server_port_text = strchr( server_host, ':' );
+    int server_port = rocketnet_server_transport_port( server );
+    if ( server_port_text )
+    {
+        *server_port_text = '\0';
+        if ( server_port <= 0 )
+            server_port = (int) strtol( server_port_text + 1, NULL, 10 );
+    }
+    char server_address[80];
+    snprintf( server_address, sizeof(server_address), "%s:%d", server_host, server_port );
+
+    char server_transport_name[64];
+    snprintf( server_transport_name, sizeof( server_transport_name ), "%s", rocketnet_server_transport_io_name( server ) );
+    printf( "soak transport: server %s\n", server_transport_name );
+    char client_transport_name[64] = { 0 };
+
+#if defined(__linux__)
+    int self_netns = -1;
+    int client_netns = -1;
+    char client_netns_path[256];
+    if ( rocketnet_test_getenv( "SOAK_CLIENT_NETNS", client_netns_path, sizeof( client_netns_path ) ) && client_netns_path[0] != '\0' )
+    {
+        self_netns = open( "/proc/self/ns/net", O_RDONLY );
+        client_netns = open( client_netns_path, O_RDONLY );
+        if ( self_netns < 0 || client_netns < 0 )
+        {
+            printf( "soak: cannot open the namespaces /proc/self/ns/net and %s: %s\n", client_netns_path, strerror( errno ) );
+            rn_native_server_transport_stop_and_destroy( server );
+            rocketnet_term();
+            return 1;
+        }
+    }
+#endif
 
     struct rocketnet_client_transport_t * client = NULL;
 
@@ -299,6 +399,16 @@ int main( int argc, char ** argv )
     int unplanned_disconnect_recorded = 0;
     int deadline_reached = 0;
     int payload_size = 1;
+    int client_sweeps = 0;      // full sweeps of payload sizes the current client has sent
+    int resources_started = 0;
+    int resources_ended = 0;
+    double resources_start_time = 0.0;
+    struct process_resources_t resources_start;
+    struct process_resources_t resources_end;
+    struct process_resources_t resources_peak;
+    memset( &resources_start, 0, sizeof( resources_start ) );
+    memset( &resources_end, 0, sizeof( resources_end ) );
+    memset( &resources_peak, 0, sizeof( resources_peak ) );
     const double start_time = rocketnet_time();
     double last_report_time = start_time;
     double reconnect_time = start_time;
@@ -315,7 +425,7 @@ int main( int argc, char ** argv )
 
         // reconnect on a cycle: the connect path is never a rare path
 
-        if ( !client || rocketnet_time() - reconnect_time > 30.0 )
+        if ( !client || rocketnet_time() - reconnect_time > 30.0 || ( reconnects == 0 && client_sweeps >= 1 ) )
         {
             if ( client )
             {
@@ -336,13 +446,41 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
+#if defined(__linux__)
+            if ( client_netns >= 0 && setns( client_netns, CLONE_NEWNET ) != 0 )
+            {
+                printf( "soak: setns into %s failed: %s\n", client_netns_path, strerror( errno ) );
+                failures++;
+                break;
+            }
+#endif
             client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
+#if defined(__linux__)
+            if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
+            {
+                printf( "soak: setns back to the server namespace failed: %s\n", strerror( errno ) );
+                failures++;
+                break;
+            }
+#endif
             if ( !client )
             {
                 printf( "soak: failed to create the client transport\n" );
                 failures++;
                 break;
             }
+            const char * granted = rocketnet_client_transport_io_name( client );
+            if ( client_transport_name[0] == '\0' )
+            {
+                snprintf( client_transport_name, sizeof( client_transport_name ), "%s", granted ? granted : "unknown" );
+                printf( "soak transport: client %s\n", client_transport_name );
+            }
+            else if ( !granted || strcmp( granted, client_transport_name ) != 0 )
+            {
+                printf( "soak: client transport changed from %s to %s on a reconnect\n", client_transport_name, granted ? granted : "unknown" );
+                failures++;
+            }
+            client_sweeps = 0;
             if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES )
             {
                 printf( "soak: unexpected client payload capacity\n" );
@@ -385,7 +523,10 @@ int main( int argc, char ** argv )
             rocketnet_server_transport_send_packet( server, rocketnet_client_transport_client_index( client ), payload, payload_size );
             rocketnet_server_transport_send_packets( server );
             server_sent++;
-            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            if ( payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+                payload_size++;
+            else
+                { payload_size = 1; client_sweeps++; }
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; i++ )
@@ -426,9 +567,35 @@ int main( int argc, char ** argv )
             }
         }
 
+        // the post-warmup sample: the second client (the first after the
+        // warm cycle's reconnect) has finished its first full sweep
+
+        if ( !resources_started && reconnects >= 1 && connected && client_sweeps >= 1 )
+        {
+            if ( process_resources_read( &resources_start ) )
+            {
+                resources_started = 1;
+                resources_start_time = rocketnet_time();
+                resources_peak = resources_start;
+                last_report_time = resources_start_time;
+            }
+            else
+            {
+                printf( "soak: failed to read the process resource counts\n" );
+                failures++;
+                break;
+            }
+        }
+
         if ( rocketnet_time() - last_report_time > 10.0 )
         {
             last_report_time = rocketnet_time();
+            if ( resources_started && connected )
+            {
+                struct process_resources_t sample;
+                if ( process_resources_read( &sample ) )
+                    process_resources_peak( &resources_peak, &sample );
+            }
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
                     (unsigned long long) payloads_verified, (unsigned long long) failures );
@@ -465,6 +632,43 @@ int main( int argc, char ** argv )
             unplanned_disconnect_recorded = 1;
             printf( "soak: the handshake in progress at the bound did not complete (%s, %d)\n",
                     rocketnet_client_state_name( client_state ), client_state );
+            failures++;
+        }
+    }
+
+    // the end sample, before the teardown, with a client connected as at
+    // the post-warmup sample
+
+    if ( resources_started && connected && !unplanned_disconnect_recorded && process_resources_read( &resources_end ) )
+    {
+        resources_ended = 1;
+        process_resources_peak( &resources_peak, &resources_end );
+    }
+
+    if ( resources_started && resources_ended )
+    {
+        const double seconds_since_start = rocketnet_time() - resources_start_time;
+        for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
+        {
+            printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
+                    (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
+            if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
+            {
+                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
+                        (long long) resources_start.values[i], (long long) resources_end.values[i] );
+                if ( i == PROCESS_RESOURCES_MEMORY )
+                    printf( " (allowed growth %lld bytes over %.0f s)", (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+                printf( "\n" );
+                failures++;
+            }
+        }
+    }
+    else
+    {
+        printf( "soak resources: none (the run ended inside the warm cycle)\n" );
+        if ( assert_flat )
+        {
+            printf( "soak: --assert-flat FAILED: no post-warmup and end samples (the run ended inside the warm cycle)\n" );
             failures++;
         }
     }
@@ -521,6 +725,8 @@ int main( int argc, char ** argv )
     printf( "soak summary: client_verified %llu\n", (unsigned long long) client_verified );
     printf( "soak summary: server_verified %llu\n", (unsigned long long) server_verified );
     printf( "soak summary: reconnects %llu\n", (unsigned long long) reconnects );
+    printf( "soak summary: server_transport_io %s\n", server_transport_name );
+    printf( "soak summary: client_transport_io %s\n", client_transport_name[0] ? client_transport_name : "none" );
 
     for ( int s = ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED; s <= ROCKETNET_CLIENT_STATE_DISCONNECTED; s++ )
     {
@@ -551,6 +757,13 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_time() );
     rn_native_server_transport_stop_and_destroy( server );
+
+#if defined(__linux__)
+    if ( self_netns >= 0 )
+        close( self_netns );
+    if ( client_netns >= 0 )
+        close( client_netns );
+#endif
 
     rocketnet_term();
 
