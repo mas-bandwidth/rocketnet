@@ -27,14 +27,19 @@ Keep the endpoint, allocator and callback contexts alive, and poll
 destroying it. A client state of `DISCONNECTED` alone does not prove its
 worker has released storage. Caller-stepped clients progress through update.
 
-Destroy asserts the completion precondition, then synchronously joins and
-frees resources. It has no promised wall-clock bound. A stuck worker leaves
-completion false; it does not permit early destruction. An endpoint that has
-never started or connected is already complete.
+Destroy asserts the completion precondition when assertions are enabled, then
+synchronously joins and frees resources. It has no promised wall-clock bound.
+A stuck worker leaves completion false. An endpoint that has never started or
+connected is already complete.
 
-Calling destroy too early asserts when assertions are enabled. With assertions
-disabled, it returns without freeing the endpoint; discarding that handle leaks
-the allocation. Preview-1 callers must adopt the completion checks above.
+Calling destroy too early is API misuse in every build: it logs one error
+naming the skipped completion function, records the misuse, requests shutdown
+itself and updates a bounded number of times without sleeping, then
+synchronously joins, wipes and frees. A worker that has not exited by then is
+logged a second time and its object is kept, not freed under it. The
+debug assert still stops on the misuse. Preview-1 callers must still adopt the
+completion checks above; the leak is gone, but the error and misuse count say
+the contract was broken.
 
 Wait for server completion before restarting. A client retry from a terminal
 failure can return `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while the old

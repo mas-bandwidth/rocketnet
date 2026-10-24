@@ -69,6 +69,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: XDP receive queue holds at least twice the send queue" );
 
+// The XDP ring geometry is per queue and does not derive from
+// ROCKETNET_MAX_CLIENTS: the TX queue is a hash of the destination
+// (rocketnet_server_socket_send_queue), so a server's clients spread over its
+// queues, and a build for more clients runs more queues (BUILDING.md,
+// "Maximum clients"). The most queues (ROCKETNET_XDP_MAX_QUEUES, 1024) stage
+// two packets for every client at any ROCKETNET_MAX_CLIENTS.
+
 // The fill ring holds twice the receive frames the server puts on it. The
 // kernel reads the fill ring through a cached batch and publishes its consumer
 // index only when that batch is used up (xskq_cons_peek_addr_unchecked,
@@ -108,6 +115,32 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCK
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
                          "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
+
+// The send staging of a transport whose one staging serves every client of
+// the server (loopback, IOCP, RIO): two packets for each client the build
+// holds, rounded up to a power of two -- 2048 at the default 1000 clients.
+// The per-queue rings of the multi-queue transports (xdp, gso, io_uring) do
+// not derive from it: a server's clients spread over its queues, and a build
+// for more clients runs more queues (BUILDING.md, "Maximum clients").
+
+#define ROCKETNET_SERVER_SEND_STAGING_PACKETS             ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * ROCKETNET_MAX_CLIENTS,
+                         "the server-wide send staging holds two packets for every client" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS,
+                         "receive budget twice send: per-update receive budget holds at least twice the server-wide send staging" );
+
+// The server's packet lease table. Insert refuses past half the table, so
+// one update leases at most 65536 packets: the server-wide send staging rule,
+// two packets for every client, holds at any ROCKETNET_MAX_CLIENTS up to the
+// 32768 bound, so the table is fixed rather than derived.
+
+#define ROCKETNET_SERVER_PACKET_LEASES                                  131072
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PACKET_LEASES / 2 >= 2 * ROCKETNET_MAX_CLIENTS,
+                         "one update leases at least two packets for every client" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PACKET_LEASES / 2 >= ROCKETNET_SERVER_SEND_STAGING_PACKETS,
+                         "one update leases every packet the server-wide send staging holds" );
 
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload

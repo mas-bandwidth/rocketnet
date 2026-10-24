@@ -3962,6 +3962,12 @@ void rocketnet_test_server_transport_io_pin_loopback()
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
+    // Built-in loopback must use the same worker-owned send rings as the
+    // socket transports even though its backend has no native wait object.
+    // A custom BASE backend remains a separate compatibility path.
+    rocketnet_check( client_config.step_driven == 0 );
+    rocketnet_check( rocketnet_client_transport_client_io( client ) != NULL );
+
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
     {
@@ -8529,7 +8535,7 @@ extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
-extern void rocketnet_test_server_receive_keeps_up_with_max_clients();
+extern void rocketnet_test_server_async_delivery_with_max_clients();
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
@@ -8902,7 +8908,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
-    { "test_server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients, NULL },
+    { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },

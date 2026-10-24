@@ -12,8 +12,10 @@
 (* is in ticks of one unit each (the committed instances use 100 ms); every *)
 (* tick is an update.  There are two numbered, unacked records of the two  *)
 (* delay classes: "s", a single-packet record, and "c", a chunk of a block *)
-(* (a record whose send descriptor has more than one fragment).  Both are  *)
-(* first sent at tick 0, in either order.  A record is due when            *)
+(* (a record whose send descriptor has more than one fragment).  The small *)
+(* record is first sent at tick 0; the chunk at ChunkFirst (0 in the first *)
+(* cut; late in its block's first timeout when the send budget paces a     *)
+(* block out over longer than the timeout).  A record is due when          *)
 (*     t >= lastSend[r] + Delay(r) where                                   *)
 (*     Delay("s") = Min(rto, Interval)  * backoff["s"]                     *)
 (*     Delay("c") = Min(rto, ChunkCap) * backoff["c"]                      *)
@@ -37,8 +39,12 @@
 (* clamp(srtt * scale + 2 * rttvar, rto_min, rto_max), and resets the      *)
 (* back-off to 1.  Before any sample rto is RtoInitial.  A record's own    *)
 (* ack may come at any update, or never: every send may be lost.  At tick  *)
-(* Timeout an unacked record ends the connection (RELIABLE_TIMEOUT) and    *)
-(* nothing more is sent.                                                   *)
+(* Timeout after its own first send (MESSAGES m9.3) an unacked record      *)
+(* ends the connection (RELIABLE_TIMEOUT) and nothing more is sent.  The   *)
+(* code keeps each number's first send in send_first_sends                 *)
+(* (rn_window_ack_record_first_send).  BlockClock = TRUE times the chunk   *)
+(* from its block's first send at tick 0, the code before the fix: the     *)
+(* reversed witness MCRNResendTimingBrokenBlockClock.cfg.                  *)
 (*                                                                         *)
 (* MaxBackoff is the back-off parameter: 1 is the rule (no back-off, the   *)
 (* delay is the same for every resend); 8 is the first version's           *)
@@ -79,6 +85,16 @@ OneFifo == FALSE
 ChunkInFlight == TRUE
 OneFifoTwoDelays == TRUE
 
+\*   ChunkFirst: the tick of the chunk's own first send.
+\*   BlockClock: FALSE times every record from its own first send (the
+\*            rule); TRUE times the chunk from its block's first send at
+\*            tick 0 (the reversed witness).
+\* (ChunkFirst <- ChunkFirstLate, BlockClock <- BlockClockOn)
+ChunkFirst == 0
+BlockClock == FALSE
+ChunkFirstLate == Timeout - 2
+BlockClockOn == TRUE
+
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -93,7 +109,7 @@ ChunkCap == Max(1, Timeout \div MinAttempts)
 ConfigAccepted == Timeout >= MinAttempts * Max(Interval, RtoInitial)
 
 VARIABLES
-    t,          \* now, in ticks since the first send
+    t,          \* now, in ticks since the small record's first send
     lastSend,   \* [Records -> tick of the record's last send]
     rto,        \* the current clamped rto, in ticks
     backoff,    \* [Records -> the back-off factor, 1 under the rule]
@@ -108,27 +124,37 @@ Cap(r) == IF r = "s" THEN Interval ELSE ChunkCap
 
 Delay(r) == Min(rto, Cap(r)) * backoff[r]
 
-Due(r) == ~acked[r] /\ t < Timeout /\ t >= lastSend[r] + Delay(r)
+FirstSend(r) == IF r = "c" THEN ChunkFirst ELSE 0
+Clock(r) == IF r = "c" /\ BlockClock THEN 0 ELSE FirstSend(r)
+Deadline(r) == Clock(r) + Timeout
+Horizon == ChunkFirst + Timeout
+Started(r) == t >= FirstSend(r)
 
-Live == t < Timeout /\ \E r \in Records : ~acked[r]
+\* rn_window_ack_check_timeout: the oldest unacked record that has been
+\* sent has stood its timeout.
+TimedOut == \E r \in Records : ~acked[r] /\ Started(r) /\ t >= Deadline(r)
+
+Due(r) == ~acked[r] /\ ~TimedOut /\ Started(r) /\ (attempts[r] = 0 \/ t >= lastSend[r] + Delay(r))
+
+Live == ~TimedOut /\ \E r \in Records : ~acked[r]
 
 TypeOK ==
-    /\ t \in 0..Timeout
-    /\ lastSend \in [Records -> 0..Timeout]
+    /\ t \in 0..Horizon
+    /\ lastSend \in [Records -> 0..Horizon]
     /\ rto \in RtoMin..RtoMax
     /\ backoff \in [Records -> {1, 2, 4, 8}]
     /\ \A r \in Records : backoff[r] <= MaxBackoff
-    /\ attempts \in [Records -> 1..MinAttempts]
+    /\ attempts \in [Records -> 0..MinAttempts]
     /\ acked \in [Records -> BOOLEAN]
     /\ head \in Records
     /\ phase \in {"walk", "tick"}
 
 Init ==
     /\ t = 0
-    /\ lastSend = [r \in Records |-> 0]
+    /\ lastSend = [r \in Records |-> FirstSend(r)]
     /\ rto = RtoInitial
     /\ backoff = [r \in Records |-> 1]
-    /\ attempts = [r \in Records |-> 1]
+    /\ attempts = [r \in Records |-> IF FirstSend(r) = 0 THEN 1 ELSE 0]
     /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE FALSE]
     /\ head \in (IF Chunk THEN Records ELSE {"s"})
     /\ phase = "walk"
@@ -175,7 +201,8 @@ Sample(x) ==
 Ack(r) ==
     /\ phase = "walk"
     /\ ~acked[r]
-    /\ t < Timeout
+    /\ ~TimedOut
+    /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase>>
 
@@ -203,14 +230,14 @@ Spec == Init /\ [][Next]_vars
 
 \* The property the rule exists for, for each class.
 AttemptsBeforeTimeout ==
-    \A r \in Records : (~acked[r] /\ t = Timeout) => attempts[r] >= MinAttempts
+    \A r \in Records : (~acked[r] /\ Started(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
 
 \* Under the rule no unacked record waits more than its cap for its next
 \* send while the connection is up: Interval for a small record, the RTO
 \* bound for a chunk.
 ResendGapBounded ==
     \A r \in Records :
-        (~acked[r] /\ t < Timeout) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
+        (~acked[r] /\ ~TimedOut /\ attempts[r] > 0) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
 
 \* A due small record is sent in the update it falls due: no update ends
 \* with it still due, whatever the chunk beside it does.

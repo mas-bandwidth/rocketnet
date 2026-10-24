@@ -8,8 +8,11 @@ serialize it.
 The main frame calls and create are designed to be unnoticeable in a game
 profiler. Client disconnect and server stop request shutdown without waiting
 for workers. Their completion queries let a game keep its frame loop running;
-only after completion does synchronous destroy join and free. Soak, load and profiling work is planned
-hardening. This preview makes no claim from it.
+after completion synchronous destroy joins and frees. An early destroy logs and
+counts the misuse, then performs the shutdown and join itself with a bounded
+number of updates and no sleep; a worker that has not exited by then is logged
+and its object is kept, not freed. Soak, load and
+profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
 [sdk/rocketnet.h](sdk/rocketnet.h). This file is the narrative: how a frame is
@@ -143,17 +146,32 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 
 `transport` is an ordered candidate list, comma separated, validated at create
 and walked left to right at client `connect` and server `start`. The first
-candidate that starts wins, and a list that every candidate refuses fails
-loudly. `"auto"` (the default, also NULL or the empty
-string) is the platform's recommended order; a one-element list is a pin. A
-known name this endpoint does not have is skipped with one log line; a name
-that is no transport anywhere is a typo and fails loudly. The accessor on each
+candidate that starts wins. `"auto"` (the default, also NULL or the empty
+string) is the platform's recommended order. A known name that this build
+does not offer for this endpoint on this platform (`gso` on a client or on
+macOS, for example) is skipped with one log line. A list with at least one
+name left after skipping is a strict pin: only those transports are tried, in
+that order, and if every one refuses, connect or start fails loudly. A list
+whose every name is skipped falls back to the endpoint's own `auto` order with
+a warning; this is deliberate, so one fleet-wide list (for example
+`ROCKETNET_SERVER_TRANSPORT=gso`) deploys unchanged to mixed machines
+(`sdk/rocketnet_config.cpp`, `rocketnet_transport_ladder_parse`). A name that is
+no transport anywhere is a typo and refuses the create. The accessor on each
 end reports the transport that won.
 
 Every transport serves IPv4, IPv6, or both: `rocketnet_server_create` takes an
 IPv4 address and an IPv6 address, either NULL but not both. With both, on the
 same port (both 0, or equal), the server binds the IPv6 wildcard on
 that port with `IPV6_V6ONLY` off and advertises both named addresses.
+
+The addresses given to create are the server's advertised addresses, the ones
+connect tokens name; they are not bind restrictions. With one address, every
+transport except `xdp` binds that family's wildcard (`0.0.0.0` or `[::]`) on
+the given port, even when the address names a specific IP, so the server
+receives on every local address of that family. `xdp` attaches to the
+interface that carries the given address. Pass the address clients reach, and
+use a host firewall if traffic to the server's port on other local addresses
+must be kept out.
 `"auto"` tries `xdp` first when both addresses are on one interface. `xdp` on
 two interfaces, and `portable` where `IPV6_V6ONLY` cannot be cleared, refuse
 with `TRANSPORT_FAMILIES_UNSUPPORTED` and the ladder continues. A connect
@@ -173,16 +191,16 @@ structs, except `config_bytes`.
 | Field | Variable | Type | Default | A bad value |
 |---|---|---|---|---|
 | packet_filter | ROCKETNET_CLIENT_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
-| max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
+| max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..361728` |
 | max_fragmented_messages | ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
-| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
+| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, or `auto` inside a list: refuses the create; a list whose every name is skipped here uses `auto` with a warning |
 | state_change_callback | none | `void (*)( void *, enum rocketnet_client_state_t, enum rocketnet_client_state_t )` | `NULL` | no environment form |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | reliable_messages_in_flight | ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_message_buffer_bytes | ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
-| send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
+| receive_message_buffer_bytes | ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES | int | `1048576` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `1048576` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `4194304` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `256` | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
@@ -199,17 +217,17 @@ structs, except `config_bytes`.
 | backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
 | num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024` |
 | num_os_cpus | ROCKETNET_SERVER_NUM_OS_CPUS | int | `0` (transport default) | refuses the create unless `0` or `1..256` |
-| max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
+| max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..361728` |
 | max_fragmented_messages | ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
-| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
+| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, or `auto` inside a list: refuses the create; a list whose every name is skipped here uses `auto` with a warning |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | reliable_messages_in_flight | ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_message_buffer_bytes | ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
-| send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
+| receive_message_buffer_bytes | ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES | int | `1048576` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `1048576` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `4194304` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `256` (per client) | refuses the create unless `16..65536` |
 | packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
@@ -270,12 +288,22 @@ client and requests transport shutdown. `rocketnet_server_stopped` reports
 completion without waiting. Until it is true, start is refused; afterward start
 can finalize the old run and activate a new transport. Clients are identified by an `int` index,
 `0 .. max_clients - 1`, the slot each connection takes.
-Each client and server is one block that create allocates through the
+Create allocates each client and server as one block through the
 allocator. `rocketnet_client_required_memory` and
-`rocketnet_server_required_memory` report that block's size, so a program that
-wants every byte up front can pass `rocketnet_init` an allocator
-over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`. Connect
-and start may also allocate transport memory. A normal client connect starts
+`rocketnet_server_required_memory` report that block's size, and only that
+block's. Connect and start then allocate the transport through the same
+allocator, before any traffic: sockets, worker threads and wake objects, I/O
+rings and buffers, and on the server the per-client protocol tables
+(encryption mappings, client slots, ACK state, connect-token history, replay
+marks and fragment reassembly) and the stats worker's storage. All allocation
+happens up front at create, connect and start; the frame calls (update,
+receive, start, finish and abort message, send packets) never allocate. A
+program that wants every byte from a region of its own can pass
+`rocketnet_init` an allocator over that region, aligned to
+`ROCKETNET_ALLOCATION_ALIGNMENT`, sized for the block plus the transport
+memory that connect and start log for each candidate where the transport
+reports a plan (`client memory plan` and `server memory plan` lines, info
+level). A normal client connect starts
 one background network thread. A transport with wait/wake support uses that
 thread for bounded batched I/O and hands buffers to the frame thread; the
 fallback path uses it as a polling receive worker while sends stay on the frame
@@ -289,8 +317,11 @@ returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
 The server does not fall back to computing these stats synchronously on the
 frame thread. After a successful start, stop requests worker shutdown;
 `rocketnet_server_stopped` remains false until both transport I/O and the stats
-worker have exited. Destroy requires completion and synchronously joins the
-worker before freeing its storage.
+worker have exited. Destroy normally follows completion and synchronously joins
+the worker before freeing its storage; called early, it logs and counts the
+misuse, requests shutdown and updates a bounded number of times without
+sleeping, then joins and frees once complete, or logs and keeps the object if
+the worker has not exited.
 
 ### Server memory footprint
 
@@ -399,9 +430,13 @@ bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t 
 
 To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
-request shutdown and poll completion before destroy. Destroy asserts completion,
-then joins any remaining thread handle and wipes/frees resources synchronously.
-Keep allocator/callback contexts and all borrowed storage alive until destroy
+request shutdown and poll completion before destroy. Destroy asserts completion;
+called early, it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown itself and updates a bounded number of
+times without sleeping. Once complete it joins any remaining thread handle and
+wipes/frees resources synchronously; if the worker has not exited it logs a
+second error and keeps the object rather than free memory the worker owns. Keep
+allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise peer receipt.
 
 ## Frame loop
@@ -557,6 +592,24 @@ bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * st
     return rocketnet_client_finish_message( client, bytes ) != 0;
 }
 ```
+
+### Size limits
+
+There is no single per-packet limit; each layer has its own, all derived from
+a 1500-byte MTU path (`sdk/rocketnet_wire.h`, `sdk/rocketnet_constants.h`):
+
+| Limit | Bytes | What it bounds |
+|---|---|---|
+| `ROCKETNET_MAX_PACKET_BYTES` | 1452 | The UDP payload of every packet sent: the IPv6 payload of a 1500-byte MTU (IPv4 has 20 bytes spare). A received datagram larger than this is dropped by the prefilter, before decryption, and counted in `PREFILTER_TOO_LARGE`. |
+| `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` | 1416 | The message bytes one packet carries: 1452 less 26 bytes of prefilter, sequence and authentication tag and the 7-byte minimum ACK block, rounded down to a multiple of 8. |
+| `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` | 1411 | The largest UNRELIABLE or UNRELIABLE_WITH_ACK_RECEIPT message that goes in one packet. |
+| UNRELIABLE_SEQUENCED in one packet | 1405, or 1404 on a channel of 256 or more | Its record header is 10 or 11 bytes instead of 3. |
+| fragment bytes | 1413 | The bytes of a fragmented payload one packet carries (1452 less 26, the 7-byte ACK block and the 6-byte fragment header). |
+| `max_payload_bytes` | 1416 .. 361728, default 16384 | The largest payload the transport fragments and reassembles: at most 256 fragments of 1413 bytes. |
+| `max_message_bytes` | 1415 .. 1048576 (`ROCKETNET_MAX_MESSAGE_BYTES`), default 1048576 | The largest message; also bounded by `receive_message_buffer_bytes`. |
+
+An unreliable message over its one-packet limit is promoted to its reliable
+twin rather than refused; only a message over `max_message_bytes` is refused.
 
 ### Not every refused start spends a sequence number
 
@@ -814,7 +867,10 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 ```
 
 Destroy every client and server before `rocketnet_term`. Request shutdown first,
-wait by polling completion from the event loop, then destroy. A stalled worker
-keeps completion false, so its object and contexts must remain alive. Destroy
-is synchronous after completion; allocator hooks and thread-handle cleanup do
-not have a strict wall-time guarantee.
+wait by polling completion from the event loop, then destroy. An early destroy
+is API misuse: it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown, updates a bounded number of times without
+sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
+worker keeps completion false, so its object and contexts must remain alive.
+Destroy is synchronous after completion; allocator hooks and thread-handle
+cleanup do not have a strict wall-time guarantee.

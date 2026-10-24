@@ -57,8 +57,10 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
                                           uint64_t current_timestamp );
 
 // returns 1 when this token has no live claim, or is claimed for this same
-// address; 0 when another address holds the claim. The claim expires at the
-// handshake deadline, so the token is free again once that mapping is gone.
+// address; 0 when another address holds the claim. The claim lives until the
+// handshake deadline, the response binding, a refusal, or its mapping's
+// removal -- whichever comes first -- so it never outlives the half-open
+// mapping it stands for.
 
 int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_history_t * history,
                                               const uint8_t * token_identifier,
@@ -86,7 +88,8 @@ int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_histo
                                                double current_time );
 
 // releases this address's claim when a request that holds one is refused
-// before its mapping is added.
+// before its mapping is added, or when the half-open mapping that holds it is
+// removed before the handshake deadline.
 
 void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
                                                  const uint8_t * token_identifier,
