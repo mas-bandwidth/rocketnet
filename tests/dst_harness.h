@@ -41,7 +41,9 @@
 
 #define ROCKETNET_DST_MAX_CLIENTS            16
 #define ROCKETNET_DST_NUM_CHANNELS           9
-#define ROCKETNET_DST_MAX_PACKETS            32
+// One endpoint's frames for a step: the message layer's packets_per_update
+// (256), so the burst schedule can stage and send a whole burst in one update.
+#define ROCKETNET_DST_MAX_PACKETS            256
 // The delivery ring of one endpoint. It holds what one update delivers, and
 // the burst schedule releases its whole window in one update: the ring is as
 // wide as the window the schedule can hold (ROCKETNET_DST_BURST_CAPACITY).
@@ -88,6 +90,14 @@
 #define ROCKETNET_DST_BURST_MIN_STEPS        100
 #define ROCKETNET_DST_BURST_MAX_STEPS        300
 #define ROCKETNET_DST_BURST_CAPACITY         1024
+// burst: the messages one endpoint queues in its one update. Each is
+// unreliable and close to one packet's payload, so it takes exactly one
+// packet and a drawn 300 fill the update's 256 packets and spill the rest
+// into the next step. Unreliable sends are never retransmitted, so the held
+// window carries the drawn burst and not a resend storm.
+#define ROCKETNET_DST_BURST_MESSAGES         300
+#define ROCKETNET_DST_BURST_MIN_BYTES        1250
+#define ROCKETNET_DST_BURST_MAX_BYTES        1380
 
 // dup-storm: the window in steps, the copies of each packet, and the most
 // extra delay one copy draws (so the copies arrive reordered).
@@ -243,7 +253,8 @@ struct rocketnet_dst_result_t
     uint64_t schedule_fired;        // times the schedule's fault was applied
     uint64_t clock_back_seen;       // endpoint updates given a time below the one before
     uint64_t max_sequence_jump;     // largest one-step rise of a receiver's highest opened sequence
-    uint64_t burst_packets;         // packets the burst endpoint's held window released in one step
+    uint64_t burst_sent;            // packets the burst endpoint put on the wire in its one update
+    uint64_t burst_received;        // packets the burst endpoint took in its one release step
     uint64_t duplicate_payloads;    // payloads a receiver took twice (the library's duplicate refusals)
 };
 
@@ -297,8 +308,9 @@ struct rocketnet_dst_schedule_t
     uint64_t end_step;              // the window's end, exclusive (burst, dup-storm)
     int endpoint;                   // clock-back: the endpoint; burst, seq-gap: the client
     int side;                       // seq-gap: 0 the client's sends, 1 the server's
-    int pending;                    // seq-gap: waiting for the drawn client's session
+    int pending;                    // seq-gap: waiting for the drawn client's session; burst: waiting for it to connect
     uint64_t amount;                // clock-back: ms; seq-gap: sequences skipped
+    int burst_slot;                 // burst: the drawn client's server slot when it fired
     double clock_offset[ROCKETNET_DST_MAX_CLIENTS + 1];
     double clock_last[ROCKETNET_DST_MAX_CLIENTS + 1];
     int clock_seen[ROCKETNET_DST_MAX_CLIENTS + 1];
@@ -310,7 +322,8 @@ struct rocketnet_dst_schedule_t
     uint64_t fired;
     uint64_t clock_back_seen;
     uint64_t max_sequence_jump;
-    uint64_t burst_packets;
+    uint64_t burst_sent;
+    uint64_t burst_received;
 };
 
 typedef struct rocketnet_dst_world_t
@@ -520,7 +533,6 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
             // the burst client's held packets reach the server in this one step
             for ( int i = 0; i < s->held_count; i++ )
                 rocketnet_dst_server_process( endpoint, &w->client[s->endpoint].address, s->held[i], s->held_bytes[i], time );
-            s->burst_packets += (uint64_t) s->held_count;
             rocketnet_dst_schedule_trace( w, 1, (uint64_t) s->held_count, 0 );
             s->held_count = 0;
         }
@@ -586,8 +598,7 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
     }
     if ( releasing )
     {
-        w->schedule.burst_packets += received;
-        w->schedule.fired++;
+        w->schedule.burst_received = received;
         rocketnet_dst_schedule_trace( w, 2, received, 0 );
     }
 
@@ -723,6 +734,9 @@ static inline void rocketnet_dst_endpoint_send_packets( void * transport )
         rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, receiver,
                                         endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes );
         rocketnet_dst_wire_send( w, from, to, endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes );
+        if ( !endpoint->is_server && endpoint->client_index == w->schedule.endpoint &&
+             w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step )
+            w->schedule.burst_sent++;
     }
     endpoint->outgoing_count = 0;
 }
@@ -915,7 +929,13 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
 
     client->generation++;
     rocketnet_dst_check_generation( &w->check, index, client->generation );
-    if ( client->generation > 1 && !rocketnet_dst_client_message_build( w, index ) )
+    // the burst client's first session also gets a fresh message object at
+    // connect: its pre-connect updates leave the one made at create free, and
+    // the server's CONFIG would go by unseen; every later session rebuilds as
+    // a restart does
+    const int fresh = client->generation > 1 ||
+                      ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && index == w->schedule.endpoint );
+    if ( fresh && !rocketnet_dst_client_message_build( w, index ) )
     {
         rocketnet_dst_fail( w, "message_object", "the restarted message object was refused" );
         return;
@@ -1009,6 +1029,59 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
             client->sequence[type & 7][direction]--;
         if ( channel == 8 && type == 3 && client->epoch[direction] > 0 )
             client->epoch[direction]--;
+    }
+}
+
+// burst: the drawn client's live server slot, or -1.
+static inline int rocketnet_dst_burst_slot( rocketnet_dst_world_t * w, int index )
+{
+    for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
+    {
+        if ( rocketnet_dst_world_client_for_slot( w, slot ) == index )
+            return slot;
+    }
+    return -1;
+}
+
+// burst: one endpoint queues its whole burst in the step the window opens.
+// Every message is unreliable and just under one packet, so it takes one
+// packet and 300 messages fill the update's 256 packets, the rest spilling
+// into the next step. Draws come from the schedule's own substream; the
+// caller uncaps both directions first so the send budget cannot thin the
+// burst.
+static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int index, int direction, int slot,
+                                             int messages )
+{
+    rocketnet_dst_client_t * client = &w->client[index];
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    if ( slot < 0 )
+        return;
+    const int channel = 0;
+    const int type = 0;                                     // ROCKETNET_RELIABILITY_UNRELIABLE
+    const int session = direction == 0 ? slot : 16 + index;
+    for ( int n = 0; n < messages; n++ )
+    {
+        const int size = (int) rocketnet_dst_substream_uniform( &s->draws, ROCKETNET_DST_BURST_MIN_BYTES,
+                                                                ROCKETNET_DST_BURST_MAX_BYTES );
+        const uint32_t sequence = rocketnet_dst_next_sequence( client, type, direction );
+        const uint32_t generation = (uint32_t) client->generation;
+        uint8_t payload[2048];
+        if ( size > (int) sizeof(payload) ||
+             !rocketnet_dst_payload_build( payload, size, sequence, direction, type, channel, generation,
+                                           w->server_incarnation, 0 ) )
+            return;
+        const uint32_t sent = direction == 0
+            ? rocketnet_message_client_send( client->message, channel, type, payload, size )
+            : rocketnet_message_server_send( w->message_server, slot, channel, type, payload, size );
+        if ( sent )
+        {
+            const uint64_t identity = direction == 0
+                ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
+            rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
+                                      identity, 0, size );
+        }
+        else if ( client->sequence[type & 7][direction] > 0 )
+            client->sequence[type & 7][direction]--;
     }
 }
 
@@ -1195,6 +1268,7 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
                                                                      ROCKETNET_DST_BURST_MAX_STEPS );
             s->start_step = rocketnet_dst_schedule_draw_step( s, fault_steps, length );
             s->end_step = s->start_step + length;
+            s->pending = 1;
             s->held = (uint8_t (*)[ROCKETNET_RECEIVE_CEILING])
                 malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_CEILING] ) * ROCKETNET_DST_BURST_CAPACITY );
             if ( !s->held )
@@ -1227,6 +1301,45 @@ static inline void rocketnet_dst_schedule_step( rocketnet_dst_world_t * w )
         s->clock_offset[s->endpoint] -= (double) s->amount * 0.001;
         s->fired++;
         rocketnet_dst_schedule_trace( w, (uint64_t) s->endpoint, s->amount, 0 );
+    }
+    if ( s->kind == ROCKETNET_DST_SCHEDULE_BURST && s->pending && w->step >= s->start_step )
+    {
+        // the window opens at the first step the drawn client holds a session
+        // on both ends; the drawn length is shortened to end inside the window
+        rocketnet_dst_client_t * client = &w->client[s->endpoint];
+        const int slot = rocketnet_dst_burst_slot( w, s->endpoint );
+        if ( client->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && slot >= 0 &&
+             w->step < w->fault_steps )
+        {
+            uint64_t length = s->end_step > s->start_step ? s->end_step - s->start_step : ROCKETNET_DST_BURST_MIN_STEPS;
+            const uint64_t remaining = w->fault_steps - w->step;
+            if ( length > remaining )
+                length = remaining;
+            // end before a drawn churn replaces the session; a churn this
+            // step leaves the window unopened until the client is back
+            if ( client->churn_step >= 0 && (uint64_t) client->churn_step < w->step + length )
+                length = (uint64_t) client->churn_step > w->step ? (uint64_t) client->churn_step - w->step : 0;
+            if ( length == 0 )
+                return;
+            s->start_step = w->step;
+            s->end_step = w->step + length;
+            s->burst_slot = slot;
+            s->pending = 0;
+            s->fired++;
+            // the burst's two directions have no rate: this one update stages
+            // the whole drawn batch and the held window releases it whole
+            (void) rocketnet_message_client_set_send_kbps( client->message, 0 );
+            (void) rocketnet_message_server_set_send_kbps( w->message_server, slot, 0 );
+            rocketnet_dst_schedule_trace( w, (uint64_t) s->endpoint, length, 0 );
+        }
+    }
+    if ( s->kind == ROCKETNET_DST_SCHEDULE_BURST && !s->pending && w->step == s->start_step + 1 )
+    {
+        // the one burst update was rate-free; the rest of the run is not
+        const int slot = s->burst_slot;
+        (void) rocketnet_message_client_set_send_kbps( w->client[s->endpoint].message,
+                                                       ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+        (void) rocketnet_message_server_set_send_kbps( w->message_server, slot, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
     }
     if ( s->kind == ROCKETNET_DST_SCHEDULE_SEQ_GAP && s->pending && w->step >= s->start_step &&
          w->step < w->fault_steps )
@@ -1522,8 +1635,12 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         {
             rocketnet_dst_client_t * client = &w->client[i];
             if ( client->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                 ( client->pause_until < 0 || (int) k >= client->pause_until ) )
+                 ( client->pause_until < 0 || (int) k >= client->pause_until ) &&
+                 !rocketnet_dst_burst_holding( w, i ) )
                 rocketnet_dst_send_one( w, i, 0, -1 );
+            if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
+                 i == w->schedule.endpoint )
+                rocketnet_dst_send_burst( w, i, 0, w->schedule.burst_slot, ROCKETNET_DST_BURST_MESSAGES );
             rocketnet_message_client_send_packets( client->message );
         }
 
@@ -1533,7 +1650,13 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         {
             const int index = rocketnet_dst_world_client_for_slot( w, slot );
             if ( index >= 0 && index < w->num_clients )
-                rocketnet_dst_send_one( w, index, 1, slot );
+            {
+                if ( !rocketnet_dst_burst_holding( w, index ) )
+                    rocketnet_dst_send_one( w, index, 1, slot );
+                if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
+                     index == w->schedule.endpoint )
+                    rocketnet_dst_send_burst( w, index, 1, slot, ROCKETNET_DST_BURST_MESSAGES );
+            }
         }
         rocketnet_message_server_send_packets( w->message_server );
 
@@ -1681,7 +1804,8 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
     result->schedule_fired = w->schedule.fired;
     result->clock_back_seen = w->schedule.clock_back_seen;
     result->max_sequence_jump = w->schedule.max_sequence_jump;
-    result->burst_packets = w->schedule.burst_packets;
+    result->burst_sent = w->schedule.burst_sent;
+    result->burst_received = w->schedule.burst_received;
     // what the receivers took twice: the library's duplicate refusals, which
     // the dup fault and the dup-storm schedule both cause
     result->duplicate_payloads =

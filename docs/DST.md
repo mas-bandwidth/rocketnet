@@ -75,13 +75,22 @@ schedule; a failure prints its seed and the replay command, which carries
   refuses to run if the library holds another value. A session fires the
   schedule when its send sequence passes the boundary. The unit suite does
   not set it, so there these two only replay.
-- `burst`: draws a client, a window of 100 to 300 steps and its start. While
-  the window is open the client reads nothing, and the server holds what the
-  client sends (up to 1024 packets; past that a packet is lost, as a full wire
-  loses it). The window's last step releases both: the client receives every
-  packet the wire kept for it, and the server receives every held packet, in
-  one step. The delivery ring of one endpoint holds what one step delivers,
-  so it is as wide as the window the schedule holds (1024 payloads).
+- `burst`: draws a client, a window of 100 to 300 steps and its start. The
+  window opens at the first step from there on where the client holds a
+  session on both ends, and ends before a drawn churn replaces it. In that one
+  opening update the client sends 300 small unreliable messages (each one
+  packet) and the server sends the same to it; unreliable sends are not
+  retransmitted, so the window carries the drawn batch and not a resend storm.
+  While the window is open the client reads nothing and both directions are
+  quiet apart from the batch; the server holds what the client sends (up to
+  1024 packets; past that a packet is lost, as a full wire loses it). The
+  window's last step releases both: the client receives every packet the wire
+  kept for it, and the server receives every held packet, in one step. The
+  report counts the packets the burst endpoint sent in its one update apart
+  from the packets it received in its one release step, and a run without the
+  schedule moves neither. The delivery ring of one endpoint holds what one
+  step delivers, so it is as wide as the window the schedule holds (1024
+  payloads).
 - `dup-storm`: draws a window of 50 to 200 steps and its start. Every packet
   sent in the window is also delivered 2 to 5 more times, each copy with its
   own drawn delay of 0 to 50 ms over the base latency, so the copies arrive
@@ -92,7 +101,8 @@ schedule; a failure prints its seed and the replay command, which carries
 `test_dst_schedule_same_seed_same_trace`, `test_dst_clock_back_reaches_endpoints`
 and `test_dst_seq_gap_exceeds_history` (`tests/test_unit_dst_core.cpp`, run by
 `./bin/test`) pin that each schedule replays and fires.
-`test_dst_burst_releases_a_batch_in_one_step` pins that the burst releases a
-hundred packets in one step, and `test_dst_dup_storm_duplicates_payloads` pins
-that the storm's copies reach the receivers as a payload taken twice, with
-the duplicate fault off.
+`test_dst_burst_releases_a_batch_in_one_step` pins that the burst sends at
+least two hundred packets in one update and receives at least two hundred in
+one release step, counted apart, and `test_dst_dup_storm_duplicates_payloads`
+pins that the storm's copies reach the receivers as a payload taken twice,
+with the duplicate fault off.

@@ -276,10 +276,11 @@ int main( int argc, char ** argv )
             printf( "seed=%llu trace=%016llx\n",
                     (unsigned long long) seed, (unsigned long long) result.trace_hash );
         else if ( verbose )
-            printf( "seed=%llu trace=%016llx fired=%llu clock_back=%llu jump=%llu burst=%llu\n",
+            printf( "seed=%llu trace=%016llx fired=%llu clock_back=%llu jump=%llu burst_sent=%llu burst_received=%llu\n",
                     (unsigned long long) seed, (unsigned long long) result.trace_hash,
                     (unsigned long long) result.schedule_fired, (unsigned long long) result.clock_back_seen,
-                    (unsigned long long) result.max_sequence_jump, (unsigned long long) result.burst_packets );
+                    (unsigned long long) result.max_sequence_jump, (unsigned long long) result.burst_sent,
+                    (unsigned long long) result.burst_received );
 
         if ( !result.passed )
         {

@@ -216,24 +216,27 @@ static void test_dst_seq_gap_exceeds_history()
     rocketnet_unit_check( result.max_sequence_jump <= 1024 );
 }
 
-// The burst schedule releases its window in one step: the drawn client takes
-// its whole backlog at once and the server takes every held packet at once.
-// Seed 3 releases a hundred packets in that one step; a run without the
-// schedule releases none.
+// The burst schedule sends and receives hundreds of packets in one step: the
+// drawn client stages its whole drawn batch in one update (the counters are
+// apart), and the window's release hands it the wire's whole backlog in one
+// step. Seed 3 stages and releases at least two hundred each way; a run
+// without the schedule moves none.
 static void test_dst_burst_releases_a_batch_in_one_step()
 {
-    struct rocketnet_dst_options_t options = dst_test_options( 600 );
-    options.fault_steps = 400;
+    struct rocketnet_dst_options_t options = dst_test_options( 900 );
+    options.fault_steps = 600;
     options.schedule = ROCKETNET_DST_SCHEDULE_BURST;
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
     rocketnet_unit_check( result.passed );
     rocketnet_unit_check( result.schedule_fired == 1 );
-    rocketnet_unit_check( result.burst_packets >= 100 );
+    rocketnet_unit_check( result.burst_sent >= 200 );
+    rocketnet_unit_check( result.burst_received >= 200 );
 
     options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
-    rocketnet_unit_check( result.burst_packets == 0 );
+    rocketnet_unit_check( result.burst_sent == 0 );
+    rocketnet_unit_check( result.burst_received == 0 );
 }
 
 // The dup-storm schedule delivers every packet of its window more than once,
