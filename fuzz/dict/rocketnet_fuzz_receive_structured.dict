@@ -1,0 +1,152 @@
+# The stateful receive fuzz target's own packet types, prefixes, records, and limits.
+# Every value is the byte sequence the target's parser or decision stream reads.
+
+# ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+filter_value="\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_REQUEST_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_request="\x00\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_DENIED_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_denied="\x01\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_CHALLENGE_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_challenge="\x02\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_RESPONSE_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_response="\x03\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_keep_alive="\x04\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_PAYLOAD_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_payload="\x05\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_DISCONNECT_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_COOKIE_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_ACK_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+
+# ROCKETNET_CONNECTION_FRAGMENT_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
+prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
+
+# The first reserved packet type after ROCKETNET_CONNECTION_FRAGMENT_PACKET (sdk/rocketnet_wire.h)
+type_reserved="\x0a"
+
+# The first keyed epoch after ROCKETNET_FILTER_EPOCH_UNKEYED (sdk/rocketnet_wire.h)
+epoch_keyed="\x01"
+
+# ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 710, u16 little-endian (sdk/rocketnet_wire.h)
+request_wire_bytes="\xc6\x02"
+
+# ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, 34, u16 little-endian (sdk/rocketnet_wire.h)
+denied_wire_bytes="\x22\x00"
+
+# ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES, 66, u16 little-endian (sdk/rocketnet_wire.h)
+challenge_wire_bytes="\x42\x00"
+
+# ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, 50, u16 little-endian (sdk/rocketnet_wire.h)
+response_wire_bytes="\x32\x00"
+
+# ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 41, u16 little-endian (sdk/rocketnet_wire.h)
+keep_alive_min_wire_bytes="\x29\x00"
+
+# ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES, 34, u16 little-endian (sdk/rocketnet_wire.h)
+payload_min_wire_bytes="\x22\x00"
+
+# ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES, 33, u16 little-endian (sdk/rocketnet_wire.h)
+disconnect_min_wire_bytes="\x21\x00"
+
+# ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES, 38, u16 little-endian (sdk/rocketnet_wire.h)
+cookie_wire_bytes="\x26\x00"
+
+# ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES, 33, u16 little-endian (sdk/rocketnet_wire.h)
+ack_min_wire_bytes="\x21\x00"
+
+# ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES, 40, u16 little-endian (sdk/rocketnet_wire.h)
+fragment_min_wire_bytes="\x28\x00"
+
+# ROCKETNET_RECEIVE_CEILING, 1452 (= ROCKETNET_SEND_BUDGET), u16 little-endian (sdk/rocketnet_wire.h)
+receive_ceiling_bytes="\xac\x05"
+
+# ROCKETNET_SEND_BUDGET, 1452, u16 little-endian (sdk/rocketnet_wire.h)
+send_budget_bytes="\xac\x05"
+
+# ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 1416, u16 little-endian (sdk/rocketnet.h)
+max_payload_bytes="\x88\x05"
+
+# ROCKETNET_RECEIVE_PAYLOAD_BYTES, 1416 (= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES), u16 little-endian (sdk/rocketnet_layers.h)
+receive_payload_bytes="\x88\x05"
+
+# ROCKETNET_MAX_FRAGMENT_BYTES, 1413, u16 little-endian (sdk/rocketnet_fragment.h)
+max_fragment_bytes="\x85\x05"
+
+# ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 1413, u16 little-endian (sdk/rocketnet_fragment.h)
+max_receive_fragment_bytes="\x85\x05"
+
+# ROCKETNET_MAX_FRAGMENTS, 256, u16 little-endian (sdk/rocketnet_fragment.h)
+max_fragments="\x00\x01"
+
+# ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 361728, u24 little-endian (sdk/rocketnet_fragment.h)
+max_fragmented_payload_bytes="\x00\x85\x05"
+
+# ROCKETNET_ACK_BLOCK_MIN_BYTES, 7, u16 little-endian (sdk/rocketnet_wire.h)
+ack_block_min_bytes="\x07\x00"
+
+# ROCKETNET_ACK_BLOCK_MAX_BYTES, 1027, u16 little-endian (sdk/rocketnet_wire.h)
+ack_block_max_bytes="\x03\x04"
+
+# The first valid session sequence, u32 little-endian (STANDARD.md, Sequence numbers)
+sequence_one="\x01\x00\x00\x00"
+
+# The invalid zero sequence, u32 little-endian (STANDARD.md, Sequence numbers)
+sequence_zero="\x00\x00\x00\x00"
+
+# The sequence reconstruction window's low edge, u32 little-endian (sdk/rocketnet_replay.cpp)
+sequence_wrap_low="\xff\xff\xff\xff"
+
+# The sequence reconstruction window's half-window edge, u32 little-endian (sdk/rocketnet_replay.cpp)
+sequence_half="\x00\x00\x00\x80"
+
+# ROCKETNET_WIRE_VERSION, 0x4E7C1A93, little-endian (sdk/rocketnet_connect_token.h)
+version="\x93\x1a\x7c\x4e"
+
+# ROCKETNET_DEV_PROTOCOL_ID, 0x1122334455667788, little-endian (sdk/rocketnet_connect_token.h)
+protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
+
+# ROCKETNET_TEST_CREATE_TS, 1756166400, u64 little-endian (sdk/rocketnet_test_vectors.h)
+create_timestamp="\x00\xf9\xac\x68\x00\x00\x00\x00"
+
+# ROCKETNET_TEST_EXPIRE_TS, 1756166700, u64 little-endian (sdk/rocketnet_test_vectors.h)
+expire_timestamp="\x2c\xfa\xac\x68\x00\x00\x00\x00"
+
+# ROCKETNET_ADDRESS_FLAG_IPV4 (sdk/rocketnet_connect_token.h)
+address_ipv4="\x01"
+
+# ROCKETNET_ADDRESS_FLAG_IPV6 (sdk/rocketnet_connect_token.h)
+address_ipv6="\x02"
+
+# The vector server address 203.0.113.10:40000 in ROCKETNET_SIGNED_OFFSET_IPV4's layout (sdk/rocketnet_test_vectors.h)
+ipv4_address="\xcb\x00\x71\x0a\x40\x9c"
+
+# rocketnet_dev_server_public_key (sdk/rocketnet_connect_token.cpp)
+server_public_key="\x3d\x24\x90\x88\x9d\x37\x4c\x29\x6f\xab\x1d\x57\x70\xcb\x71\x47\x6a\x06\xf7\x4e\xf2\xf2\x54\x0c\xf2\x21\x5f\x76\x14\xf4\x80\x1c"
+
+# A fragment header for payload id 1, index 0, count 2 (sdk/rocketnet_fragment.h)
+fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
+
+# A fragment header for payload id 1, index 1, count 2 (sdk/rocketnet_fragment.h)
+fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
+
+# A fragment header for payload id 1, index 0, count ROCKETNET_MAX_FRAGMENTS (sdk/rocketnet_fragment.h)
+fragment_max_count="\x01\x00\x00\x00\xff\xff"
+
+# An ack block with largest received 1, one range, and range length 1 (sdk/rocketnet_ack.h)
+ack_block_one_range="\x01\x00\x00\x00\x01\x01\x00"
+
+# An empty ack block with largest received 0 and no ranges (sdk/rocketnet_ack.h)
+ack_block_empty="\x00\x00\x00\x00\x00\x00\x00"

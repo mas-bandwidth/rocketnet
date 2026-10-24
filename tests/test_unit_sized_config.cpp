@@ -125,13 +125,11 @@ static void test_sized_config_accepts_every_known_size()
         struct rocketnet_client_transport_config_t old_caller;
         memset( &old_caller, 0xEE, sizeof( old_caller ) );      // past the old prefix is not the caller's memory
         memcpy( &old_caller, &defaults, older );
-        old_caller.max_payload_bytes = 4096;
         old_caller.max_fragmented_messages = 3;
 
         struct rocketnet_client_transport_config_t read;
         memset( &read, 0, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, older, simulated_known, COUNT( simulated_known ) ) == 1 );
-        check( read.max_payload_bytes == 4096 );
         check( read.max_fragmented_messages == 3 );
         check( memcmp( read.packet_filter, defaults.packet_filter, sizeof( read.packet_filter ) ) == 0 );
         check( strcmp( read.transport, defaults.transport ) == 0 );
@@ -429,12 +427,9 @@ static void test_sized_config_client_create_checks_the_config()
     // accepted
     SIZED_CONFIG_CLIENT_CREATE( (void) 0, true );
     SIZED_CONFIG_CLIENT_CREATE( c.transport = "portable", true );
-    SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, true );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS, true );
 
     // transport fields out of range: refused
-    SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = -1, false );
     SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
 
@@ -463,8 +458,6 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.num_xdp_queues = 1025, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = -1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = 257, false );
-    SIZED_CONFIG_SERVER_CREATE( c.max_payload_bytes = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = -1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 0, false );
@@ -560,7 +553,7 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &client_defaults ) );
 
     // a prefix value is read: an out-of-range one in it is refused
-    client_config.max_payload_bytes = -1;
+    client_config.max_fragmented_messages = -1;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );

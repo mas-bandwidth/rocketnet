@@ -18,7 +18,7 @@
 // P5).
 //
 // The properties checked are RNEndpoint's: ReliableExactlyOnce (every reliable
-// message the peer sent, ordered or not, delivered exactly once),
+// message the other side sent, ordered or not, delivered exactly once),
 // OrderedInOrder (each channel's ordered messages in send order) and
 // UnreliableAtMostOnce.
 
@@ -84,9 +84,9 @@ struct ep_side_t
     int kind_of[EP_MESSAGES];               // what each sent message was
     int channel_of[EP_MESSAGES];
     int sent[EP_MESSAGES];
-    int delivered[EP_MESSAGES];             // of the peer's messages
+    int delivered[EP_MESSAGES];             // of the other side's messages
     uint32_t ordered_next[EP_ORDERED_CHANNELS];  // per channel: how many ordered messages were delivered
-    std::vector<uint32_t> ordered_order[EP_ORDERED_CHANNELS];   // the peer's ordered indices per channel, in send order
+    std::vector<uint32_t> ordered_order[EP_ORDERED_CHANNELS];   // the other side's ordered indices per channel, in send order
 };
 
 struct ep_stats_t
@@ -189,17 +189,17 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     return true;
 }
 
-static void ep_deliver( ep_side_t * side, ep_side_t * peer, const rn_delivery_t * delivery, ep_stats_t * stats )
+static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_t * delivery, ep_stats_t * stats )
 {
     check( delivery->bytes >= 8 );
     uint32_t index;
     memcpy( &index, delivery->data, 4 );
     check( index < EP_MESSAGES );
-    check( peer->sent[index] );                                 // only what the peer sent
+    check( remote->sent[index] );                                 // only what the other side sent
     const int kind = delivery->data[4];
-    check( kind == peer->kind_of[index] );
+    check( kind == remote->kind_of[index] );
     if ( kind == EP_KIND_ORDERED )
-        check( (int) delivery->channel == peer->channel_of[index] );   // codes 0 and 2 carry no channel on the wire (9.1)
+        check( (int) delivery->channel == remote->channel_of[index] );   // codes 0 and 2 carry no channel on the wire (9.1)
     for ( int i = 8; i < delivery->bytes; i++ )
         check( delivery->data[i] == (uint8_t) ( index + (uint32_t) i ) );
     side->delivered[index]++;
@@ -216,7 +216,7 @@ static void ep_deliver( ep_side_t * side, ep_side_t * peer, const rn_delivery_t 
 }
 
 // one update of one side: the endpoint's events in, then its actions out
-static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t * random, ep_stats_t * stats )
+static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_t * random, ep_stats_t * stats )
 {
     rn_endpoint_t * endpoint = &side->endpoint;
 
@@ -270,7 +270,7 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
             ep_ack_t ack;
             ack.arrive = now + 0.01 + (double) ( ep_random( random ) % 40 ) * 0.001;
             ack.id = packet.id;
-            peer->acks.push_back( ack );
+            remote->acks.push_back( ack );
         }
 
         rn_delivery_t out[256];
@@ -278,14 +278,14 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
         rn_endpoint_on_payload( endpoint, packet.data, packet.bytes, out, 256, &count, now );
         check( count >= 0 && count < 256 );
         for ( int i = 0; i < count; i++ )
-            ep_deliver( side, peer, &out[i], stats );
+            ep_deliver( side, remote, &out[i], stats );
     }
     rn_endpoint_config_tick( endpoint, 1, now );                  // the stand-in transport is connected throughout
     check( rn_endpoint_error( endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the application sends a few
     for ( int i = 0; i < 3; i++ )
-        if ( !ep_send_next( side, peer, random ) )
+        if ( !ep_send_next( side, remote, random ) )
             break;
 
     // while something is in flight, the endpoint names a deadline
@@ -329,21 +329,21 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
         for ( int c = 0; c < copies; c++ )
         {
             packet.arrive = now + 0.005 + (double) ( ep_random( random ) % 60 ) * 0.001;
-            if ( !peer->inbound.empty() && packet.arrive < peer->inbound.back().arrive )
+            if ( !remote->inbound.empty() && packet.arrive < remote->inbound.back().arrive )
                 stats->reordered++;
-            peer->inbound.push_back( packet );
+            remote->inbound.push_back( packet );
         }
     }
 }
 
-static bool ep_done( const ep_side_t * side, const ep_side_t * peer )
+static bool ep_done( const ep_side_t * side, const ep_side_t * remote )
 {
-    // everything sent, every reliable message of the peer delivered, and
+    // everything sent, every reliable message of the other side delivered, and
     // nothing in flight
-    if ( side->next_index < EP_MESSAGES || peer->next_index < EP_MESSAGES )
+    if ( side->next_index < EP_MESSAGES || remote->next_index < EP_MESSAGES )
         return false;
     for ( int k = 0; k < EP_MESSAGES; k++ )
-        if ( peer->kind_of[k] != EP_KIND_UNRELIABLE && side->delivered[k] != 1 )
+        if ( remote->kind_of[k] != EP_KIND_UNRELIABLE && side->delivered[k] != 1 )
             return false;
     return side->endpoint.ordered.send.U == side->endpoint.ordered.send.next;
 }
@@ -375,13 +375,13 @@ static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stat
     return step;
 }
 
-static void ep_check_properties( const ep_side_t * side, const ep_side_t * peer )
+static void ep_check_properties( const ep_side_t * side, const ep_side_t * remote )
 {
     int unreliable_sent = 0, unreliable_delivered = 0;
     for ( int k = 0; k < EP_MESSAGES; k++ )
     {
-        check( peer->sent[k] );
-        if ( peer->kind_of[k] == EP_KIND_UNRELIABLE )
+        check( remote->sent[k] );
+        if ( remote->kind_of[k] == EP_KIND_UNRELIABLE )
         {
             check( side->delivered[k] <= 1 );                   // UnreliableAtMostOnce
             unreliable_sent++;
@@ -428,11 +428,11 @@ static void test_endpoint_back_to_back_over_lossy_array()
     check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // CONFIG (10.3): each end announced its CONFIG, and took and matched
-    // the peer's through the same lossy array
+    // the other side's through the same lossy array
     check( a->endpoint.ordered.config_announced && b->endpoint.ordered.config_announced );
     check( a->endpoint.ordered.config_received && b->endpoint.ordered.config_received );
 
-    // a peer whose CONFIG never arrives is a RELIABLE_TIMEOUT reliable_timeout
+    // an end whose CONFIG from the other side never arrives is a RELIABLE_TIMEOUT reliable_timeout
     // after the wait began, and the deadline names that time
     {
         const double start = 1000.0 + steps * EP_STEP;

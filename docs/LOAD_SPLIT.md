@@ -204,7 +204,7 @@ the later completion barrier increment `late_application_deliveries` and fail
 delivery qualification rather than repairing a missed drain deadline. The
 receiver checks the monotonic deadline for each application message, including
 batches returned by an update that crossed the boundary. The
-merger recomputes aggregate and per-peer rates from the raw per-peer byte
+merger recomputes aggregate and per-client rates from the raw per-client byte
 records and conservative requested-duration denominator, accounting for
 six-decimal receipt rounding.
 

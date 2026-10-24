@@ -542,7 +542,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
 
-// --- the production minter refuses a token no peer accepts ---------------------
+// --- the production minter refuses a token no server accepts -------------------
 
 // a timeout of zero or below (t13.2: a production server refuses both), and an
 // expire stamp at or before the create stamp (the token is already expired when

@@ -920,7 +920,7 @@ static void rocketnet_server_release_mapping_claim( struct rocketnet_server_prot
 // timed-out one: CLIENT_CONNECTED = CLIENT_DISCONNECTED + CLIENT_TIMED_OUT
 // still holds, and INTEGRITY_LIMIT_REACHED says how many of the disconnects
 // were this. A connection under 2^36 forgery attempts has nothing worth
-// preserving, and the peer's own timeout ends its side. This is the read
+// preserving, and the client's own timeout ends its side. This is the read
 // path, so the check runs in every build.
 
 static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol_t * server,
@@ -991,8 +991,15 @@ struct rocketnet_sealed_type_counters_t
     int wrong_opened_size;
 };
 
+// The sealed types. known_mapping_index is the caller's lookup for this
+// address, or ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP. The packet opens into
+// opened (ROCKETNET_RECEIVE_CEILING bytes, the caller's): an accepted
+// payload is delivered where it opened, *out_payload pointing at its type
+// data inside opened, so its plaintext is written once.
+
 static int rocketnet_server_process_sealed_packet( struct rocketnet_server_protocol_t * server,
                                                    const struct rocketnet_address_t * from,
+                                                   int known_mapping_index,
                                                    uint8_t packet_type,
                                                    const uint8_t * packet_data,
                                                    int packet_bytes,
@@ -1000,8 +1007,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                    double current_time,
                                                    uint8_t * response_packet,
                                                    int * response_bytes,
-                                                   uint8_t * out_payload,
+                                                   uint8_t * opened,
                                                    int out_payload_capacity,
+                                                   const uint8_t ** out_payload,
                                                    int * out_payload_bytes,
                                                    int * out_payload_client_index )
 {
@@ -1069,7 +1077,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    int mapping_index = rocketnet_encryption_map_find( server->encryption_map, from );
+    int mapping_index = known_mapping_index != ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP ?
+                        known_mapping_index : rocketnet_encryption_map_find( server->encryption_map, from );
     if ( mapping_index == -1 )
     {
         rocketnet_spam( "server ignored sealed packet. no mapping for this address" );
@@ -1131,10 +1140,13 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     const uint8_t * ephemeral = packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET ? mapping->client_ephemeral_public_key : NULL;
 
-    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet_data, packet_bytes, packet_type,
                                                      sequence, server->protocol_id, mapping->connection_salt,
                                                      ephemeral, key );
+#if ROCKETNET_TEST_SEAMS
+    if ( opened_bytes >= 0 && packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+        server->test_payload_writes++;
+#endif // #if ROCKETNET_TEST_SEAMS
     if ( opened_bytes < 0 )
     {
         rocketnet_spam( "server ignored sealed packet. did not open" );
@@ -1275,8 +1287,15 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
     {
         rocketnet_spam( "server received payload from client %d (%d bytes)", client_index, type_data_bytes );
-        if ( !rocketnet_server_payload_copy( out_payload, out_payload_capacity, type_data, type_data_bytes, out_payload_bytes, counters ) )
+        if ( type_data_bytes > out_payload_capacity )
+        {
+            rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
+            counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+        *out_payload = type_data;
+        *out_payload_bytes = type_data_bytes;
+        counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
         *out_payload_client_index = client_index;
         server->payload_sequence = sequence;
         server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
@@ -1345,24 +1364,27 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
 
-int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
-                                     const struct rocketnet_address_t * from,
-                                     const uint8_t * packet_data,
-                                     int packet_bytes,
-                                     uint64_t current_timestamp,
-                                     double current_time,
-                                     uint8_t * response_packet,
-                                     int * response_bytes,
-                                     uint8_t * out_payload,
-                                     int out_payload_capacity,
-                                     int * out_payload_bytes,
-                                     int * out_payload_client_index )
+int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
+                                                const struct rocketnet_address_t * from,
+                                                int known_mapping_index,
+                                                const uint8_t * packet_data,
+                                                int packet_bytes,
+                                                uint64_t current_timestamp,
+                                                double current_time,
+                                                uint8_t * response_packet,
+                                                int * response_bytes,
+                                                uint8_t * opened,
+                                                int out_payload_capacity,
+                                                const uint8_t ** out_payload,
+                                                int * out_payload_bytes,
+                                                int * out_payload_client_index )
 {
     rocketnet_assert( server );
     rocketnet_assert( from );
     rocketnet_assert( packet_data );
     rocketnet_assert( response_packet );
     rocketnet_assert( response_bytes );
+    rocketnet_assert( opened );
     rocketnet_assert( out_payload );
     rocketnet_assert( out_payload_bytes );
     rocketnet_assert( out_payload_client_index );
@@ -1372,6 +1394,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
     counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
 
     *response_bytes = 0;
+    *out_payload = NULL;
     *out_payload_bytes = 0;
     *out_payload_client_index = -1;
     server->payload_connection_id = 0;
@@ -1417,10 +1440,45 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    return rocketnet_server_process_sealed_packet( server, from, (uint8_t) packet_type, packet_data, packet_bytes,
+    return rocketnet_server_process_sealed_packet( server, from, known_mapping_index, (uint8_t) packet_type, packet_data, packet_bytes,
                                                    current_timestamp, current_time,
                                                    response_packet, response_bytes,
-                                                   out_payload, out_payload_capacity, out_payload_bytes, out_payload_client_index );
+                                                   opened, out_payload_capacity, out_payload, out_payload_bytes, out_payload_client_index );
+}
+
+// The copying form, for a caller that owns no open buffer: the packet opens
+// on the stack and an accepted payload is copied into out_payload, refused
+// whole when it does not fit out_payload_capacity.
+
+int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int out_payload_capacity,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index )
+{
+    rocketnet_assert( out_payload );
+    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+    const uint8_t * payload = NULL;
+    const int outcome = rocketnet_server_protocol_process_received( server, from, ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP,
+                                                                    packet_data, packet_bytes, current_timestamp, current_time,
+                                                                    response_packet, response_bytes,
+                                                                    opened, out_payload_capacity, &payload,
+                                                                    out_payload_bytes, out_payload_client_index );
+    if ( payload && *out_payload_bytes > 0 )
+    {
+        memcpy( out_payload, payload, (size_t) *out_payload_bytes );
+#if ROCKETNET_TEST_SEAMS
+        server->test_payload_writes++;
+#endif // #if ROCKETNET_TEST_SEAMS
+    }
+    return outcome;
 }
 
 int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
@@ -1768,7 +1826,7 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // the client's ONLY transition to _connected_, so a client that
     // acknowledges one is claiming to have received the packet that would
     // have connected it. The server cannot verify the claim -- an ack block
-    // is the peer's statement about its own receive state -- and does not
+    // is the client's statement about its own receive state -- and does not
     // need to; see below.
     //
     // WHY THIS TEST AND NOT THE CONFIRMED FLAG: the defect class is "a
