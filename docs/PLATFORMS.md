@@ -7,7 +7,7 @@ builds it and runs the suite on it for every pull request and every push to
 that no workflow runs is unsupported, even if the code happens to build there.
 
 The table below is the whole claim. Each row names the workflow file and the
-runner label. `tools/check_platform_policy.py`
+runner's operating-system and architecture tokens. `tools/check_platform_policy.py`
 checks that each row is backed by the workflow it names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
 
 ## The table
@@ -58,8 +58,8 @@ A supported row promises three things, and only these three:
    row.
 2. A red leg on that platform is a merge blocker. It is not a nightly finding
    that may wait for morning.
-3. The workflow file and runner label in the row are the ones that run it, and
-   the label is present in that file.
+3. The workflow file and runner operating-system and architecture tokens in
+   the row correspond to labels present in that file.
 
 It does not promise another compiler, another architecture, another runner
 image, privileged XDP attach, line-rate measurements, or a transport the row does
@@ -76,7 +76,7 @@ nightly full-system guest. The nightly row is how that suite is claimed.
    not supported.
 2. Add one row to the table in the same change. The row names the operating
    system, architecture, compiler, transports, tier, workflow file and runner
-   label.
+   operating-system and architecture tokens.
 3. Run `python3 tools/check_platform_policy.py`. A row whose label is absent
    from the named workflow fails the check.
 
@@ -94,7 +94,8 @@ unsupported rows in the table record architectures for which no leg exists.
 
 ### A claim with no leg is refused
 
-A supported or nightly row must name both a workflow file and a runner label.
+A supported or nightly row must name both a workflow file and runner
+operating-system and architecture tokens.
 An empty value, `-`, or a label that does not occur in the named workflow is a
 failed check, not a documentation note. `tools/check_platform_policy.py` exits
 1 and names the row. This is deliberate: a support claim without a leg is the
