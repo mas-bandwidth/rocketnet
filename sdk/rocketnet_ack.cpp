@@ -56,7 +56,7 @@ static int rocketnet_ack_replay_bit( const struct rocketnet_replay_protection_t 
 }
 
 // tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
-// tla/RNSentHistory.tla PeerAck: restates the received set inside the window as one ack block
+// tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
 {
     rocketnet_assert( output );
