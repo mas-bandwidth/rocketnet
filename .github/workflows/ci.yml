@@ -57,8 +57,10 @@
 #                           that fires in Debug is compiled out, and the
 #                           optimizer is a different compiler. The ubuntu
 #                           Release row runs as two parallel legs.
-#   build-and-test-windows  the same suite under MSVC, Release, as two
-#                           parallel legs. The Debug row is in nightly.yml.
+#   build-and-test-windows  the build and the unit suite under MSVC, Release,
+#                           as two parallel legs. The Debug row and the
+#                           Windows functional suite are in nightly.yml
+#                           (windows / Debug, windows / Release ASan).
 #   sanitizers              asan + ubsan over the whole suite
 #   fuzz-smoke              a bounded, deterministic replay of the committed
 #                           regression corpus over the wire-facing parsers
@@ -252,8 +254,12 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: ./bin/test_sodium
 
+      # The committed sodium pair from its SHA-256 pinned inputs, byte for
+      # byte, on the Linux Release (b) leg and the macOS Release leg; the
+      # Windows (b) leg runs the same step (sodium/README.md, "Reproducing
+      # the vendored inputs").
       - name: Reproduce the committed sodium pair
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
@@ -700,7 +706,8 @@ jobs:
   # With it gone the legs are ~67s of checks over a 71-92s floor, halved by
   # measured duration:
   #
-  #   (a)  ~32s  the suite and sodium (13s), the full suite over IOCP (14s),
+  #   (a)  ~32s  the suite and sodium (13s), the full suite over IOCP (14s;
+  #              moved to nightly.yml 2026-10-24, see leg (a) below),
   #              IOCP allocation and shutdown, the committed XDP fallback
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
@@ -756,6 +763,12 @@ jobs:
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
+      # The same reproduction as the Linux and macOS Release legs, from a
+      # Windows checkout (sodium/README.md, "Reproducing the vendored inputs").
+      - name: Reproduce the committed sodium pair
+        if: matrix.leg == 'b'
+        run: python tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
+
       # leg (a) runs the suites on the default development library
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
       # (ROCKETNET_DEV=OFF) as a consumer sees it.
@@ -799,20 +812,20 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
-      - name: Run functional suite
-        if: matrix.leg == 'a'
-        shell: bash
-        run: ./bin/Release/functional.exe
-
-      - name: Functional suite with IOCP selected
-        if: matrix.leg == 'a'
-        shell: bash
-        env:
-          ROCKETNET_SERVER_TRANSPORT: iocp
-        run: |
-          set -o pipefail
-          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
+      # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
+      # Windows runs the build and the unit suite (test.exe) only; the full
+      # functional.exe takes about 223 s per run on the fleet Windows runner,
+      # and leg (a) ran it twice (default, then ROCKETNET_SERVER_TRANSPORT=iocp)
+      # inside this job's 3-minute bound, so the leg could not pass. The bound
+      # is the per-commit law and is not raised; the suite moved instead,
+      # unchanged, to nightly.yml, which is exempt from the time rule:
+      #   windows / Debug (build-and-test-windows-debug): "Run functional
+      #       suite" and "Functional suite with IOCP selected", the same two
+      #       steps with the same pin and the same env-pin grep;
+      #   windows / Release ASan (build-and-test-windows-asan): the Release
+      #       functional.exe under default, iocp and rio.
+      # The short per-case functional runs stay here: the lifecycle binary
+      # below and leg (b)'s transport family matrix.
 
       - name: "Functional: lifecycle binary"
         if: matrix.leg == 'a'

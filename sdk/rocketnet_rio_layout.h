@@ -152,7 +152,7 @@ static inline uint64_t rocketnet_rio_receive_address_offset(
 static inline uint64_t rocketnet_rio_context( int kind, int phase, uint32_t index )
 {
     return ( (uint64_t)(uint8_t) kind << 56 )
-         | ( (uint64_t)(uint16_t) phase << 48 )
+         | ( (uint64_t)(uint8_t) phase << 48 )
          | index;
 }
 

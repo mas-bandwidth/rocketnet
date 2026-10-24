@@ -55,6 +55,10 @@ static int rocketnet_ack_replay_bit( const struct rocketnet_replay_protection_t 
     return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
 }
 
+// the empty block (largest 0, first range length 0, no ranges) is written
+// exactly while nothing is opened, and every other block has a first range
+// length of at least one (tla/AckBlockWrap.tla WriteBlock)
+
 // tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
 // tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
@@ -170,15 +174,19 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
     if ( block_bytes > data_bytes )
         return 0;
 
-    // validity is evaluated on the reconstructed 64-bit largest, including
-    // the zero test: a genuine sequence whose low 32 bits happen to be zero
-    // does not read as a fresh connection
+    // the empty block is recognised on its wire fields, at any highest sent
+    // (tla/AckBlockWrap.tla ReadBlock, EmptyRecognised): wire largest 0,
+    // first range length 0 and no ranges is the statement that nothing has
+    // been opened yet. Reconstructing first would read a wire 0 as 2^32 once
+    // highest sent reaches 2^31 and refuse it
+    // (tla/MCAckBlockWrapBrokenHalfRange.cfg). A block naming a sequence
+    // always has a first range length of at least one, so a zero first range
+    // length with anything else nonzero is malformed, and a genuine largest
+    // whose low 32 bits are zero still reads nonempty.
 
-    uint64_t largest = rocketnet_reconstruct_ack_largest( wire_largest, highest_sent );
-
-    if ( largest == 0 )
+    if ( first_range_length == 0 )
     {
-        if ( first_range_length != 0 || num_ranges != 0 )
+        if ( wire_largest != 0 || num_ranges != 0 )
             return 0;
         block->largest = 0;
         block->first_range_length = 0;
@@ -186,8 +194,12 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
         return block_bytes;
     }
 
-    if ( first_range_length == 0 )
-        return 0;
+    // every other block is evaluated on the reconstructed 64-bit largest
+    // (tla/AckBlockWrap.tla ReadBlock, LargestExact); a largest that
+    // reconstructs to zero cannot hold a first range of one or more and is
+    // refused by the bound below
+
+    uint64_t largest = rocketnet_reconstruct_ack_largest( wire_largest, highest_sent );
 
     if ( (uint64_t) first_range_length > largest )
         return 0;
@@ -306,7 +318,11 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 
 // tla/RNServerStats.tla. The aggregates hold exactly what
 // rocketnet_ack_endpoint_update_stats would count over the same windows, so
-// the published numbers are current after every send, receive and ack.
+// the published numbers are current after every send, receive and ack. Every
+// published field matches the recompute exactly except jitter, which matches
+// within floating-point rounding: rocketnet_ack_stats_publish_rtt takes
+// ( sum - count * min ) / count from a double sum, while the recompute sums
+// sample - min in float.
 // Every window is a function of its high-water mark; when the mark rises the
 // window moves: the records below the new base leave (they are still in the
 // ring, read before anything overwrites them), the records between the old

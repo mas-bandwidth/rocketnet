@@ -8,9 +8,8 @@
 // a public server a lifecycle object holding one message server per run, so
 // every call here is a guard, a state check and one call down. The configs are resolved here: the public
 // struct is split into the transport config and the message config the
-// layers take, the message fields and the send budget take their environment
-// overrides here, and the transport fields take theirs at the transport's
-// create, as they always have.
+// layers take, and every override, transport rows included, is applied once
+// at public create by the split.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_test_seams.h"
@@ -140,7 +139,7 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
 // the message table's two budget rows, client_send_kbps and server_send_kbps,
 // take no variable here: the endpoint's budget is its one budget field above,
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
-// rn_client_split (:135) and rn_server_split (:173) resolve for the create
+// rn_client_split and rn_server_split resolve for the create
 
 static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {
@@ -172,9 +171,16 @@ static bool rn_dev_env_int( const char * name, int found, const char * text, int
 {
     if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
         return true;
+    // ASCII digits only, checked before strtol, which would take leading
+    // whitespace and a '+': the same rule as every other numeric override
+    // (rocketnet_config_numeric_charset, sdk/rocketnet_config.cpp). Every
+    // range here starts at 0, so no sign is valid.
+    bool digits = found == 1;
+    for ( const char * cursor = text; digits && *cursor != '\0'; cursor++ )
+        digits = *cursor >= '0' && *cursor <= '9';
     char * end = NULL;
-    const long parsed = found == 1 ? strtol( text, &end, 10 ) : 0;
-    if ( found != 1 || end == text || *end != '\0' || parsed < min_value || parsed > max_value )
+    const long parsed = digits ? strtol( text, &end, 10 ) : 0;
+    if ( !digits || end == text || *end != '\0' || parsed < min_value || parsed > max_value )
     {
         rocketnet_error( "%s=\"%s\" refused: expected %d .. %d", name, text, min_value, max_value );
         return false;
@@ -420,7 +426,6 @@ enum rn_client_count_t
     RN_CLIENT_RECEIPTS_LOST,
     RN_CLIENT_RECEIPTS_DROPPED,
     RN_CLIENT_BUDGET_DROPS,
-    RN_CLIENT_SEND_DEFERRED,
     RN_CLIENT_NOT_CONNECTED_DROPS,
     RN_CLIENT_COUNT
 };
@@ -712,6 +717,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
         if ( !base )
         {
+            rocketnet_error( "client create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;
@@ -1004,7 +1010,11 @@ enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_cli
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a state
 const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 {
-    switch ( (int) state )
+    // read as the int a C caller passed, as rocketnet_log_level does: a load
+    // of an enum outside its range of values is undefined in C++
+    int value;
+    memcpy( &value, &state, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED:           return "MESSAGE_NOT_RECEIVED";
         case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:       return "MESSAGE_MEMORY_EXHAUSTED";
@@ -1031,7 +1041,11 @@ const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a reason
 const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason )
 {
-    switch ( (int) reason )
+    // read as the int a C caller passed, as rocketnet_log_level does: a load
+    // of an enum outside its range of values is undefined in C++
+    int value;
+    memcpy( &value, &reason, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_DISCONNECT_REASON_NONE:                      return "NONE";
         case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return "CONFIG_MISMATCH";
@@ -1196,7 +1210,6 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
     counts[RN_CLIENT_RECEIPTS_LOST] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
     counts[RN_CLIENT_RECEIPTS_DROPPED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL );
     counts[RN_CLIENT_BUDGET_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-    counts[RN_CLIENT_SEND_DEFERRED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
     counts[RN_CLIENT_NOT_CONNECTED_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
     if ( transport_stats )
         *transport_stats = stats;
@@ -1654,6 +1667,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         if ( !base )
         {
             sodium_memzero( &transport, sizeof( transport ) );
+            rocketnet_error( "server create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;

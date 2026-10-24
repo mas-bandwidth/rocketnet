@@ -110,7 +110,8 @@ and update ends with a hand-off) (`SpecFair`):
 On a Linux bench, from `tla/`:
 
 ```sh
-java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIo.cfg MCRNClientIo
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIoSafety.cfg MCRNClientIo
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIoLiveFilled0.cfg MCRNClientIoLiveness
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenReuseBeforeSent.cfg MCRNClientIo
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenSwapWhileReading.cfg MCRNClientIo
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenReceiveStall.cfg MCRNClientIo
@@ -282,48 +283,63 @@ generated, 672 distinct).
 
 ## Runs
 
-The full threaded instance now has 772,561 distinct states. Its combined
-safety and liveness check (`MCRNClientIo.cfg`) remains an explicit `bench`
-case with unchanged parameters. The bounded record reports an actual timeout;
-the earlier completed manual measurement is historical evidence, not a bounded
-CI pass.
+The full threaded instance has 772,561 distinct states. The combined safety
+and liveness control `MCRNClientIo.cfg` timed out at the 110-second budget
+(exit 124) and is retired: its obligations are exactly the union of the
+required split cases below, each of which completes within the budget.
 
 The required threaded controls split the proof obligations, never the state
 space. All retain two send slots, one-datagram receive buffers and three
-arrivals. `MCRNClientIoSafety.cfg` checks all nine original invariants under
-`Spec` (fairness is unnecessary for safety). The temporal configurations retain
-`SpecFair` and all nine invariants:
+arrivals, and every one reports the same 772,561 distinct states.
+`MCRNClientIoSafety.cfg` checks all nine original invariants under `Spec`
+(fairness is unnecessary for safety). The temporal configurations retain
+`SpecFair` and all nine invariants, and each checks one property, or one
+conjunct of one named in `MCRNClientIoLiveness.tla`:
 
-| Configuration suffix | Temporal obligation |
-|---|---|
-| `LiveHandedOff` | `HandedOffEventuallySent` |
-| `LiveCommittedA`, `LiveCommittedB` | `CommittedEventuallyHandedOff`, split by ring |
-| `LiveStop` | `StopEventuallyJoins` |
-| `LiveFilled` | `FilledEventuallyExposed` |
-| `LiveArrivedBeforeLast`, `LiveArrivedLast` | `ArrivedEventuallyDelivered`, split by threshold |
-| `LiveDestroy` | `DestroyCompletes` |
+| Configuration | Obligation | Seconds |
+|---|---|---|
+| `MCRNClientIoSafety.cfg` | the nine invariants (`Spec`) | 8.610 |
+| `MCRNClientIoLiveHandedOffA.cfg` | `HandedOffEventuallySent`, ring A | 47.036 |
+| `MCRNClientIoLiveHandedOffB.cfg` | `HandedOffEventuallySent`, ring B | 47.066 |
+| `MCRNClientIoLiveCommittedA1.cfg` | `CommittedEventuallyHandedOff`, ring A, slot 1 | 57.845 |
+| `MCRNClientIoLiveCommittedA2.cfg` | `CommittedEventuallyHandedOff`, ring A, slot 2 | 46.719 |
+| `MCRNClientIoLiveCommittedB1.cfg` | `CommittedEventuallyHandedOff`, ring B, slot 1 | 47.515 |
+| `MCRNClientIoLiveCommittedB2.cfg` | `CommittedEventuallyHandedOff`, ring B, slot 2 | 46.874 |
+| `MCRNClientIoLiveStop.cfg` | `StopEventuallyJoins` | 47.903 |
+| `MCRNClientIoLiveFilled0.cfg` | `FilledEventuallyExposed`, buffer 0 | 48.914 |
+| `MCRNClientIoLiveFilled1.cfg` | `FilledEventuallyExposed`, buffer 1 | 48.848 |
+| `MCRNClientIoLiveArrivedFirst.cfg` | `ArrivedEventuallyDelivered`, n = 1 | 49.826 |
+| `MCRNClientIoLiveArrivedSecond.cfg` | `ArrivedEventuallyDelivered`, n = 2 | 52.698 |
+| `MCRNClientIoLiveArrivedLast.cfg` | `ArrivedEventuallyDelivered`, n = 3 | 49.921 |
+| `MCRNClientIoLiveDestroy.cfg` | `DestroyCompletes` | 57.940 |
 
-The original committed-slot property is a conjunction over rings and slots.
-`MCRNClientIoLiveness.tla` names its two ring conjuncts, each still universally
-quantifying over `Slots`; its assumption that `Rings = {"A", "B"}` makes
-completeness explicit. Both configurations explore both rings. The arrival
-property is similarly partitioned into thresholds `1..(MaxDatagrams-1)` and `MaxDatagrams`: every
-threshold of the original property remains checked over the complete state
-graph. Checking every row above under the same `SpecFair` is exactly checking the original six
-properties separately: no action, bound, state constraint or fairness condition
-is removed or strengthened. The combined committed-slot candidate exceeded
-110 seconds, so the two ring conjuncts are separate required cases. The
-combined arrival check also exceeded the cap after completing the state graph;
-its two threshold partitions are separate required cases.
+Each split is a finite conjunction checked conjunct by conjunct on the
+complete state graph, and an `ASSUME` in `MCRNClientIoLiveness.tla` makes each
+partition complete, so a constant change that adds an element no conjunct
+names fails at parse time instead of silently checking less:
 
-`RUNS.tsv` is generated by the pinned `tlacheck` runner, using at most two TLC
-workers and an individual 110-second budget. The bounded split controls must
-all finish with exit 0; invariant witnesses must name their declared invariant.
-The no-deadline witness exits 13 with a generic temporal violation; it is
-attributed to `DestroyCompletes` because that is its sole configured property.
-CI can accept
-the combined control's explicit timeout debt without accepting a timeout as a
-proof. The step-driven control keeps its existing instance and fairness.
+- `HandedOffEventuallySent` is `\A r \in Rings`; `HandedOffA` and
+  `HandedOffB` are its two conjuncts, with `ASSUME Rings = {"A", "B"}`.
+- `CommittedEventuallyHandedOff` is `\A r \in Rings, s \in Slots`;
+  `CommittedA1`, `CommittedA2`, `CommittedB1` and `CommittedB2` are its four
+  conjuncts, with the ring assumption and `ASSUME Slots = {1, 2}`.
+- `FilledEventuallyExposed` is `\A b \in Buffers`; `Filled0` and `Filled1`
+  are its two conjuncts, with `ASSUME Buffers = {0, 1}`.
+- `ArrivedEventuallyDelivered` is `\A n \in 1..MaxDatagrams`;
+  `ArrivedFirst`, `ArrivedSecond` and `ArrivedLast` are its three conjuncts,
+  with `ASSUME MaxDatagrams = 3`.
+
+Checking every row above under the same `SpecFair` is exactly checking the
+original six properties: no action, constant, state constraint, fairness
+condition or property is removed or weakened.
+
+`RUNS.tsv` is generated by the pinned `tlacheck` runner, each case as its own
+shard with two TLC workers and an individual 110-second budget (seconds above
+are from amd-3, a 16-core bench). The bounded controls must all finish with exit 0;
+invariant witnesses must name their declared invariant. The no-deadline
+witness exits 13 with a generic temporal violation; it is attributed to
+`DestroyCompletes` because that is its sole configured property. No
+`rnclientio` case carries bench debt.
 
 ## Step-driven mode
 
@@ -348,11 +364,22 @@ and the five liveness properties under `SpecStepFair`: `SpecFair` with the
 core actions fair on their executor, `StepBegin` and `StepEnd` weakly fair
 (the game calls `update` every frame), and the main thread's reopen,
 hand-off, expose, return and join and the receive strongly fair, since a
-caller step disables them intermittently. The committed instance is one slot
-and two datagrams, which fits the runner's 110 s budget. At two slots and
-three datagrams, the size of `MCRNClientIo.cfg`, the same check passes when
-run by hand with TLC 2.19 (exit 0, about six minutes on a 16-core bench),
-outside the budget, so it has no row in `RUNS.tsv`.
+caller step disables them intermittently. That control is one slot and two
+datagrams, which fits the runner's 110 s budget.
+
+At the full instance (two slots, three datagrams) the step-driven state graph
+has 449,119 distinct states. `MCRNClientIoStepFullSafety.cfg` checks the nine
+invariants of `MCRNClientIoStepDriven.cfg` there under `Spec` (exit 0,
+4.987 s), as a required case. Its liveness does not fit the budget:
+checked one property per configuration under `SpecStepFair`, each of
+`HandedOffEventuallySent`, `CommittedEventuallyHandedOff`,
+`StopEventuallyJoins`, `FilledEventuallyExposed`,
+`ArrivedEventuallyDelivered` and `DestroyCompletes` completes the 449,119-state
+graph and then times out in the temporal check (exit 124 at 110.17 to
+110.25 s, two workers, amd-3), so none is a required case. The combined
+full-instance check passes when run by hand with TLC 2.19 (exit 0, about six
+minutes on a 16-core bench), outside the budget, so it has no row in
+`RUNS.tsv`.
 
 The reversed witness, `MCRNClientIoBrokenStepStartsThread.cfg`, sets
 `StepModeStartsThread = TRUE`: create starts the thread in step mode too, and
