@@ -10,11 +10,19 @@ and OFF, fail-fast false.
 
 ## Head and host
 
-Recorded at head `cbf907beee44c1a5b76af1a732f9199ab99a9703` (branch
-`sprint/rn-10000-custom-build.w3.g1.e1`, BASE `7a0258612392`), on hetzner2
-(16 cores, 124 GB, Ubuntu 24.04, gcc 13.3.0, clang 18.1.3), builds at `-j4`.
-The 10000 builds and loads ran at `7ce4fb99`, whose source differs from the
-head only in `load.c`'s header comment.
+Recorded at head `09395b079957938538af5e36c67479e938b1293b` (branch
+`sprint/rn-10000-custom-build.w5.g1.e1`: main `6f4ab487` merged with attempt
+4's `81d99a8e`, which carries the plan-derived bound for
+`test_secrets_wiped_destroy_writes_only_keys` at
+`tests/test_unit_secrets_wiped.cpp:750`). The commit that records this file
+differs from that head only in this file. Builds at `-j4`, Release.
+
+- 10000 unit suite: amd-3 (16 cores, 30 GB, Ubuntu 26.04.1, gcc 15.2.0,
+  clang 21.1.8), one checkout per cell.
+- 10000 bounded load: hetzner2 (16 cores, 124 GB, Ubuntu 24.04, gcc 13.3.0),
+  gcc, DEV ON.
+- The memory plan, the DEV OFF load row and the default-build rows below were
+  recorded on hetzner2 at attempt 3 (`cbf907be`, BASE `7a0258612392`).
 
 ## Commands
 
@@ -54,12 +62,15 @@ pass criteria). The bounded run uses it.
 
 | build | connected | connect_s | sent / received / drops | server_update p50 / p99 us | rss_mb | census | verdict |
 |---|---|---|---|---|---|---|---|
-| 10000 gcc DEV ON | 10000 | 3.418 | 300000 / 300000 / 0 | 3452 / 5050 | 7739.19 | resource_baseline=PASS, fds 3 -> 20009 -> 3, threads 1 -> 10007 -> 1 | PASS |
-| 10000 gcc DEV OFF | 10000 | 3.260 | 300000 / 300000 / 0 | 3225 / 4940 | 7732.71 | resource_baseline=PASS, fds 3 -> 20009 -> 3, threads 1 -> 10007 -> 1 | PASS |
+| 10000 gcc DEV ON, head `09395b07` | 10000 | 5.023 | 300000 / 300000 / 0 | 3792 / 15014 | 7770.88 | resource_baseline=PASS, fds 3 -> 20009 -> 3, threads 1 -> 10007 -> 1 | PASS |
+| 10000 gcc DEV ON, `cbf907be` | 10000 | 3.418 | 300000 / 300000 / 0 | 3452 / 5050 | 7739.19 | resource_baseline=PASS, fds 3 -> 20009 -> 3, threads 1 -> 10007 -> 1 | PASS |
+| 10000 gcc DEV OFF, `cbf907be` | 10000 | 3.260 | 300000 / 300000 / 0 | 3225 / 4940 | 7732.71 | resource_baseline=PASS, fds 3 -> 20009 -> 3, threads 1 -> 10007 -> 1 | PASS |
 
 All five criteria passed (connect_within_10s, no_unexpected_disconnect,
-reliable_delivery, unreliable_integrity, counters_agree). Client update p99
-was 17 us (DEV ON) and 16 us (DEV OFF). The server update is over the 100 us
+reliable_delivery, unreliable_integrity, counters_agree). At head the client
+update p99 was 92 us and the server update p99 15014 us, on a host at load
+average 21 from other work; at `cbf907be` the client update p99 was 17 us
+(DEV ON) and 16 us (DEV OFF). The server update is over the 100 us
 call budget at 10000 clients, as it already is at 1000 (870 us p99 at BASE,
 below); that is the performance milestone's work, not this card's.
 
@@ -75,18 +86,22 @@ difference is run-to-run noise on a shared host. At head the default build's
 `./bin/test` and `./bin/functional` pass at DEV ON, and `./bin/test` passes
 at DEV OFF.
 
-**Unit suite, 10000 build: one red.** `./bin/test` fails one case in every
-10000 cell (gcc and clang, DEV ON and OFF):
+**Unit suite, 10000 build, at head: green in all four cells.** On amd-3,
+`./bin/test` exits 0 and prints `*** ALL TESTS PASSED ***` with no check
+failure in every 10000 cell, each built with zero warnings:
 
-    check failed: test_secrets_wiped_destroy_writes_only_keys peak_rss_mb=1698 bound_mb=1217
+| cell | build warnings | ./bin/test | cases run |
+|---|---|---|---|
+| gcc DEV ON | 0 | exit 0, ALL TESTS PASSED | 1078 |
+| gcc DEV OFF | 0 | exit 0, ALL TESTS PASSED | 1079 |
+| clang DEV ON | 0 | exit 0, ALL TESTS PASSED | 1078 |
+| clang DEV OFF | 0 | exit 0, ALL TESTS PASSED | 1079 |
 
-It passes in the default build at BASE, so the 10000 build causes it; it is
-not pre-existing. The case copies every live block of its connected pair
-before destroy, so its peak is twice the pair's memory, and the server
-transport's fixed tables grow with the build's maximum whatever the case's
-`max_clients`. The fix is a plan-derived `SUITE_CASE_RSS_BOUND` for that case
-in `tests/test_unit_secrets_wiped.cpp` (outside this card's paths; the diff
-is in the card's report). With it applied, `./bin/test` passes in the default
-build and in the 10000 gcc DEV ON, gcc DEV OFF, clang DEV ON and clang DEV
-OFF builds. Every other case passes at 10000. Until that diff lands, the
-nightly's unit step is red by this one case.
+`test_secrets_wiped_destroy_writes_only_keys` runs and passes in each. At
+attempt 3 it failed every 10000 cell (`peak_rss_mb=1698 bound_mb=1217`):
+the case copies every live block of its connected pair before destroy, so
+its peak is twice the pair's memory, and the server transport's fixed
+tables grow with the build's maximum whatever the case's `max_clients`. The
+plan-derived `SUITE_CASE_RSS_BOUND` at `tests/test_unit_secrets_wiped.cpp:750`
+bounds it at twice the pair's planned memory, so the nightly's unit step is
+green.
