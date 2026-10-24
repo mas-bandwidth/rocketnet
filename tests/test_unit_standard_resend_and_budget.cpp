@@ -17,6 +17,7 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_window_send.h"
 #include "rocketnet_window_ack.h"
+#include "rocketnet_channel.h"
 
 #include <string.h>
 
@@ -32,9 +33,12 @@ struct resend_trace_fixture_t
     rocketnet_message_config_t config;
     rn_arena_t * arena;
     rn_region_t * region;
-    rn_window_send_t send;
-    rn_window_ack_t ack;
+    rn_ordered_t ordered;
+    rn_window_send_t & send;
+    rn_window_ack_t & ack;
     uint64_t next_packet_id;
+
+    resend_trace_fixture_t() : send( ordered.send ), ack( ordered.ack ) {}
 };
 
 static void resend_trace_open( resend_trace_fixture_t * f )
@@ -45,8 +49,7 @@ static void resend_trace_open( resend_trace_fixture_t * f )
     check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
     rn_region_carve( f->region );
-    rn_window_send_init( &f->send, f->region, 0 );
-    rn_window_ack_init( &f->ack, &f->send, f->region, &f->config );
+    check( rn_ordered_init( &f->ordered, f->region, &f->config, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
     f->next_packet_id = 1;
 }
 
@@ -58,17 +61,34 @@ static void resend_trace_close( resend_trace_fixture_t * f )
 
 static uint64_t resend_trace_send( resend_trace_fixture_t * f, double now )
 {
+    const uint32_t d = rn_region_send_alloc( f->region, 16 );
+    check( d != RN_DESCRIPTOR_NONE );
     uint64_t number = 0, ring_start = 0;
-    check( rn_window_send_first_write( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_first_write( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, d, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
     const uint64_t packet_id = f->next_packet_id++;
     rn_window_ack_commit_packet( &f->ack, packet_id, &number, 1, now );
     return packet_id;
 }
 
+// One resend pass through the product walk (rn_ordered_write); the count is
+// the numbers each written packet carries.
 static uint32_t resend_trace_pass( resend_trace_fixture_t * f, double now )
 {
-    uint64_t out[16];
-    return rn_window_ack_resend( &f->ack, now, &f->next_packet_id, out, 16 );
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * payloads[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    for ( int i = 0; i < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; i++ )
+        payloads[i] = frames[i];
+    const int written = rn_ordered_write( &f->ordered, now, payloads, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+    uint32_t resent = 0;
+    for ( int p = 0; p < written; p++ )
+    {
+        uint32_t count = 0;
+        const uint64_t * numbers = rn_packet_builder_numbers( &f->ordered.builder, p, &count );
+        check( numbers != NULL || count == 0 );
+        resent += count;
+        rn_ordered_commit( &f->ordered, p, f->next_packet_id++, now );
+    }
+    return resent;
 }
 
 static int standard_resend_and_budget_generate( const char * id, uint8_t * out, int capacity )
