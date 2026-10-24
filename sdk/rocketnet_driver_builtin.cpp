@@ -28,7 +28,7 @@ static const int PORTABLE_RX_BANKS = 3;
 // server needs.
 static int portable_rx_capacity( const rocketnet_server_transport_config_t * config )
 {
-    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * max_clients;
 }
 static uint64_t portable_rx_storage_bytes( int capacity )
@@ -1114,9 +1114,10 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
-static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
+static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
-    return rocketnet_server_iocp_create( context, bind, config->transport->num_xdp_queues );
+    // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS );
 }
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t*) transport ); }
 static void iocp_stop( void * transport )
@@ -1237,9 +1238,9 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     else if (strcmp(transport, "iocp") == 0)
     {
-        const int workers = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes(workers);
-        plan.worker_threads = workers + 1; plan.sockets = 1;
+        // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker.
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes(ROCKETNET_IOCP_DEFAULT_WORKERS);
+        plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1; plan.sockets = 1;
     }
     else if (strcmp(transport, "rio") == 0)
     {

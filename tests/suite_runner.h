@@ -28,6 +28,7 @@
 #include "plan_rss.h"
 #include "portable_crt.h"
 #include "time_scale.h"
+#include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -67,7 +68,19 @@ extern char **environ;
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value. A case process that reports its plan's
 // bound (tests/plan_rss.h) is held to that instead.
+//
+// A build for more clients (-DROCKETNET_MAX_CLIENTS, BUILDING.md "Maximum
+// clients") carries larger per-server tables whatever the case's max_clients:
+// the receive arrays and payload batches hold 16 packets for every client
+// the build holds. There the bound is 1.5 times the largest case measured at
+// 10000 clients on a macOS Release build (811 MiB,
+// test_server_stats_worker_late_batch_keeps_modulo_fairness, 2026-10-23),
+// so 1217; a build for more than 10000 sets the environment variable.
+#if ROCKETNET_MAX_CLIENTS <= 1000
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+#else
+#define ROCKETNET_TEST_MAX_CASE_RSS_MB 1217
+#endif
 
 // group_of's flag for a case of the nightly tier: the case runs, in the group
 // the rest of the value names, only under ROCKETNET_TEST_NIGHTLY=1. The cases

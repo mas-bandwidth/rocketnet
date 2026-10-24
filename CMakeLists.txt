@@ -118,9 +118,30 @@ if(ROCKETNET_HISTORY_PACKETS LESS 4096 OR ROCKETNET_HISTORY_PACKETS GREATER 3276
     message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768")
 endif()
 
-set(ROCKETNET_REASSEMBLY_MEMORY_MIB 512 CACHE STRING "Maximum reassembly component allocation in MiB")
+# The most clients one server holds (sdk/rocketnet.h ROCKETNET_MAX_CLIENTS).
+# 1000 is the supported default; -DROCKETNET_MAX_CLIENTS=10000 builds a larger
+# server, and every limit that serves all clients derives from it (BUILDING.md,
+# "Maximum clients").
+set(ROCKETNET_MAX_CLIENTS 1000 CACHE STRING "Maximum clients per server (512..32768)")
+if(NOT ROCKETNET_MAX_CLIENTS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be an integer")
+endif()
+if(ROCKETNET_MAX_CLIENTS LESS 512 OR ROCKETNET_MAX_CLIENTS GREATER 32768)
+    message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be 512..32768")
+endif()
+
+# Empty ROCKETNET_REASSEMBLY_MEMORY_MIB scales with the clients: 512 MiB per
+# 1000 (sdk/rocketnet_memory.h), so 512 at the default and 5120 at 10000.
+set(ROCKETNET_REASSEMBLY_MEMORY_MIB "" CACHE STRING "Maximum reassembly component allocation in MiB (empty: 512 per 1000 clients)")
 set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
+set(ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+if(NOT ROCKETNET_REASSEMBLY_MEMORY_MIB STREQUAL "")
+    list(APPEND ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB})
+endif()
 foreach(budget ROCKETNET_REASSEMBLY_MEMORY_MIB ROCKETNET_XDP_MEMORY_MIB)
+    if(${budget} STREQUAL "")
+        continue()
+    endif()
     if(NOT ${budget} MATCHES "^[0-9]+$")
         message(FATAL_ERROR "${budget} must be an integer")
     endif()
@@ -169,9 +190,9 @@ else()
     endif()
 endif()
 add_compile_definitions(
+    ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
-    ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
-    ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+    ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
 include(cmake/RocketNetDependencies.cmake)
 
@@ -245,7 +266,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
         OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
-        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n${ROCKETNET_HISTORY_PACKETS}\n")
+        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n${ROCKETNET_HISTORY_PACKETS}\n${ROCKETNET_MAX_CLIENTS}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -254,6 +275,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
             "-DCLANG=${ROCKETNET_BPF_CLANG}"
             "-DMULTIARCH=${ROCKETNET_MULTIARCH}"
             "-DHISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}"
+            "-DMAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
         BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
         DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
@@ -438,13 +460,15 @@ foreach(target rocketnet rocketnet_dev rocketnet_dev_stats_manual rocketnet_shar
     else()
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=0)
     endif()
+    # PUBLIC for the same reason: the consumer's ROCKETNET_MAX_CLIENTS is the
+    # library's.
+    target_compile_definitions(${target} PUBLIC ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS})
     if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
         target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
     endif()
     target_compile_definitions(${target} PRIVATE
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
-        ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
-        ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+        ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
     target_include_directories(${target} BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_include_directories(${target} PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"

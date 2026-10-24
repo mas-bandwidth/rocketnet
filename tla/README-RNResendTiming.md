@@ -135,3 +135,15 @@ code: a block's chunks sent first, a small record 10 ms after, an RTT sample
 of 200 ms (resend_delay 250 ms); at 111 ms the small record is resent and the chunks
 are not, and the chunks go at 251 ms. Built against the one-FIFO walk it
 fails, resending the chunks at 100 ms.
+
+`MCRNResendTimingChunkLate.cfg` sends the chunk first at tick 98, late in its
+block's first timeout, as when the send budget paces a block out over longer
+than the timeout (1 MiB at the default 1000 kbps). Each record is timed from
+its own first send (MESSAGES m9.3), so it passes. The reversed witness
+`MCRNResendTimingBrokenBlockClock.cfg` times the chunk from its block's first
+send at tick 0, as the code did before `send_first_sends`: at tick 100 the
+chunk has two sends where four are owed, and `AttemptsBeforeTimeout` fails.
+The unit test `test_ordered_chunk_timeout_runs_from_its_own_first_send`
+(`test_unit_channel_ordered.cpp`) replays it against the code: a chunk first
+sent 12 s after its block's first chunk is not timed out until 10 s after its
+own first send, and an unsent oldest number has no clock.

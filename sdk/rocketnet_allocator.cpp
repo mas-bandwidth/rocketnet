@@ -60,6 +60,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
     "channel send state",
     "channel receive state",
     "sender per-number table",
+    "sender first sends",
     "receiver descriptors",
     "received bitset",
     "held-ordered index",
@@ -78,7 +79,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] =
 {
-    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W", "SR",
+    "32C", "16C", "32W", "8W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W", "SR",
 };
 
 const char * rn_region_part_name( int part )
@@ -141,6 +142,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_CHANNEL_SEND] = sizeof(rn_channel_send_t) * C;
     layout->bytes[RN_PART_CHANNEL_RECEIVE] = sizeof(rn_channel_receive_t) * C;
     layout->bytes[RN_PART_SEND_NUMBERS] = sizeof(rn_send_number_t) * W;
+    layout->bytes[RN_PART_SEND_FIRST_SENDS] = sizeof(double) * W;
     layout->bytes[RN_PART_RECEIVE_DESCRIPTORS] = sizeof(rn_receive_descriptor_t) * W;
     layout->bytes[RN_PART_RECEIVED_BITS] = W / 8;                                   // W is a power of two, at least 64: whole u64 words
     layout->bytes[RN_PART_HELD_INDEX] = sizeof(rn_held_entry_t) * 2 * W;
@@ -435,6 +437,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->channel_send = (rn_channel_send_t*) ( base + layout->offset[RN_PART_CHANNEL_SEND] );
     region->channel_receive = (rn_channel_receive_t*) ( base + layout->offset[RN_PART_CHANNEL_RECEIVE] );
     region->send_numbers = (rn_send_number_t*) ( base + layout->offset[RN_PART_SEND_NUMBERS] );
+    region->send_first_sends = (double*) ( base + layout->offset[RN_PART_SEND_FIRST_SENDS] );
     region->receive_descriptors = (rn_receive_descriptor_t*) ( base + layout->offset[RN_PART_RECEIVE_DESCRIPTORS] );
     region->received_bits = (uint64_t*) ( base + layout->offset[RN_PART_RECEIVED_BITS] );
     region->held_index = (rn_held_entry_t*) ( base + layout->offset[RN_PART_HELD_INDEX] );
@@ -480,6 +483,9 @@ void rn_region_carve( rn_region_t * region )
     }
 
     memset( region->send_numbers, 0, sizeof(rn_send_number_t) * region->window );
+    // send_first_sends is not cleared: an entry is read only after its
+    // number first send writes it (rn_window_ack_record_first_send), and
+    // numbering sets last_send to RN_SEND_NUMBER_NEVER_SENT
     for ( uint32_t n = 0; n < region->window; n++ )
     {
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
@@ -1399,7 +1405,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,

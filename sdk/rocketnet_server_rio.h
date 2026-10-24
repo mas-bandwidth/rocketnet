@@ -41,8 +41,10 @@
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
 // rocketnet_server_rio_available() is defined, and it is false.
 
-#define ROCKETNET_RIO_SEND_QUEUE_SIZE 2048
-#define ROCKETNET_RIO_RECEIVES 4096
+// One socket serves every client: each send phase is the server-wide send
+// staging (2048 at 1000 clients) and the posted receives are twice it.
+#define ROCKETNET_RIO_SEND_QUEUE_SIZE ROCKETNET_SERVER_SEND_STAGING_PACKETS
+#define ROCKETNET_RIO_RECEIVES ( 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS )
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
                          "receive budget twice send: RIO receives hold at least twice the send queue" );

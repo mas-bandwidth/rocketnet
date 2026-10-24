@@ -18,6 +18,21 @@ transport retains the selected operations and opaque instance for its lifetime.
 Factories, resources and platform decisions stay in the transport layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
+The `transport` config value is an ordered candidate list
+(`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp:858-998`).
+A known name absent from this build's availability list for the endpoint on
+this platform (`gso` on a client or on macOS, `io_uring` built without
+liburing) is skipped with one info line (`:947-961`). A list with at least
+one name left after skipping is a strict pin: only those candidates are tried,
+in order, and if every one refuses, the ladder is exhausted and connect or
+start fails. A list whose every name is skipped falls back to the endpoint's
+`auto` order with a warning (`:969-995`): ruled on the #110 review, so one
+fleet-wide line such as `ROCKETNET_SERVER_TRANSPORT=gso` deploys unchanged to
+mixed machines. A row that is compiled out but kept as a refusing rung (`xdp`
+in a build without XDP) is not skipped: its pin refuses at start with
+`ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. An unknown name, an empty element or
+`auto` inside a list refuses the create.
+
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
@@ -120,6 +135,10 @@ the create log line names each feature as yes or no.
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
+  and by RIO: IOCP runs one completion worker plus one send worker and RIO one
+  I/O worker, so a client's datagrams are not reordered by several workers
+  dequeuing one completion port.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
@@ -215,7 +234,7 @@ and `:3573`):
 |---|---|---|
 | GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
 | XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
-| IOCP (Windows) | one worker per completion thread plus one transmit worker | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
+| IOCP (Windows) | one completion worker plus one transmit worker; ignores `num_xdp_queues` | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
 | portable/msgx socket | one receive worker and one transmit worker | nothing |
 | io_uring | none | nothing |
@@ -432,21 +451,33 @@ started). `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
 A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
 address not of its family, on another port, or that does not parse is one
-log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1059-1079`).
+log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1396-1424`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
-off (`sdk/rocketnet_server_transport.cpp:1086`). `portable`
-(`sdk/rocketnet_platform.cpp:585`), `msgx` through that same socket, `gso`
-(`sdk/rocketnet_server_gso_linux.cpp:334`), `io_uring`
-(`sdk/rocketnet_server_uring_linux.cpp:230`), `iocp`
-(`sdk/rocketnet_server_iocp_windows.cpp:513`) and `rio`
-(`sdk/rocketnet_server_rio_windows.cpp:489`) serve both from that bind. Port 0
+off (`sdk/rocketnet_server_transport.cpp:1426-1433`). `portable`
+(`sdk/rocketnet_platform.cpp:797-805`), `msgx` through that same socket, `gso`
+(`sdk/rocketnet_server_gso_linux.cpp:491`), `io_uring`
+(`sdk/rocketnet_server_uring_linux.cpp:372`), `iocp`
+(`sdk/rocketnet_server_iocp_windows.cpp:678`) and `rio`
+(`sdk/rocketnet_server_rio_windows.cpp:623`) serve both from that bind. Port 0
 writes the granted port onto both addresses
-(`sdk/rocketnet_server_transport.cpp:1406`). The protocol advertises the named
-IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1460`).
+(`sdk/rocketnet_server_transport.cpp:1758-1761`). The protocol advertises the named
+IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1816-1850`).
 `TokenAddressAdvertised` accepts a request when the token's address of the
-arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:177`). A
+arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:206`). A
 v4-mapped source is canonicalised to IPv4 first. The token's other-family
 address is not consulted.
+
+The given addresses are advertised addresses, not bind restrictions. With one
+address, the server binds that family's wildcard (`0.0.0.0` or `[::]`) on the
+given port, even when the address names a specific IP
+(`sdk/rocketnet_server_transport.cpp:1435-1441`), and every transport except
+`xdp` opens its sockets on that wildcard: `xdp` alone carries
+`ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS` and attaches to the interface that
+carries the given address. The `server transport started on` log line names
+the wildcard for a socket transport and the given address for `xdp`
+(`sdk/rocketnet_server_transport.cpp:1749`). Connect tokens must name the
+given address, the one clients reach; a socket transport still receives the
+server's port on every local address of the family.
 
 `portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
 with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp:20`).
