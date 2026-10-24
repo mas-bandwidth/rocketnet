@@ -9629,6 +9629,9 @@ static bool rocketnet_test_server_pin_allows_io_uring()
 static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "msgx" ); }
 #endif
 
+extern void rocketnet_test_server_stats_creates_no_thread();
+extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
@@ -9923,6 +9926,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
+    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

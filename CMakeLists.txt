@@ -833,6 +833,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
+        functional/process_thread_counts.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)

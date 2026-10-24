@@ -28,6 +28,12 @@ latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
 [BUILDING.md](../BUILDING.md) for the 60-second target and 120-second cap.
 
+The process thread-count cases `test_server_stats_creates_no_thread` and
+`test_public_step_driven_client_connects_without_a_thread` read the process's
+OS thread count from `/proc/self/task`, so they are functional cases in
+`./bin/functional`, not unit cases. On platforms without that file the count
+is -1 and the thread assertion pins nothing, so it is never unit logic.
+
 ## Peak memory per case
 
 Both runners record each case process's peak resident set (`wait4`
