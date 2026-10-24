@@ -475,6 +475,10 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
 
 int main( int argc, char ** argv )
 {
+    // before anything is created: the allocator keeps the pages the warm-up
+    // populates (tests/process_resources.h, THE WARM-UP)
+    process_resources_keep_freed_pages();
+
     uint64_t max_iterations = 0;
     uint64_t max_seconds = 0;
     int have_iterations = 0;

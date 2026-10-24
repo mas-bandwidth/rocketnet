@@ -31,7 +31,13 @@
     faulted in every page of every private mapping once (MADV_POPULATE_WRITE
     on the writable ones, MADV_POPULATE_READ on the rest; contents are not
     changed): from then on resident memory grows only when the process maps
-    or touches memory it did not hold at the post-warmup sample. On Windows
+    or touches memory it did not hold at the post-warmup sample. The
+    allocator must not hand populated pages back and fault them in again: so
+    process_resources_keep_freed_pages, called before anything is created,
+    stops glibc trimming its heaps (M_TRIM_THRESHOLD at its maximum; free()
+    otherwise returns the heap top to the kernel and the next malloc faults it
+    back in, a drop of megabytes then a regrowth that is neither a leak nor
+    flat). On Windows
     the memory count is the commit charge (PrivateUsage), which counts
     preallocated memory at its allocation, touched or not; macOS has no
     populate call and its count is read as it is.
@@ -71,6 +77,9 @@
 #else
 #include <dirent.h>
 #include <errno.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -310,6 +319,20 @@ static inline int64_t process_resources_touch_all( void )
     return unsupported && populated == 0 ? -1 : populated;
 #else
     return -1;
+#endif
+}
+
+// THE WARM-UP, its first half: glibc keeps every freed heap page instead of
+// trimming the heap top, so the pages process_resources_touch_all populates
+// stay resident (see THE WARM-UP). Call once, before anything is created.
+// Returns 1 where it applies and took effect.
+
+static inline int process_resources_keep_freed_pages( void )
+{
+#if defined(__GLIBC__) && !defined(_WIN32) && !defined(__APPLE__)
+    return mallopt( M_TRIM_THRESHOLD, 0x7fffffff ) == 1;
+#else
+    return 0;
 #endif
 }
 
