@@ -854,7 +854,8 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     for ( uint32_t i = 0; i < count; i++ )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
-        if ( descriptor->live && descriptor->number == number + i )
+        // Descriptors hold the 24-bit wire number, so compare every fragment across the 2^24 wrap the same way.
+        if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
             descriptor->live = 0;
             descriptor->block_count = 0;
@@ -1261,7 +1262,7 @@ struct rn_ordered_plan_t
 // (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
 // chunk's, a packet the transport refused); a sent one is due when its class's
 // delay has passed since its last send, the same delay every time
-// (RNResendTiming!Walk, no back-off). The walk stops at the first number not
+// (tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
 // yet due. Returns false when more is due than this update can write. On
 // return *last_unsent is the last never-sent number at the FIFO's head (where
 // new numbers of this class join), or RN_RESEND_NONE.

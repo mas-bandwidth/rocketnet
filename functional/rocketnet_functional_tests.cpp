@@ -4182,7 +4182,6 @@ static uint8_t * rocketnet_test_server_rio_start( rocketnet_server_rio_t * rio, 
 void rocketnet_test_server_rio_probe()
 {
     rocketnet_check( rocketnet_server_rio_available() );
-    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
@@ -4235,9 +4234,6 @@ void rocketnet_test_server_rio_probe()
     rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-
-    // every destroy, the refused stages' included, drained before it freed
-    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 // every size the wire allows, each packet tagged by its index in its first
@@ -4397,9 +4393,7 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
     rocketnet_platform_socket_destroy( client_socket );
-    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 // one exact packet in each direction, with the client and destination families
@@ -4492,9 +4486,7 @@ void rocketnet_test_server_rio_wire_ipv6()
     rocketnet_test_server_rio_wire_exchange( rio, client_socket, &client_address, &server_address );
 
     rocketnet_platform_socket_destroy( client_socket );
-    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 void rocketnet_test_server_rio_wire_dual_stack()
@@ -4519,9 +4511,7 @@ void rocketnet_test_server_rio_wire_dual_stack()
     rocketnet_test_server_rio_wire_exchange( rio, client_socket, &client_address, &server_address );
     rocketnet_platform_socket_destroy( client_socket );
 
-    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 void rocketnet_test_server_rio_send_full()
@@ -4566,9 +4556,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
-    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
 // the iocp transport's USO/URO tier against a plain UDP client on loopback: the

@@ -7,13 +7,14 @@
 # The macOS leg runs the same script with --report-only on the fleet's
 # Apple-silicon runner: it records the msgx per-frame latency every night
 # without gating on a machine that is not reserved quiet. The Windows leg runs
-# report-only on a shared hosted image so its numbers are recorded without
-# flaking the gate on a noisy multi-tenant host.
+# report-only on the Windows fleet runner ([self-hosted, Windows, X64,
+# rocketnet-windows]), which also carries other fleet work, so its numbers are
+# recorded without gating.
 #
 # Hosted minutes budget:
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
 #   - macos-frame-budget:   0 hosted minutes (self-hosted rocketnet-macos)
-#   - windows-frame-budget: timeout-minutes: 10 (~2 min/night actual)
+#   - windows-frame-budget: 0 hosted minutes (self-hosted rocketnet-windows)
 
 name: Nightly Client Frame Budget
 
@@ -116,14 +117,12 @@ jobs:
 
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        ref: [main, sprint/rocketnet-proof]
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
