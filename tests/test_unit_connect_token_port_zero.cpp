@@ -115,6 +115,46 @@ static void test_client_transport_refuses_connect_token_port_zero()
 
 REGISTER_UNIT_TEST( test_client_transport_refuses_connect_token_port_zero );
 
+static void test_token_makers_refuse_port_zero()
+{
+    rocketnet_quiet( true );
+
+    // For the dev maker, "127.0.0.1:0" and "[::1]:0" return INVALID_ADDRESS
+    // and leave the token buffer untouched; "127.0.0.1" still returns OK.
+    #if ROCKETNET_DEV
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    extern const uint8_t rocketnet_dev_server_public_key[32];
+    memset( token, 0, sizeof( token ) );
+
+    // Dev address with port 0 should be refused
+    check( rocketnet_create_dev_connect_token( "127.0.0.1:0", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( rocketnet_create_dev_connect_token( NULL, "[::1]:0", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    // Valid dev address should still work
+    memset( token, 0, sizeof( token ) );
+    check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
+    #endif
+
+    // For the production writer, an address with port 0 returns INVALID_ADDRESS
+    uint8_t production_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    uint8_t prod_pub_key[ROCKETNET_KEY_BYTES];
+    memset( prod_pub_key, 0x52, ROCKETNET_KEY_BYTES );
+    uint8_t backend_key[ROCKETNET_KEY_BYTES + ROCKETNET_KEY_BYTES];
+    memset( backend_key, 0x53, sizeof( backend_key ) );
+
+    // Production with port 0 should be refused
+    const char * addrs_with_port_zero[] = { "127.0.0.1:0" };
+    check( rocketnet_write_production_connect_token( backend_key, prod_pub_key, 1, addrs_with_port_zero, 1, 1, 1000, 1060, 15, NULL, production_token, sizeof( production_token ) ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    // Production with valid port should work
+    const char * addrs_with_valid_port[] = { "127.0.0.1:40000" };
+    check( rocketnet_write_production_connect_token( backend_key, prod_pub_key, 1, addrs_with_valid_port, 1, 1, 1000, 1060, 15, NULL, production_token, sizeof( production_token ) ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_quiet( false );
+}
+
+REGISTER_UNIT_TEST( test_token_makers_refuse_port_zero );
+
 static double port_zero_clock( void * ) { return 1000.0; }
 
 static void test_client_connect_refuses_connect_token_port_zero()
