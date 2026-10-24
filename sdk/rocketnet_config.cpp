@@ -855,7 +855,7 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     return -1;
 }
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder )
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server )
 {
     rocketnet_assert( available );
     rocketnet_assert( num_available > 0 );
@@ -885,7 +885,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     {
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i], server ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
         return true;
     }
@@ -981,7 +981,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         auto_names[0] = '\0';
         for ( int i = 0; i < num_available; i++ )
         {
-            if ( rocketnet_transport_pin_only( available[i] ) ) continue;
+            if ( rocketnet_transport_pin_only( available[i], server ) ) continue;
             const size_t used = strlen( auto_names );
             snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_transport_name( available[i] ) );
         }
@@ -990,7 +990,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i] ) )
+            if ( !rocketnet_transport_pin_only( available[i], server ) )
                 ladder->candidates[ladder->num_candidates++] = available[i];
     }
 

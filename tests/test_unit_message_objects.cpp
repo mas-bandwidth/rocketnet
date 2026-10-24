@@ -81,7 +81,7 @@ struct mo_endpoint_t
     std::vector<uint64_t> batch_connection;
 
     // acks: ids this endpoint opened, reported to the sender at its next update
-    std::vector<uint64_t> acks_inbox;               // ids the peer opened of this endpoint's sends
+    std::vector<uint64_t> acks_inbox;               // ids the other end opened of this endpoint's sends
     std::vector<int> acks_inbox_slot;
     std::vector<uint64_t> acks_inbox_connection;
     std::vector<uint64_t> acked;                    // this update's acked batch
@@ -178,7 +178,7 @@ static void mo_update( void * transport, double time )
     mo_net_t * net = e->net;
     e->time = time;
 
-    // the transport's acked packet ids: what the peer opened since the last update
+    // the transport's acked packet ids: what the other end opened since the last update
     e->acked.clear();
     e->acked_slot.clear();
     e->acked_connection.clear();
