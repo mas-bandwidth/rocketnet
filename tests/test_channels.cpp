@@ -1023,10 +1023,10 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6574080 );
-    check( layout.region_bytes == 6574080 );
-    check( rocketnet_message_connection_bytes( &config ) == 6574080 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6574080 );
+    check( layout.formula_bytes == 6582272 );
+    check( layout.region_bytes == 6582272 );
+    check( rocketnet_message_connection_bytes( &config ) == 6582272 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6582272 );
 
     const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 256, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
@@ -1581,10 +1581,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6574080" ) != NULL );
-    check( strstr( text, "formula bytes 6574080" ) != NULL );
-    check( strstr( text, "1000 connections 6574080000" ) != NULL );
+    check( strstr( text, "48C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 6582272" ) != NULL );
+    check( strstr( text, "formula bytes 6582272" ) != NULL );
+    check( strstr( text, "1000 connections 6582272000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -4058,6 +4058,7 @@ struct channels_window_witness_rig_t
 {
     rn_region_t region;
     rn_send_number_t send_numbers[8];
+    double send_first_sends[8];
     rn_sent_packet_t sent_packets[8];
     rn_sent_index_t sent_index[16];
     uint32_t sent_refs[128];
@@ -4080,6 +4081,7 @@ static void channels_window_witness_setup( channels_window_witness_rig_t * rig, 
     rig->region.sent_index_entries = 16;
     rig->region.sent_ref_entries = 128;
     rig->region.send_numbers = rig->send_numbers;
+    rig->region.send_first_sends = rig->send_first_sends;
     rig->region.sent_packets = rig->sent_packets;
     rig->region.sent_index = rig->sent_index;
     rig->region.sent_refs = rig->sent_refs;

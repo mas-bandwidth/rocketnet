@@ -263,7 +263,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
-// tla/RNChannel.tla Enqueue
+// tla/RNChannel.tla Enqueue, GhostSequencedWrite: a sequenced send moves sequenced_write past zero on its channel
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -293,7 +293,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
-// tla/RNChannel.tla DeliverMessage
+// tla/RNChannel.tla DeliverMessage, GhostSequencedRead: a sequenced delivery moves sequenced_watermark past zero on its channel
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -380,7 +380,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
-// tla/RNChannel.tla OpenPacket
+// tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -800,7 +800,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
-// tla/RNChannel.tla ReceiveAck
+// tla/RNChannel.tla ReceiveAck, ReceiveAckAny: feeds the acked packet ids the transport delivered into the window
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into
@@ -1174,7 +1174,8 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
-// tla/RNChannel.tla WritePacket
+// tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write
+// tla/RNBlocks.tla SendRecord: a fragment's item carries its index, k - 1 and its own ring offset
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
     const rn_region_t * region = ordered->channels.region;
@@ -1281,6 +1282,8 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
     return true;
 }
 
+// tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
+// tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
     if ( !ordered || !payloads || num_payloads < 1 )

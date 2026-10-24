@@ -7,10 +7,11 @@
 # Inputs: SOURCE_DIR, OUTPUT_DIR, XXD, CLANG (a clang with the BPF target, or
 # empty) and MULTIARCH (the host triple whose /usr/include/<triple> holds
 # asm/types.h), and optionally HISTORY_PACKETS: the library's
-# ROCKETNET_HISTORY_PACKETS, which sets the kernel replay window
-# (sdk/rocketnet_xdp_limits.h); without it the header's default applies. The
-# script runs only in a build with XDP (CMakeLists.txt): without a
-# BPF-capable clang the XDP transport is compiled out instead.
+# ROCKETNET_HISTORY_PACKETS, which sets the kernel replay window, and
+# MAX_CLIENTS: the library's ROCKETNET_MAX_CLIENTS, which sizes the kernel
+# replay map (sdk/rocketnet_xdp_limits.h); without either the header's default
+# applies. The script runs only in a build with XDP (CMakeLists.txt): without
+# a BPF-capable clang the XDP transport is compiled out instead.
 #
 # The object is byte-reproducible from the same sources and toolchain: the
 # compile runs in SOURCE_DIR on relative paths, and -fdebug-compilation-dir
@@ -33,6 +34,9 @@ endif()
 set(xdp_defines -D__linux__ -D__BPF__)
 if(HISTORY_PACKETS)
     list(APPEND xdp_defines "-DROCKETNET_HISTORY_PACKETS=${HISTORY_PACKETS}")
+endif()
+if(MAX_CLIENTS)
+    list(APPEND xdp_defines "-DROCKETNET_MAX_CLIENTS=${MAX_CLIENTS}")
 endif()
 execute_process(COMMAND "${CLANG}" ${xdp_defines} -ffreestanding -O2 -g
         "-I/usr/include/${MULTIARCH}" -Isdk

@@ -265,7 +265,7 @@ struct rocketnet_server_transport_t
 {
     // the cache-line-aligned members lead, each a whole number of cache
     // lines, so the compiler inserts no alignment padding before any of them
-    rocketnet_packet_leases_t<131072> packet_leases;
+    rocketnet_packet_leases_t<ROCKETNET_SERVER_PACKET_LEASES> packet_leases;
     struct rocketnet_server_payload_ring_t payload_ring;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
@@ -1107,7 +1107,7 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     rocketnet_server_transport_config_t defaults;
     if (!config) { rocketnet_server_transport_default_config(&defaults); config = &defaults; }
     const int clients = config->max_clients;
-    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (clients < 1 || clients > ROCKETNET_MAX_CLIENTS || payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ||
         payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ||
@@ -1408,9 +1408,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
-    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     if (!rocketnet_reassembly_memory_allowed_delivered(requested_clients, requested_slots, requested_payload,
             rocketnet_server_reassembly_delivered_capacity(requested_clients, requested_slots),
             rocketnet_server_reassembly_delivered_bytes(requested_clients, requested_slots, requested_payload)))
@@ -1605,7 +1605,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
 
-    server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    server_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int default_send_capacity = config->max_clients > ROCKETNET_SERVER_MIN_SEND_PACKETS ?
         config->max_clients : ROCKETNET_SERVER_MIN_SEND_PACKETS;
     server_transport->send_capacity = rocketnet_server_test_create_send_capacity > 0 ?

@@ -128,7 +128,7 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[10];               // layer 3's first_send (8 bytes, then its flag byte) lands here, inside the pinned 64
+    uint8_t reserved[10];               // unused, inside the pinned 64
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
     uint32_t span_prev, span_next;      // RN_SEND_FLAG_SPAN: the live spans, oldest first (RN_DESCRIPTOR_NONE ends)
 };
@@ -212,6 +212,7 @@ enum
     RN_PART_CHANNEL_SEND = 0,           // 32 C
     RN_PART_CHANNEL_RECEIVE,            // 16 C
     RN_PART_SEND_NUMBERS,               // 32 W
+    RN_PART_SEND_FIRST_SENDS,           // 8 W
     RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
     RN_PART_RECEIVED_BITS,              // W / 8
     RN_PART_HELD_INDEX,                 // 16 * 2W
@@ -351,6 +352,7 @@ struct rn_region_t
     rn_channel_send_t * channel_send;
     rn_channel_receive_t * channel_receive;
     rn_send_number_t * send_numbers;
+    double * send_first_sends;          // each number's first send time, indexed number % W like send_numbers; valid once its last_send is not RN_SEND_NUMBER_NEVER_SENT
     rn_receive_descriptor_t * receive_descriptors;
     uint64_t * received_bits;
     rn_held_entry_t * held_index;

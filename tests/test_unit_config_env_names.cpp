@@ -627,7 +627,7 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == 68 );
+    check( documented.size() == 66 );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );
