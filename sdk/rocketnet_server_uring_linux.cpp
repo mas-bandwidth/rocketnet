@@ -143,14 +143,23 @@ struct rocketnet_server_uring_bank_t
     alignas(16) uint8_t packet_data[ROCKETNET_URING_BANK_SIZE][ROCKETNET_FRAME_STRIDE];
 };
 
+// a queue is constructed by default-initialization (placement new with no
+// parentheses): the fields below start from their initializers and the
+// receive buffers are not written at create. they are allocated with the
+// queue, all at create, but a page of a buffer is resident only once the
+// kernel first writes it, so a run of small datagrams keeps about one page
+// of each 66 KiB buffer resident, and only coalesced receives touch more.
+// nothing reads a buffer byte the kernel did not write: the parse reads the
+// header, name, control and payload the completion reports.
+
 struct rocketnet_server_uring_queue_t
 {
-    int fd;
-    bool armed;                                 // a multishot RECVMSG is in the kernel (or queued to submit)
-    bool cancel_pending;                        // destroy's cancel SQE has no CQE yet
-    struct io_uring_buf_ring * buf_ring;
-    bool buf_ring_inverted_resv;                // registered through the inverted resv check (see setup_buf_ring)
-    struct msghdr receive_message;              // the multishot's msghdr: the name area reserved, and the UDP_GRO control area when GRO is on
+    int fd = -1;
+    bool armed = false;                         // a multishot RECVMSG is in the kernel (or queued to submit)
+    bool cancel_pending = false;                // destroy's cancel SQE has no CQE yet
+    struct io_uring_buf_ring * buf_ring = NULL;
+    bool buf_ring_inverted_resv = false;        // registered through the inverted resv check (see setup_buf_ring)
+    struct msghdr receive_message = {};         // the multishot's msghdr: the name area reserved, and the UDP_GRO control area when GRO is on
     alignas(64) uint8_t buffers[ROCKETNET_URING_RECV_BUFFERS][ROCKETNET_URING_RECV_BUFFER_BYTES];
 };
 
@@ -1100,7 +1109,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
+        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t;
         uring->queues[i].fd = -1;
     }
 
@@ -1133,7 +1142,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
         for ( int b = 0; b < ROCKETNET_URING_RECV_BUFFERS; b++ )
         {
             uint8_t * buffer = queue->buffers[b];
-            memset( buffer, 0, ROCKETNET_URING_RECV_BUFFER_BYTES );
+            memset( buffer, 0, sizeof(out) + sizeof(struct sockaddr_storage) + ROCKETNET_URING_TEST_PAYLOAD_BYTES );
             memcpy( buffer, &out, sizeof(out) );
             memcpy( buffer + sizeof(out), &source_address, sizeof(source_address) );
             memset( buffer + sizeof(out) + sizeof(struct sockaddr_storage), (uint8_t) b, ROCKETNET_URING_TEST_PAYLOAD_BYTES );
@@ -1207,7 +1216,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
+        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t;
         uring->queues[i].fd = -1;
     }
 
