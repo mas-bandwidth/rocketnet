@@ -1250,7 +1250,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                                        const char * public_address_string,
                                                                                        const struct rocketnet_server_transport_config_t * config,
-                                                                                       double time, int * status );
+                                                                                       double time, int * status,
+                                                                                       const uint64_t * resolved_memory_budget = NULL );
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
                                                                               const struct rocketnet_server_transport_config_t * config,
@@ -1276,10 +1277,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
 }
 
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
+                                                                                  const struct rocketnet_server_transport_config_t * config,
+                                                                                  uint64_t memory_budget_bytes, int * status )
+{
+    rocketnet_assert( config );
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
+}
+
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                            const char * public_address_string,
                                                                            const struct rocketnet_server_transport_config_t * config,
-                                                                           double time, int * status )
+                                                                           double time, int * status,
+                                                                           const uint64_t * resolved_memory_budget )
 {
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
     const int manual_override = rocketnet_server_stats_manual_next;
@@ -1330,7 +1340,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the default shape; the caller's struct is the middle layer; the
     // environment overlays both through the config table, every override
     // logged loudly with the value it displaced. validation refuses
-    // loudly and never clamps.
+    // loudly and never clamps. A config the public create already resolved
+    // (resolved_memory_budget set, rocketnet_server_transport_create_resolved)
+    // takes no second environment pass: start uses the config create
+    // validated and sized, whatever the environment says now.
 
     struct rocketnet_server_transport_config_t effective_config;
     if ( config )
@@ -1341,7 +1354,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1507,8 +1520,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    uint64_t memory_budget = 0;
-    if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+    uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;

@@ -1266,3 +1266,87 @@ static void test_connection_reset_dirty_slot_discards_open_aggregate()
     reset_loopback_destroy( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_dirty_slot_discards_open_aggregate );
+// A transport with no send capacity left this update: the send pass goes
+// straight to its flush and no connection's write pass runs.
+static int reset_loopback_no_send_capacity( void * transport )
+{
+    (void) transport;
+    return 0;
+}
+
+// The reliable timeout (6.4 "Giving up") is checked by every update for every
+// connected slot, not only by a write pass that reaches its reliable phase.
+// The message is sent once; then every send pass is starved and the peer
+// never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
+// or past first send + reliable_message_timeout_ms, and not before.
+static void test_reliable_timeout_fires_while_send_pass_starved()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.message_resend_delay_initial_ms = 100;
+    config.message_resend_delay_max_ms = 1000;
+    config.reliable_message_timeout_ms = 1000;
+    const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
+    const uint8_t payload[] = { 's', 't', 'a', 'r', 'v', 'e', 'd' };
+
+    // the server's connection
+    {
+        reset_loopback_t f;
+        memset( &f, 0, sizeof(f) );
+        f.now = 1000.0;
+        f.server = reset_loopback_server_create( f.now, &config );
+        check( f.server );
+        const int slot = reset_loopback_connect( &f, 0, 0xE301, &config );
+        reset_loopback_settle_messages( &f );
+
+        check( rocketnet_message_server_send( f.server, slot, 0,
+                                      ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
+        f.now += 0.01;
+        check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_server_send_packets( f.server );
+        const double first_send = f.now;
+
+        f.server->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+        for ( int i = 0; i < 30; i++ )
+        {
+            f.now = first_send + 0.025 + 0.05 * i;
+            check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+            rocketnet_message_server_send_packets( f.server );
+            const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
+            check( rocketnet_message_server_disconnect_reason( f.server, slot ) == expected );
+        }
+        check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+        reset_loopback_destroy( &f );
+    }
+
+    // the client's connection
+    {
+        reset_loopback_t f;
+        memset( &f, 0, sizeof(f) );
+        f.now = 1000.0;
+        f.server = reset_loopback_server_create( f.now, &config );
+        check( f.server );
+        reset_loopback_connect( &f, 0, 0xE302, &config );
+        reset_loopback_settle_messages( &f );
+
+        check( rocketnet_message_client_send( f.clients[0], 0,
+                                      ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, sizeof(payload) ) != 0 );
+        f.now += 0.01;
+        check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_client_send_packets( f.clients[0] );
+        const double first_send = f.now;
+
+        f.clients[0]->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+        for ( int i = 0; i < 30; i++ )
+        {
+            f.now = first_send + 0.025 + 0.05 * i;
+            check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+            rocketnet_message_client_send_packets( f.clients[0] );
+            const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
+            check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == expected );
+        }
+        check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+        reset_loopback_destroy( &f );
+    }
+}
+REGISTER_UNIT_TEST( test_reliable_timeout_fires_while_send_pass_starved );

@@ -1,6 +1,7 @@
 # Supported shared-library C ABI. Review changes to this list explicitly.
 rocketnet_assert_function
 rocketnet_client_abort_message
+rocketnet_client_can_send_message
 rocketnet_client_connect
 rocketnet_client_create
 rocketnet_client_default_config_internal
@@ -27,6 +28,7 @@ rocketnet_log_level
 rocketnet_log_level_name
 rocketnet_quiet
 rocketnet_server_abort_message
+rocketnet_server_can_send_message
 rocketnet_server_client_connected
 rocketnet_server_client_id
 rocketnet_server_client_stats
