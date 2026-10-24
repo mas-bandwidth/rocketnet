@@ -48,8 +48,10 @@
 \* a CONNECTED slot (disconnect_client, disconnect_all_clients) ends the slot
 \* state in its step and leaves the session's Burst disconnect packets
 \* waiting; each server update has an allowance of SealsPerUpdate seals
-\* (ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE), and SealWaiting seals one
-\* waiting packet within it. The code's immediate seal of a burst the
+\* (ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE), and SealWaiting is one
+\* update's drain: at the model's scale of one seal an update it seals one
+\* waiting packet, so no update seals past its allowance by construction and
+\* an update with nothing waiting is a stutter. The code's immediate seal of a burst the
 \* allowance still holds whole is this deferral followed by its seals in
 \* the same update. A waiting burst belongs to its ended session, never to
 \* the slot, which a new client may take at once. Stop and destroy seal or
@@ -75,7 +77,7 @@ ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"
 \* steps beside the drain, inside its TLC budget.
 Burst == 1
 SealsPerUpdate == 1
-ASSUME SealsPerUpdate >= Burst
+ASSUME SealsPerUpdate >= Burst /\ SealsPerUpdate = 1
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory; on the server
@@ -125,11 +127,11 @@ Reset(v, i, why) ==
 VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
           collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
-          allBefore, readIn, admitIn, waiting, left, overspent
+          allBefore, readIn, admitIn, waiting, overspent
 \* state, slot, kept: the server object
-\* waiting, left: the disconnect packets each ended session still waits to
-\*   have sealed, and what this update's allowance has left; overspent: a
-\*   ghost, TRUE once one update sealed more than SealsPerUpdate
+\* waiting: the disconnect packets each ended session still waits to have
+\*   sealed; overspent: a ghost, TRUE once one update sealed more than
+\*   SealsPerUpdate
 \* link: the session tags of client packets in flight to the server (lossy)
 \* held: session tags the server has read and not yet processed
 \* readIn: the server state of every read; admitIn: the state of every
@@ -144,8 +146,8 @@ VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
 vars == <<state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
           collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
-          allBefore, readIn, admitIn, waiting, left, overspent>>
-drain == <<waiting, left, overspent>>
+          allBefore, readIn, admitIn, waiting, overspent>>
+drain == <<waiting, overspent>>
 NoneWaiting == [s \in Sessions |-> 0]
 env == <<link, nextSess, home, tokOf, starts, creates>>
 ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
@@ -162,7 +164,7 @@ Init ==
     /\ doubleTok = FALSE /\ observed = {} /\ crossDelivered = {} /\ collateral = {}
     /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {}
     /\ priorTokens = {} /\ readmitted = FALSE /\ droppedIn = {} /\ allBefore = {}
-    /\ waiting = NoneWaiting /\ left = SealsPerUpdate /\ overspent = FALSE
+    /\ waiting = NoneWaiting /\ overspent = FALSE
 
 \* Every path out of a slot's connection: the one Reset(i). sendDisc says
 \* whether the path sends the disconnect burst to a connected client. The
@@ -284,10 +286,10 @@ DisconnectAll ==
     /\ \E i \in Slots : slot[i].st # "FREE"
     /\ slot' = [i \in Slots |-> DisconnectSlot(i)]
     /\ IF Defect = "disconnectallunbounded"
-          THEN /\ overspent' = (overspent \/ Burst * Cardinality(EndedInDisconnectAll) > left)
-               /\ UNCHANGED <<waiting, left>>
+          THEN /\ overspent' = (overspent \/ Burst * Cardinality(EndedInDisconnectAll) > SealsPerUpdate)
+               /\ UNCHANGED waiting
           ELSE /\ waiting' = [s \in Sessions |-> IF s \in EndedInDisconnectAll THEN Burst ELSE waiting[s]]
-               /\ UNCHANGED <<left, overspent>>
+               /\ UNCHANGED overspent
     /\ lastEnd' = [i \in Slots |-> IF EndsInDisconnectAll(i)
                                   THEN "SERVER_DISCONNECTED" ELSE lastEnd[i]]
     /\ allBefore' = {[slot |-> i, st |-> slot[i].st, sess |-> slot[i].sess] : i \in Slots}
@@ -450,28 +452,21 @@ Lose(s) ==
     /\ UNCHANGED <<state, slot, kept, nextSess, home, tokOf, starts, creates,
                    lastEnd, established, ghosts>>
 
-\* DrainDisconnectBurst, the update's half (rocketnet_server_transport_update):
-\* a new update's allowance. No slot changes.
-ServerUpdate ==
-    /\ state = "RUNNING" /\ left < SealsPerUpdate
-    /\ left' = SealsPerUpdate
-    /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, ghosts, waiting, overspent>>
-
-\* DrainDisconnectBurst, one seal: a waiting disconnect packet of ended
-\* session s is sealed within this update's allowance
-\* (rocketnet_server_transport_drain_disconnect_bursts). No slot changes: the
-\* slot ended at the disconnect, and may already hold another client.
+\* DrainDisconnectBurst, one update's drain: a waiting disconnect packet of
+\* ended session s is sealed within the update's allowance
+\* (rocketnet_server_transport_update calling
+\* rocketnet_server_transport_drain_disconnect_bursts; SealsPerUpdate = 1
+\* here). No slot changes: the slot ended at the disconnect, and may already
+\* hold another client.
 SealWaiting(s) ==
-    /\ state = "RUNNING" /\ waiting[s] > 0 /\ left > 0
+    /\ state = "RUNNING" /\ waiting[s] > 0
     /\ waiting' = [waiting EXCEPT ![s] = @ - 1]
-    /\ left' = left - 1
     /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, ghosts, overspent>>
 
 \* Every step but a drop clears droppedIn, and every step but a
 \* DisconnectAll clears allBefore; the fair actions name both too, and leave
 \* the drain unchanged, so that their fairness conditions name a whole step.
-\* The drain's steps, whole: an update's allowance and one seal.
-UpdateStep == ServerUpdate /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
+\* The drain's step, whole: one update's seal.
 SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
 
 \* disconnect_client(i) leaves its burst waiting (the immediate seal of a
@@ -488,16 +483,16 @@ Next ==
        /\ allBefore' = {}
        /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     \/ /\ Stop
-       /\ waiting' = NoneWaiting /\ UNCHANGED <<left, overspent>>
+       /\ waiting' = NoneWaiting /\ UNCHANGED overspent
        /\ droppedIn' = {}
        /\ allBefore' = {}
        /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     \/ /\ Destroy
-       /\ waiting' = NoneWaiting /\ UNCHANGED <<left, overspent>>
+       /\ waiting' = NoneWaiting /\ UNCHANGED overspent
        /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
     \/ /\ \E i \in Slots : /\ DisconnectClient(i)
                            /\ waiting' = [waiting EXCEPT ![slot[i].sess] = Burst]
-       /\ UNCHANGED <<left, overspent>>
+       /\ UNCHANGED overspent
        /\ droppedIn' = {}
        /\ allBefore' = {}
        /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
@@ -507,7 +502,6 @@ Next ==
     \/ \E s \in Sessions : Deliver(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ UNCHANGED drain
     \/ \E i \in Slots : ServerDropSend(i) /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held /\ UNCHANGED drain
     \/ DisconnectAll
-    \/ UpdateStep
     \/ \E s \in Sessions : SealStep(s)
 
 Spec == Init /\ [][Next]_vars
@@ -515,7 +509,6 @@ Spec == Init /\ [][Next]_vars
 \* updates keep coming, and each waiting packet is sealed within one.
 Fairness ==
     /\ \A i \in Slots : WF_vars(Establish(i) \/ Deny(i) \/ SlotTimeout(i))
-    /\ WF_vars(UpdateStep)
     /\ \A s \in Sessions : WF_vars(SealStep(s))
 LiveSpec == Spec /\ Fairness
 
@@ -536,7 +529,7 @@ TypeOK ==
     /\ priorTokens \subseteq Tokens /\ readmitted \in BOOLEAN
     /\ droppedIn \subseteq SlotStates
     /\ readIn \subseteq ServerStates /\ admitIn \subseteq ServerStates
-    /\ waiting \in [Sessions -> 0..Burst] /\ left \in 0..SealsPerUpdate
+    /\ waiting \in [Sessions -> 0..Burst]
     /\ overspent \in BOOLEAN
 
 \* An occupied slot holds its session; a free one holds none.
