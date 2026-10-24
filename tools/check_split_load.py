@@ -102,10 +102,15 @@ def validate_resources(fields):
             raise ValueError(f"{name}: resource phase mismatch")
 
 
-def validate_receipt(fields, role, run_id, total, duration, limit):
+# Offers per client per second in each direction, by load mode.
+LOAD_RATES = {"rate_1hz": 1, "full": 10}
+
+
+def validate_receipt(fields, role, run_id, total, duration, limit, load="rate_1hz"):
+    rate = LOAD_RATES[load]
     expected(fields, schema="split_v1", role=role, run_id=run_id, total=total,
              duration_target_s=duration, profile="default", payload_bytes=32,
-             rate_target_hz=1, wire_scope="pre_run_to_traffic_end_conservative",
+             rate_target_hz=rate, load=load, wire_scope="pre_run_to_traffic_end_conservative",
              workload_scope="traffic_plus_drain", startup_complete=1,
              traffic_complete=1, drain_complete=1, barrier_complete=1,
              load_complete=1, wire_valid=1, resource_baseline="PASS",
@@ -135,7 +140,7 @@ def validate_receipt(fields, role, run_id, total, duration, limit):
         raise ValueError("short traffic or drain window")
     if finite(fields, "barrier_actual_s") > (33.1 if role == "server" else 30.1):
         raise ValueError("barrier exceeded bounded teardown")
-    if integer(fields, "expected_offers") != duration * integer(fields, "count", 1):
+    if integer(fields, "expected_offers") != duration * rate * integer(fields, "count", 1):
         raise ValueError("wrong expected offer count")
     if integer(fields, "missed_due_slots"):
         raise ValueError("missed due slots")
@@ -284,17 +289,22 @@ def expected_combo_offers(client, combo, duration):
 
 
 def validate(server_text, shard_texts, run_id, total, duration, limit,
-             server_transport=None, client_transport=None, allocation_manifest=None):
+             server_transport=None, client_transport=None, allocation_manifest=None,
+             load="rate_1hz"):
+    if load not in LOAD_RATES:
+        raise ValueError("unknown load mode")
+    offers = duration * LOAD_RATES[load]
     if not RUN_ID.fullmatch(run_id):
         raise ValueError("run ID must be exactly 16 hexadecimal characters")
     run_id = run_id.lower()
     ready = one(server_text, "split_ready")
     expected(ready, schema="split_v1", role="server", run_id=run_id, total=total,
-             duration_s=duration, profile="default", payload_bytes=32, rate_target_hz=1)
+             duration_s=duration, profile="default", payload_bytes=32,
+             rate_target_hz=LOAD_RATES[load], load=load)
     if not ready.get("address") or not re.fullmatch(r"[0-9a-f]{64}", ready.get("key", "")):
         raise ValueError("server readiness lacks address or public key")
     server = one(server_text, "split_receipt")
-    validate_receipt(server, "server", run_id, total, duration, limit)
+    validate_receipt(server, "server", run_id, total, duration, limit, load)
     wire_map(server_text, "server", run_id, 0, total, server)
     if server_transport is not None and server.get("transport") != server_transport:
         raise ValueError("server transport differs from requested transport")
@@ -311,7 +321,7 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
     for text in shard_texts:
         shard_ready = one(text, "split_shard_ready")
         shard = one(text, "split_receipt")
-        validate_receipt(shard, "client-shard", run_id, total, duration, limit)
+        validate_receipt(shard, "client-shard", run_id, total, duration, limit, load)
         if client_transport is not None and shard.get("transport") != client_transport:
             raise ValueError("client transport differs from requested transport")
         if integer(shard, "s2c_offered") or integer(shard, "s2c_accepted") or integer(shard, "c2s_received"):
@@ -319,7 +329,8 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         first, count = integer(shard, "first"), integer(shard, "count", 1)
         expected(shard_ready, schema="split_v1", role="client-shard", run_id=run_id,
                  total=total, first=first, count=count, duration_s=duration,
-                 profile="default", payload_bytes=32, rate_target_hz=1)
+                 profile="default", payload_bytes=32,
+                 rate_target_hz=LOAD_RATES[load], load=load)
         if first + count > total:
             raise ValueError("shard range exceeds population")
         current = set(range(first, first + count))
@@ -343,13 +354,13 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
     for key, server_pair in server_streams.items():
         client_pair = client_streams[key]
         if key[1] == "c2s":
-            target = expected_combo_offers(key[0], key[2], duration)
+            target = expected_combo_offers(key[0], key[2], offers)
             if server_pair[1] != target or client_pair[0] != target:
                 raise ValueError(f"c2s per-client target rate or rotation failed {key}")
             if server_pair[0] != 0 or client_pair[1] != 0 or client_pair[0] != server_pair[1]:
                 raise ValueError(f"c2s delivery mismatch {key}")
         else:
-            if server_pair[0] != duration or client_pair[1] != duration:
+            if server_pair[0] != offers or client_pair[1] != offers:
                 raise ValueError(f"s2c per-client target rate failed {key}")
             if server_pair[1] != 0 or client_pair[0] != 0 or server_pair[0] != client_pair[1]:
                 raise ValueError(f"s2c delivery mismatch {key}")
@@ -399,6 +410,8 @@ def main():
     parser.add_argument("--server-transport", required=True)
     parser.add_argument("--client-transport", required=True)
     parser.add_argument("--allocation-manifest", required=True, type=Path)
+    parser.add_argument("--load", choices=sorted(LOAD_RATES), default="rate_1hz",
+                        help="the load mode both roles ran (full: 10 offers per client per second)")
     args = parser.parse_args()
     try:
         if not (1 <= args.total <= 1000 and 1 <= args.duration <= 3600 and
@@ -409,7 +422,8 @@ def main():
                           args.run_id, args.total, args.duration, args.aggregate_limit_kbps,
                           args.server_transport, args.client_transport,
                           json.loads(args.allocation_manifest.read_bytes().decode("utf-8"),
-                                     object_pairs_hook=strict_object))
+                                     object_pairs_hook=strict_object),
+                          args.load)
     except (OSError, ValueError, OverflowError) as error:
         print("split_merge_json: " + json.dumps({"schema": "split_merge_v2", "verdict": "FAIL",
               "overall_verdict": "FAIL", "non_timing_verdict": "FAIL",
