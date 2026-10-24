@@ -8,7 +8,7 @@
 // through it with BPF_PROG_TEST_RUN: the kernel returns the program's verdict
 // on each frame and transmits nothing. The filter cases involve no socket, no
 // interface and no packet traffic, and no XDP program is attached anywhere.
-// xsk_bind_falls_back_to_copy and xdp_on_link_reply_reaches_the_peer run only
+// xsk_bind_falls_back_to_copy and xdp_on_link_reply_reaches_the_client run only
 // inside a virtme-ng guest, on veth pairs they create and remove.
 //
 // bpf_redirect_map only returns XDP_REDIRECT when the map slot is populated,
@@ -1126,7 +1126,7 @@ static bool replay_key_layout_matches_header( filter_t * filter )
 
 static const char * zc_veth = "rnxsk0";
 static const char * case_skip_reason = NULL;
-static const char * zc_veth_peer = "rnxsk1";
+static const char * zc_veth_far = "rnxsk1";
 
 static bool inside_virtme_guest()
 {
@@ -1282,19 +1282,19 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
     // a failed add means the pair is not ours (the name may already be taken), so nothing is removed
 
     char command[256];
-    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s", zc_veth, zc_veth_peer );
+    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s", zc_veth, zc_veth_far );
     if ( system( command ) != 0 )
     {
-        printf( "  could not create the veth pair %s/%s; nothing removed\n", zc_veth, zc_veth_peer );
+        printf( "  could not create the veth pair %s/%s; nothing removed\n", zc_veth, zc_veth_far );
         return false;
     }
 
     // from here the pair is ours and is removed on every exit path
 
-    snprintf( command, sizeof(command), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_peer );
+    snprintf( command, sizeof(command), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_far );
     const bool up = system( command ) == 0;
     if ( !up )
-        printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_peer );
+        printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_far );
 
     const bool ok = up && xsk_bind_on_veth( zc_veth );
 
@@ -1303,22 +1303,22 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
     snprintf( command, sizeof(command), "ip link del %s", zc_veth );
     const bool removed = system( command ) == 0;
     if ( !removed )
-        printf( "  could not remove the veth pair %s/%s\n", zc_veth, zc_veth_peer );
+        printf( "  could not remove the veth pair %s/%s\n", zc_veth, zc_veth_far );
 
     return ok && removed;
 }
 
 // ON-LINK REPLY: the one case that attaches a program and moves traffic, so it
 // runs only inside a virtme-ng guest (it skips on a host). A veth pair has
-// its peer end in a network namespace with no default route; the example
+// its far end in a network namespace with no default route; the example
 // server runs with the xdp transport on the near end, the example client runs in
-// the namespace, and every frame the server sends must carry the peer end's
+// the namespace, and every frame the server sends must carry the far end's
 // MAC as its destination. The namespace and the veth pair are removed on
 // every exit path.
 
 #define ONLINK_NAMESPACE "rnonlink"
 #define ONLINK_NEAR "rnonlink0"
-#define ONLINK_PEER "rnonlink1"
+#define ONLINK_FAR "rnonlink1"
 #define ONLINK_SERVER_ADDRESS "10.77.1.1:40000"
 #define ONLINK_WANT_FRAMES 150
 #define ONLINK_SECONDS 20.0
@@ -1419,7 +1419,7 @@ static void onlink_print_tail( const char * label, const char * path )
 struct onlink_environment_t
 {
     int home_netns_fd = -1;
-    int peer_netns_fd = -1;
+    int client_netns_fd = -1;
     int capture_fd = -1;
     int stdin_pipe[2] = { -1, -1 };
     pid_t server = -1;
@@ -1443,8 +1443,8 @@ struct onlink_environment_t
             setns( home_netns_fd, CLONE_NEWNET );
             close( home_netns_fd );
         }
-        if ( peer_netns_fd >= 0 )
-            close( peer_netns_fd );
+        if ( client_netns_fd >= 0 )
+            close( client_netns_fd );
         if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
         {
             // already gone: the namespace takes its veth end with it
@@ -1454,7 +1454,7 @@ struct onlink_environment_t
     }
 };
 
-static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
+static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 {
     if ( !inside_virtme_guest() )
     {
@@ -1502,42 +1502,42 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     }
 
     if ( !onlink_run( "ip netns add " ONLINK_NAMESPACE ) ||
-         !onlink_run( "ip link add " ONLINK_NEAR " type veth peer name " ONLINK_PEER ) ||
-         !onlink_run( "ip link set " ONLINK_PEER " netns " ONLINK_NAMESPACE ) ||
+         !onlink_run( "ip link add " ONLINK_NEAR " type veth peer name " ONLINK_FAR ) ||
+         !onlink_run( "ip link set " ONLINK_FAR " netns " ONLINK_NAMESPACE ) ||
          !onlink_run( "ip addr add 10.77.1.1/24 dev " ONLINK_NEAR ) ||
          !onlink_run( "ip link set " ONLINK_NEAR " up" ) ||
          !onlink_run( "echo 2 > /sys/class/net/" ONLINK_NEAR "/napi_defer_hard_irqs" ) ||
          !onlink_run( "echo 200000 > /sys/class/net/" ONLINK_NEAR "/gro_flush_timeout" ) ||
-         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip addr add 10.77.1.2/24 dev " ONLINK_PEER ) ||
-         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set " ONLINK_PEER " up" ) ||
+         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip addr add 10.77.1.2/24 dev " ONLINK_FAR ) ||
+         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set " ONLINK_FAR " up" ) ||
          !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set lo up" ) )
         return false;
 
     environment.home_netns_fd = open( "/proc/self/ns/net", O_RDONLY );
-    environment.peer_netns_fd = open( "/var/run/netns/" ONLINK_NAMESPACE, O_RDONLY );
-    if ( environment.home_netns_fd < 0 || environment.peer_netns_fd < 0 )
+    environment.client_netns_fd = open( "/var/run/netns/" ONLINK_NAMESPACE, O_RDONLY );
+    if ( environment.home_netns_fd < 0 || environment.client_netns_fd < 0 )
     {
         printf( "  FAIL could not open the network namespaces\n" );
         return false;
     }
 
-    // the peer end's MAC and a packet socket on it, opened inside the namespace
+    // the far end's MAC and a packet socket on it, opened inside the namespace
 
-    uint8_t peer_mac[6];
-    int peer_index = 0;
+    uint8_t client_mac[6];
+    int client_ifindex = 0;
     {
-        if ( setns( environment.peer_netns_fd, CLONE_NEWNET ) != 0 )
+        if ( setns( environment.client_netns_fd, CLONE_NEWNET ) != 0 )
             return false;
         const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
         struct ifreq ifr;
         memset( &ifr, 0, sizeof(ifr) );
-        strncpy( ifr.ifr_name, ONLINK_PEER, sizeof(ifr.ifr_name) - 1 );
+        strncpy( ifr.ifr_name, ONLINK_FAR, sizeof(ifr.ifr_name) - 1 );
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
-            memcpy( peer_mac, ifr.ifr_hwaddr.sa_data, 6 );
+            memcpy( client_mac, ifr.ifr_hwaddr.sa_data, 6 );
         if ( probe >= 0 )
             close( probe );
-        peer_index = (int) if_nametoindex( ONLINK_PEER );
+        client_ifindex = (int) if_nametoindex( ONLINK_FAR );
         environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
         if ( environment.capture_fd >= 0 )
         {
@@ -1545,7 +1545,7 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
             memset( &bind_address, 0, sizeof(bind_address) );
             bind_address.sll_family = AF_PACKET;
             bind_address.sll_protocol = htons( ETH_P_IP );
-            bind_address.sll_ifindex = peer_index;
+            bind_address.sll_ifindex = client_ifindex;
             if ( bind( environment.capture_fd, (struct sockaddr*) &bind_address, sizeof(bind_address) ) != 0 )
             {
                 close( environment.capture_fd );
@@ -1554,9 +1554,9 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
         }
         if ( setns( environment.home_netns_fd, CLONE_NEWNET ) != 0 )
             return false;
-        if ( !have_mac || peer_index == 0 || environment.capture_fd < 0 )
+        if ( !have_mac || client_ifindex == 0 || environment.capture_fd < 0 )
         {
-            printf( "  FAIL could not read the peer end's MAC or open a packet socket on it\n" );
+            printf( "  FAIL could not read the far end's MAC or open a packet socket on it\n" );
             return false;
         }
     }
@@ -1568,12 +1568,12 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     }
 
     environment.server = onlink_spawn( server_path, ONLINK_SERVER_ADDRESS, environment.server_log, -1, true, environment.stdin_pipe[0] );
-    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.peer_netns_fd, false, environment.stdin_pipe[0] );
+    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.client_netns_fd, false, environment.stdin_pipe[0] );
 
     // every frame from the server's address and port, judged by its
     // destination MAC
 
-    int frames_to_peer = 0;
+    int frames_to_client = 0;
     int frames_elsewhere = 0;
     const double deadline = onlink_now() + ONLINK_SECONDS;
     // Keep the exchange alive for the full bounded window. Captured frames
@@ -1599,16 +1599,16 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
         const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
         if ( memcmp( frame + 26, onlink_server_ipv4, 4 ) != 0 || source_port != 40000 )
             continue;
-        if ( memcmp( frame, peer_mac, 6 ) == 0 )
+        if ( memcmp( frame, client_mac, 6 ) == 0 )
         {
-            frames_to_peer++;
+            frames_to_client++;
         }
         else
         {
             if ( frames_elsewhere == 0 )
-                printf( "  FAIL a reply went to %02x:%02x:%02x:%02x:%02x:%02x, not the peer's %02x:%02x:%02x:%02x:%02x:%02x\n",
+                printf( "  FAIL a reply went to %02x:%02x:%02x:%02x:%02x:%02x, not the client's %02x:%02x:%02x:%02x:%02x:%02x\n",
                     frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
-                    peer_mac[0], peer_mac[1], peer_mac[2], peer_mac[3], peer_mac[4], peer_mac[5] );
+                    client_mac[0], client_mac[1], client_mac[2], client_mac[3], client_mac[4], client_mac[5] );
             frames_elsewhere++;
         }
     }
@@ -1639,9 +1639,9 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
         printf( "  FAIL the client did not connect and exchange payloads (connected %d, exchanged %d)\n", client_connected ? 1 : 0, exchanged ? 1 : 0 );
         ok = false;
     }
-    if ( frames_to_peer < ONLINK_WANT_FRAMES || frames_elsewhere != 0 )
+    if ( frames_to_client < ONLINK_WANT_FRAMES || frames_elsewhere != 0 )
     {
-        printf( "  FAIL %d frames reached the peer's MAC (want %d) and %d went elsewhere (want 0)\n", frames_to_peer, ONLINK_WANT_FRAMES, frames_elsewhere );
+        printf( "  FAIL %d frames reached the client's MAC (want %d) and %d went elsewhere (want 0)\n", frames_to_client, ONLINK_WANT_FRAMES, frames_elsewhere );
         ok = false;
     }
     if ( !ok )
@@ -1662,7 +1662,7 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
 // destroy destroys a mutex create never made).
 
 #define TEARDOWN_NEAR "rnteardown0"
-#define TEARDOWN_PEER "rnteardown1"
+#define TEARDOWN_FAR "rnteardown1"
 #define TEARDOWN_SERVER_ADDRESS "10.78.1.1:40000"
 #define TEARDOWN_SECONDS 30.0
 
@@ -1749,12 +1749,12 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
         // nothing left from an earlier run
     }
 
-    bool ok = onlink_run( "ip link add " TEARDOWN_NEAR " numtxqueues 2 numrxqueues 2 type veth peer name " TEARDOWN_PEER " numtxqueues 2 numrxqueues 2" ) &&
+    bool ok = onlink_run( "ip link add " TEARDOWN_NEAR " numtxqueues 2 numrxqueues 2 type veth peer name " TEARDOWN_FAR " numtxqueues 2 numrxqueues 2" ) &&
               onlink_run( "ip addr add 10.78.1.1/24 dev " TEARDOWN_NEAR ) &&
               onlink_run( "ip link set " TEARDOWN_NEAR " up" ) &&
               onlink_run( "echo 2 > /sys/class/net/" TEARDOWN_NEAR "/napi_defer_hard_irqs" ) &&
               onlink_run( "echo 200000 > /sys/class/net/" TEARDOWN_NEAR "/gro_flush_timeout" ) &&
-              onlink_run( "ip link set " TEARDOWN_PEER " up" );
+              onlink_run( "ip link set " TEARDOWN_FAR " up" );
 
     int status = 0;
     bool exited = false;
@@ -1858,7 +1858,7 @@ static const case_t cases[] =
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },
     { "replay_key_layout_matches_header", replay_key_layout_matches_header },
-    { "xdp_on_link_reply_reaches_the_peer", xdp_on_link_reply_reaches_the_peer },
+    { "xdp_on_link_reply_reaches_the_client", xdp_on_link_reply_reaches_the_client },
     { "xdp_create_fails_part_way_tears_down", xdp_create_fails_part_way_tears_down },
     { "xsk_bind_falls_back_to_copy", xsk_bind_falls_back_to_copy },
 };

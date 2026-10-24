@@ -241,7 +241,7 @@ static const struct rocketnet_counters_t * live_matrix_sender_counters( struct l
 
 // A start message the region has no room for ends the connection
 // (MESSAGE_MEMORY_EXHAUSTED), and the region frees a message only when the
-// peer acks it (or, for an unreliable one, writes it), so the sender asks the
+// receiver acks it (or, for an unreliable one, writes it), so the sender asks the
 // library for its room before each start message: a send is admitted only
 // while it fits and leaves at least half of the pool it takes from free, the
 // store class for a message up to one block stride, the send spans above it.
@@ -945,13 +945,13 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                 {
                     rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_client_send_fits( m->client, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_client_send_fits( m->client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 else
                 {
                     rn_message_server_send_fits( m->server, 0, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_server_send_fits( m->server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
                 printf( "disconnect %s region: store_c0=%llu/%llu store_c1=%llu/%llu spans=%llu/%llu free_messages=%u "
@@ -1129,7 +1129,6 @@ void live_message_matrix_loopback()
 
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;
-    m->live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );

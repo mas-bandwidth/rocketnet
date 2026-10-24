@@ -34,7 +34,7 @@ void rocketnet_derive_handshake_keys( struct rocketnet_connection_keys_t * keys,
 
 // Derive all four keys. Computes the shared secret from the ephemeral pair,
 // derives, then erases the shared secret from the stack before returning.
-// Returns 0 -- refusing the whole derivation -- when the peer's ephemeral
+// Returns 0 -- refusing the whole derivation -- when the remote endpoint's ephemeral
 // public key is a small-order point, which both sides MUST treat as fatal to
 // the handshake. The caller erases its ephemeral secret once this returns.
 
@@ -44,7 +44,7 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
                                       const uint8_t * connection_salt,
                                       const uint8_t * session_nonce,
                                       const uint8_t * own_ephemeral_secret_key,
-                                      const uint8_t * peer_ephemeral_public_key,
+                                      const uint8_t * remote_ephemeral_public_key,
                                       const uint8_t * client_ephemeral_public_key,
                                       const uint8_t * server_ephemeral_public_key );
 

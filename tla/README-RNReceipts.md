@@ -18,15 +18,19 @@ layer implementation exists.
   draft. Reliable numbers remain in `Unacked` after map eviction or loss.
   Reliable retransmission is an abstract choice of any unacked number;
   scheduling/backoff is outside this model. Unreliable records write once.
-- `OpenPacket(pid)` is a peer transport open. `ReceiveAck(pid)` consumes
+- `OpenPacket(pid)` is an open by the remote transport. `ReceiveAck(pid)` consumes
   the transport's acked-packet-id event, and only that event updates
   `acked`. `PacketLost(pid)` supplies the transport lost-id event. A late
   ACK may follow loss; no message-level ACK or second ACK channel exists.
   ACKs of evicted map entries acknowledge no numbers. Duplicate/unknown
   events with no live transport slot are stuttering inputs.
 - `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
-  descriptors after their one-resend delay deadline or map eviction. Its retained
-  outcome suppresses a late ACK. `Disconnect` represents the documented
+  descriptors after their receipt deadline or map eviction. The receipt
+  deadline is the constant `ReceiptDeadline`, the endpoint's maximum resend
+  delay (`message_resend_delay_max_ms`); it does not move with the adaptive
+  resend delay `RTO`, and `ASSUME RTO <= ReceiptDeadline`. Map eviction is the
+  one exception: an evicted entry can never be acknowledged, so it reports
+  LOSS at once. Its retained outcome suppresses a late ACK. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.
 - `EmitAck` emits a reliable receipt only when every number of the message
@@ -93,6 +97,12 @@ that prunes transitions or hides violations.
   a promoted unreliable send, waits for all fragment numbers, independently of
   their index/arrival order.
 - `ReceiptRingBounded`: receipt queue length never exceeds its capacity.
+- `LossOnlyAfterDeadline`: a type-5 LOSS is generated only once its first
+  number's age has reached `ReceiptDeadline`, or after its sent-map entry
+  was evicted. The fixed configuration uses `RTO = 1` and
+  `ReceiptDeadline = 2`, so an ACK after the resend delay and inside the
+  deadline is reachable and must report ACKED; the mid instance has
+  `ReliableTimeout = 1`, which caps age at 1, so its deadline is 1.
 - `UnreliableNeverResent`: effective type 5 is written at most once.
 - `ReceiptProgress`: every issued receipt send eventually generates an
   outcome or its connection ends. Fairness requires eventual transport-slot completion, allowing either
@@ -114,21 +124,27 @@ property, plus `TypeOK`. They must exit 12 and identify that property.
   carries fragment `<<2,1>>`; open and packet ACK leave only that last index
   in `acked`. `EmitAck(2)` then violates
   `BlockAckedOnlyWhenAllFragmentsAcked`, with `<<2,0>>` still unacked.
-- `BrokenTwoOutcomes`: the nine-state trace chooses single-record type 5.
-  The sends and packet write are followed by `Tick` to resend delay 1, transport
+- `BrokenEarlyLoss`: the six-state trace chooses single-record type 5.
+  After the two API sends, packet 0 carries `<<2,0>>`; one `Tick` brings its
+  age to `RTO = 1`, below `ReceiptDeadline = 2`. The broken sweep, the rule
+  before this change (LOSS at the adaptive resend delay), then emits LOSS,
+  violating `LossOnlyAfterDeadline`. The same order in the code (send, an
+  update after the resend delay, then the ACK) is
+  `test_receipt_late_ack_inside_deadline_is_acked`.
+- `BrokenTwoOutcomes`: the ten-state trace chooses single-record type 5.
+  The sends and packet write are followed by two `Tick` steps to the receipt deadline, transport
   open, then `SweepLoss(2)`. Its late transport ACK matches the retained
   map entry. `EmitAck(2)` appends ACKED after LOSS, violating
   `ExactlyOneOutcomePerReceiptSerial` even though the full one-entry ring
   now contains only ACKED. Generation history catches what the ring hides.
-- `BrokenReliableLoss`: the six-state trace chooses a two-fragment type-5
+- `BrokenReliableLoss`: the seven-state trace chooses a two-fragment type-5
   message promoted to effective type 6. Fragment `<<2,0>>` is written;
-  `Tick` reaches resend delay 1. The broken `SweepLoss(2)` emits LOSS for this reliable
-  block, violating `LossOnlyForUnreliableReceipt` before its reliable timeout
-  at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
+  Two `Tick` steps reach the receipt deadline 2. The broken `SweepLoss(2)` emits LOSS for this reliable
+  block, violating `LossOnlyForUnreliableReceipt`. Actual types 6 and 7 share this checked rule; the enumerated witness
   selects the promoted type first.
 
 The measured traces and their exact state counts are recorded with the run
-records and the task's raw TLC evidence. No witness uses an unrelated type
+records and the task's raw TLC evidence; `tla/RUNS.tsv` holds the current counts. No witness uses an unrelated type
 error or a different safety violation as a substitute for its named property.
 
 ## Reference behavior and differences
@@ -165,17 +181,18 @@ This receipt module does not claim to validate those unrelated semantics.
 ## Reproduction
 
 Use the exact runner and JAR pin in `tla/README.md`, on a Linux bench. The
-four registered cases belong to `rnreceipts`. Run shards 0 through 3 with
-`--shards 4 --shard N --workers 2 --timeout 110s`, each in a private output
+six registered cases belong to `rnreceipts`. Run shards 0 through 5 with
+`--shards 6 --shard N --workers 2 --timeout 110s`, each in a private output
 directory; witnesses use one worker automatically. Merge their measured
 records with `tlacheck merge --keep tla/RUNS.tsv`, then require
 `tlacheck groups --root . --stale` to print `[]`. Keep superseded records
 verbatim in `RUNS-HISTORY.tsv`; never edit fingerprints or measurements.
 
 Measured final outcomes (generated/distinct, elapsed seconds): fixed
-72,559/25,028, 10.274; last-index 421/250, 0.988; two-outcomes 1,599/755,
-1.073; reliable-loss 155/96, 0.970. The fixed run completes temporal checking;
-the three witnesses each exit 12 with precisely their declared invariant.
+67,144/23,800, 7.740; mid 3,602,016/792,811, 13.245; last-index 409/244,
+0.951; two-outcomes 2,481/1,207, 1.104; reliable-loss 371/221, 0.705;
+early-loss 134/85, 0.681. The fixed run completes temporal checking; the
+four witnesses each exit 12 with precisely their declared invariant.
 
 ## Mid-scale instance
 

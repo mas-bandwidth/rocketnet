@@ -183,8 +183,8 @@ def exec_functional_names():
             continue
         for m in EXEC_TEST_NAME_RE.finditer(text):
             patterns.append(re.escape(m.group(1)).replace("%d", "[0-9]+").replace("%s", "[a-z0-9_]+"))
-    # the hard-killed peer cases name themselves from their cell
-    # (rocketnet_posix_hard_killed_peer_test_name, functional/posix_hard_killed_peer.cpp)
+    # the hard-killed client cases name themselves from their cell
+    # (rocketnet_posix_hard_killed_client_test_name, functional/posix_hard_killed_client.cpp)
     patterns.append("test_posix_(?:hard_killed_client|send_to_closed_port|client_server_gone|receive_seam)_[a-z0-9_]+")
     return re.compile("(?:" + "|".join(patterns) + ")")
 

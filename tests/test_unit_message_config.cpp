@@ -25,6 +25,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
+#include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_message_object.h"
@@ -71,7 +72,7 @@ struct mc_endpoint_t
     std::vector<int> batch_slot;
 
     // acks: ids this endpoint opened, reported to the sender at its next update
-    std::vector<uint64_t> acks_inbox;               // ids the peer opened of this endpoint's sends
+    std::vector<uint64_t> acks_inbox;               // ids the other end opened of this endpoint's sends
     std::vector<int> acks_inbox_slot;
     std::vector<uint64_t> acked;                    // this update's acked batch
     std::vector<int> acked_slot;
@@ -164,7 +165,7 @@ static void mc_update( void * transport, double time )
     mc_net_t * net = e->net;
     e->time = time;
 
-    // the transport's acked packet ids: what the peer opened since the last update
+    // the transport's acked packet ids: what the other end opened since the last update
     e->acked.clear();
     e->acked_slot.clear();
     if ( !net->hold_acks )
@@ -733,7 +734,7 @@ static void test_message_config_equal_connects_and_verifies()
     check( pair.net->clients[0]->disconnects == 0 );
     check( pair.net->server->disconnects == 0 );
 
-    // each end's first record is its CONFIG (read with the peer's limits)
+    // each end's first record is its CONFIG (read with the other end's limits)
     mc_check_first_record_is_config( pair.net->clients[0], &server_slot->ordered.limits, &config );
     mc_check_first_record_is_config( pair.net->server, &client->ordered.limits, &config );
 
@@ -806,7 +807,7 @@ static void test_message_config_first_loss_still_verifies()
 
 // RNEndpoint Tick, the CONFIG half: the server's packets never reach the
 // client, while the client's reach the server and are acked. The client has
-// nothing reliable unacked, yet it is still waiting for the peer's CONFIG, so
+// nothing reliable unacked, yet it is still waiting for the server's CONFIG, so
 // reliable_timeout after it connected it ends the connection as
 // RELIABLE_TIMEOUT. Red at a base without CONFIG: nothing ever times out.
 static void test_message_config_never_received_is_reliable_timeout()
@@ -890,8 +891,59 @@ static void test_config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
+// The fuzz seed f8 0d 00 30 (fuzz/corpus_config/regress_config_f80d0030)
+// applies "0" to message_resend_delay_max_ms (range 10..60000, zero is not
+// "use the default"). The harness expects validation to refuse it exactly as
+// it refuses any out-of-range INT; this pins that the library does, by setting
+// the struct field directly, and that the refusal never clamps the value.
+static void test_message_config_resend_delay_max_zero_refused()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    config.message_resend_delay_max_ms = 0;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 0 );
+    config.message_resend_delay_max_ms = 9;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 9 );
+    config.message_resend_delay_max_ms = 60001;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 60001 );
+    config.message_resend_delay_max_ms = 2000;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+}
+
+// The message table's range is the table's own; the message config's contract
+// is the range and the cross-field resend rules together (the initial delay
+// must sit inside the min..max the operator chose). A value the table's range
+// accepts can still break the cross rule: a min above the initial delay is
+// refused by the cross rule alone.
+static void test_message_config_resend_delay_cross_rule_refused()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+
+    // 60000 is inside the table's range for the min (0..60000), so the table
+    // accepts it; the cross rule does not, because the initial delay (2000)
+    // would sit below the floor
+    config.message_resend_delay_min_ms = 60000;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( !rocketnet_message_validate_config( &config ) );
+    check( config.message_resend_delay_min_ms == 60000 );
+    config.message_resend_delay_min_ms = 0;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( rocketnet_message_validate_config( &config ) );
+}
+
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
+REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
+REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );

@@ -34,7 +34,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | libFuzzer (corpus replay and fuzz runs; clang-cl on Windows) | planned for the final deliverable | ✅ | ✅ |
 | Toolchain matrix (MSVC, clang-cl and ARM64 on Windows; Xcode universal arm64 and x86_64 on macOS; gcc and clang on Linux) | ✅ | ✅ | ✅ |
 | Lifecycle stress (init/term, create/destroy, restart, destroy under traffic) | planned for the final deliverable | ✅ | ✅ |
-| Hard-killed peer never stalls receive | planned for the final deliverable | ✅ | planned for the final deliverable |
+| Hard-killed client never stalls receive | planned for the final deliverable | ✅ | planned for the final deliverable |
 | Socket error paths (oversize, runt, garbage, zero-length, failed sends) | planned for the final deliverable | ✅ | ✅ |
 | Network thread priority | ✅ | ✅ | ✅ |
 | Examples (run_examples.py) | ❌ | ❌ | ❌ |
@@ -84,13 +84,13 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Functional suite on each server transport | portable | planned for the final deliverable |
 | Functional suite on each server transport | iocp | ✅ |
 | Functional suite on each server transport | rio | ✅ |
-| Hard-killed peer or ICMP error never stalls receive | xdp | planned for the final deliverable |
-| Hard-killed peer or ICMP error never stalls receive | msgx | ✅ |
-| Hard-killed peer or ICMP error never stalls receive | gso | planned for the final deliverable |
-| Hard-killed peer or ICMP error never stalls receive | io_uring | planned for the final deliverable |
-| Hard-killed peer or ICMP error never stalls receive | portable | planned for the final deliverable |
-| Hard-killed peer or ICMP error never stalls receive | iocp | planned for the final deliverable |
-| Hard-killed peer or ICMP error never stalls receive | rio | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | xdp | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | msgx | ✅ |
+| Hard-killed client or ICMP error never stalls receive | gso | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | io_uring | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | portable | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | iocp | planned for the final deliverable |
+| Hard-killed client or ICMP error never stalls receive | rio | planned for the final deliverable |
 | Socket error paths | xdp | ✅ |
 | Socket error paths | msgx | ✅ |
 | Socket error paths | gso | ✅ |

@@ -64,7 +64,7 @@
 // The scripted-order hook: each direction of the wire passes packets to the
 // simulator (the default), holds the message layer's payload packets for the
 // case to deliver in the order it chooses (control packets still pass), or
-// drops every packet. A held packet reaches the peer only through
+// drops every packet. A held packet reaches the receiver only through
 // rocketnet_channel_harness_deliver_held, which hands it to the simulator's
 // scripted schedule (rocketnet_network_simulator_deliver_packets).
 enum
@@ -975,7 +975,7 @@ static inline void rocketnet_channel_harness_set_wire( rocketnet_channel_harness
 }
 
 // Hand the held packets named by index, in the order given, to the simulator's
-// scripted schedule, due now; the peer receives them in that order at its next
+// scripted schedule, due now; the receiver gets them in that order at its next
 // update. The held list is unchanged; rocketnet_channel_harness_clear_held
 // forgets it. Returns the number handed to the wire.
 static inline int rocketnet_channel_harness_deliver_held( rocketnet_channel_harness_t * h, const int * indices, int count )
