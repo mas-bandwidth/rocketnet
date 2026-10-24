@@ -93,10 +93,11 @@ static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
 
     uint32_t forget_count = 0;
     uint32_t mark_count = 0;
+    const struct rocketnet_server_xdp_replay_key_t * forget_keys = NULL;
     const struct rocketnet_server_xdp_replay_key_t * mark_keys = NULL;
     const struct rocketnet_server_xdp_replay_value_t * mark_values = NULL;
 
-    rocketnet_xdp_replay_marks_forgets( &marks, &forget_count );
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
     rocketnet_unit_check( forget_count == 1 );
 
     // the one forget is A, in insertion order
@@ -106,7 +107,7 @@ static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
     rocketnet_xdp_replay_key_from_address( &a, &key_a );
     rocketnet_xdp_replay_key_from_address( &b, &key_b );
 
-    rocketnet_unit_check( memcmp( &marks.forgets[0], &key_a, 20 ) == 0 );
+    rocketnet_unit_check( memcmp( &forget_keys[0], &key_a, 20 ) == 0 );
 
     // the two marks are A at 41 and B at 7, in insertion order
 
@@ -120,7 +121,7 @@ static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
     // reset empties both lists
 
     rocketnet_xdp_replay_marks_reset( &marks );
-    rocketnet_xdp_replay_marks_forgets( &marks, &forget_count );
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
     rocketnet_unit_check( forget_count == 0 );
     rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
     rocketnet_unit_check( mark_count == 0 );
@@ -153,8 +154,89 @@ static void test_xdp_transport_replay_marks_full_refuses_and_counts()
     rocketnet_unit_check( marks.refused == 1 );
 }
 
+static void test_xdp_transport_replay_marks_failed_forgets_kept()
+{
+    // tla/RNXdpReplay.tla ForgetOwedUntilApplied: a forget the kernel refused
+    // stays pending, in order, ahead of the next walk's forgets
+
+    struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_reset( &marks );
+
+    const uint16_t ports[6] = { 50000, 50001, 50002, 50003, 50004, 50005 };
+    for ( int i = 0; i < 6; i++ )
+    {
+        struct rocketnet_address_t a = replay_marks_ipv4( ports[i] );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, (uint32_t) ( 10 + i ) ) );
+    }
+
+    const bool forget_failed[6] = { false, true, false, true, true, false };
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed ) == 0 );
+
+    const struct rocketnet_server_xdp_replay_key_t * forget_keys = NULL;
+    uint32_t forget_count = 0;
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
+    rocketnet_unit_check( forget_count == 3 );
+
+    const uint16_t kept_ports[3] = { 50001, 50003, 50004 };
+    for ( uint32_t i = 0; i < 3; i++ )
+    {
+        struct rocketnet_address_t a = replay_marks_ipv4( kept_ports[i] );
+        struct rocketnet_server_xdp_replay_key_t key;
+        rocketnet_xdp_replay_key_from_address( &a, &key );
+        rocketnet_unit_check( memcmp( &forget_keys[i], &key, 20 ) == 0 );
+    }
+
+    const struct rocketnet_server_xdp_replay_key_t * mark_keys = NULL;
+    const struct rocketnet_server_xdp_replay_value_t * mark_values = NULL;
+    uint32_t mark_count = 0;
+    rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
+    rocketnet_unit_check( mark_count == 0 );
+
+    // the next walk's forget follows the kept ones
+
+    struct rocketnet_address_t next = replay_marks_ipv4( 50009 );
+    struct rocketnet_server_xdp_replay_key_t next_key;
+    rocketnet_xdp_replay_key_from_address( &next, &next_key );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &next ) );
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
+    rocketnet_unit_check( forget_count == 4 );
+    rocketnet_unit_check( memcmp( &forget_keys[3], &next_key, 20 ) == 0 );
+}
+
+static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
+{
+    // a full buffer's refusals are handed to the commit, which adds them to
+    // the socket's commit failure count, rather than zeroed by the reset
+
+    struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_reset( &marks );
+
+    for ( uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
+    {
+        struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, i + 1 ) );
+    }
+
+    struct rocketnet_address_t extra = replay_marks_ipv4( 60000 );
+    rocketnet_unit_check( !rocketnet_xdp_replay_marks_mark( &marks, &extra, 100 ) );
+    rocketnet_unit_check( !rocketnet_xdp_replay_marks_mark( &marks, &extra, 101 ) );
+    rocketnet_unit_check( marks.refused == 2 );
+
+    const bool no_failures[1] = { false };
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures ) == 2 );
+    rocketnet_unit_check( marks.refused == 0 );
+    rocketnet_unit_check( marks.mark_count == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    // the next commit with no refusal hands over none
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures ) == 0 );
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 
 #endif // #if defined(__linux__)
