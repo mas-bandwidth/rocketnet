@@ -318,7 +318,11 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 
 // tla/RNServerStats.tla. The aggregates hold exactly what
 // rocketnet_ack_endpoint_update_stats would count over the same windows, so
-// the published numbers are current after every send, receive and ack.
+// the published numbers are current after every send, receive and ack. Every
+// published field matches the recompute exactly except jitter, which matches
+// within floating-point rounding: rocketnet_ack_stats_publish_rtt takes
+// ( sum - count * min ) / count from a double sum, while the recompute sums
+// sample - min in float.
 // Every window is a function of its high-water mark; when the mark rises the
 // window moves: the records below the new base leave (they are still in the
 // ring, read before anything overwrites them), the records between the old
