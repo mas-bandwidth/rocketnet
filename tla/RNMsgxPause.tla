@@ -19,11 +19,12 @@
 (* worker observed an older, expired value is never removed by this        *)
 (* worker's clear.                                                          *)
 (*                                                                         *)
-(* Each Pause carries a generation number (ghost state, not in the code)   *)
-(* so the invariant can say which pause a clear removed.  The code         *)
-(* compares values only; time never runs backwards, so a fresh pause        *)
-(* (now + retry) never equals an expired value (at most now), and the       *)
-(* value compare stands for the generation compare.                        *)
+(* The ghost removed (not in the code) is the value the word held when    *)
+(* the last clear ran.  A pause published after a worker observed an       *)
+(* older expiry is fresh: its expiry is later than the time of the clear.  *)
+(* Two pauses stored at the same instant carry the same expiry; the        *)
+(* compare-and-swap cannot tell them apart and need not, because a clear   *)
+(* of either removes an expired value.                                     *)
 (*                                                                         *)
 (* Rule switch, TRUE only in the reversed witness:                         *)
 (*   StoreZero  the expired pause is cleared by an unconditional store of  *)
@@ -40,51 +41,43 @@ ASSUME MaxTime >= 1 /\ Retry >= 1 /\ StoreZero \in BOOLEAN
 
 Times == 0..(MaxTime + Retry)
 
-VARIABLES now,         \* rocketnet_platform_time, in ticks
-          down,        \* msgx_down_until: 0, or the expiry of a pause
-          gen,         \* ghost: generation of the pause the word holds
-          clearedGen,  \* ghost: generation of the pause the last clear removed
-          pc,          \* per worker: idle, loaded, expired or probe
-          seen,        \* per worker: the value it loaded
-          seenGen      \* per worker: ghost generation of the value it loaded
+VARIABLES now,      \* rocketnet_platform_time, in ticks
+          down,     \* msgx_down_until: 0, or the expiry of a pause
+          removed,  \* ghost: the value the word held when the last clear ran
+          pc,       \* per worker: idle, loaded, expired or probe
+          seen      \* per worker: the value it loaded
 
-vars == <<now, down, gen, clearedGen, pc, seen, seenGen>>
+vars == <<now, down, removed, pc, seen>>
 
 Steps == {"idle", "loaded", "expired", "probe"}
 
 TypeOK ==
     /\ now \in 0..MaxTime
     /\ down \in Times
-    /\ gen \in Nat
-    /\ clearedGen \in Nat
-    /\ clearedGen <= gen
+    /\ removed \in Times
     /\ pc \in [Workers -> Steps]
     /\ seen \in [Workers -> Times]
-    /\ seenGen \in [Workers -> Nat]
 
 Init ==
     /\ now = 0
     /\ down = 0
-    /\ gen = 0
-    /\ clearedGen = 0
+    /\ removed = 0
     /\ pc = [w \in Workers |-> "idle"]
     /\ seen = [w \in Workers |-> 0]
-    /\ seenGen = [w \in Workers |-> 0]
 
 \* Time advances one tick: a pause whose expiry is reached is expired.
 Expire ==
     /\ now < MaxTime
     /\ now' = now + 1
-    /\ UNCHANGED <<down, gen, clearedGen, pc, seen, seenGen>>
+    /\ UNCHANGED <<down, removed, pc, seen>>
 
 \* rocketnet_msgx_active loads msgx_down_until.  0 is the live pump: the
 \* batch call follows at once.
 Load(w) ==
     /\ pc[w] = "idle"
     /\ seen' = [seen EXCEPT ![w] = down]
-    /\ seenGen' = [seenGen EXCEPT ![w] = gen]
     /\ pc' = [pc EXCEPT ![w] = IF down = 0 THEN "probe" ELSE "loaded"]
-    /\ UNCHANGED <<now, down, gen, clearedGen>>
+    /\ UNCHANGED <<now, down, removed>>
 
 \* A pause that has not expired: rocketnet_msgx_active returns false and
 \* the caller takes the per-packet path.
@@ -92,7 +85,7 @@ StayPaused(w) ==
     /\ pc[w] = "loaded"
     /\ now < seen[w]
     /\ pc' = [pc EXCEPT ![w] = "idle"]
-    /\ UNCHANGED <<now, down, gen, clearedGen, seen, seenGen>>
+    /\ UNCHANGED <<now, down, removed, seen>>
 
 \* The observed pause has expired (where the test hook
 \* rocketnet_msgx_before_expiry_clear runs, before the swap).
@@ -100,7 +93,7 @@ ObserveExpired(w) ==
     /\ pc[w] = "loaded"
     /\ now >= seen[w]
     /\ pc' = [pc EXCEPT ![w] = "expired"]
-    /\ UNCHANGED <<now, down, gen, clearedGen, seen, seenGen>>
+    /\ UNCHANGED <<now, down, removed, seen>>
 
 \* The compare-and-swap: clear only the value this worker observed.  On a
 \* failed swap the word is reloaded into seen and tested again (0 is live).
@@ -109,39 +102,37 @@ ClearIfUnchanged(w) ==
     /\ pc[w] = "expired"
     /\ IF down = seen[w]
           THEN /\ down' = 0
-               /\ clearedGen' = seenGen[w]
+               /\ removed' = down
                /\ pc' = [pc EXCEPT ![w] = "probe"]
-               /\ UNCHANGED <<seen, seenGen>>
+               /\ UNCHANGED seen
           ELSE /\ seen' = [seen EXCEPT ![w] = down]
-               /\ seenGen' = [seenGen EXCEPT ![w] = gen]
                /\ pc' = [pc EXCEPT ![w] = IF down = 0 THEN "probe" ELSE "loaded"]
-               /\ UNCHANGED <<down, clearedGen>>
-    /\ UNCHANGED <<now, gen>>
+               /\ UNCHANGED <<down, removed>>
+    /\ UNCHANGED now
 
 \* The reversed witness: an unconditional store of 0.
 ClearUnconditional(w) ==
     /\ StoreZero
     /\ pc[w] = "expired"
     /\ down' = 0
-    /\ clearedGen' = seenGen[w]
+    /\ removed' = down
     /\ pc' = [pc EXCEPT ![w] = "probe"]
-    /\ UNCHANGED <<now, gen, seen, seenGen>>
+    /\ UNCHANGED <<now, seen>>
 
 \* The batch call (the re-probe after a clear) succeeds, or is refused for
 \* weather, which never pauses.
 Probe(w) ==
     /\ pc[w] = "probe"
     /\ pc' = [pc EXCEPT ![w] = "idle"]
-    /\ UNCHANGED <<now, down, gen, clearedGen, seen, seenGen>>
+    /\ UNCHANGED <<now, down, removed, seen>>
 
 \* rocketnet_msgx_pause: the batch call was refused; store now + retry
 \* unconditionally, whatever the word holds.
 Pause(w) ==
     /\ pc[w] = "probe"
     /\ down' = now + Retry
-    /\ gen' = gen + 1
     /\ pc' = [pc EXCEPT ![w] = "idle"]
-    /\ UNCHANGED <<now, clearedGen, seen, seenGen>>
+    /\ UNCHANGED <<now, removed, seen>>
 
 Worker(w) ==
     \/ Load(w)
@@ -159,12 +150,15 @@ Spec == Init /\ [][Next]_vars
 SpecFair == Spec /\ \A w \in Workers : WF_vars(Worker(w))
 
 -----------------------------------------------------------------------------
-\* The word is 0 only when the last clear removed the newest pause: no
-\* clear ever removes a pause published after its worker's observation.
-FreshPauseSurvives == down = 0 => clearedGen = gen
+\* No clear ever removes a pause that has not expired: the value a clear
+\* removed was at most the time of the clear (time never runs backwards,
+\* so checking it against the current time is the same check).  A pause
+\* the other worker published after this worker observed an older expiry
+\* expires later than now and so is never removed by this worker's clear.
+FreshPauseSurvives == removed <= now
 
-\* The word holds a pause only as long as one was published.
-PauseHasGeneration == down > 0 => gen > 0
+\* A worker about to clear holds a value that had expired when it looked.
+ClearOnlyExpired == \A w \in Workers : pc[w] = "expired" => 0 < seen[w] /\ seen[w] <= now
 
 \* Liveness: a pause that has expired is eventually cleared or replaced
 \* by a fresh one.
