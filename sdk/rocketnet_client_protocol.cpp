@@ -899,7 +899,12 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
         client->rtt_session_sampled = 1;
     }
 
-    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+    // a payload (type 5) and a fragment (type 9) become ack-eligible later:
+    // the payload when it is accepted, the fragment when reassembly accepts
+    // it (rocketnet_client_process_fragment)
+
+    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
+         packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
         rocketnet_replay_advance( &client->accepted_session, sequence );
 
     rocketnet_ack_endpoint_record_received( &client->ack, sequence, packet_bytes, current_time );
@@ -910,7 +915,8 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
                                           &counters[ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL] );
 
     if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET &&
-         ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET ) )
+         packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
+         packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
         client->ack.ack_debt++;
 
     *out_type_data_offset = block_bytes;
@@ -1235,6 +1241,8 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
         // the arrival invariant honest in release
         rocketnet_assert( 0 );
         client->counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED]++;
+        rocketnet_replay_advance( &client->accepted_session, client->received_session_sequence );
+        client->ack.ack_debt++;
         return 1;
     }
 
@@ -1252,9 +1260,26 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED,
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL };
 
-    return rocketnet_reassembly_process_fragment( client->reassembly, 0,
-                                                  opened + type_data_offset, type_data_bytes,
-                                                  client->counters->values, &fragment_counters );
+    const int accepted = rocketnet_reassembly_process_fragment( client->reassembly, 0,
+                                                                opened + type_data_offset, type_data_bytes,
+                                                                client->counters->values, &fragment_counters );
+
+    // standard/TRANSPORT.md t15.3: a packet is ack-eligible only once its
+    // type data passes validation, and a fragment's validation is
+    // reassembly's. so the fragment's sequence is marked in accepted_session,
+    // and adds to the ack debt, only when reassembly accepts it: a refused
+    // fragment is never named in a block, so the server's aggregate never
+    // completes on it (tla/FragmentsAndAcks.tla RecvData,
+    // NamedOnlyIfAccepted). an accepted fragment that completes a payload
+    // later dropped as batch full still acknowledges: reassembly accepted it.
+
+    if ( accepted )
+    {
+        rocketnet_replay_advance( &client->accepted_session, client->received_session_sequence );
+        client->ack.ack_debt++;
+    }
+
+    return accepted;
 }
 
 static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol_t * client,

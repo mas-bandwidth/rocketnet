@@ -182,6 +182,7 @@ MCRNBlocksBrokenPlaceByArrival.cfg	MCRNBlocks.tla	invariant	DeliveredEqualsSent	
 MCFragmentsAndAcksBits.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
 MCFragmentsAndAcksWitWalkskip.cfg	MCFragmentsAndAcks.tla	invariant	WalkVisitsUnacked	check	fragmentsandacks	required	-
 MCFragmentsAndAcksWitStaleheld.cfg	MCFragmentsAndAcks.tla	invariant	BitsMatchRing	check	fragmentsandacks	required	-
+MCFragmentsAndAcksWitAckRefused.cfg	MCFragmentsAndAcks.tla	invariant	NamedOnlyIfAccepted	check	fragmentsandacks	required	-
 MCRNClientIoBrokenReuseBeforeSent.cfg	MCRNClientIo.tla	invariant	NoReuseBeforeSent	check	rnclientio	required	-
 MCRNClientIoBrokenSwapWhileReading.cfg	MCRNClientIo.tla	invariant	ExposedStable	check	rnclientio	required	-
 MCRNClientIoBrokenReceiveStall.cfg	MCRNClientIo.tla	invariant	NoReceiveStall	check	rnclientio	required	-
