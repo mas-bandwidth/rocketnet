@@ -56,6 +56,21 @@ for transport in transports:
         assert session['native_retained_on_failed_cancel_bytes'] is None
         assert session['config_copy_frozen_for_future_start'] is False
         assert session['one_block_sufficient'] is False
+        assert plan['allocator_bytes'] == plan['planned_bytes'] - plan['umem_bytes']
+        assert plan['os_bytes'] == plan['umem_bytes'] + plan['thread_stack_bytes'] + plan['mapped_ring_bytes']
+        assert plan['thread_stack_bytes'] > 0
+    # The lifecycle rows: the public server through start, stop, start, stop
+    # and the public client through connect, disconnect, connect, disconnect.
+    # required_memory bounds the first cycle's peak and the second cycle takes
+    # no more than the first: one block sized from the plan never runs out.
+    for profile in [profiles[0], profiles[1]]:
+        server, client = run(*profile, transport, 1, '--lifecycle')
+        assert server['lifecycle'] == 'server' and client['lifecycle'] == 'client'
+        for row in (server, client):
+            assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
+            assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
+        assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 3
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
@@ -66,9 +81,22 @@ if sys.platform.startswith('linux'):
     assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 8  # seven queue workers plus one stats worker
     assert xdp['sockets'] == 7
+    assert xdp['os_bytes'] >= xdp['umem_bytes'] + xdp['thread_stack_bytes'] and xdp['thread_stack_bytes'] > 0
+    # the provided buffer rings are kernel-mapped memory outside the allocator;
+    # a build without liburing has no io_uring plan
+    uring = subprocess.run([str(binary), '1', '1416', '1', 'io_uring', '4', '--plan-only'],
+                           capture_output=True, text=True, timeout=10)
+    if uring.returncode == 0:
+        uring_plan = json.loads(uring.stdout)
+        assert uring_plan['mapped_ring_bytes'] > 0 and uring_plan['os_bytes'] >= uring_plan['mapped_ring_bytes']
+    else:
+        assert 'memory plan unavailable' in uring.stderr, (uring.returncode, uring.stdout, uring.stderr)
 if sys.platform == 'win32':
     rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
     assert rio_plan['worker_threads'] == 2  # one RIO I/O worker plus one stats worker
+    # the RIO registered region comes from the allocator; nothing but stacks is OS-owned
+    assert rio_plan['allocator_bytes'] == rio_plan['planned_bytes']
+    assert rio_plan['os_bytes'] == rio_plan['thread_stack_bytes']
     rio, = run(1, 1416, 1, 'rio', 0, '--session-plan-only')
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0
