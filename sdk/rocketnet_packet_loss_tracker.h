@@ -84,16 +84,29 @@ inline void rocketnet_packet_loss_tracker_packet_received( rocketnet_packet_loss
 
     sequence++;
 
-    const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
+    // A sequence already judged cannot affect either the count or a ring slot.
+    if ( sequence <= tracker->last_packet_processed )
+    {
+        return;
+    }
 
-    // count a sequence not yet judged, once: a duplicate whose slot already
-    // holds it is not counted again
-    if ( sequence > tracker->last_packet_processed && tracker->received_packets[index] != sequence )
+    const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
+    const uint64_t resident = tracker->received_packets[index];
+
+    // Count a sequence not yet judged once while its slot still identifies it.
+    // Production callers reject replay duplicates before this tracker, so an
+    // older sequence sharing a slot with a newer resident is a distinct receive.
+    if ( resident != sequence )
     {
         tracker->packets_received_ahead++;
     }
 
-    tracker->received_packets[index] = sequence;
+    // An older sequence must not erase a newer unjudged receive in the same
+    // slot. Empty and older slots can safely take this sequence.
+    if ( resident == 0xFFFFFFFFFFFFFFFFUL || resident < sequence )
+    {
+        tracker->received_packets[index] = sequence;
+    }
     // the high-water mark never moves backwards: a reordered older packet
     // stays a hole in the judged window, not a new most-recent sequence, so
     // the mark is kept at the highest sequence seen (each sequence judged
@@ -129,11 +142,12 @@ inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t
     uint64_t start = tracker->last_packet_processed + 1;
     uint64_t finish = ( tracker->most_recent_packet_received > ROCKETNET_PACKET_LOSS_TRACKER_SAFETY ) ? ( tracker->most_recent_packet_received - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY ) : 0;
 
-    if ( finish > start && finish - start >= ROCKETNET_PACKET_LOSS_TRACKER_HISTORY )
+    if ( tracker->most_recent_packet_received >= start &&
+         tracker->most_recent_packet_received - start >= ROCKETNET_PACKET_LOSS_TRACKER_HISTORY )
     {
-        // the span [start, finish] is longer than the history ring, so the
-        // ring alone cannot judge its older part (those slots were
-        // overwritten). Judge it by count instead: lost is the span length
+        // The unjudged high-water span is at least the history ring, so newer
+        // safety-margin records may have reused slots needed by [start,
+        // finish]. Judge it by count instead: lost is the span length
         // minus the distinct sequences received in it, which is the running
         // count of sequences received above last_packet_processed less the
         // ones received in the safety margin (finish, most_recent] (read from
