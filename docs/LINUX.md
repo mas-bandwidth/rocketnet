@@ -425,14 +425,16 @@ older and newer `vng` releases pass it to the guest shell alike:
 
 ```sh
 vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir "$PWD" -- "sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv4 && sudo ./bin/functional --run test_xdp_transport_max_size_both_ways_ipv6"
-vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 4 --append "irqaffinity=0 isolcpus=2-3 nohz_full=2-3" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v build/generated/server_xdp.o"
+vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 4 --append "irqaffinity=0 isolcpus=1-3 nohz_full=1-3" --rwdir "$PWD" -- "sudo ./bin/test_xdp_filter -v build/generated/server_xdp.o"
 ```
 
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md`), on the same `server_xdp.o` the
 library embeds. The teardown case creates a two-queue veth and sets
-`num_os_cpus=2`, so its workers target CPUs 2 and 3; the filter guest therefore
-boots four CPUs and isolates 2-3. With those boot-tier settings, a provisioned
+`num_os_cpus=2`, so its workers target CPUs 2 and 3. The on-link reply case
+uses one queue and `num_os_cpus=1`, so its worker targets CPU 1. The filter
+guest therefore boots four CPUs and isolates 1-3 to satisfy both cases. With
+those boot-tier settings, a provisioned
 XDP data plane, and no clang on `PATH`, all 18 cases print `ok`, including
 `xdp_on_link_reply_reaches_the_client` and
 `xdp_create_fails_part_way_tears_down`. The explicit object path makes the
