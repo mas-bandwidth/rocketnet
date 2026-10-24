@@ -2085,6 +2085,9 @@ int rocketnet_server_socket_send_queue( const rocketnet_address_t * to, int num_
     return (int) ( hash % (uint64_t) num_queues );
 }
 
+// tla/RNDriverSendStaging.tla XdpStart: stages a packet in the producer buffer
+// being filled, or refuses it (NULL) when no producer buffer is filling
+
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t /* packet_id */, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
@@ -2241,7 +2244,8 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
             continue;
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
-        // tla/RNDriverSendStaging.tla Publish: with no free replacement, keep
+        // tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
+        // producer): with no free replacement, keep
         // the producer and its complete packets staged. The next call retries
         // after worker recycle (WorkerRetire).
         if ( socket->send_handoff.publish() )
@@ -2787,6 +2791,9 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     }
 }
 
+// tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
+// worker staged, claimed under the receive mutex
+
 void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
@@ -2897,10 +2904,12 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
         // reservation retains the entire batch for a later iteration. The
         // fill ring has a slot for every frame beyond the kernel's unpublished
         // batch (ROCKETNET_XDP_FILL_RING_SIZE), so a flush never waits on the
-        // kernel ending its batch (tla/RNXdpReceiveRing.tla).
+        // kernel ending its batch (tla/RNXdpReceiveRing.tla Refill: the
+        // pending return flushed at the top of the pass).
         return_pending_frames();
 
-        // see if there are any packets to receive
+        // see if there are any packets to receive (tla/RNXdpReceiveRing.tla
+        // Peek: xsk_ring_cons__peek, at most the staging room and pending storage)
 
         uint32_t receive_index;
         
@@ -2930,7 +2939,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // (xsk_ring_cons__cancel) before releasing num_consumed
             // (xsk_ring_cons__release), so the next peek returns the skipped
             // descriptors first. The frame ownership is modelled in
-            // tla/RNXdpReceiveRing.tla.
+            // tla/RNXdpReceiveRing.tla; the loop below is its Take, one
+            // descriptor read and its frame held while the staging buffer has room.
             uint32_t num_consumed = 0;
 
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];

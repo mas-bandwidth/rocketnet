@@ -968,7 +968,8 @@ struct rocketnet_server_frame_t
     int client_index;               // slot this frame belongs to, or -1 before assignment
 };
 
-// tla/RNDriverSendStaging.tla Reserve
+// tla/RNDriverSendStaging.tla Reserve and FailedSend: reserves a frame in the
+// transport's staging, or returns NULL and drops the frame when the staging is full
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                                 const rocketnet_address_t * to,
                                                                 struct rocketnet_server_frame_t * frame, bool shutdown = false )
