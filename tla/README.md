@@ -102,7 +102,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 | `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
-| `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
+| `rnclientio` | 30 | Client I/O thread design: the full threaded instance split by obligation (one safety case and 13 liveness cases, each one property or one conjunct of one), the step-driven mode at one slot and at the full instance (one safety case and six liveness cases), seven invariant witnesses, one temporal witness and the step-mode witness |
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
 | `rnxdpreplay` | 4 | Kernel replay high-water map control and three invariant witnesses |
