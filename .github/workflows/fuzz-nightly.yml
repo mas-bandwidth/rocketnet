@@ -62,6 +62,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_differential","source":"fuzz/rocketnet_fuzz_differential.cpp","seeds":"fuzz/corpus_differential","dict":"fuzz/dict/rocketnet_fuzz_differential.dict"}'
     concurrency:
       group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -114,15 +115,29 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet_dev --parallel
 
+      - name: Check out the pinned netcode reference
+        if: contains(fromJSON(matrix.leg).target, 'differential')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
+          git -C netcode-ref checkout --quiet 1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
+
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
           set -euo pipefail
           mkdir -p bin
+          EXTRA=""
+          if [[ "${{ fromJSON(matrix.leg).target }}" == "rocketnet_fuzz_differential" ]]; then
+            cc -O2 -DNDEBUG -ffp-contract=off -c netcode-ref/netcode.c -o bin/netcode_ref.o \
+              -I netcode-ref -I sodium
+            EXTRA="-Itools/differential -Inetcode-ref -DROCKETNET_DIFFERENTIAL_NETCODE_DIR bin/netcode_ref.o"
+          fi
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -Isodium -Isdk -Itest $EXTRA "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 

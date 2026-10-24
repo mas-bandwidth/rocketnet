@@ -1065,7 +1065,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;

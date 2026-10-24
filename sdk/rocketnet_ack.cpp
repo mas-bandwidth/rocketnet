@@ -55,6 +55,8 @@ static int rocketnet_ack_replay_bit( const struct rocketnet_replay_protection_t 
     return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
 }
 
+// tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
+// tla/RNSentHistory.tla PeerAck: restates the received set inside the window as one ack block
 int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
 {
     rocketnet_assert( output );
@@ -758,6 +760,7 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
 }
 
 // tla/RNSentHistory.tla Send
+// tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
@@ -874,6 +877,7 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
 }
 
+// tla/FragmentsAndAcks.tla StartFragmented: draws the aggregate id and pins the packet id behind cnt fragment acks
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
                                                 uint64_t packet_id, int fragment_count )
 {
