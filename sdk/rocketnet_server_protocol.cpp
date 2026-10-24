@@ -36,12 +36,17 @@ static void rocketnet_server_connection_id_assigned( struct rocketnet_server_pro
 // the failed-signature-verify budget: see rocketnet_server.h. the window
 // rolls over when the clock passes it, clearing the global count and every
 // per-source count together, so a source that exhausted the budget is refused
-// for the rest of the window and no longer.
+// for the rest of the window and no longer. a clock that steps back before
+// the window's start (an NTP step, a VM resume) starts a fresh window too, so
+// a recorded failure refuses its source for at most the window length of
+// clock movement in either direction (tla/RNSecurityTables.tla
+// FloodWindowBounded).
 
 static void rocketnet_signature_verify_budget_decay( struct rocketnet_signature_verify_budget_t * budget,
                                                      uint64_t current_timestamp )
 {
-    if ( current_timestamp >= budget->window_start + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS )
+    if ( current_timestamp < budget->window_start ||
+         current_timestamp >= budget->window_start + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS )
     {
         budget->window_start = current_timestamp;
         budget->failure_count = 0;
