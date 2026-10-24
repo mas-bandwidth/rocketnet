@@ -575,7 +575,7 @@ enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_c
     config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
     config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
     config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
     config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
@@ -1429,7 +1429,7 @@ enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_c
     config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
     config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
     config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
     config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
@@ -2316,6 +2316,12 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 // ---------------------------------------------------------------------------
 // The development network simulator: a development library's calls, and a
 // unit-test build's (the test hooks switch the development posture on).
+//
+// The setting applies at once to a live connection and to a running server:
+// the call hands it to the thread that owns the simulator as a config record
+// under a tiny mutex, and that thread takes it before its next send. The
+// connection's threads do not move, and a production library refuses the
+// simulator and carries none of its memory.
 
 #if ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
 
