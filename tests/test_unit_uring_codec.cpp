@@ -276,10 +276,151 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
         &ss, (int) sizeof( struct sockaddr_in6 ) - 1, true, &out ) );
 }
 
+// the segmented send's msghdr (rocketnet_uring_gso_message): one iovec per
+// packet of the run, a UDP_SEGMENT cmsg holding the stride when the run is
+// longer than one, the shorter tail as the last iovec, and a longer packet
+// or another destination ending the run. no socket: the msghdr is read back
+// field by field.
+
+static uint16_t gso_message_stride( const struct msghdr * message )
+{
+    const struct cmsghdr * cmsg = CMSG_FIRSTHDR( message );
+    rocketnet_unit_check( cmsg != NULL );
+    rocketnet_unit_check( cmsg->cmsg_level == IPPROTO_UDP );
+    rocketnet_unit_check( cmsg->cmsg_type == UDP_SEGMENT );
+    rocketnet_unit_check( cmsg->cmsg_len == CMSG_LEN( sizeof(uint16_t) ) );
+    uint16_t stride = 0;
+    memcpy( &stride, CMSG_DATA( cmsg ), sizeof(stride) );
+    return stride;
+}
+
+static void test_uring_gso_message_stride_and_tail()
+{
+    static uint8_t frames[8][ROCKETNET_RECEIVE_CEILING];
+    uint8_t * wire[8];
+    for ( int i = 0; i < 8; i++ )
+        wire[i] = frames[i];
+
+    struct rocketnet_address_t a;
+    struct rocketnet_address_t b;
+    rocketnet_unit_check( rocketnet_address_parse( &a, "10.0.0.1:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &b, "10.0.0.2:40000" ) );
+
+    struct rocketnet_address_t to[8];
+    for ( int i = 0; i < 8; i++ )
+        to[i] = a;
+
+    struct sockaddr_storage name;
+    memset( &name, 0, sizeof(name) );
+    const socklen_t namelen = (socklen_t) sizeof(struct sockaddr_in);
+
+    struct msghdr message;
+    struct iovec iovecs[8];
+    alignas(8) uint8_t control[ROCKETNET_URING_GSO_CONTROL_BYTES];
+
+    // an equal-sized run: one msghdr, one iovec per packet, the stride in
+    // the cmsg
+
+    {
+        const int bytes[4] = { 400, 400, 400, 400 };
+        const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                     wire, bytes, to, 4, 64, 65000 );
+        rocketnet_unit_check( run == 4 );
+        rocketnet_unit_check( message.msg_name == &name );
+        rocketnet_unit_check( message.msg_namelen == namelen );
+        rocketnet_unit_check( message.msg_iov == iovecs );
+        rocketnet_unit_check( message.msg_iovlen == 4 );
+        for ( int i = 0; i < 4; i++ )
+        {
+            rocketnet_unit_check( iovecs[i].iov_base == wire[i] );
+            rocketnet_unit_check( iovecs[i].iov_len == 400 );
+        }
+        rocketnet_unit_check( message.msg_control == control );
+        rocketnet_unit_check( message.msg_controllen == ROCKETNET_URING_GSO_CONTROL_BYTES );
+        rocketnet_unit_check( gso_message_stride( &message ) == 400 );
+    }
+
+    // a shorter tail is the run's last iovec and closes the run
+
+    {
+        const int bytes[5] = { 400, 400, 400, 150, 400 };
+        const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                     wire, bytes, to, 5, 64, 65000 );
+        rocketnet_unit_check( run == 4 );
+        rocketnet_unit_check( message.msg_iovlen == 4 );
+        rocketnet_unit_check( iovecs[2].iov_len == 400 );
+        rocketnet_unit_check( iovecs[3].iov_base == wire[3] );
+        rocketnet_unit_check( iovecs[3].iov_len == 150 );
+        rocketnet_unit_check( gso_message_stride( &message ) == 400 );
+    }
+
+    // a one-packet run carries no cmsg
+
+    {
+        const int bytes[1] = { 400 };
+        const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                     wire, bytes, to, 1, 64, 65000 );
+        rocketnet_unit_check( run == 1 );
+        rocketnet_unit_check( message.msg_iovlen == 1 );
+        rocketnet_unit_check( iovecs[0].iov_len == 400 );
+        rocketnet_unit_check( message.msg_control == NULL );
+        rocketnet_unit_check( message.msg_controllen == 0 );
+    }
+
+    // a longer packet ends the run before it
+
+    {
+        const int bytes[3] = { 400, 400, 500 };
+        const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                     wire, bytes, to, 3, 64, 65000 );
+        rocketnet_unit_check( run == 2 );
+        rocketnet_unit_check( message.msg_iovlen == 2 );
+        rocketnet_unit_check( gso_message_stride( &message ) == 400 );
+    }
+
+    // another destination ends the run before it
+
+    {
+        const int bytes[3] = { 400, 400, 400 };
+        to[2] = b;
+        const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                     wire, bytes, to, 3, 64, 65000 );
+        to[2] = a;
+        rocketnet_unit_check( run == 2 );
+        rocketnet_unit_check( message.msg_iovlen == 2 );
+    }
+
+    // an aborted packet (no bytes) ends the run; at the front there is no run
+
+    {
+        const int bytes[3] = { 400, 0, 400 };
+        rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                           wire, bytes, to, 3, 64, 65000 ) == 1 );
+        rocketnet_unit_check( message.msg_control == NULL );
+        const int aborted[2] = { 0, 400 };
+        rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                           wire, aborted, to, 2, 64, 65000 ) == 0 );
+    }
+
+    // the segment and byte bounds, and no control buffer, limit the run
+
+    {
+        const int bytes[8] = { 400, 400, 400, 400, 400, 400, 400, 400 };
+        rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                           wire, bytes, to, 8, 3, 65000 ) == 3 );
+        rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof(control), &name, namelen,
+                                                           wire, bytes, to, 8, 64, 1000 ) == 2 );
+        rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, NULL, 0, &name, namelen,
+                                                           wire, bytes, to, 8, 64, 65000 ) == 1 );
+        rocketnet_unit_check( message.msg_control == NULL );
+    }
+}
+
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_tag_round_trips );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_parses_name_and_payload );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_buffers );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_recvmsg_refuses_negative_lengths );
 REGISTER_UNIT_TEST( test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped );
+REGISTER_UNIT_TEST( test_uring_gso_message_stride_and_tail );
 
 #endif // #if ROCKETNET_URING_CODEC_ACTIVE

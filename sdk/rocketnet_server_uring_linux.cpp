@@ -28,9 +28,13 @@
 //
 // The send side is the gso transport's staging: game threads reserve a frame
 // slot with one atomic add between flushes, and send_packets submits one
-// SENDMSG per slot with bytes, each slot carrying its own msghdr, iovec and
-// destination, then reaps ready completions within its completion budget
-// without waiting. The reservation index goes back to zero only in a call that leaves
+// SENDMSG per send run, the run's first slot carrying the msghdr, the
+// destination and the UDP_SEGMENT control, and the run's slots their own
+// iovecs, then reaps ready completions within its completion budget without
+// waiting. A run is one slot unless the create probe found UDP_SEGMENT: then
+// consecutive slots to one destination, equal sizes but for one shorter
+// tail (rocketnet_uring_gso_message), go out as one segmented send whose one
+// CQE retires every slot of the run. The reservation index goes back to zero only in a call that leaves
 // no send without its CQE and no staged slot unsubmitted: until its CQE the
 // kernel owns a slot's frame and msghdr, so a call that returns first leaves
 // the index where it is and a later call retires the rest.
@@ -53,6 +57,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_server_gso.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -80,17 +85,26 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 // Only private synchronous create-failure cleanup waits for kernel ownership.
 #define ROCKETNET_URING_ABORT_CREATE_WAIT_SECONDS 0.001
 
-// each slot's info is the slot's msghdr, iovec and destination, which the
-// kernel reads until the send's CQE. finish threads write packet_bytes, so a
+// the most packets one segmented send carries, and the most bytes: the gso
+// transport's bounds (the kernel's UDP_MAX_SEGMENTS, the 16-bit UDP payload)
+
+#define ROCKETNET_URING_MAX_SEGMENTS                    ROCKETNET_GSO_MAX_SEGMENTS
+#define ROCKETNET_URING_MAX_SUPER_BYTES                 ROCKETNET_GSO_MAX_SUPER_BYTES
+
+// each slot's info: the destination and bytes the fill threads write, and,
+// when the slot is the first of a send run, the run's msghdr, name and
+// UDP_SEGMENT control, which the kernel reads until the run's CQE, and how
+// many packets the run carries. finish threads write packet_bytes, so a
 // slot's info is cache line aligned.
 
 struct alignas(64) rocketnet_server_uring_send_info_t
 {
     rocketnet_address_t to;
     int packet_bytes;
+    int run_packets;                            // first slot of a run: the slots the run's one CQE retires
     struct msghdr message;
-    struct iovec iovec;
     struct sockaddr_storage name;
+    alignas(8) uint8_t control[ROCKETNET_URING_GSO_CONTROL_BYTES];
 };
 
 struct rocketnet_server_uring_send_buffer_t
@@ -102,6 +116,11 @@ struct rocketnet_server_uring_send_buffer_t
     uint8_t padding_1[4096];
 
     rocketnet_server_uring_send_info_t info[ROCKETNET_URING_SEND_QUEUE_SIZE];
+
+    // one iovec per slot, main thread only: a run's msghdr points at the
+    // iovecs of its slots, contiguous because the run's slots are
+
+    struct iovec iovecs[ROCKETNET_URING_SEND_QUEUE_SIZE];
 
     uint8_t padding_2[4096];
 
@@ -150,6 +169,15 @@ struct rocketnet_server_uring_t
     int sends_pending;                          // sends submitted, by this send_packets or an earlier one, with no CQE reaped
     int send_submitted;                         // staged slots below this were submitted by an earlier send_packets
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
+    int features;                               // ROCKETNET_SERVER_URING_FEATURE_*: UDP_SEGMENT in use now
+
+    // the run builder's view of the slots ahead, main thread only: the
+    // bytes, destination and wire pointer of at most a run's worth of slots
+    // copied out of the cache-line-aligned infos
+
+    int run_packet_bytes[ROCKETNET_URING_MAX_SEGMENTS];
+    rocketnet_address_t run_to[ROCKETNET_URING_MAX_SEGMENTS];
+    uint8_t * run_wire[ROCKETNET_URING_MAX_SEGMENTS];
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
 
@@ -743,14 +771,38 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
     if ( kind == ROCKETNET_URING_TAG_SEND )
     {
-        // the "send" case: the slot is reaped; its frame and msghdr are the
-        // staging's again (RNUringDriver KernelComplete posted this CQE)
+        // the "send" case: the run is reaped; the frames and msghdr of every
+        // slot of the run are the staging's again (RNUringDriver
+        // KernelComplete posted this one CQE for the whole run)
+
+        const int slot = rocketnet_uring_tag_index( tag );
+        int run_packets = 1;
+        if ( slot >= 0 && slot < ROCKETNET_URING_SEND_QUEUE_SIZE && uring->send.info[slot].run_packets > 1 )
+            run_packets = uring->send.info[slot].run_packets;
 
         uring->sends_pending--;
         if ( cqe->res < 0 )
-            uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED]++;
+        {
+            if ( run_packets > 1 && ( cqe->res == -EINVAL || cqe->res == -EIO || cqe->res == -EOPNOTSUPP ) &&
+                 ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) )
+            {
+                // the kernel accepted the UDP_SEGMENT probe but refused a live
+                // segmented send. unlike the gso transport's sendmmsg the run
+                // cannot be resent: its CQE has handed the slots back, and a
+                // resend would put them in the kernel again after this call
+                // may reset the index. so the run is dropped, counted, and
+                // every later flush sends plain, one SENDMSG per slot
+
+                uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
+                rocketnet_warn( "io_uring transport: live segmented send refused (%s). degrading to one SENDMSG per packet", strerror( -cqe->res ) );
+            }
+            uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] += (uint64_t) run_packets;
+        }
         else
-            uring->counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT]++;
+        {
+            uring->counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] += (uint64_t) run_packets;
+        }
         return;
     }
 
@@ -1068,6 +1120,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
 {
+    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, 0 );
+}
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+{
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
 
@@ -1132,6 +1189,24 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     bind_address->port = bound_port;
     uring->bind_address = *bind_address;
 
+    // the UDP_SEGMENT probe, the gso transport's: sends rotate across the
+    // whole group, so every socket must accept it, all or nothing. the probe
+    // writes segment size zero, the value every socket already holds, so a
+    // refusal leaves nothing to roll back. failure is a tier, not an error
+
+    if ( ( flags & ROCKETNET_SERVER_URING_DISABLE_SEGMENT ) == 0 )
+    {
+        int segment_sockets = 0;
+        for ( int i = 0; i < num_queues; i++ )
+        {
+            int zero = 0;
+            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) ) == 0 )
+                segment_sockets++;
+        }
+        if ( segment_sockets == num_queues )
+            uring->features |= ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+    }
+
     // the ring: ROCKETNET_URING_ENTRIES submission entries, a completion
     // queue twice that
 
@@ -1190,8 +1265,9 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 
     rocketnet_server_uring_submit( uring );
 
-    rocketnet_info( "io_uring transport: %d queue reuseport group on port %d, %d entry ring, %d receive buffers per queue",
-                    num_queues, bound_port, ROCKETNET_URING_ENTRIES, ROCKETNET_URING_RECV_BUFFERS );
+    rocketnet_info( "io_uring transport: %d queue reuseport group on port %d, %d entry ring, %d receive buffers per queue, UDP_SEGMENT %s",
+                    num_queues, bound_port, ROCKETNET_URING_ENTRIES, ROCKETNET_URING_RECV_BUFFERS,
+                    ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) ? "yes" : "no (one SENDMSG per packet)" );
 
     return uring;
 }
@@ -1279,6 +1355,12 @@ int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
     return uring->num_queues;
+}
+
+int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    return uring->features;
 }
 
 void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, uint64_t * counters )
@@ -1382,8 +1464,9 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 }
 
 // RNUringDriver Submit, Reap, SendReturn and ResetIndex: one SENDMSG per
-// slot with bytes not submitted by an earlier call, in chunks no larger than
-// the free submission queue space, rotated across the group's sockets; then
+// send run of slots with bytes not submitted by an earlier call (a run is
+// one slot without UDP_SEGMENT), in chunks no larger than the free
+// submission queue space, rotated across the group's sockets; then
 // reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
 // no waits (receive CQEs met on the way go to the fill bank). The reservation index goes back to 0 only
 // when no send is without its CQE and every staged slot is submitted
@@ -1454,11 +1537,35 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
                 continue;
             }
 
-            info->iovec.iov_base = uring->send.data[slot] + ROCKETNET_FRAME_WIRE_OFFSET;
-            info->iovec.iov_len = (size_t) info->packet_bytes;
-            memset( &info->message, 0, sizeof(info->message) );
-            info->message.msg_name = &info->name;
-            info->message.msg_namelen = namelen;
+            // the run from this slot: the slots ahead copied out for the
+            // builder, at most a segmented send's worth, one slot when
+            // segmentation is off
+
+            int ahead = num_slots - slot;
+            if ( ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 )
+                ahead = 1;
+            if ( ahead > ROCKETNET_URING_MAX_SEGMENTS )
+                ahead = ROCKETNET_URING_MAX_SEGMENTS;
+            for ( int i = 0; i < ahead; i++ )
+            {
+                const struct rocketnet_server_uring_send_info_t * next = &uring->send.info[slot + i];
+                uring->run_packet_bytes[i] = next->packet_bytes;
+                uring->run_to[i] = next->to;
+                uring->run_wire[i] = uring->send.data[slot + i] + ROCKETNET_FRAME_WIRE_OFFSET;
+            }
+
+            // RNUringDriver Submit, a run as one send: the run's first slot
+            // owns the msghdr, name and control, its slots their iovecs, and
+            // the kernel owns them all until the run's one CQE
+            // (KernelComplete frees the whole run; NoReuseWhileKernelOwned)
+
+            const int run = rocketnet_uring_gso_message( &info->message, &uring->send.iovecs[slot],
+                                                         info->control, (int) sizeof(info->control),
+                                                         &info->name, namelen,
+                                                         uring->run_wire, uring->run_packet_bytes, uring->run_to, ahead,
+                                                         ROCKETNET_URING_MAX_SEGMENTS, ROCKETNET_URING_MAX_SUPER_BYTES );
+            rocketnet_assert( run >= 1 );
+            info->run_packets = run;
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
             if ( uring->test_fail_sends > 0 )
             {
@@ -1467,17 +1574,18 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
                 info->message.msg_namelen = 0;
             }
 #endif
-            info->message.msg_iov = &info->iovec;
-            info->message.msg_iovlen = 1;
 
             struct io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
             rocketnet_assert( sqe );
             io_uring_prep_sendmsg( sqe, fd, &info->message, MSG_DONTWAIT );
             io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, queue_index, (uint32_t) slot ) );
 
+            if ( run > 1 )
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS]++;
+
             uring->sends_pending++;
             prepared++;
-            slot++;
+            slot += run;
         }
 
         rocketnet_server_uring_submit( uring );
@@ -1622,6 +1730,18 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     (void) num_queues;
     rocketnet_error( "io_uring transport refused: built without liburing" );
     return NULL;
+}
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+{
+    (void) flags;
+    return rocketnet_server_uring_create( context, bind_address, num_queues );
+}
+
+int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )
+{
+    (void) uring;
+    return 0;
 }
 
 void rocketnet_server_uring_stop( struct rocketnet_server_uring_t * ) {}
