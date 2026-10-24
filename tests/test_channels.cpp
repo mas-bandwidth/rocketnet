@@ -1704,7 +1704,7 @@ static void rn_soak_check_accounting( const rn_region_t * region )
         check( used[c] + rn_send_store_free_chunks( &region->store, c ) == rn_send_store_total_chunks( &region->store, c ) );
 }
 
-static uint32_t rn_held_slot( const rn_region_t * region, uint64_t key )
+static uint32_t rn_held_index( const rn_region_t * region, uint64_t key )
 {
     uint32_t slot = (uint32_t) ( ( key * 0x9E3779B97F4A7C15ULL ) >> 40 ) & ( region->held_entries - 1 );
     while ( region->held_index[slot].used && region->held_index[slot].key != key )
@@ -1916,7 +1916,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 // the held index: ordered messages behind their predecessor are held, then drained
 
                 const uint64_t key = ( (uint64_t) c << 32 ) | descriptor->ordering;
-                const uint32_t held = rn_held_slot( receiver, key );
+                const uint32_t held = rn_held_index( receiver, key );
                 receiver->held_index[held].key = key;
                 receiver->held_index[held].number_slot = r;
                 receiver->held_index[held].used = 1;
@@ -1927,7 +1927,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             rn_channel_receive_t * rc = &receiver->channel_receive[c];
             check( rc->ordered_read == descriptor->ordering );
             const uint64_t key = ( (uint64_t) c << 32 ) | descriptor->ordering;
-            const uint32_t held = rn_held_slot( receiver, key );
+            const uint32_t held = rn_held_index( receiver, key );
             check( receiver->held_index[held].used );
             receiver->held_index[held].used = 0;
             receiver->held_index[held].key = 0;
