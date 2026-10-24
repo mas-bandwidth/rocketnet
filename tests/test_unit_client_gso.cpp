@@ -50,7 +50,7 @@ struct fake_gso_socket_t
     int refuse_segment_errno;           // nonzero: a call whose first message is segmented fails with it
     int num_messages;
     fake_gso_message_t messages[FAKE_GSO_MAX_MESSAGES];
-    uint8_t packet_data[FAKE_GSO_MAX_PACKETS][ROCKETNET_CLIENT_GSO_MAX_SEGMENTS * 4];
+    uint8_t packet_data[FAKE_GSO_MAX_PACKETS][512];
     int num_packets;
 };
 
