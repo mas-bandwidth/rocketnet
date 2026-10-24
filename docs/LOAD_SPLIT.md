@@ -11,7 +11,8 @@ configuration and validation work.
 Build the **same exact source revision** on every host with the development
 SDK and tools enabled. Keep the default server/client configuration; the only
 accepted nonempty `ROCKETNET_SERVER_*` and `ROCKETNET_CLIENT_*` environment
-settings are the transport selectors. Nonempty `ROCKETNET_DEV_*` overrides
+settings are the transport selectors and the server's AF_XDP core layout,
+`ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`. Nonempty `ROCKETNET_DEV_*` overrides
 are refused. Choose an explicit aggregate limit in kbps below the measured
 server and client host link capacity; the program does not invent a link rate.
 
@@ -159,6 +160,34 @@ overall PASS requires all of them. The timing budget is specifically the p99
 upper bound of server update and send-packets calls; each must be at most 100
 microseconds. Maxima are reported separately and do not define this p99
 budget.
+The server also times every main server call it makes in traffic plus
+drain and prints one `split_server_call:` line per call, for
+`server_update`, `server_receive_messages` (every call, including the one
+that returns no batch), `server_start_message`, `server_finish_message`
+and `server_send_packets`, each with its count, p50 and p99 upper bounds,
+maximum and over-budget count. The budget for every one of them is 100
+microseconds at p99, judged at the worst case only: 1000 clients, all
+connected, in the full load mode. Pass `full` as the last argument to the
+server and to every client shard: the server then ticks at 10 Hz and offers
+one message to every client every update, and every client updates at 10 Hz
+and offers one message every update (`rate_target_hz=10 load=full` in the
+receipts; pass `--load full` to the merger). The default mode (one offer
+per client per second, `load=rate_1hz`) and the 1, 10, 100 and 500 rungs are
+correctness runs, not timing. `tools/check_server_calls.py` reads the server
+logs and prints a row per log and call; only the worst-case rows carry a
+budget verdict, the others print `NA`, and a set without a worst-case log is
+invalid:
+
+```text
+python3 tools/check_server_calls.py --report-only s1000-full.log s1.log s10.log s100.log s500.log
+```
+
+A log missing a call, repeating one, mixing runs or with contradicting
+quantiles is invalid evidence and exits 2. With `--report-only` a budget
+miss prints `verdict=FAIL` and exits 0; without it the miss exits 1. The
+check runs report-only until every call is inside the budget at the worst
+case, and then without the flag.
+
 The server wire baseline is sampled before RUN; each client's baseline is
 sampled before connect, because RUN can arrive during another client's
 startup loop. Counters end at the role's traffic boundary. They conservatively

@@ -347,10 +347,12 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->mutex.ok ) rocketnet_platform_mutex_destroy( &server->mutex );
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
+    // the receive banks hold datagrams, never a secret: freed as they are,
+    // so destroy touches no bank page the run did not (tla/RNDestroyWipe.tla)
     if ( server->rx_storage )
-        rocketnet_clear_and_free( context, server->rx_storage, (size_t) portable_rx_storage_bytes( server->rx_capacity ) );
+        rocketnet_free( context, server->rx_storage );
     server->~portable_server_t();
-    rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
+    rocketnet_free( context, server );
 }
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )

@@ -63,9 +63,28 @@ sibling binary that does), belongs in the functional suite:
 
     ./bin/functional
 
-The functional suite is its own target. It runs in parallel under the same
-120 second failure limit and prints the same way. Put a new test in `./bin/test` when the assertion can be
-reached through a state machine or the simulator. Put it in `./bin/functional`
+Each functional case targets completion within **60 seconds**, with a hard
+**120-second maximum**, including Debug, sanitizer and emulated builds. Cases
+should stop as soon as their correctness checks finish; they do not wait out
+that budget. The live message matrix reports elapsed time against both bounds,
+while preserving delivery, ordering, receipt and cleanup checks. This budget
+is separate from the library's main-call latency/performance qualification.
+`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases. Every functional
+case, including sibling binaries, runs alone on every platform. Setting
+`ROCKETNET_TEST_JOBS` cannot increase functional concurrency; deterministic
+unit cases may still run in parallel. Run separate functional invocations and
+other network workloads separately on the same test host as well.
+
+Functional assertions check delivery, ordering, state transitions and eventual
+recovery. Wall-clock latency and receive gaps are diagnostics, not pass/fail
+performance thresholds. Generous deadlines catch missing progress or hangs.
+Exact protocol timeout boundaries belong in deterministic tests with simulated
+time. Real pacing primitives may check that they wait at all, without imposing
+an upper latency threshold. Performance qualification is a separate workload.
+
+The functional suite is its own target and prints results in the same format.
+Put a new test in `./bin/test` when the assertion can be reached through a
+state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and

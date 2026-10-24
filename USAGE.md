@@ -8,8 +8,11 @@ serialize it.
 The main frame calls and create are designed to be unnoticeable in a game
 profiler. Client disconnect and server stop request shutdown without waiting
 for workers. Their completion queries let a game keep its frame loop running;
-only after completion does synchronous destroy join and free. Soak, load and profiling work is planned
-hardening. This preview makes no claim from it.
+after completion synchronous destroy joins and frees. An early destroy logs and
+counts the misuse, then performs the shutdown and join itself with a bounded
+number of updates and no sleep; a worker that has not exited by then is logged
+and its object is kept, not freed. Soak, load and
+profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
 [sdk/rocketnet.h](sdk/rocketnet.h). This file is the narrative: how a frame is
@@ -235,8 +238,8 @@ fields in the public configuration structs:
 | `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` / `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | uint64, unix seconds | `0` (wall clock) | Sets `game_clock_epoch`, the unix time at the game clock's zero, for the connect-token expiry check; `0` reads the host wall clock. |
 | `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` / `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | int, `2..1000000` | `0` (off) | Development only: drop every Nth outgoing datagram. |
 | `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` / `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | int, `2..64` | `0` (off) | Development only: reverse each window of W outgoing datagrams. |
-| `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on server transport memory plans; over-budget candidates are skipped, and `rocketnet_server_start` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
-| `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Enforces an upper bound on client transport memory plans; over-budget candidates are skipped, and `rocketnet_client_connect` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
+| `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Read at `rocketnet_server_create`. Enforces an upper bound on server transport memory plans; over-budget candidates are skipped, and `rocketnet_server_start` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
+| `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Read at `rocketnet_client_create`. Enforces an upper bound on client transport memory plans; over-budget candidates are skipped, and `rocketnet_client_connect` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | string (`xx:xx:xx:xx:xx:xx`) | auto-discovered | Sets the gateway MAC address for Linux AF_XDP server sockets when automatic gateway ARP discovery cannot resolve it. |
 | `ROCKETNET_LOG_LEVEL` | int (`0..5`) | `info` (`3`) | Sets process-wide log verbosity: `none` (`0`), `error` (`1`), `warn` (`2`), `info` (`3`), `debug` (`4`), `spam` (`5`). Only a whole-string integer in `0..5` is accepted; the names are output names, not accepted inputs, and a word is ignored with a warning. |
 
@@ -289,8 +292,11 @@ returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
 The server does not fall back to computing these stats synchronously on the
 frame thread. After a successful start, stop requests worker shutdown;
 `rocketnet_server_stopped` remains false until both transport I/O and the stats
-worker have exited. Destroy requires completion and synchronously joins the
-worker before freeing its storage.
+worker have exited. Destroy normally follows completion and synchronously joins
+the worker before freeing its storage; called early, it logs and counts the
+misuse, requests shutdown and updates a bounded number of times without
+sleeping, then joins and frees once complete, or logs and keeps the object if
+the worker has not exited.
 
 ### Server memory footprint
 
@@ -382,9 +388,13 @@ bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t 
 
 To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
-request shutdown and poll completion before destroy. Destroy asserts completion,
-then joins any remaining thread handle and wipes/frees resources synchronously.
-Keep allocator/callback contexts and all borrowed storage alive until destroy
+request shutdown and poll completion before destroy. Destroy asserts completion;
+called early, it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown itself and updates a bounded number of
+times without sleeping. Once complete it joins any remaining thread handle and
+wipes/frees resources synchronously; if the worker has not exited it logs a
+second error and keeps the object rather than free memory the worker owns. Keep
+allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise peer receipt.
 
 ## Frame loop
@@ -503,6 +513,43 @@ server disconnects that client with
 own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. The send budget governs the wire,
 never the queue. A reliable message waits for budget and is never dropped; an
 unreliable message over budget is dropped and counted.
+
+### Asking whether there is room
+
+`rocketnet_client_can_send_message( client, channel, reliability, max_bytes )`
+and `rocketnet_server_can_send_message( server, client_index, channel,
+reliability, max_bytes )` answer whether a start message with the same
+arguments would be given room now: `true` or `false`. They use the same
+decision start message uses, so a `true` answer is a start that gets its
+pointer. A `false` answer means the start would not: the connection's message
+memory is full, or the start would be dropped or refused (not CONNECTED, a
+message already open, a bad argument). The query does not soften the rule
+above: a start after a `false` still ends the connection with
+`MESSAGE_MEMORY_EXHAUSTED`. Ask, and hold the message back until room returns
+as the peer acknowledges messages.
+
+The query changes no state, counts nothing, allocates nothing and runs in
+constant time. Only start message and update take room, so a `true` answer
+holds until the next of either. Each server client slot has its own message
+memory; a server index outside `0 .. max_clients - 1` is misuse and answers
+`false`. A `false` may be pessimistic for an unreliable message that fits in
+one packet, which start can write straight into a free packet without taking
+message memory.
+
+```c
+#include "rocketnet.h"
+
+bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
+{
+    if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        return false;                       /* hold it: sending now would end the connection */
+
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
+    for ( int i = 0; i < bytes; i++ )
+        out[i] = state[i];
+    return rocketnet_client_finish_message( client, bytes ) != 0;
+}
+```
 
 ### Not every refused start spends a sequence number
 
@@ -760,7 +807,10 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 ```
 
 Destroy every client and server before `rocketnet_term`. Request shutdown first,
-wait by polling completion from the event loop, then destroy. A stalled worker
-keeps completion false, so its object and contexts must remain alive. Destroy
-is synchronous after completion; allocator hooks and thread-handle cleanup do
-not have a strict wall-time guarantee.
+wait by polling completion from the event loop, then destroy. An early destroy
+is API misuse: it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown, updates a bounded number of times without
+sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
+worker keeps completion false, so its object and contexts must remain alive.
+Destroy is synchronous after completion; allocator hooks and thread-handle
+cleanup do not have a strict wall-time guarantee.

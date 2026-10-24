@@ -274,6 +274,12 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 //
 // A handle is the class in its top two bits and the chunk index below.
 
+// The free list is lazy (tla/RNLazyPool.tla): chunks [0, fresh) have been
+// taken at least once since the init and are free-listed or held; chunks
+// [fresh, num_chunks) were never taken, and neither their links nor their
+// bytes are written or read until they are. A take pops the free list, or
+// takes chunk fresh when the list is empty: the same order as a list threaded
+// through every chunk at init, without touching the class's pages.
 struct rn_store_class_t
 {
     uint8_t * data;
@@ -282,6 +288,7 @@ struct rn_store_class_t
     uint32_t num_chunks;
     uint32_t free_head;
     uint32_t free_count;
+    uint32_t fresh;
 };
 
 struct rn_send_store_t
@@ -296,6 +303,10 @@ int rn_send_store_class_for( int bytes );
 uint32_t rn_send_store_chunks_needed( int bytes );
 
 void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
+
+// 1 when rn_send_store_alloc of `bytes` would take its chunks now: the one
+// test the allocation itself makes (tla/RNSendStore.tla Alloc's guard); pure
+bool rn_send_store_fits( const rn_send_store_t * store, int bytes );
 
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // the first chunk's handle, or RN_CHUNK_NONE
 
@@ -362,8 +373,9 @@ struct rn_region_t
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 
-    uint32_t descriptors_free_head;
-    uint32_t descriptors_free;
+    uint32_t descriptors_free_head;     // the free list of descriptors taken before, RN_DESCRIPTOR_NONE when empty
+    uint32_t descriptors_free;          // queue less the descriptors in use
+    uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (tla/RNLazyPool.tla)
 
     uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
@@ -372,9 +384,10 @@ struct rn_region_t
 };
 
 // at connect: every table back to its empty state, every free list
-// threaded and the exhausted state cleared, in the region's own memory.
-// Allocates nothing. The ring's and the store's bytes are not cleared:
-// nothing reads them before writing them.
+// emptied (the descriptor pool and the store's classes are lazy,
+// tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
+// memory. Allocates nothing. The ring's, the store's and the pools' bytes
+// are not cleared: nothing reads them before writing them.
 void rn_region_carve( rn_region_t * region );
 
 // the slot's region when its connection ends and before the slot is reused
@@ -483,6 +496,37 @@ void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, i
 // exhausts the region like rn_region_send_alloc (R5). The descriptor index, or
 // RN_DESCRIPTOR_NONE.
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
+
+// ----------------------------------------------------------------
+//                      the send room decision
+// ----------------------------------------------------------------
+
+// The one decision a send's room is taken by. rn_region_send_alloc and
+// rn_region_send_alloc_span act on it, and the public room query
+// (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
+// reads it, so the query and the send never disagree. Pure, allocation-free,
+// O(1). Checked in the allocation's order: the size, then the sticky
+// exhaustion, then a free descriptor, then the chunks or the span.
+#define RN_SEND_FIT_OK              0   // room: the allocation takes it
+#define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
+#define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)
+#define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation exhausts the region
+#define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation exhausts the region
+
+int rn_region_send_fit_store( const rn_region_t * region, int bytes );
+int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
+
+// A start message's room: a store chunk up to one block stride, a span above
+// it. rn_region_send_take allocates it (rn_region_send_alloc or
+// rn_region_send_alloc_span) and rn_region_send_fit decides it, by the same
+// size rule.
+inline bool rn_region_send_is_span( int bytes )
+{
+    return bytes >= (int) RN_SPAN_MIN_BYTES;
+}
+
+int rn_region_send_fit( const rn_region_t * region, int bytes );
+uint32_t rn_region_send_take( rn_region_t * region, int bytes );
 
 // The bytes of fragment `fragment` of a send, and their length: from the span
 // at fragment * F, or from the single store chunk. NULL for a descriptor not in

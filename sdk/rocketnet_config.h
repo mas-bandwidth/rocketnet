@@ -61,10 +61,12 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
 
 // the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
 // the defaults, into the transport config, the message config and the send
-// budget the layers take. read_env applies the message fields', the budget's
-// and the server's max_clients overrides, as create does; the other transport
-// fields take theirs at the transport's create. false, with a log line, for a
-// string too long for its layer field or a budget out of range.
+// budget the layers take. read_env applies every environment override, the
+// transport table's, the message fields', the budget's and the development
+// simulator's, as create does: the result is the endpoint's one resolved
+// config, which start and connect use without reading the environment again.
+// false, with a log line, for a string too long for its layer field, a
+// variable that does not parse or a budget out of range.
 
 struct rocketnet_client_transport_config_t;
 struct rocketnet_server_transport_config_t;
@@ -125,6 +127,22 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+// the creates behind public connect and start: config is the one the public
+// create resolved (DEFAULT < STRUCT < ENV, rn_client_split and
+// rn_server_split in sdk/rocketnet_api.cpp) and memory_budget_bytes the
+// operator budget it read then, so neither reads the environment again
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, uint64_t memory_budget_bytes, int * status );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, uint64_t memory_budget_bytes, int * status );
+struct rocketnet_message_client_t * rocketnet_message_client_create_resolved( void * context, const uint8_t * connect_token,
+                                                                              const struct rocketnet_client_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
+                                                                              uint64_t memory_budget_bytes );
+struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( void * context, const char * address,
+                                                                              const struct rocketnet_server_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
+                                                                              uint64_t memory_budget_bytes );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
 
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );

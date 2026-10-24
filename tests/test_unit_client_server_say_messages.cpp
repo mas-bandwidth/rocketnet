@@ -113,6 +113,10 @@ static const allowlist_row_t allowlist[] =
     { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.
+    { F_O, "rn_message_packet_build_t", "FRAGMENT PACKING" },
+    { F_O, "One open outgoing packet per connection", "FRAGMENT PACKING" },
+    { F_S, "rn_message_packet_build_t", "FRAGMENT PACKING" },
+    { F_S, "whole-packet send cannot overtake", "FRAGMENT PACKING" },
     { F_O, "one record in one packet", "FRAGMENT PACKING" },
     { F_M, "the record ends this packet", "FRAGMENT PACKING" },
     { "sdk/rocketnet_message.h", "message-to-packet", "FRAGMENT PACKING" },

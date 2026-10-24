@@ -8514,6 +8514,8 @@ extern void control_disconnect_burst_each_end();
 extern void control_standalone_ack_each_end();
 extern void control_fragment_packets_each_end();
 extern void control_denied_when_server_full();
+extern void default_one_mib_messages_all_modes();
+extern void unreliable_small_messages_pack_in_place();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
@@ -8857,6 +8859,7 @@ static void rocketnet_test_hostname_resolve_localhost()
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
+extern void rocketnet_test_ack_endpoints_independent_across_threads();
 
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
@@ -8890,6 +8893,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_receive_keeps_up_with_max_clients", rocketnet_test_server_receive_keeps_up_with_max_clients, NULL },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -9101,6 +9105,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_control_standalone_ack_each_end", control_standalone_ack_each_end, NULL },
     { "test_control_fragment_packets_each_end", control_fragment_packets_each_end, NULL },
     { "test_control_denied_when_server_full", control_denied_when_server_full, NULL },
+    { "test_default_one_mib_messages_all_modes", default_one_mib_messages_all_modes, NULL },
+    { "test_unreliable_small_messages_pack_in_place", unreliable_small_messages_pack_in_place, NULL },
     { "test_unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted, NULL },
     { "test_reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full, NULL },
     { "test_resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links, NULL },

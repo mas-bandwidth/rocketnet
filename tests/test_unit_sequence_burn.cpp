@@ -49,7 +49,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern unsigned long long g_ack_visit_count;
+extern thread_local unsigned long long g_ack_visit_count;
 
 static void rec_sent( struct rocketnet_ack_endpoint_t * ep, uint64_t sequence )
 {
@@ -68,7 +68,9 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
     {
         uint64_t held_bit = ( ep->sent_held[i >> 6] >> ( i & 63 ) ) & 1;
         uint64_t unacked_bit = ( ep->sent_unacked[i >> 6] >> ( i & 63 ) ) & 1;
-        int expect_held = ep->sent[i].sequence != 0 && ep->sent[i].sequence >= window_low;
+        // a slot not written since the reset is the empty record (sequence 0)
+        const bool written = ( ep->sent_written[i >> 6] >> ( i & 63 ) ) & 1;
+        int expect_held = written && ep->sent[i].sequence != 0 && ep->sent[i].sequence >= window_low;
         int expect_unacked = expect_held && !ep->sent[i].acked;
         rocketnet_unit_check( ( held_bit != 0 ) == ( expect_held != 0 ) );
         rocketnet_unit_check( ( unacked_bit != 0 ) == ( expect_unacked != 0 ) );

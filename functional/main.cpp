@@ -2,8 +2,9 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Functional suite. Each test is a process. Sibling binaries that open a
-    socket or start a real transport are tests of this suite, under the same
+    Functional suite. Each test is a process, with only one case running at a
+    time. Sibling binaries that open a socket or start a real transport are
+    tests of this suite, under the same
     120s failure limit (tests/suite_runner.h).
 */
 
@@ -27,7 +28,7 @@ static int rocketnet_functional_worker( const char * name )
 #if defined(_WIN32)
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
     // A 4096-byte buffer paired with explicit fflush keeps each worker's
-    // test-name line in a single pipe write so parallel workers never tear lines.
+    // test-name line in a single pipe write.
     if ( setvbuf( stdout, NULL, _IOFBF, 4096 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
         return 1;
@@ -62,12 +63,9 @@ static int rocketnet_functional_worker( const char * name )
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
-// the suite's groups (tests/suite_runner.h): a group runs alone, so a case that
-// measures wall time is not measured against the rest of the suite. The live
-// message matrix holds a wall-clock pass bound (functional/live_matrix.cpp), so
-// it is a group of its own, after every other case.
+// Preserve suite ordering. All cases run serially, including sibling binaries.
 static int rocketnet_functional_test_group( const char * name )
 {
 #if defined(__APPLE__)
@@ -80,10 +78,14 @@ static int rocketnet_functional_test_group( const char * name )
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
+#if defined(_WIN32)
+    return 0;
+#else
     return rocketnet_posix_hard_killed_peer_test_group( name );
+#endif
 }
 
-#endif // #if defined(__APPLE__) || defined(__linux__)
+#endif // #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
 // test_transport_control (a sibling binary, test_transport_control.cpp) runs
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
@@ -141,14 +143,14 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control" },
         { "test_iocp", "test_iocp" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #elif defined(__APPLE__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
         { "test_msgx", "test_msgx" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #elif defined(__linux__)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
@@ -157,12 +159,12 @@ int main( int argc, char ** argv )
         { "test_xdp", "test_xdp" },
 #endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
         { "test_transport_control", "test_transport_control" },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #endif
 }

@@ -175,6 +175,7 @@ class CheckExportsDevelopmentCodeTest(unittest.TestCase):
             "rocketnet_server_transport_dev_config",
             "rocketnet_server_transport_set_test_timestamp",
             "_rocketnet_platform_set_priority_calls_for_testing",
+            "_g_ack_visit_count",
         }
         self.assertEqual(check_exports.development_symbols(defined), sorted(defined))
 

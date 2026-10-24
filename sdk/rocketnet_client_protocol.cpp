@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
+#include "rocketnet_memory.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -82,11 +83,23 @@ static void rocketnet_client_integrity_failure( struct rocketnet_client_protocol
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 }
 
+void rocketnet_client_protocol_zero_state( struct rocketnet_client_protocol_t * client )
+{
+    typedef rocketnet_client_protocol_t T;
+    const rocketnet_span_t skip[] =
+    {
+        { offsetof( T, ack ) + offsetof( rocketnet_ack_endpoint_t, sent ), sizeof( rocketnet_ack_endpoint_t ) - offsetof( rocketnet_ack_endpoint_t, sent ) },
+        { offsetof( T, acked_packet_ids ), sizeof( ( (T *) 0 )->acked_packet_ids ) },
+    };
+    static_assert( offsetof( T, acked_packet_ids ) > offsetof( T, ack ), "the skipped spans are in their order in the struct" );
+    rocketnet_zero_except( client, sizeof( T ), skip, (int) ( sizeof( skip ) / sizeof( skip[0] ) ) );
+}
+
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
 {
     rocketnet_assert( client );
     rocketnet_assert( counters );
-    memset( client, 0, sizeof(*client) );
+    rocketnet_client_protocol_zero_state( client );
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = 10.0;

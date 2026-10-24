@@ -36,8 +36,10 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
   per call in Release builds. This target is not yet established under a
   1000-client load. Create may take longer. Client disconnect and server stop
   request shutdown without waiting for workers. Poll client disconnected or
-  server stopped before synchronous destroy joins and frees resources. Long
-  soak, load and profiling runs remain part of hardening.
+  server stopped before synchronous destroy joins and frees resources. An early
+  destroy logs and counts the misuse, then completes the shutdown and join
+  itself with bounded updates and no sleep; a worker that has not exited is
+  logged and its object kept, not freed. Long soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -126,7 +128,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
-4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. Only after the corresponding query returns true may `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously join and free the object. Destroy asserts this precondition. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
+4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object. Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
 
 ### Compilable loopback integration example
 
@@ -303,8 +305,8 @@ configured families refuses start with
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
 
 Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
-`receive_message_buffer_bytes = 262144`, `max_message_bytes = 262144`,
-`send_message_buffer_bytes = 800000`, `send_queue_messages = 1024`,
+`receive_message_buffer_bytes = 1048576`, `max_message_bytes = 1048576`,
+`send_message_buffer_bytes = 4194304`, `send_queue_messages = 1024`,
 `packets_in_flight = 256`, `unreliable_messages_per_update = 1024`,
 `sequenced_messages_held = 16`, `max_message_receipts = 256`,
 `reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server
@@ -454,6 +456,7 @@ RocketNet has no copying send call: the caller never hands it a finished buffer 
 - The caller serializes or writes the message into that pointer in place.
 - `rocketnet_client_finish_message(client, bytes_written)` and `rocketnet_server_finish_message( server, bytes_written )` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused).
 - `rocketnet_client_abort_message(client)` and `rocketnet_server_abort_message( server )` cancel an open reservation without sending and give its room back.
+- `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )` and `rocketnet_server_can_send_message( server, client_index, channel, reliability, max_bytes )` answer whether that start would be given room now. They change nothing and run in constant time. A start after a `false` still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`.
 - There is no public broadcast call: to send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
 
 Where the returned pointer lies depends on the message:
@@ -478,10 +481,10 @@ In practice: no per-message copy or allocation for unreliable traffic that takes
 - **One `start` pending per object at a time:** finish or abort the current reservation before calling `start` again on the same client or server, and never keep the `uint8_t *` after `finish` or `abort`.
 - **Finish before `update` and `send_packets`:** an in-place start still pending when `rocketnet_client_update` / `rocketnet_server_update` or `rocketnet_client_send_packets` / `rocketnet_server_send_packets` runs is aborted there and counted as API misuse (the stats' `api_misuses`); its later `finish` returns `0`. A start on the region path is not aborted there, but the caller cannot tell the paths apart, so finish or abort every start before either call.
 - **The in-place rules for a fitting unreliable message:**
-  - Each fitting message gets its own packet, sealed and staged at `finish` and flushed by the next `send_packets` with everything else. Acks ride in it as in every packet; other messages do not. A game that wants several small unreliable messages in one packet writes them as one message.
+  - Small fitting messages share a packet. `start` reserves their final payload location after previously committed records; `finish` commits the actual length without copying. A full packet is sealed before opening the next, and `send_packets` seals and flushes the remaining records. Acks ride in each sealed packet. `abort` releases only the pending reservation; earlier records remain intact.
   - Those packets count against `packets_per_update` (one allowance per update, shared with the packets `send_packets` writes). While reliable work is due, an in-place message never takes the last slot of the allowance: one is kept for the reliable work.
   - The message falls back to the queue (written to the region and sent by the next `send_packets`, one copy) when the transport has no packet buffer to give, or one smaller than the request, when unreliable messages are already queued on that connection (so it cannot overtake them; for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` also when its channel's queue or a reliable block is still waiting), when the update's packet allowance is spent, or when the send budget cannot pay the declared maximum now (or a reliable message from the last pass is still waiting for budget). Each fallback is counted inside the library (the message layer's `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` counter, which is not one of the public stats fields). `start` then returns a pointer into the region, or `NULL` if the region has no room (below).
-  - If the send budget can no longer pay at `finish`, the message is dropped there, counted in the `messages_dropped_over_budget` stat, and `finish` still returns its serial; a `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` message reports `ROCKETNET_RECEIPT_STATUS_LOSS` for it.
+  - If the send budget can no longer pay when the packet is sealed, its messages are dropped there, counted in the `messages_dropped_over_budget` stat, and each successful `finish` has returned its serial; a `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` message reports `ROCKETNET_RECEIPT_STATUS_LOSS` for it.
 - **A reliable message:** `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT` and `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` are always written into the region (a store chunk up to `1152` bytes, a contiguous span above that) and copied into their packet, or into `1152`-byte fragments, at `send_packets`. A reliable message waits for send budget and is never dropped for it.
 - **An oversize unreliable message:** when the declared `bytes` exceeds one packet (up to `max_message_bytes`), `start` accepts it and the message is promoted on the wire to its reliable twin (`ROCKETNET_RELIABILITY_UNRELIABLE` to `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` to `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to reliable-with-receipt delivery, keeping its ACKED-only receipt). If `finish` then commits a `bytes_written` that fits one packet, the message is not promoted: the same region record moves to the queued unreliable route without a copy and goes out with the next `send_packets`. Above `max_message_bytes`, `start` refuses in every mode.
 - **What a `NULL` return from `start` means:**

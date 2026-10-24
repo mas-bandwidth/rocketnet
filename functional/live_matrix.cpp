@@ -263,7 +263,13 @@ static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uin
 {
     const int fits = direction == 0 ? rn_message_client_send_fits( m->client, (int) length, free_bytes, pool_bytes, free_messages )
                                     : rn_message_server_send_fits( m->server, 0, (int) length, free_bytes, pool_bytes, free_messages );
-    return fits && *free_bytes >= (uint64_t) length && *free_bytes - length >= *pool_bytes / 2 && *free_messages >= 1;
+    // Keep half the pool free for ordinary traffic, but admit a message larger
+    // than half the pool when it is otherwise empty. A fixed half-pool reserve
+    // would permanently starve the new 1 MiB default's largest messages.
+    if ( !fits || *free_bytes < (uint64_t) length || *pool_bytes < (uint64_t) length || *free_messages < 1 )
+        return 0;
+    const uint64_t reserve = (uint64_t) length > *pool_bytes / 2 ? *pool_bytes - length : *pool_bytes / 2;
+    return *free_bytes - length >= reserve;
 }
 
 // ---------------------------------------------------------------
@@ -1107,7 +1113,7 @@ void live_message_matrix_loopback()
     memset( live_matrix_table_received, 0, sizeof( live_matrix_table_received ) );
 
     // the run's config (section 4): the message defaults, so the reliable
-    // maximum is 262,144, with room for every stream at once: a deeper
+    // maximum is 1 MiB, with bounded room shared by every stream: a deeper
     // send region and queue, more packets per update, and receive lists
     // sized so nothing is dropped for want of room
     rocketnet_message_default_config( &m->message_config );

@@ -31,8 +31,12 @@ static void test_public_message_limit_defaults_and_constant()
     rocketnet_server_config_t server;
     check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_default_config( &server ) == ROCKETNET_STATUS_OK );
-    check( client.max_message_bytes == 262144 );
-    check( server.max_message_bytes == 262144 );
+    check( client.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( client.receive_message_buffer_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.receive_message_buffer_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( client.send_message_buffer_bytes == 4 * ROCKETNET_MAX_MESSAGE_BYTES );
+    check( server.send_message_buffer_bytes == 4 * ROCKETNET_MAX_MESSAGE_BYTES );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_defaults_and_constant );
 
