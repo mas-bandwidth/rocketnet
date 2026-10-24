@@ -20,9 +20,11 @@
 //
 // Copies (R3): a fitting unreliable message is written in place in the packet
 // buffer, with no copy between the message layer and the transport: start
-// takes the transport frame and hands out a pointer inside it, finish writes
-// the header and form byte around it and finishes that frame
-// (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla). Every other message is
+// reserves room at the committed end of the connection's open transport
+// frame and hands out a pointer there, finish writes the record header in
+// front and commits it, and later records append behind it until the frame
+// is full or a flush seals it (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla
+// StartInPlace, FinishInPlace, SealBuild). Every other message is
 // written once by the application, in place, into its region record (start,
 // finish). THE COPIES (a): each packet write copies
 // the record into the transport frame start_packet returned
@@ -332,6 +334,9 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 static void rn_message_connection_cancel_pending( rn_message_object_t * object, int index );
 
 // Seal the connection's completed records once. No message payload is copied.
+// RNOutgoingBuild Seal, from SealBuild (a start that does not fit or falls
+// back), BeginFlush (send_packets) and BeginUpdate (update); the over-budget
+// drop is its drop branch, and the packet counts either way.
 static void rn_message_flush_unreliable( rn_message_object_t * object, int index, bool discard )
 {
     rn_message_connection_t * connection = &object->connections[index];
@@ -410,7 +415,8 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
         return;
     if ( object->in_place )
     {
-        // RNOutgoingBuild Abort: the frame goes back to the transport
+        // RNOutgoingBuild Abort: the reservation is returned; a frame with no
+        // committed record goes back to the transport
         if ( object->in_place == 1 )
             object->link.abort_packet( object->link.transport, &object->in_place_context );
         else if ( connection->unreliable_build.writer.records == 0 )
@@ -553,7 +559,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
     }
 
-    rn_message_object_close_in_place( object );
+    rn_message_object_close_in_place( object );       // RNOutgoingBuild BeginUpdate: the open builds sealed
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, false );
 
@@ -777,6 +783,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const int transport_max = rn_message_send_transport_max( object, reliability );
 
+    // RNOutgoingBuild StartInPlace: a fitting unreliable message reserves its
+    // declared maximum at the open build's committed end, or opens a frame;
+    // SealBuild first when it does not fit the rest of the frame
     if ( unreliable && object->link.start_packet )
     {
         const int eligible = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
@@ -816,14 +825,15 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 return object->in_place_payload + header;
             }
         }
-        // A queued or whole-packet send cannot overtake completed records.
+        // A queued or whole-packet send cannot overtake completed records
+        // (RNOutgoingBuild SealBuild before StartQueued).
         rn_message_flush_unreliable( object, index, false );
     }
 
-    // RNOutgoingBuild StartInPlace: a fitting unreliable message takes a
-    // transport frame and is written in it, its header's room in front and
-    // the form byte's after; header + bytes + 1, the declared maximum,
-    // decides the frame
+    // RNOutgoingBuild StartInPlace, the whole-frame case: a fitting message
+    // that cannot be packed takes a transport frame of its own and is written
+    // in it, its header's room in front and the form byte's after;
+    // header + bytes + 1, the declared maximum, decides the frame
     if ( unreliable && object->link.start_packet )
     {
         int header = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
@@ -938,6 +948,9 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return 0;
 
+    // RNOutgoingBuild FinishInPlace: the record committed at its reservation
+    // and the committed end advanced by the bytes written, so a short finish
+    // returns the rest; no committed record moves (PriorRecordsUnmoved)
     if ( object->in_place == 2 )
     {
         rn_message_connection_t * connection = &object->connections[index];
@@ -981,9 +994,9 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 
     if ( object->in_place )
     {
-        // RNOutgoingBuild FinishInPlace: the header and form byte written
-        // around the bytes, and the same frame finished: sealed and staged by
-        // the transport, the acks due riding in it
+        // RNOutgoingBuild FinishInPlace, the whole-frame case: the header and
+        // form byte written around the bytes, and the frame, full, sealed at
+        // once (SealBuild) and staged by the transport, the acks due riding in it
         rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
@@ -999,7 +1012,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         object->pending_connection = -1;
         if ( payload_bytes == 0 )
         {
-            link->abort_packet( link->transport, &context );     // FinishInPlaceOverBudget: dropped and counted
+            link->abort_packet( link->transport, &context );     // a seal's over-budget drop: dropped and counted
             return serial;
         }
         const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
@@ -1084,6 +1097,8 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
 
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
+    // RNOutgoingBuild BeginFlush: a pending in-place start aborted, then every
+    // open build sealed before the write pass
     rn_message_object_close_in_place( object );
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, false );

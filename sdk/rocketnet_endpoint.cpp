@@ -422,10 +422,14 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
 //                     the in-place unreliable send
 // ---------------------------------------------------------------
 
-// docs/OUTGOING-BUILD.md; tla/RNOutgoingBuild.tla StartInPlace, FinishInPlace,
-// FinishInPlaceOverBudget and Abort. The payload is the frame's: the header
-// goes in front of the bytes the game wrote and the form byte after them,
-// in place, so the message layer copies nothing into the transport.
+// docs/OUTGOING-BUILD.md; tla/RNOutgoingBuild.tla StartInPlace (header and
+// affordable decide it: a record appended at the open build's committed end,
+// or a frame opened for it), FinishInPlace, Abort, and the over-budget drop
+// of a seal (SealBuild, BeginFlush, BeginUpdate). The payload is the frame's:
+// the header goes in front of the bytes the game wrote and the form byte
+// after them, in place, so the message layer copies nothing into the
+// transport. rn_endpoint_in_place_finish is the whole-frame case, a record
+// that fills its frame and is sealed at once.
 
 static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now );
 
@@ -563,8 +567,8 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
     // R6, RNSendBudget Send at the unreliable class. start took this path
     // only when the bucket could pay the declared maximum
     // (rn_endpoint_in_place_affordable), and the bytes written are at most
-    // that, so the admit succeeds; RNOutgoingBuild FinishInPlaceOverBudget
-    // is the drop, counted, should the bucket have moved since. The class
+    // that, so the admit succeeds; RNOutgoingBuild's seal with its drop
+    // (SealBuild) is the drop, counted, should the bucket have moved since. The class
     // order holds: while the reliable path has work due, an in-place packet
     // is admitted only if one maximum packet stays in the bucket for it
     if ( endpoint->send_budget_enabled )
