@@ -270,3 +270,90 @@ allocation gaps report `non_timing_verdict=FAIL` and never authorize a
 performance-ladder continuation. A runner may continue to the next rung
 only when `non_timing_verdict=PASS` and should retain the overall FAIL and
 timing evidence in its report.
+
+## Proof load
+
+The proof load checks every delivery method end to end at 256 kbps per
+client in each direction. Pass `proof` as the last argument to the server and
+to every client shard, run the server pinned to one transport, and pass
+`--load proof` to the merger:
+
+```text
+ROCKETNET_SERVER_TRANSPORT=portable \
+load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
+load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+```
+
+The offer clock is full load's: the server ticks at 10 Hz, every client
+updates at 10 Hz, and each side offers once per client per update
+(`rate_target_hz=10 load=proof payload_bytes=proof` in the receipts). Each
+offer, in each direction, is two messages: a 1200-byte small message in one
+of the eight reliability modes and a 2000-byte fragmented message in one of
+the five reliable modes, each rotating by offer from the client's index.
+That is 3200 payload bytes per offer, an offered 256 kbps per client per
+direction before packet overhead, so each client's wire rate is at least
+256 kbps each way. An unreliable mode has no fragmented stream: the SDK sends
+an unreliable message larger than one packet as its reliable twin. A stream
+is one client, one direction, one mode and one size class, 13 per client and
+direction, each on its own channel. The SDK default server and client
+configuration is unchanged; the aggregate cap stays the operator's argument
+(1000 clients at 256 kbps is 256 Mbit/s each way, under a 1 GbE path).
+
+Every payload carries its stream, its sequence, its length, the run ID and an
+FNV-1a checksum over its bytes, written and read by
+`tools/load_split_verify.h`. The receiver of each stream records each
+delivery against the rule for its mode:
+
+| Mode | Rule |
+| --- | --- |
+| RELIABLE, RELIABLE_WITH_ACK_RECEIPT | exactly once against the sender's count |
+| RELIABLE_ORDERED, RELIABLE_ORDERED_WITH_ACK_RECEIPT | exactly once, in order, no gaps |
+| RELIABLE_SEQUENCED | never older than the newest delivered, never a duplicate; a stale message the receiver drops is a skip, counted and never failed |
+| UNRELIABLE_SEQUENCED | never older than the newest delivered, never a duplicate; loss is counted, never failed |
+| UNRELIABLE, UNRELIABLE_WITH_ACK_RECEIPT | never a duplicate; loss is counted, never failed |
+
+The sender keeps a receipt ledger for the three `_WITH_ACK_RECEIPT` modes:
+every send gets exactly one outcome, a reliable one is only ever ACKED, and
+`receipts_dropped` is zero. A stream tracks sequences 1 to 8191 and a ledger
+8192 receipt sends per client and direction, enough for a 10-minute run
+(about 750 small and 1200 fragmented messages per stream, about 4650 receipt
+sends); a run past either bound is reported, never wrapped.
+
+With `proof`, the server refuses to run (exit 2, `split_transport_refused:`,
+before any client connects) unless `ROCKETNET_SERVER_TRANSPORT` names one
+transport and the granted transport is that one; `split_ready:` prints
+`transport_pin=` beside `transport=`. In any mode, a pin naming one transport
+that is not the one granted is the same refusal. Any client disconnect
+between the end of the population window and the planned close fails the
+run, and the role prints one `split_disconnect:` line per client with its
+phase and reason.
+
+At the end each role prints, instead of `split_stream:` lines, one
+`split_verify:` line per client, direction, mode and size class: `side=send`
+with the count sent (and, for a receipt mode, the outcomes and the bitmap of
+the sequences ACKED), or `side=receive` with the deliveries, the duplicates,
+the order and stale counts (and, for a receipt mode, the bitmap of the
+sequences delivered). One `split_proof:` line per role carries the checksum
+failures, the local receipt failures, `receipts_dropped`, the disconnects,
+the lowest per-client wire rate each way and the role's proof verdict. The
+per-client bandwidth verdict in `split_receipt:` is the 256 kbps floor in
+place of the 100 kbps cap.
+
+`tools/check_split_load.py --load proof` joins the two ends of every stream
+across roles: the sender's count is the proof's rotation; exactly-once
+streams deliver the sender's count; ordered streams have no gap or reorder;
+sequenced streams never deliver an older message; no stream has a duplicate
+or a delivery the sender never sent; every receipt send has one outcome, a
+reliable one ACKED, and every ACKED sequence is one the receiver recorded;
+every client is at least 256 kbps on the wire each way in both roles' raw
+records; no role reports a disconnect, a checksum failure or a dropped
+receipt; and the granted transport is the pinned one. It prints one line,
+the cell verdict:
+
+```text
+split_proof_cell: verdict=PASS transport=portable total=1000 streams=26000 messages_sent=... messages_delivered=... unreliable_lost=... sequenced_skipped=... timing_verdict=...
+```
+
+The cell verdict is the delivery proof. The server API timing evidence is
+still validated and its verdict printed beside it; the timing budget is
+judged at full load, not here.
