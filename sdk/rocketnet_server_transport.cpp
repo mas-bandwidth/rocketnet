@@ -1107,19 +1107,29 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     // what the library cannot know, named rather than guessed
     const char * excluded[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
     int count = 0;
-    excluded[count++] = "kernel socket accounting beyond the buffer requests (linux doubles each SO_SNDBUF/SO_RCVBUF request) and grants smaller than the requests";
+    // refuse an overflow before the write: at the cap, drop and log once
+    auto append = [&]( const char * line ) {
+        if ( count >= ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS )
+        {
+            rocketnet_error( "host-memory estimate exclusion list is full (%d); dropping: %s",
+                             ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS, line );
+            return;
+        }
+        excluded[count++] = line;
+    };
+    append( "kernel socket accounting beyond the buffer requests (linux doubles each SO_SNDBUF/SO_RCVBUF request) and grants smaller than the requests" );
     if ( xdp )
     {
-        excluded[count++] = "AF_XDP fill and completion rings (the umem config leaves their sizes to libxdp), ring headers and page rounding";
-        excluded[count++] = "libbpf/libxdp allocations, the XDP program and its maps";
+        append( "AF_XDP fill and completion rings (the umem config leaves their sizes to libxdp), ring headers and page rounding" );
+        append( "libbpf/libxdp allocations, the XDP program and its maps" );
     }
     if ( strcmp( transport, "io_uring" ) == 0 )
-        excluded[count++] = "io_uring submission and completion rings and the provided buffer rings (kernel and liburing mappings outside the SDK allocator)";
+        append( "io_uring submission and completion rings and the provided buffer rings (kernel and liburing mappings outside the SDK allocator)" );
     if ( plan.worker_threads > 0 )
-        excluded[count++] = "thread guard pages, thread-local storage and kernel thread structures; stacks count reserved address space, not resident pages";
-    excluded[count++] = "kernel page tables and loader/shared-library memory";
-    excluded[count++] = "libc allocator bookkeeping outside the SDK allocator";
-    excluded[count++] = "application memory";
+        append( "thread guard pages, thread-local storage and kernel thread structures; stacks count reserved address space, not resident pages" );
+    append( "kernel page tables and loader/shared-library memory" );
+    append( "libc allocator bookkeeping outside the SDK allocator" );
+    append( "application memory" );
     rocketnet_assert( count <= ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS );
     for ( int i = 0; i < count; i++ )
         e.exclusions[i] = excluded[i];
