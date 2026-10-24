@@ -100,9 +100,9 @@ is still an observation and its run is expected to fail (see below).
 
 ### The hang the request named
 
-The class: a peer moves to a new state, sends the packet announcing it once, the packet
+The class: one side moves to a new state, sends the packet announcing it once, the packet
 is lost, and nobody ever sends it again. `Connects` and `ServerNotStranded` together
-say neither peer is left waiting for a packet nobody will send again. They are checked
+say neither side is left waiting for a packet nobody will send again. They are checked
 with every deadline and timeout off, so that only the protocol's own re-sending can get
 the client to 4; a deadline would otherwise turn a hang into a tidy -3 or -4.
 
@@ -187,7 +187,7 @@ value arriving. Liveness runs use a FIFO link without latency or duplication
 three on. With reordering or latency on, `Reorder` or `Delay` can hold a copy from the
 head forever, which only the per-value `EventualDelivery` excludes (README-Link.md,
 "What TLC found" 2). With duplication on, TLC found a second artefact: the path keeps a
-wire at `Capacity` with duplicated copies exactly when the peer must send, and Link
+wire at `Capacity` with duplicated copies exactly when the sender must send, and Link
 disables `Send` at `Capacity` rather than dropping, so the protocol's send is blocked
 rather than lost, forever. That is the model-size knob acting as a hidden blocker, not
 the protocol; see "What TLC found".
@@ -382,8 +382,8 @@ The one packet either end sends without re-sending is the disconnect: ten copies
 (`DisconnectCopies` here), then the sender's state is gone
 (`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp:1309-1336`;
 `rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1656-1676`).
-If every copy is lost the peer waits for its idle timeout, which S:2918-2924 states as
-the design ("losing all ten costs only a peer that waits for the timeout"). In this
+If every copy is lost the receiver waits for its idle timeout, which S:2918-2924 states as
+the design ("losing all ten costs only a receiver that waits for the timeout"). In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
 

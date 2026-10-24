@@ -530,7 +530,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     // the full derivation, refusing a degenerate server ephemeral outright.
-    // the attempt then ends at its deadline, the correct outcome for a peer
+    // the attempt then ends at its deadline, the correct outcome for a server
     // offering a small order point.
 
     if ( !rocketnet_derive_connection_keys( &client->keys,

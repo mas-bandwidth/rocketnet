@@ -697,7 +697,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
         rn_message_connection_t * connection = &object->connections[i];
-        // RNEndpoint Tick, the CONFIG half: the wait for the peer's CONFIG
+        // RNEndpoint Tick, the CONFIG half: the wait for the remote endpoint's CONFIG
         // starts at the first update the connection is connected at (the
         // server's from its Observe reset, the client's from the first update
         // its transport reports CONNECTED, 11.3)
@@ -803,7 +803,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 rn_message_flush_unreliable( object, index, false );
             if ( !build->writer.payload )
             {
-                // Keep a fair rotating send round available to other peers.
+                // Keep a fair rotating send round available to the other clients.
                 const int reserve = object->link.send_connected_count ? object->link.send_connected_count( object->link.transport ) : object->num_connections;
                 const bool frame_available = !object->link.send_capacity_available || object->link.send_capacity_available( object->link.transport ) > reserve;
                 if ( frame_available && rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time ) >= 0 &&

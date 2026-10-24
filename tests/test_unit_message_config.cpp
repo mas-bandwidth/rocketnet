@@ -72,7 +72,7 @@ struct mc_endpoint_t
     std::vector<int> batch_slot;
 
     // acks: ids this endpoint opened, reported to the sender at its next update
-    std::vector<uint64_t> acks_inbox;               // ids the peer opened of this endpoint's sends
+    std::vector<uint64_t> acks_inbox;               // ids the other end opened of this endpoint's sends
     std::vector<int> acks_inbox_slot;
     std::vector<uint64_t> acked;                    // this update's acked batch
     std::vector<int> acked_slot;
@@ -165,7 +165,7 @@ static void mc_update( void * transport, double time )
     mc_net_t * net = e->net;
     e->time = time;
 
-    // the transport's acked packet ids: what the peer opened since the last update
+    // the transport's acked packet ids: what the other end opened since the last update
     e->acked.clear();
     e->acked_slot.clear();
     if ( !net->hold_acks )
@@ -734,7 +734,7 @@ static void test_message_config_equal_connects_and_verifies()
     check( pair.net->clients[0]->disconnects == 0 );
     check( pair.net->server->disconnects == 0 );
 
-    // each end's first record is its CONFIG (read with the peer's limits)
+    // each end's first record is its CONFIG (read with the other end's limits)
     mc_check_first_record_is_config( pair.net->clients[0], &server_slot->ordered.limits, &config );
     mc_check_first_record_is_config( pair.net->server, &client->ordered.limits, &config );
 
@@ -807,7 +807,7 @@ static void test_message_config_first_loss_still_verifies()
 
 // RNEndpoint Tick, the CONFIG half: the server's packets never reach the
 // client, while the client's reach the server and are acked. The client has
-// nothing reliable unacked, yet it is still waiting for the peer's CONFIG, so
+// nothing reliable unacked, yet it is still waiting for the server's CONFIG, so
 // reliable_timeout after it connected it ends the connection as
 // RELIABLE_TIMEOUT. Red at a base without CONFIG: nothing ever times out.
 static void test_message_config_never_received_is_reliable_timeout()

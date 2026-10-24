@@ -3,7 +3,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 
 \* Standalone receipt layer over the transport's packet event interface.
 \* WritePacket(n,pid) commits one opaque record/fragment to a transport packet.
-\* OpenPacket(pid) means the peer transport opened it; ReceiveAck(pid) is the
+\* OpenPacket(pid) means the remote transport opened it; ReceiveAck(pid) is the
 \* transport packet-acked input, not a message ACK. PacketLost(pid) is the
 \* transport lost input. A late packet ACK may follow a lost notification.
 \* The environment never invents an ACK for an unopened packet. It may delay,

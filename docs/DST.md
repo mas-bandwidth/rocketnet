@@ -14,12 +14,12 @@ The harness checks properties that also appear in the TLA+ models:
 - acknowledgements name authenticated opened packets;
 - buffers, queues, reassembly slots and receipt rings remain within their
   configured bounds;
-- a peer that can make fair progress does not remain wedged.
+- an endpoint (the server or a client) that can make fair progress does not remain wedged.
 
-Every simulated peer has explicit state: connection generation, local clock,
+Every simulated endpoint has explicit state: connection generation, local clock,
 next frame time, restart state, sent-message identities and received-message
 identities. Fault decisions are derived from the run seed and stable event
-keys, so adding an unrelated peer does not perturb another peer's schedule.
+keys, so adding an unrelated client does not perturb another endpoint's schedule.
 Trace hashes cover the seed, ordered fault decisions and observable endpoint
 events.
 

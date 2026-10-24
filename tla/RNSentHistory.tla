@@ -10,12 +10,12 @@
 (* never acknowledged the write is an eviction, and the eviction must be   *)
 (* told apart by what the sender knows:                                    *)
 (*                                                                         *)
-(*   lost     the peer has acknowledged a sequence at least Threshold      *)
+(*   lost     the receiver has acknowledged a sequence at least Threshold  *)
 (*            above the evicted one (RFC 9002 section 6.1.1, the packet    *)
 (*            threshold, ROCKETNET_LOSS_PACKET_THRESHOLD): the packet was  *)
 (*            lost on the path. Counted SEND_HISTORY_LOST, an outcome.     *)
 (*   overflow no such later acknowledgment exists: the fate is unknown (a  *)
-(*            silent peer, or a window too small for the path). Counted    *)
+(*            silent receiver, or a window too small for the path). Counted *)
 (*            SEND_HISTORY_OVERFLOW, a refusal of history.                 *)
 (*                                                                         *)
 (* A write never refuses the send. STANDARD.md "Replay window sizing"      *)
@@ -24,7 +24,8 @@
 (*                                                                         *)
 (* The path. Packets in flight may be delivered in any order or lost (at   *)
 (* most MaxLoss in all, never Threshold + 1 consecutive sequences). The    *)
-(* peer acknowledges by restating its received set inside its window as    *)
+(* receiver acknowledges by restating its received set inside its window   *)
+(* as                                                                      *)
 (* an ack block (the last AckRange sequences below its highest received); *)
 (* blocks are in flight too, delivered in any order and after any delay,   *)
 (* so an ack may arrive after the record it names was evicted, where it is *)
@@ -58,7 +59,7 @@ CONSTANTS
     MaxSeq,             \* sequences 1 .. MaxSeq may be sent (a size knob)
     MaxLoss,            \* packets the path may lose in all (a size knob)
     Flight,             \* the healthy bound: sends at most this far ahead of largestAcked
-    AckRange,           \* the ack block covers this many sequences below the peer's highest
+    AckRange,           \* the ack block covers this many sequences below the receiver's highest
     AckSlots,           \* ack blocks in flight at once (a size knob)
     CountEveryUnacked,  \* the defect: no lost class, every unacked eviction is overflow
     RefuseWhenFull      \* the defect: Send disabled while every record is unacked
@@ -74,8 +75,8 @@ VARIABLES
     ring,            \* ring[i] = [seq |-> newest sequence written (0 = empty), acked |-> BOOLEAN]
     largestAcked,    \* the highest sequence marked acknowledged; 0 = none
     inFlight,        \* packets sent and neither delivered nor lost
-    rcvd,            \* the peer's received set
-    acks,            \* ack blocks in flight: each a set of sequences the peer restated
+    rcvd,            \* the receiver's received set
+    acks,            \* ack blocks in flight: each a set of sequences the receiver restated
     pathLost,        \* the sequences the path lost
     ackedSet,        \* ghost: every sequence ever marked acknowledged
     evictedUnacked,  \* ghost: every sequence evicted while unacknowledged
@@ -139,7 +140,7 @@ Send ==
           /\ next' = s + 1
     /\ UNCHANGED <<largestAcked, rcvd, acks, pathLost, ackedSet>>
 
-\* the path carries a packet to the peer
+\* the path carries a packet to the receiver
 Deliver ==
     /\ \E s \in inFlight :
           /\ inFlight' = inFlight \ {s}
@@ -158,8 +159,8 @@ Lose ==
     /\ UNCHANGED <<next, ring, largestAcked, rcvd, acks, ackedSet,
                    evictedUnacked, lostSet, overflowSet, healthy>>
 
-\* the peer sends an ack block restating its received set inside its window
-PeerAck ==
+\* the receiver sends an ack block restating its received set inside its window
+ReceiverAck ==
     /\ rcvd # {}
     /\ Cardinality(acks) < AckSlots
     /\ LET top == Max(rcvd)
@@ -187,7 +188,7 @@ Done ==
     /\ next > MaxSeq
     /\ UNCHANGED vars
 
-Next == Send \/ Deliver \/ Lose \/ PeerAck \/ ReceiveAck \/ Done
+Next == Send \/ Deliver \/ Lose \/ ReceiverAck \/ ReceiveAck \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -202,7 +203,7 @@ EveryEvictionClassified ==
     /\ lostSet \cup overflowSet = evictedUnacked
 
 \* a sequence counted lost has a later acknowledgment at least Threshold above it,
-\* acknowledged for real (the peer received it) and remembered in largestAcked
+\* acknowledged for real (the receiver received it) and remembered in largestAcked
 LostImpliesLaterAcked ==
     \A s \in lostSet : \E t \in ackedSet : t >= s + Threshold /\ t \in rcvd /\ largestAcked >= t
 

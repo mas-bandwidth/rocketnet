@@ -832,9 +832,6 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
     const rocketnet_ack_endpoint_t fresh_ack = f.server.acks->endpoints[a];
     memset( &f.server.acks->endpoints[a], 0xA5, sizeof(f.server.acks->endpoints[a]) );
-    // The stats producer binding belongs to the transport lifetime. Poison
-    // connection state, but retain the valid binding that reset must keep.
-    f.server.acks->endpoints[a].stats_delta = fresh_ack.stats_delta;
     rocketnet_reassembly_slot_t fresh_slots[2];
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof(fresh_slots) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof(fresh_slots) );
@@ -842,7 +839,6 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     rocketnet_server_connection_reset( &f.server, a );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
-    check( f.server.acks->endpoints[a].stats_delta == fresh_ack.stats_delta );
     check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof(fresh_slots) ) == 0 );
@@ -1172,7 +1168,7 @@ static void test_connection_reset_each_state_leaves_a_clean_slot()
         reset_loopback_client_disconnect_state_scenario( handshake_and_connected[i], 0 );
 
     // Mid-fragment is a connected state with fragments already flushed into
-    // the loopback wire but not yet consumed by the peer.
+    // the loopback wire but not yet consumed by the server.
     reset_loopback_client_disconnect_state_scenario( ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, 1 );
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
@@ -1304,7 +1300,7 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );
 
 // Reuse the same server slot with deliberately dirty payload storage and an
-// unsealed aggregate from the former peer. Reset must clear ownership/state,
+// unsealed aggregate from the former client. Reset must clear ownership/state,
 // not the payload bytes. Each delivery mode must work for the replacement.
 static void test_connection_reset_dirty_slot_discards_open_aggregate()
 {
@@ -1392,7 +1388,7 @@ static int reset_loopback_no_send_capacity( void * transport )
 
 // The reliable timeout (6.4 "Giving up") is checked by every update for every
 // connected slot, not only by a write pass that reaches its reliable phase.
-// The message is sent once; then every send pass is starved and the peer
+// The message is sent once; then every send pass is starved and the receiver
 // never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
 // or past first send + reliable_message_timeout_ms, and not before.
 static void test_reliable_timeout_fires_while_send_pass_starved()

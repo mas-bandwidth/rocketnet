@@ -77,8 +77,8 @@ implementation, stated here because RN-2 is the party that relies on it.
    row `payload capacity` of [RN-1 t3 Constants and registries](TRANSPORT.md#t3)
    as exactly one type 5 packet, never fragmented.
 2. **An acknowledged packet was delivered once.** When the connection layer
-   reports a type 5 packet acknowledged, the peer's connection layer MUST have
-   handed its payload to the peer's message layer exactly once. A connection
+   reports a type 5 packet acknowledged, the receiver's connection layer MUST have
+   handed its payload to the receiver's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
    The receiver MUST finish successful message-layer processing before ACK publication.
    If a reliable record cannot reserve receive storage, the receiver MUST leave
@@ -103,7 +103,7 @@ implementation, stated here because RN-2 is the party that relies on it.
    identify that connection by a value that differs for every connection a
    slot has held, not only by the slot index, and MUST attach the same
    identification to every payload it delivers.
-6. **Replies open later.** When the peer sends a packet in reply to a packet
+6. **Replies open later.** When the remote endpoint sends a packet in reply to a packet
    this endpoint's connection layer opened in one update, the connection
    layer MUST open the reply in a later update, never in the same one.
 7. **Replay window depth.** The connection layer's replay window MUST refuse
@@ -2671,7 +2671,7 @@ f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
 
 ### m9.1. Acknowledgement mapping
 
-The connection layer reports which of a sender's packets the peer
+The connection layer reports which of a sender's packets the receiver
 acknowledged. The message layer keeps its own reliable numbering, so it MUST
 translate each report into the reliable numbers and receipt serials that
 packet carried.
@@ -2907,7 +2907,7 @@ configuration: build-specific maximum at least 301; num_channels 301
 4. An endpoint MUST end the connection with `RELIABLE_TIMEOUT` when an update
    is at or after the start of the CONFIG wait plus the reliable timeout
    ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
-   accepted the peer's CONFIG.
+   accepted the remote endpoint's CONFIG.
 5. An endpoint MUST accept a CONFIG record only when its body length is the
    body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
    version is its version row, both reserved fields are zero.
@@ -2921,7 +2921,7 @@ configuration: build-specific maximum at least 301; num_channels 301
    `fragment_bytes` fields of the body with its own values.
 9. An endpoint MUST end the connection with `CONFIG_MISMATCH` when any
    compared field differs.
-10. An endpoint MAY receive message records before the peer's CONFIG, and
+10. An endpoint MAY receive message records before the remote endpoint's CONFIG, and
     when it does it MUST process them against its own configuration.
 
 <a id="m11.1"></a>
@@ -3145,17 +3145,17 @@ packet: second payload of the promoted code-2 block
 <a id="m13"></a>
 ## m13. Security considerations
 
-The transport seals every payload; this section bounds what a peer can do
+The transport seals every payload; this section bounds what the remote endpoint can do
 within the message layer of a sealed connection.
 
 1. **Violations end the connection.** A payload that breaks a rule of RN-2 is
    a violation. A receiver MUST refuse the whole payload, MUST NOT hand up any
    record of it, and MUST end the connection. A correct sender never sends a
-   violation, so one is evidence of a faulty or hostile peer. Each violation has
+   violation, so one is evidence of a faulty or hostile sender. Each violation has
    its own counter.
-2. **No live growth.** Every table a peer can influence is fixed at connection
+2. **No live growth.** Every table the remote endpoint can influence is fixed at connection
    creation from configuration. A receiver MUST NOT allocate memory after
-   connection creation, so a peer MUST NOT be able to make a receiver hold more
+   connection creation, so a sender MUST NOT be able to make a receiver hold more
    than the configured region. The checks of [m4 Receiver checks](#m4) run
    before a record is held or delivered.
 3. **Bounds.** A record whose channel, number, span or size falls outside the
@@ -3165,7 +3165,7 @@ within the message layer of a sealed connection.
    range the transport delivers.
 4. **Amplification.** The checks run over a payload once. A receiver MUST
    complete them in time bounded by the payload's own length, with no
-   allocation, so a peer MUST NOT be able to grow a receiver's work or memory.
+   allocation, so a sender MUST NOT be able to grow a receiver's work or memory.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
