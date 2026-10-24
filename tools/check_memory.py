@@ -7,7 +7,11 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
+# (clients, payload column, max_fragmented_messages). The payload column is
+# ignored: the payload is fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (16384).
+# Slots 0 is the default config (ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, 8), which
+# must plan and create at 1000 clients.
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 0)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
@@ -103,6 +107,13 @@ if sys.platform == 'win32':
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0
     assert rio['active_transport_sdk_callback_bytes'] > 0
+# 1000 clients x 16 reassembly slots (not the default 8) at the fixed 16384
+# payload is over the reassembly budget (ROCKETNET_REASSEMBLY_MEMORY_MIB):
+# create refuses it before allocating. The budget is not raised.
+refused_slots = subprocess.run([str(binary), '1000', '1416', '16', 'portable', '1'],
+                               capture_output=True, text=True, timeout=60)
+assert refused_slots.returncode != 0 and 'memory profile configuration refused' in refused_slots.stderr, (
+    refused_slots.returncode, refused_slots.stdout, refused_slots.stderr)
 refused = subprocess.run([str(binary), '1001', '1416', '1', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (
