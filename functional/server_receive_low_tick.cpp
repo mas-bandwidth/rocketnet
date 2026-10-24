@@ -27,21 +27,6 @@
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
 static const int server_receive_low_tick_max_clients = 1000;
-static const int server_receive_low_tick_payload_bytes_per_second = 32000; // 256 kbps of payload per client
-static const int server_receive_low_tick_packets_per_client_update = 4;    // 4 x 800 bytes per 0.1 s at 10 Hz
-static const int server_receive_low_tick_slices = 10;                 // clients are updated in 10 slices of 100
-static const double server_receive_low_tick_traffic_seconds = 10.0;
-
-static void server_receive_low_tick_check( bool condition, const char * expression, int line )
-{
-    if ( condition )
-        return;
-    printf( "server_receive_low_tick check failed: %s at line %d\n", expression, line );
-    fflush( stdout );
-    exit( 1 );
-}
-
-#define server_receive_low_tick_require( condition ) server_receive_low_tick_check( (condition), #condition, __LINE__ )
 
 static long server_receive_low_tick_rss_bound_mb()
 {
@@ -64,6 +49,22 @@ SUITE_CASE_RSS_BOUND( test_server_receive_1000_clients_256kbps_10hz, server_rece
 #if defined(__linux__)
 
 #include <sys/resource.h>
+
+static const int server_receive_low_tick_payload_bytes_per_second = 32000; // 256 kbps of payload per client
+static const int server_receive_low_tick_packets_per_client_update = 4;    // 4 x 800 bytes per 0.1 s at 10 Hz
+static const int server_receive_low_tick_slices = 10;                 // clients are updated in 10 slices of 100
+static const double server_receive_low_tick_traffic_seconds = 10.0;
+
+static void server_receive_low_tick_check( bool condition, const char * expression, int line )
+{
+    if ( condition )
+        return;
+    printf( "server_receive_low_tick check failed: %s at line %d\n", expression, line );
+    fflush( stdout );
+    exit( 1 );
+}
+
+#define server_receive_low_tick_require( condition ) server_receive_low_tick_check( (condition), #condition, __LINE__ )
 
 struct server_receive_low_tick_udp_row_t
 {
