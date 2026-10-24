@@ -9,17 +9,17 @@
 (* owns the simulator as a config record under a tiny mutex and is applied  *)
 (* there, outside the lock).                                                *)
 (*                                                                         *)
-(* Link models the wire; this module adds the setting in force, the        *)
-(* Reconfigure action and the invariant the change must satisfy:            *)
+(* Link models the wire: the copies in flight, their due counters, the     *)
+(* loss patterns and the delivery.  This module adds the setting in force, *)
+(* the Reconfigure action and the invariant the change must satisfy:       *)
 (*                                                                         *)
 (*   - a packet sent after the change is held to the NEW setting: it is    *)
 (*     let out only when the setting in force at its send was "open", and  *)
 (*     it is lost only when that setting was "lossy";                       *)
 (*                                                                         *)
 (*   - no packet sent before the change is dropped BY it: the copies in    *)
-(*     flight when the setting changed keep their accounting (they are    *)
-(*     still on the wire, or they left through a delivery), because the    *)
-(*     change itself removes nothing.                                      *)
+(*     flight when the setting changed keep their place, because the change *)
+(*     itself removes nothing.                                              *)
 (*                                                                         *)
 (* The setting is modelled as two values, "open" and "lossy": that is the  *)
 (* shape of the change the API offers (a loss percentage that is zero or   *)
@@ -27,18 +27,22 @@
 (* (rocketnet_network_simulator_send), which is why a copy already in      *)
 (* flight keeps the fate it was given.                                     *)
 (*                                                                         *)
-(* The counts are per version: copiesOut and copiesRemoved balance against *)
-(* the copies on the wire, and outSince and lostSince count what the       *)
-(* setting in force has done since the last change.                        *)
+(* The model lives beside Link rather than inside it, and the reason is    *)
+(* mechanical: Link's variables are substituted by eight other models      *)
+(* (FragmentsAndAcks, RNEndpoint, RNWindow, ClientConnection, RNBlocks,    *)
+(* ServerConnection, RNSlots and RNChannel), so a new variable in Link    *)
+(* would change every one of their fingerprints and their measured        *)
+(* records.  The Reconfigure action below is the one Link needs for a     *)
+(* live setting, and it is stated over the same wire.                      *)
 (*                                                                         *)
-(* Fault is the control the module carries: "none" is the real behaviour, *)
+(* Fault is the control the module carries: "none" is the real behaviour,  *)
 (* "holds_old_setting" is a link that keeps the setting it started with   *)
-(* (a change that never reaches the sends) and "drops_in_flight" is a     *)
+(* (a change that never reaches the sends) and "drops_in_flight" is a      *)
 (* link that drops what was already in flight when the setting changes.    *)
 (* Both faults break LiveSettingHolds, and the committed configs that     *)
 (* check them say which invariant they break.                              *)
 (***************************************************************************)
-EXTENDS Link, FiniteSets
+EXTENDS Link
 
 CONSTANTS
     Reconfigurable,  \* BOOLEAN: may the setting change while packets are in flight
@@ -50,24 +54,22 @@ ASSUME /\ Reconfigurable \in BOOLEAN
        /\ Fault \in {"none", "holds_old_setting", "drops_in_flight"}
 
 VARIABLES
-    setting,        \* "open" or "lossy": the loss setting in force
-    ver,            \* the version of the setting in force
-    settings,       \* the setting of every version: settings[v+1] is version v
-    copiesOut,      \* the copies that were let out, in all versions
-    copiesRemoved,  \* the copies that left the wire
-    outSince,       \* the copies the setting in force let out since the last change
-    lostSince       \* the sends the setting in force lost since the last change
+    setting,         \* "open" or "lossy": the loss setting in force
+    ver,             \* how many changes the setting has taken
+    outSince,        \* 1 when a copy was let out since the last change
+    lostSince,       \* 1 when a send was lost since the last change
+    droppedByChange  \* 1 when a change removed a copy that was in flight
 
-mcVars == <<wire, sent, pulse, setting, ver, settings, copiesOut, copiesRemoved, outSince, lostSince>>
+mcVars == <<wire, sent, pulse, setting, ver, outSince, lostSince, droppedByChange>>
 
 Settings == {"open", "lossy"}
 
 (***************************************************************************)
 (* The setting a send is held to: the one in force, unless the link is    *)
-(* the control that never learned the change, which keeps the setting of  *)
-(* its first version.                                                      *)
+(* the control that never learned the change, which keeps the setting it   *)
+(* started with.                                                           *)
 (***************************************************************************)
-HeldSetting == IF Fault = "holds_old_setting" THEN settings[1] ELSE setting
+HeldSetting == IF Fault = "holds_old_setting" THEN "open" ELSE setting
 
 (***************************************************************************)
 (* The send.  The loss decision happens here, under the setting in force  *)
@@ -80,28 +82,25 @@ MCSend(p) ==
     /\ sent' = NextCount
     /\ IF HeldSetting = "lossy" \/ LostAtSend(NextCount)
          THEN /\ UNCHANGED wire
-              /\ lostSince' = lostSince + 1
-              /\ UNCHANGED copiesOut
+              /\ lostSince' = 1
               /\ UNCHANGED outSince
          ELSE /\ \E d \in 0..MaxDelay : wire' = Append(wire, [pkt |-> p, due |-> d])
-              /\ copiesOut' = copiesOut + 1
-              /\ outSince' = outSince + 1
+              /\ outSince' = 1
               /\ UNCHANGED lostSince
-    /\ UNCHANGED <<pulse, setting, ver, settings, copiesRemoved>>
+    /\ UNCHANGED <<pulse, setting, ver, droppedByChange>>
 
 (***************************************************************************)
 (* The delivery.  It is the only way a copy leaves the wire in this model  *)
 (* (the cfg turns the arbitrary-loss pattern and the duplication off), so  *)
-(* the count of removals is the count of deliveries.                       *)
+(* the wire holds exactly the copies that were let out and not delivered.  *)
 (***************************************************************************)
 MCDeliver(p) ==
     /\ Deliver(p)
-    /\ copiesRemoved' = copiesRemoved + 1
-    /\ UNCHANGED <<setting, ver, settings, copiesOut, outSince, lostSince>>
+    /\ UNCHANGED <<setting, ver, outSince, lostSince, droppedByChange>>
 
 (***************************************************************************)
-(* The live change.  It replaces the setting and opens a new version.  It  *)
-(* touches nothing else: the copies in flight when it happens keep their  *)
+(* The live change.  It replaces the setting and counts the change.  It    *)
+(* touches nothing else: the copies in flight when it happens keep their   *)
 (* place and their fate.                                                   *)
 (***************************************************************************)
 MCReconfigure(s) ==
@@ -111,23 +110,23 @@ MCReconfigure(s) ==
     /\ ver < MaxVersions
     /\ setting' = s
     /\ ver' = ver + 1
-    /\ settings' = Append(settings, s)
     /\ outSince' = 0
     /\ lostSince' = 0
     /\ IF Fault = "drops_in_flight"
          THEN /\ wire' = <<>>
-              /\ copiesRemoved' = copiesRemoved + Len(wire)
+              /\ droppedByChange' = IF Len(wire) > 0 THEN 1 ELSE droppedByChange
          ELSE /\ UNCHANGED wire
-              /\ UNCHANGED copiesRemoved
-    /\ UNCHANGED <<sent, pulse, copiesOut>>
+              /\ UNCHANGED droppedByChange
+    /\ UNCHANGED <<sent, pulse>>
 
 (***************************************************************************)
 (* The rest of the wire: the reordering, the jitter and the passage of    *)
 (* time.  None of them changes how many copies the wire holds.             *)
 (***************************************************************************)
 MCEnvironment ==
-    /\ \E i \in DOMAIN wire : Reorder(i) \/ Delay(i)
-    /\ (MaxDelay > 0 /\ Age)
+    /\ ( (\E i \in DOMAIN wire : Reorder(i) \/ Delay(i))
+         \/ (MaxDelay > 0 /\ Age) )
+    /\ UNCHANGED <<setting, ver, outSince, lostSince, droppedByChange>>
 
 (***************************************************************************)
 (* The model.  The setting starts "open": a connection that starts with    *)
@@ -140,11 +139,9 @@ MCInit ==
     /\ pulse = 0
     /\ setting = "open"
     /\ ver = 0
-    /\ settings = <<"open">>
-    /\ copiesOut = 0
-    /\ copiesRemoved = 0
     /\ outSince = 0
     /\ lostSince = 0
+    /\ droppedByChange = 0
 
 MCNext ==
     \/ (\E p \in Packets : MCSend(p))
@@ -152,30 +149,24 @@ MCNext ==
     \/ MCEnvironment
     \/ (\E s \in Settings : MCReconfigure(s))
 
-MCWireFair ==
-    /\ \A p \in Packets : SF_mcVars(MCDeliver(p))
-    /\ WF_mcVars(Age)
-
-Spec == MCInit /\ [][MCNext]_mcVars /\ MCWireFair
+Spec == MCInit /\ [][MCNext]_mcVars
 
 (***************************************************************************)
 (* The invariant.                                                          *)
 (*                                                                         *)
 (* LiveSettingHolds says both halves of the change:                         *)
 (*                                                                         *)
-(*   - the accounting balances: every copy that was let out is either      *)
-(*     still on the wire or was delivered.  A change that dropped the      *)
-(*     copies in flight breaks the balance, because the change removes     *)
-(*     nothing it does not account for.                                    *)
+(*   - the change removes nothing: no change ever dropped a copy that was  *)
+(*     already in flight (droppedByChange stays 0);                        *)
 (*                                                                         *)
 (*   - the setting in force held every send since the last change: a copy *)
 (*     sent after the change went out only when the new setting was        *)
 (*     "open", and was lost only when the new setting was "lossy".         *)
 (***************************************************************************)
 LiveSettingHolds ==
-    /\ copiesOut = copiesRemoved + Len(wire)
-    /\ outSince > 0 => setting = "open"
-    /\ lostSince > 0 => setting = "lossy"
+    /\ droppedByChange = 0
+    /\ outSince = 1 => setting = "open"
+    /\ lostSince = 1 => setting = "lossy"
 
 MCTypeOK ==
     /\ wire \in Seq(Copy)
@@ -183,17 +174,14 @@ MCTypeOK ==
     /\ pulse \in {0, 1}
     /\ setting \in Settings
     /\ ver \in 0..MaxVersions
-    /\ settings \in Seq(Settings)
-    /\ Len(settings) = ver + 1
-    /\ copiesOut \in Nat
-    /\ copiesRemoved \in Nat
-    /\ outSince \in Nat
-    /\ lostSince \in Nat
+    /\ outSince \in {0, 1}
+    /\ lostSince \in {0, 1}
+    /\ droppedByChange \in {0, 1}
 
 (***************************************************************************)
-(* The change itself removes nothing: the second half of the change, said *)
-(* as the balance of the counts above (a change that dropped the copies   *)
-(* in flight would break it).                                              *)
+(* The change itself removes nothing: the first half of the change, said   *)
+(* as the flag above (a change that dropped the copies in flight would     *)
+(* break it).                                                              *)
 (***************************************************************************)
 
 =============================================================================

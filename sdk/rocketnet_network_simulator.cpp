@@ -400,9 +400,9 @@ uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_win
 // happens under the lock: the lock covers the record and the flag, and the
 // send, the loss roll and the delivery stay outside it.
 //
-// tla/Link.tla models the change: the setting in force at the send holds the
-// packet, and the change itself removes nothing that was already in flight
-// (LinkReconfigureHolds).
+// tla/MCLinkReconfigure.tla models the change: the setting in force at the
+// send holds the packet (MCSend), and the change itself removes nothing that
+// was already in flight (MCReconfigure, LiveSettingHolds).
 void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator,
                                               struct rocketnet_platform_mutex_t * mutex,
                                               double latency,

@@ -390,7 +390,9 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 // The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
 // the caller hands a new setting over as a config record under the
 // simulator's own tiny mutex, and the thread that owns the simulator takes it
-// before its next send.  A production library has no simulator at all, so the
+// before its next send.  tla/MCLinkReconfigure.tla models the change: the
+// setting in force at the send holds the packet, and the change itself
+// removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
 // stubs below stand in for the development build's functions there.
 #if ROCKETNET_TEST_SEAMS
 extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );

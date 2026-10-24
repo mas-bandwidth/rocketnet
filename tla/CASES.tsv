@@ -309,3 +309,6 @@ MCRNRioWorkerBrokenSwitchBeforeIdle.cfg	MCRNRioWorker.tla	invariant	FillPhaseOwn
 MCRNRioWorkerBrokenUnboundedDequeue.cfg	MCRNRioWorker.tla	invariant	ExactDelivery	check	rnrioworker	required	-
 MCRNRioWorkerBrokenExitBeforeDrain.cfg	MCRNRioWorker.tla	invariant	FreedOnlyWhenDrained	check	rnrioworker	required	-
 MCRNRioWorkerBrokenNoWake.cfg	MCRNRioWorker.tla	temporal	EveryDatagramConsumed	check	rnrioworker	required	-
+MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	linkreconfigure	required	-
+MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	LiveSettingHolds	check	linkreconfigure	required	-
+MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	LiveSettingHolds	check	linkreconfigure	required	-
