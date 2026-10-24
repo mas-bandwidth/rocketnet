@@ -671,6 +671,37 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
         rocketnet_use_sodium(test)
     endif()
+    # The fixtures the unit cases check against, the connect token vectors and
+    # the vendored Wycheproof files, are compiled into ./bin/test at build time
+    # (cmake/EmbedTestFixtures.cmake), so no unit case reads a file at run time.
+    # A change to a fixture or to the script regenerates the source.
+    set(ROCKETNET_TEST_FIXTURES
+        tests/connect_token_vectors.json
+        tests/wycheproof/chacha20_poly1305_test.json
+        tests/wycheproof/ed25519_test.json
+        tests/wycheproof/x25519_test.json)
+    set(ROCKETNET_TEST_FIXTURES_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_test_fixtures.cpp")
+    string(REPLACE ";" "," ROCKETNET_TEST_FIXTURES_ARGUMENT "${ROCKETNET_TEST_FIXTURES}")
+    list(TRANSFORM ROCKETNET_TEST_FIXTURES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/" OUTPUT_VARIABLE ROCKETNET_TEST_FIXTURE_FILES)
+    add_custom_command(OUTPUT "${ROCKETNET_TEST_FIXTURES_SOURCE}"
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DOUTPUT=${ROCKETNET_TEST_FIXTURES_SOURCE}" "-DFIXTURES=${ROCKETNET_TEST_FIXTURES_ARGUMENT}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedTestFixtures.cmake"
+        DEPENDS ${ROCKETNET_TEST_FIXTURE_FILES} cmake/EmbedTestFixtures.cmake
+        COMMENT "Embedding the unit test fixtures"
+        VERBATIM)
+    target_sources(test PRIVATE "${ROCKETNET_TEST_FIXTURES_SOURCE}")
+    # The one writer of tests/connect_token_vectors.json: ./bin/connect_token_vectors
+    # <path> mints the vectors from the generator the unit case checks
+    # (tools/connect_token_vectors/main.cpp) and writes only the path given.
+    add_executable(connect_token_vectors tools/connect_token_vectors/main.cpp)
+    target_link_libraries(connect_token_vectors PRIVATE rocketnet_dev)
+    target_compile_features(connect_token_vectors PRIVATE cxx_std_11)
+    rocketnet_use_sodium(connect_token_vectors)
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_compile_definitions(connect_token_vectors PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
+    endif()
+    rocketnet_warning_floor(connect_token_vectors)
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
     # targets see it (a host with no system libsodium, such as Windows, has no other)
@@ -832,6 +863,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
+        functional/corpus_consistency.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
