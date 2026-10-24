@@ -267,6 +267,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
     set->newest_completed[connection_index] = 0;
 }
 
+// tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set )
 {
     rocketnet_assert( set );
