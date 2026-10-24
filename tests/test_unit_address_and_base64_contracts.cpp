@@ -86,6 +86,33 @@ static void test_base64_decode_data_never_returns_negative()
 }
 
 // ---------------------------------------------------------------------------
+// rocketnet_base64_encode_data refuses an encoded length over INT_MAX.
+//
+// The return is an int, so an encoded length above INT_MAX cannot be
+// returned whole. 3 * 2^29 input bytes encode to exactly 2^31 characters,
+// INT_MAX + 1. The test cannot allocate 2 GB, so it relies on the refusal
+// touching nothing: the input and output are 16 bytes each and output_size
+// claims SIZE_MAX, so a guard that reads or writes a byte walks off both
+// buffers. At head it returns -1 with the output untouched.
+// ---------------------------------------------------------------------------
+
+static void test_base64_encode_refuses_length_over_int_max()
+{
+    uint8_t input[16];
+    memset( input, 0x5A, sizeof(input) );
+    char output[16];
+    memset( output, 0x7E, sizeof(output) );
+
+    const size_t input_length = (size_t) 3 * ( (size_t) 1 << 29 );     // encodes to 2^31 characters
+
+    const int result = rocketnet_base64_encode_data( input, input_length, output, SIZE_MAX );
+
+    rocketnet_unit_check( result == -1 );
+    rocketnet_unit_check( output[0] == 0x7E );
+    rocketnet_unit_check( output[15] == 0x7E );
+}
+
+// ---------------------------------------------------------------------------
 // the longest bracketed IPv6 address with a port fits the buffer.
 // ---------------------------------------------------------------------------
 
@@ -294,6 +321,7 @@ static void test_wycheproof_reader_refuses_malformed_json()
 }
 
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
+REGISTER_UNIT_TEST( test_base64_encode_refuses_length_over_int_max );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
 REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
