@@ -717,30 +717,6 @@ typedef int ( * rocketnet_client_type_data_validator_t )( struct rocketnet_clien
 // offset into opened lands in out_type_data_offset and its length is
 // returned; -1 means refused, the reason counted.
 
-// the ack block read against this end's highest sent session sequence. A
-// seam build whose sessions start at ROCKETNET_DEV_SESSION_SEQUENCE_START
-// (sdk/rocketnet_test_seams.h) reads the empty block -- largest 0, first
-// range length 0, no ranges, which no block naming a sequence can be -- as
-// empty, as every real session does: its reader's highest sent sequence is
-// below 2^31 whenever the other end has opened nothing, and a session started
-// near the wrap is not. Every other block, and every block with the seam
-// unset, is read exactly as production reads it.
-static int rocketnet_client_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_t * opened, int opened_bytes, uint64_t highest_sent )
-{
-#if ROCKETNET_TEST_SEAMS
-    if ( rocketnet_dev_session_sequence_start() != 1 && opened_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES )
-    {
-        const uint8_t * p = opened;
-        const uint32_t wire_largest = rocketnet_read_uint32( &p );
-        const uint8_t num_ranges = rocketnet_read_uint8( &p );
-        const uint16_t first_range_length = rocketnet_read_uint16( &p );
-        if ( wire_largest == 0 && num_ranges == 0 && first_range_length == 0 )
-            highest_sent = 0;
-    }
-#endif // #if ROCKETNET_TEST_SEAMS
-    return rocketnet_ack_block_read( block, opened, opened_bytes, highest_sent );
-}
-
 static int rocketnet_client_session_after_open( struct rocketnet_client_protocol_t * client,
                                                 uint8_t packet_type,
                                                 const struct rocketnet_client_session_counters_t * type_counters,
@@ -868,13 +844,14 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
 {
     uint64_t * counters = client->counters->values;
 
-    // the ack block at the front of the opened data, validated on the
-    // reconstructed 64-bit largest against this end's own highest sent
-    // session sequence: a malformed block refuses the whole packet, and
-    // the type data behind it is never examined
+    // the ack block at the front of the opened data: the empty block on its
+    // wire fields, every other block on the reconstructed 64-bit largest
+    // against this end's own highest sent session sequence
+    // (tla/AckBlockWrap.tla ReadBlock): a malformed block refuses the whole
+    // packet, and the type data behind it is never examined
 
     struct rocketnet_ack_block_t block;
-    int block_bytes = rocketnet_client_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
+    int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
     if ( block_bytes == 0 )
     {
         rocketnet_spam( "client ignored session packet. bad ack block" );
