@@ -1206,6 +1206,12 @@ bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
     return iocp->stopping.load( std::memory_order_acquire );
 }
 
+int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id )
+{
+    rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
+    return iocp->sends[packet_id].packet_bytes;
+}
+
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status )
 {
     rocketnet_assert( fault >= 0 && fault < ROCKETNET_IOCP_TEST_NUM_FAULTS && count >= 0 );

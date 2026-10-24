@@ -1442,6 +1442,47 @@ static void test_windows_send_failures_counted()
     printf("test_windows_send_failures_counted\n");
 }
 
+static void ignore_unissued_packet_assert( const char *, const char *, const char *, int )
+{
+}
+
+// a finish or abort carrying an id the backend did not issue for that frame
+// writes nothing: not another operation's packet bytes, and nothing past the
+// send operations. Runs in Release, where the asserts compile to nothing; a
+// build with asserts ignores them here and goes on into the same guard.
+static void test_iocp_finish_refuses_unissued_packet_id()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(transport);
+    const rocketnet_address_t to = address("127.0.0.1:9");
+    uint64_t a = 0, b = 0;
+    uint8_t * frame_a = rocketnet_server_iocp_start_packet(transport, &to, &a);
+    uint8_t * frame_b = rocketnet_server_iocp_start_packet(transport, &to, &b);
+    CHECK(frame_a && frame_b && a != b);
+    uint64_t unissued = 0;
+    while ( unissued == a || unissued == b ) ++unissued;
+    CHECK(unissued < ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    rocketnet_assert_function(ignore_unissued_packet_assert);
+    rocketnet_server_iocp_finish_packet(transport, b, frame_b, FAULT_BYTES);
+    rocketnet_server_iocp_finish_packet(transport, unissued, frame_a, FAULT_BYTES);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, unissued) == 0);
+    rocketnet_server_iocp_abort_packet(transport, b, frame_a);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, b) == FAULT_BYTES);
+    rocketnet_server_iocp_finish_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, frame_a, FAULT_BYTES);
+    rocketnet_server_iocp_abort_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, frame_a);
+    rocketnet_assert_function(NULL);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, a) == 0);
+    rocketnet_server_iocp_abort_packet(transport, a, frame_a);
+    rocketnet_server_iocp_abort_packet(transport, b, frame_b);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, b) == 0);
+    iocp_flush(transport);
+    iocp_all_frames_free(transport, &to);
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    printf("test_iocp_transport_finish_refuses_unissued_packet_id\n");
+}
+
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
@@ -1450,6 +1491,7 @@ static const fault_case_t fault_cases[] = {
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
     { "test_iocp_transport_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
     { "test_iocp_transport_destroy_never_hangs", test_iocp_destroy_never_hangs },
+    { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
     { "test_rio_transport_completion_queue_full", test_rio_completion_queue_full },
     { "test_rio_transport_request_queue_full", test_rio_request_queue_full },
     { "test_rio_transport_send_post_fails", test_rio_send_post_fails },
