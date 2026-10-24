@@ -168,9 +168,8 @@ static inline int rocketnet_uring_gso_message(
     const struct rocketnet_address_t * to, int count,
     int max_segments, int max_super_bytes )
 {
-    if ( !control || control_bytes < (int) ROCKETNET_URING_GSO_CONTROL_BYTES )
-        max_segments = 1;
-    if ( max_segments < 1 )
+    const bool has_control = control != NULL && control_bytes >= (int) ROCKETNET_URING_GSO_CONTROL_BYTES;
+    if ( !has_control || max_segments < 1 )
         max_segments = 1;
 
     const int run = rocketnet_coalesce_send_run( packet_bytes, to, count, max_segments, max_super_bytes );
@@ -189,7 +188,7 @@ static inline int rocketnet_uring_gso_message(
     message->msg_iov = iovecs;
     message->msg_iovlen = (size_t) run;
 
-    if ( run > 1 )
+    if ( run > 1 && has_control )
     {
         memset( control, 0, ROCKETNET_URING_GSO_CONTROL_BYTES );
         message->msg_control = control;
