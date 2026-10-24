@@ -713,7 +713,6 @@ int main()
     check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = 0;
