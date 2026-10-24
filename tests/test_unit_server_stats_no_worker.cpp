@@ -70,6 +70,33 @@ struct no_worker_world_t
 
 static no_worker_world_t g_no_worker_world;
 
+// The smallest message tables both ends accept, so a thousand clients and a
+// thousand-slot server fit the suite's resident-set bound: one 8-byte
+// unreliable message each way per update needs no more.
+static void no_worker_message_config( rocketnet_server_config_t * server, rocketnet_client_config_t * client )
+{
+    if ( server )
+    {
+        server->num_channels = 1;
+        server->max_fragmented_messages = 1;
+        server->reliable_messages_in_flight = 64;
+        server->receive_message_buffer_bytes = 4096;
+        server->max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+        server->send_message_buffer_bytes = 12288;
+        server->send_queue_messages = 64;
+    }
+    if ( client )
+    {
+        client->num_channels = 1;
+        client->max_fragmented_messages = 1;
+        client->reliable_messages_in_flight = 64;
+        client->receive_message_buffer_bytes = 4096;
+        client->max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+        client->send_message_buffer_bytes = 12288;
+        client->send_queue_messages = 16;
+    }
+}
+
 static void no_worker_server_create( no_worker_world_t * world, int max_clients )
 {
     memset( world, 0, sizeof( *world ) );
@@ -88,6 +115,7 @@ static void no_worker_server_create( no_worker_world_t * world, int max_clients 
     config.protocol_id = NO_WORKER_PROTOCOL;
     config.max_clients = max_clients;
     config.transport = "loopback";
+    no_worker_message_config( &config, NULL );
     memcpy( config.backend_public_key, world->backend_public, sizeof( config.backend_public_key ) );
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -107,6 +135,7 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
         config.transport = "loopback";
         config.step_driven = true;
         config.time_callback = no_worker_clock;
+        no_worker_message_config( NULL, &config );
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         world->clients[i] = rocketnet_client_create( NULL, &config, &status );
         check( world->clients[i] != NULL && status == ROCKETNET_STATUS_OK );
@@ -217,7 +246,6 @@ static void test_server_stats_creates_no_thread()
     rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
     check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
 
-    printf( "threads before %d, after create %d, after updates %d\n", before, after_create, after_updates );
     if ( before >= 0 )
     {
         check( after_create == before );
@@ -275,7 +303,6 @@ static void test_server_stats_current_every_update()
         if ( stats.rtt_ms > 9.0 && stats.rtt_ms < 11.0 )
             current++;
     }
-    printf( "slots with the new rtt sample on the same update: %d of %d\n", current, NO_WORKER_CLIENTS );
     check( current == NO_WORKER_CLIENTS );
 
     no_worker_world_destroy( world );
