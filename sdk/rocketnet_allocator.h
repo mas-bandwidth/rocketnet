@@ -437,7 +437,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
 // The send room is five pools a start message takes from: the send queue's
 // descriptors (send_queue_messages), each of the store's three chunk classes
 // (send_message_buffer_bytes), and the send spans (receive_message_buffer_bytes). A pool fills
-// as start messages take room and empties as the peer acks them. Running one
+// as start messages take room and empties as the receiver acks them. Running one
 // out ends the connection (R5), so a debug build warns before it does.
 
 #define RN_SEND_ROOM_WARN_PERMILLE      750     // a crossing: the fullest pool reaches 75%

@@ -110,8 +110,8 @@ static bool loopback_is_wildcard( const rocketnet_address_t & address )
 
 // the source address a datagram from this endpoint carries. a wildcard bind
 // sends from its loopback. an endpoint bound to the IPv6 wildcard is dual
-// stack, like a socket with IPV6_V6ONLY off: it serves IPv4 peers too, and
-// its datagrams to an IPv4 peer come from the IPv4 loopback on its port, so
+// stack, like a socket with IPV6_V6ONLY off: it serves IPv4 clients too, and
+// its datagrams to an IPv4 client come from the IPv4 loopback on its port, so
 // the IPv4 client sees the reply from the address it sent to.
 
 static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & bind, const rocketnet_address_t & to )

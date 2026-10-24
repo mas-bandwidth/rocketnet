@@ -191,7 +191,7 @@ void reliable_duplicate_after_gap_delivered_once()
 
 // Fault injection at the SDK delivery table, not the simulated wire: reserve
 // all receive delivery slots temporarily. The normal W+Du sizing makes this
-// difficult to reach with a conforming peer, but ACK safety must survive it.
+// difficult to reach with a conforming sender, but ACK safety must survive it.
 static void reliable_receive_full_recovers_direction( int to_server, int reliability = ROCKETNET_RELIABILITY_RELIABLE, int message_bytes = 4 )
 {
     rocketnet_channel_harness_t h;

@@ -226,7 +226,7 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( protocol_id == 0 )
         return ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
-    // every peer refuses these: a production server refuses a timeout of zero or below (t13.2),
+    // every endpoint refuses these: a production server refuses a timeout of zero or below (t13.2),
     // and a token whose expire is at or before its create is already expired when it is made
     if ( timeout_seconds <= 0 || expire_timestamp <= create_timestamp )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;

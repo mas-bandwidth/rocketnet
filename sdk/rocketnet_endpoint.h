@@ -68,9 +68,9 @@ struct rn_endpoint_config_t
     X( unreliable_limit, uint32_t unreliable_limit ) /* the largest UNRELIABLE message: one record in one packet */                                   \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
     X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
-    /* CONFIG (10.3): the wait for the peer's CONFIG */                                                                                               \
-    X( config_wait_start, double config_wait_start ) /* when this end began waiting for the peer's CONFIG, or -1 before its transport is connected */ \
-    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the peer's CONFIG is past reliable_timeout, else NONE */     \
+    /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
+    X( config_wait_start, double config_wait_start ) /* when this end began waiting for the remote endpoint's CONFIG, or -1 before its transport is connected */ \
+    X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the remote endpoint's CONFIG is past reliable_timeout, else NONE */     \
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */                                                             \
     /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \
@@ -220,8 +220,8 @@ void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
 // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,
 // after the update's payloads. The first call with transport_connected set
-// starts the wait for the peer's CONFIG; from then on, a call at
-// reliable_timeout or more after it, with the peer's CONFIG still not taken,
+// starts the wait for the remote endpoint's CONFIG; from then on, a call at
+// reliable_timeout or more after it, with the remote endpoint's CONFIG still not taken,
 // sets RELIABLE_TIMEOUT, which rn_endpoint_error reports. Whether the
 // transport is connected is the caller's to say (a seam: the endpoint never
 // calls the transport).

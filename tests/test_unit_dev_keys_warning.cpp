@@ -149,8 +149,8 @@ static void dev_warning_server_config( rocketnet_server_transport_config_t * con
 }
 
 // Development creates a full-capacity server before checking the warning.
-// The portable plan covers common protocol and stats storage, including both
-// delta buffers per slot, plus the portable TX I/O banks. Add the loopback
+// The portable plan covers common protocol and ACK history storage, plus the
+// portable TX I/O banks. Add the loopback
 // queue; the portable I/O-storage term is a small conservative allowance
 // because loopback has no built-in plan row.
 // Allow 32 MiB for the process and native runtime, as the other full-capacity

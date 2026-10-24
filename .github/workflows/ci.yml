@@ -455,6 +455,17 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: python3 tools/check_platform_policy.py
 
+      # tools/check_client_server_words.py exits 1 when a tracked file's path
+      # or text names a client-to-client party outside its listed exceptions
+      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
+      # hold the red controls. It reads files only, so one leg per Linux row
+      # runs it.
+      - name: Check client/server words
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/test_check_client_server_words.py
+          python3 tools/check_client_server_words.py
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py

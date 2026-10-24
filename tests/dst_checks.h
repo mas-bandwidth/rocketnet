@@ -436,7 +436,7 @@ static inline void rocketnet_dst_check_opened( struct rocketnet_dst_check_state_
 // Mirrors RNReceipts::AckedMeansPacketOpened, RNChannelTypes::
 // AckedImpliesTransportArrival, ReplayWindow::AckReportsOnlyReceived and
 // FragmentsAndAcks::AckedMeansSurfaced. Every sequence a link ack names was
-// opened by the peer.
+// opened by the receiver.
 static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t * st,
                                              double time, int stream, uint32_t seq )
 {
@@ -687,7 +687,7 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
 
 // Mirrors RNReceipts::BlockAckedOnlyWhenAllFragmentsAcked and
 // RNChannelTypes::EveryReliableAckedAndDelivered (safety side): an ACKED
-// receipt for types 6 and 7 names a message the peer delivered; by the last
+// receipt for types 6 and 7 names a message the receiver delivered; by the last
 // step on a live session it is delivered.
 static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_dst_check_state_t * st,
                                                                int stream, uint32_t seq )
@@ -812,32 +812,32 @@ static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_
     st->replay_high[session] = highest_opened;
 }
 
-// Mirrors RNSimFaults::CrashedPeerSilent: a peer that is not up sends and
-// receives nothing. The injector is not part of this card; every peer is up,
+// Mirrors RNSimFaults::CrashedEndpointSilent: an endpoint (the server or a client) that is not up sends and
+// receives nothing. The injector is not part of this card; every endpoint is up,
 // so the check runs and holds.
-static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_check_state_t * st, int peer,
+static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_check_state_t * st, int endpoint,
                                                        int live, int sent_or_received )
 {
     if ( !live && sent_or_received )
     {
         char what[160];
-        snprintf( what, sizeof(what), "peer=%d crashed but sent or received", peer );
+        snprintf( what, sizeof(what), "endpoint=%d crashed but sent or received", endpoint );
         rocketnet_dst_check_fail( st, "crashed_silent", what );
     }
 }
 
-// Mirrors RNSimFaults::SkewBounded and ClockMonotone: every peer's clock is
+// Mirrors RNSimFaults::SkewBounded and ClockMonotone: every endpoint's clock is
 // within its bound of the true clock and never below its value the step
 // before. The clock injector is not part of this card, so the true clock is
 // passed and the bound is checked.
-static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t * st, int peer,
+static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t * st, int endpoint,
                                               double clock, double true_clock, double bound )
 {
     const double delta = clock - true_clock;
     if ( delta > bound || delta < -bound )
     {
         char what[160];
-        snprintf( what, sizeof(what), "peer=%d clock offset=%.6f bound=%.6f", peer, delta, bound );
+        snprintf( what, sizeof(what), "endpoint=%d clock offset=%.6f bound=%.6f", endpoint, delta, bound );
         rocketnet_dst_check_fail( st, "skew_bounded", what );
     }
 }
@@ -856,7 +856,7 @@ static inline void rocketnet_dst_check_liveness_connected( struct rocketnet_dst_
     }
 }
 
-// The reliable bytes sent on a session and not yet delivered at the peer.
+// The reliable bytes sent on a session and not yet delivered at the receiver.
 static inline uint64_t rocketnet_dst_check_outstanding( struct rocketnet_dst_check_state_t * st, int session )
 {
     uint64_t total = 0;

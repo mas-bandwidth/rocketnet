@@ -4,7 +4,7 @@
 */
 
 // The one header-size rule behind every wire byte counter: the IP and UDP
-// headers of the peer's family, 28 for IPv4 and 48 for IPv6, and no headers
+// headers of the remote address's family, 28 for IPv4 and 48 for IPv6, and no headers
 // for an address with no family. Time is never read and no socket is opened.
 
 #include "test_unit_registry.h"
