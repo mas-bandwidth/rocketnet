@@ -174,7 +174,18 @@ static void test_rio_transport_context_round_trips()
         != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff ) );
 }
 
+static void test_rio_transport_context_phase_never_reaches_kind()
+{
+    // the phase owns bits 48..55 only: a phase wider than a byte must not
+    // spill into the kind byte at bits 56..63.
+    const uint64_t c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0x1FF, 7 );
+    rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_RECEIVE );
+    rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 0xFF );
+    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 7 );
+}
+
 REGISTER_UNIT_TEST( test_rio_transport_layout_slices_tile_the_region );
 REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_bad_geometry );
 REGISTER_UNIT_TEST( test_rio_transport_layout_index_bounds );
 REGISTER_UNIT_TEST( test_rio_transport_context_round_trips );
+REGISTER_UNIT_TEST( test_rio_transport_context_phase_never_reaches_kind );

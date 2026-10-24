@@ -291,3 +291,30 @@ static void test_standard_handshake_client_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_handshake_client_vectors );
+
+static void test_client_protocol_connect_ignored_while_attempt_live()
+{
+    struct rocketnet_client_protocol_t client;
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rocketnet_client_protocol_init( &client, &counters );
+    rocketnet_unit_check( rocketnet_client_protocol_connect( &client, rocketnet_test_frozen_token,
+                                                            1000.0, ROCKETNET_TEST_CREATE_TS ) == 1 );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    uint8_t original_salt[ROCKETNET_CONNECTION_SALT_BYTES];
+    memcpy( original_salt, client.connection_salt, sizeof(original_salt) );
+    const struct rocketnet_counters_t original_counters = counters;
+    const uint64_t original_handshake_sequence = client.send_sequence_handshake;
+    const uint64_t original_session_sequence = client.send_sequence_session;
+
+    rocketnet_unit_check( rocketnet_client_protocol_connect( &client, rocketnet_test_frozen_token,
+                                                            1001.0, ROCKETNET_TEST_CREATE_TS ) == 0 );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+    rocketnet_unit_check( memcmp( client.connection_salt, original_salt, sizeof(original_salt) ) == 0 );
+    rocketnet_unit_check( memcmp( &counters, &original_counters, sizeof(counters) ) == 0 );
+    rocketnet_unit_check( client.send_sequence_handshake == original_handshake_sequence );
+    rocketnet_unit_check( client.send_sequence_session == original_session_sequence );
+}
+
+REGISTER_UNIT_TEST( test_client_protocol_connect_ignored_while_attempt_live );

@@ -17,4 +17,7 @@ MCHolds == [tk \in Tokens |-> IF tk = "tf" THEN {"A"} ELSE {"A", "B"}]
 \* MCRNSecurityTablesBrokenGlobalLockout.cfg overrides RefuseUnremembered
 \* with this: the full failure table refuses a source it cannot remember.
 MCRefuseUnremembered == TRUE
+\* MCRNSecurityTablesBrokenBackwardsWindow.cfg overrides BackwardsRollover
+\* with this: the window rolls over only when the clock passes it.
+MCNoBackwardsRollover == FALSE
 =============================================================================

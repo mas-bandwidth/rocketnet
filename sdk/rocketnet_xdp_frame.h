@@ -29,6 +29,57 @@
 #define ROCKETNET_IPV4_VERSION_IHL  0x45
 #define ROCKETNET_IPV6_VERSION       0x60
 
+// MAC PARSE: one strict link-layer address parse. Accepts exactly 17
+// characters after a single trailing newline is stripped: six hex pairs
+// separated by ':' or '.'. Returns false, leaving mac untouched, for
+// anything else.
+
+static inline int rocketnet_xdp_mac_hex_digit( char c )
+{
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
+    if ( c >= 'A' && c <= 'F' )
+        return c - 'A' + 10;
+    return -1;
+}
+
+static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t mac[6] )
+{
+    if ( !text || !mac )
+        return false;
+
+    size_t length = strlen( text );
+    if ( length > 0 && text[length - 1] == '\n' )
+        length--;
+    if ( length != 17 )
+        return false;
+
+    for ( size_t i = 0; i < length; ++i )
+    {
+        if ( ( i % 3 ) == 2 )
+        {
+            if ( text[i] != ':' && text[i] != '.' )
+                return false;
+        }
+        else if ( rocketnet_xdp_mac_hex_digit( text[i] ) < 0 )
+        {
+            return false;
+        }
+    }
+
+    uint8_t parsed[6];
+    for ( size_t i = 0; i < 6; ++i )
+    {
+        const int high = rocketnet_xdp_mac_hex_digit( text[3 * i] );
+        const int low = rocketnet_xdp_mac_hex_digit( text[3 * i + 1] );
+        parsed[i] = (uint8_t) ( ( high << 4 ) | low );
+    }
+    memcpy( mac, parsed, sizeof(parsed) );
+    return true;
+}
+
 // the frame header length per family: ethernet + (IPv4 or IPv6) + UDP.
 // the flush copies a payload to this offset before the build writes the
 // headers in front of it.
@@ -222,6 +273,7 @@ static inline bool rocketnet_xdp_frame_parse(
     const uint8_t * f = (const uint8_t*) frame;
     int header_bytes;
     int payload_bytes;
+    uint16_t udp_len;
 
     if ( !frame || !out_from || !out_payload || !out_payload_length )
         return false;
@@ -243,7 +295,7 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
@@ -266,7 +318,7 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
@@ -280,13 +332,11 @@ static inline bool rocketnet_xdp_frame_parse(
         return false;
     }
 
-    if ( frame_bytes < (size_t) header_bytes )
-        return false;
-
-    // bytes past the UDP length (link-layer padding) are not payload; a UDP
+    // header_bytes and udp_len are carried from the family branch, which
+    // already proved the frame holds the full header and read the UDP length.
+    // Bytes past the UDP length (link-layer padding) are not payload; a UDP
     // length past the frame end is refused, as server_xdp_udp drops it
 
-    const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
     payload_bytes = (int) ( frame_bytes - (size_t) header_bytes );
     if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
         return false;
@@ -485,6 +535,134 @@ static inline int rocketnet_xdp_drain_queue( int start, int step, int num_queues
 static inline bool rocketnet_xdp_cpu_in_set( int cpu, int set_size )
 {
     return cpu >= 0 && cpu < set_size;
+}
+
+// CPU LIST ENTRY: parse one kernel cpu-list entry ("3" or "1-7") at *cursor,
+// advancing past it and any following comma. The list ends with the string
+// terminator; only trailing whitespace (the sysfs newline) may follow. A
+// malformed entry, a reversed range or trailing garbage refuses the list.
+
+static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * first, int * last )
+{
+    const char * p = *cursor;
+    if ( *p < '0' || *p > '9' )
+        return false;
+
+    int value = 0;
+    while ( *p >= '0' && *p <= '9' )
+    {
+        value = value * 10 + ( *p - '0' );
+        if ( value > 0x7FFFFFFF )
+            return false;
+        p++;
+    }
+    *first = value;
+    *last = value;
+
+    if ( *p == '-' )
+    {
+        p++;
+        if ( *p < '0' || *p > '9' )
+            return false;
+        value = 0;
+        while ( *p >= '0' && *p <= '9' )
+        {
+            value = value * 10 + ( *p - '0' );
+            if ( value > 0x7FFFFFFF )
+                return false;
+            p++;
+        }
+        *last = value;
+    }
+
+    if ( *last < *first )
+        return false;
+
+    if ( *p == ',' )
+    {
+        *cursor = p + 1;
+        return true;
+    }
+
+    while ( *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' )
+        p++;
+
+    if ( *p != '\0' )
+        return false;
+
+    *cursor = p;
+    return true;
+}
+
+// PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
+// num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
+// ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never
+// verifies. first_missing names the first target not in the list, or -1
+// when every target is there.
+
+static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_list, int num_os_cpus, int num_queues, int * first_missing )
+{
+    if ( first_missing )
+        *first_missing = -1;
+
+    if ( !isolated_list || isolated_list[0] == '\0' || num_os_cpus < 0 || num_queues < 0 ||
+         num_os_cpus > 0x7FFFFFFF - num_queues )
+    {
+        if ( first_missing )
+            *first_missing = num_os_cpus > 0 ? num_os_cpus : 0;
+        return false;
+    }
+
+    const char * cursor = isolated_list;
+    while ( *cursor == ' ' || *cursor == '\t' )
+        cursor++;
+
+    // validate the whole list before trusting any of it: a malformed line is
+    // an unmet condition, not a pass
+    {
+        const char * check = cursor;
+        while ( true )
+        {
+            int first = 0;
+            int last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &check, &first, &last ) )
+            {
+                if ( first_missing )
+                    *first_missing = num_os_cpus > 0 ? num_os_cpus : 0;
+                return false;
+            }
+            if ( *check == '\0' )
+                break;
+        }
+    }
+
+    for ( int cpu = num_os_cpus; cpu < num_os_cpus + num_queues; cpu++ )
+    {
+        bool found = false;
+        const char * scan = cursor;
+        while ( true )
+        {
+            int first = 0;
+            int last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &scan, &first, &last ) )
+                break; // validated above
+            if ( cpu >= first && cpu <= last )
+            {
+                found = true;
+                break;
+            }
+            if ( *scan == '\0' )
+                break;
+        }
+        if ( !found )
+        {
+            if ( first_missing )
+                *first_missing = cpu;
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // STATS READ: the per-cpu stats map is read into a buffer of
