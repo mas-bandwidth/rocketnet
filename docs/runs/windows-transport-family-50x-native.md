@@ -38,8 +38,30 @@ tests\test_unit_public_link_simulator.cpp(313,5): error C2220: the following war
 - rio/portable, every case: not made
 - `./bin/Release/test.exe`: not made
 
+## Second attempt (build only)
+
+Main's C4324 break was fixed by #565 (17d3bf34). The branch at 6bb1e287
+(main at 6cd2744e plus the nightly job) was built on captain on
+2026-10-24 at about 15:37 UTC under a shared `winlock --slots 3` slot, in
+Git Bash:
+
+```
+cmake -B build -A x64 && cmake --build build --config Release --parallel 4
+BUILD exit=0, 0 MSVC warnings
+./bin/Release/test.exe
+*** ALL TESTS PASSED *** (983 test_ lines)
+```
+
+- iocp/portable, every case: not made
+- rio/portable, every case: not made
+
+The fifty-run cells were not made: the worker ended before taking the
+exclusive lock, and the rebuild at the next head (bd9694d9, main at 5805e488)
+waited 40 minutes in captain's winlock queue behind other exclusive runs and
+was withdrawn at the card's deadline.
+
 ## Verdict
 
-Not done: main's MSVC build is broken by C4324 in
-`tests/test_unit_public_link_simulator.cpp`, a file outside this card. The
-fifty-run record is owed once that build is green.
+Not done: the build and the unit suite are green on captain, and the
+iocp/portable and rio/portable cells at N=50 on IPv4, IPv6 and dual stack are
+still owed under `winlock --exclusive`.
