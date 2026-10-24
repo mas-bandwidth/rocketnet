@@ -60,7 +60,7 @@ struct rn_message_object_t;
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
-    X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
+    X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, transport_stepped ) X( KEEP, client_io ) \
     X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
     X( KEEP, client_stats ) X( KEEP, stats_frame_time ) X( KEEP, stats_frame_number ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \

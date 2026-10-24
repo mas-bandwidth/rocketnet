@@ -708,7 +708,9 @@ struct rocketnet_fuzz_saved_state_t
     struct rocketnet_fuzz_pair_t pair;
     uint64_t random_state;
     double client_clock_time;
-    rocketnet_loopback_endpoint_t endpoints[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
+    // the endpoint table's bytes: the pair runs on one thread, so its atomics
+    // are plain memory between inputs
+    alignas( rocketnet_loopback_endpoint_t ) uint8_t endpoints[sizeof( rocketnet_loopback_endpoint_t ) * ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
     uint16_t next_port;
 };
 
@@ -735,7 +737,7 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
     saved->random_state = rocketnet_fuzz_random_state;
     saved->client_clock_time = rocketnet_fuzz_client_clock_time;
     rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( saved->endpoints, state.endpoints, sizeof( saved->endpoints ) );
+    memcpy( saved->endpoints, (const void *) state.endpoints, sizeof( saved->endpoints ) );
     saved->next_port = state.next_port;
 }
 
@@ -956,7 +958,7 @@ static inline void rocketnet_fuzz_state_restore( struct rocketnet_fuzz_pair_t * 
     rocketnet_fuzz_random_state = saved->random_state;
     rocketnet_fuzz_client_clock_time = saved->client_clock_time;
     rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( state.endpoints, saved->endpoints, sizeof( saved->endpoints ) );
+    memcpy( (void *) state.endpoints, saved->endpoints, sizeof( saved->endpoints ) );
     state.next_port = saved->next_port;
     // the transport points at the pair's own shim table
     pair->transport->io.operations = &pair->shim;

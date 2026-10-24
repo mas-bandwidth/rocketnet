@@ -32,7 +32,12 @@ perform no backend work, and reconfiguration after stop is refused.
 
 Custom BASE drivers without wait/wake retain caller-thread per-packet sends;
 this compatibility path does not provide the built-in send offload guarantee.
-Built-in loopback uses the same I/O core and bounded worker-side idle polling.
+Built-in loopback runs the same I/O core stepped on the caller's thread, with
+no I/O thread: its sends and receives are index exchanges with the receiving
+endpoint's inbox (`tla/RNLoopbackWire.tla`, TRANSPORTS.md), so a send in
+`send_packets` reaches the server's next update, and a disconnect completes in
+the call. A client the config makes step-driven keeps that mode's contract:
+update finishes its stop.
 The optional development link simulator is also an explicit exception to the
 built-in worker-offload guarantee: while running, its frame work and backend
 sends remain caller-owned. Its shutdown drain transfers to the worker as

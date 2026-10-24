@@ -665,16 +665,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 inline void rocketnet_client_io_thread_function( void * data )
 {
     rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
-    while ( true )
-    {
-        const int result = rocketnet_client_io_step( io, true );
-        if ( result == ROCKETNET_CLIENT_IO_EXITED )
-            break;
-        // Built-in loopback has no native wait object. Keep its bounded idle
-        // polling on the worker; the caller still exchanges only indices.
-        if ( result == ROCKETNET_CLIENT_IO_IDLE && !io->transport->operations->wait )
-            rocketnet_platform_sleep( 0.001 );
-    }
+    while ( rocketnet_client_io_step( io, true ) != ROCKETNET_CLIENT_IO_EXITED ) {}
 }
 
 // The transport's wiring of this core (sdk/rocketnet_client_transport.cpp);

@@ -3955,9 +3955,11 @@ void rocketnet_test_server_transport_io_pin_loopback()
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
-    // Built-in loopback must use the same worker-owned send rings as the
-    // socket transports even though its backend has no native wait object.
-    // A custom BASE backend remains a separate compatibility path.
+    // Built-in loopback runs the client I/O core stepped on the caller's
+    // thread, with no I/O thread: send_packets hands its ring to the core and
+    // the step delivers it into the server's inbox before the call returns
+    // (tla/RNLoopbackWire.tla). A custom BASE backend remains a separate
+    // compatibility path.
     rocketnet_check( client_config.step_driven == 0 );
     rocketnet_check( rocketnet_client_transport_client_io( client ) != NULL );
 

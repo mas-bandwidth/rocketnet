@@ -206,6 +206,7 @@ struct rocketnet_client_legacy_receive_state_t
     X( io_thread, bool io_thread )                                                                                   \
     X( step_driven, bool step_driven ) /* an internal unit-test create: the caller runs the step */                  \
     X( step_in_update, bool step_in_update ) /* the public config field: update and send_packets run the step */     \
+    X( transport_stepped, bool transport_stepped ) /* built-in loopback: step_in_update by the transport, stop in the call */ \
     X( client_io, rocketnet_client_io_t client_io )                                                                  \
     X( stats_counted, uint64_t stats_counted ) /* Filling ring slots already counted into the stats */               \
     X( time_callback, double (*time_callback)( void * context ) ) /* the receive stamp clock, read once at create */ \
@@ -1407,12 +1408,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             // (rocketnet_client_transport_io_config_t.status, sdk/rocketnet_driver.h);
             // any other failed open is a refusal and falls
 
-            if ( granted_transport < 0 && transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+            if ( granted_transport < 0 && ( transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY || transport_status == ROCKETNET_STATUS_MUTEX_CREATE_FAILED ) )
             {
-                rocketnet_error( "client transport create: the %s transport could not allocate its endpoint", rocketnet_transport_name( candidate ) );
+                rocketnet_error( "client transport create: the %s transport could not %s its endpoint", rocketnet_transport_name( candidate ),
+                                 transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY ? "allocate" : "create the mutexes of" );
                 rocketnet_client_transport_abort_create( client_transport );
                 if ( status )
-                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                    *status = transport_status;
                 return NULL;
             }
 
@@ -1593,27 +1595,34 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
-    // tla/RNClientIo.tla. Built-in loopback uses the same core with bounded
-    // worker polling. Custom drivers without wait/wake keep BASE per-packet
-    // caller sends; the development simulator also keeps caller-owned frame
-    // work. Both exceptions retain the nonblocking receive ownership exchange.
+    // tla/RNClientIo.tla. Custom drivers without wait/wake keep BASE
+    // per-packet caller sends; the development simulator also keeps
+    // caller-owned frame work. Both exceptions retain the nonblocking receive
+    // ownership exchange.
     client_transport->io_thread = !client_transport->link_simulator &&
-        ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
-          ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );
+        rocketnet_client_transport_uses_io_thread( client_transport->io.operations );
 
     // the step-driven create (unit tests) runs no thread on either path
     client_transport->step_driven = step_driven_operations != NULL;
-    client_transport->step_in_update = config->step_driven != 0;
+
+    // built-in loopback steps on the caller's thread: its datagrams cross in
+    // the receiver's inbox on the caller threads of
+    // sdk/rocketnet_driver_loopback.cpp (tla/RNLoopbackWire.tla), so the
+    // client runs no thread of its own, a send in send_packets is taken by
+    // the server's next update, and stop completes in the call. A client
+    // the config makes step-driven keeps that mode's contract: update
+    // finishes its stop.
+    client_transport->transport_stepped = !step_driven_operations && !config->step_driven && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK;
+    client_transport->step_in_update = config->step_driven != 0 || client_transport->transport_stepped;
 
     if ( client_transport->step_in_update )
     {
         // the public step-driven mode needs a transport whose receive returns at
-        // once when drained: the I/O-thread design's wait and wake, or the
-        // loopback transport's poll, or a batched receive. A transport without one
-        // cannot be stepped on the caller's thread, so the create refuses it.
+        // once when drained: the I/O-thread design's wait and wake, or a
+        // batched receive (loopback's). A transport without one cannot be
+        // stepped on the caller's thread, so the create refuses it.
         const rocketnet_client_transport_io_operations_t * operations = client_transport->io.operations;
-        const bool nonblocking_step = ( operations->wait && operations->wake ) || operations->receive_batch ||
-                                      granted_transport == ROCKETNET_TRANSPORT_LOOPBACK;
+        const bool nonblocking_step = ( operations->wait && operations->wake ) || operations->receive_batch;
         if ( !nonblocking_step )
         {
             rocketnet_error( "client config step_driven requires a transport with a non-blocking I/O step: %s has none",
@@ -1675,7 +1684,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         else
             client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
     }
-    else if ( client_transport->step_driven )
+    else if ( client_transport->step_driven || client_transport->step_in_update )
         return client_transport;
     else
     {
@@ -1732,6 +1741,8 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 // the quit store.
 // tla/RNClientLinkStop.tla Stop: publishes quit without draining the link
 // simulator or calling the backend.
+static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport );
+
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
@@ -1754,6 +1765,17 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
         client_transport->quit.store( true, std::memory_order_release );
         if ( ( !client_transport->thread && !client_transport->link_simulator && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
             client_transport->stopped.store( true, std::memory_order_release );
+    }
+
+    // built-in loopback completes its stop here, as update would: its final
+    // sends are channel exchanges on this thread that never wait
+    // (tla/RNLoopbackWire.tla Fill), and no worker runs to finish them
+    if ( client_transport->transport_stepped && !rocketnet_client_transport_stopped( client_transport ) )
+    {
+        if ( rocketnet_client_io_core( client_transport ) )
+            rocketnet_client_io_step( &client_transport->client_io, false );
+        else
+            rocketnet_client_transport_finish_stop( client_transport );
     }
 }
 

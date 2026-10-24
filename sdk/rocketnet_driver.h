@@ -48,7 +48,9 @@ enum rocketnet_server_transport_io_flags_t
 // rocketnet_allocation_refused (sdk/rocketnet_server_socket_linux.cpp:1720,
 // sdk/rocketnet_server_rio_windows.cpp:508). Any other NULL leaves it OK and
 // is a refusal, and the transport ladder falls to the next candidate;
-// OUT_OF_MEMORY ends the ladder and the create
+// OUT_OF_MEMORY ends the ladder and the create. A client transport whose
+// create writes MUTEX_CREATE_FAILED there (loopback's channel mutexes) ends
+// the client's create with it the same way
 // (sdk/rocketnet_server_transport.cpp:1299, sdk/rocketnet_client_transport.cpp:882).
 struct rocketnet_server_transport_io_config_t
 {

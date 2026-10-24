@@ -21,6 +21,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_frame_sync.h"
+#include "token_string.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
@@ -676,8 +677,201 @@ static void check_client_memory_budget( allocator_state & state )
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 
+// The loopback wire across real threads (tla/RNLoopbackWire.tla): a server
+// on one thread and clients each on their own, as a multiplayer game runs
+// them over loopback. Every client sends reliable ordered messages, the
+// server echoes each to its sender, and each client checks it got every echo
+// in order. Clients disconnect and destroy while the server keeps sending to
+// them, then a second round connects; the server's sends to a destroyed
+// client meet its destroy (the pin). Run under tsan by CI (ci.yml tsan leg),
+// where any unordered access across the threads is a failure.
+
+#define TWO_THREADS_PROTOCOL 0x7A0B7EAD5EED0001ULL
+#define TWO_THREADS_CLIENTS 3
+#define TWO_THREADS_ROUNDS 2
+#define TWO_THREADS_MESSAGES 200
+
+struct two_threads_world_t
+{
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];   // RN_TEST_BACKEND_SECRET_KEY_BYTES
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    char server_address[64];
+    std::atomic<bool> server_ready{false};
+    std::atomic<int> clients_done{0};
+    std::atomic<int> echoes{0};
+    std::atomic<int> server_received{0};
+};
+
+struct two_threads_client_t
+{
+    two_threads_world_t * world;
+    int index;
+};
+
+static void two_threads_write( uint8_t * buffer, uint32_t value ) { memcpy( buffer, &value, 4 ); }
+static uint32_t two_threads_read( const uint8_t * buffer ) { uint32_t value; memcpy( &value, buffer, 4 ); return value; }
+
+static void two_threads_server( void * data )
+{
+    two_threads_world_t * world = (two_threads_world_t *) data;
+    rocketnet_server_config_t config;
+    check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.protocol_id = TWO_THREADS_PROTOCOL;
+    config.max_clients = TWO_THREADS_CLIENTS;
+    config.transport = "loopback";
+    memcpy( config.backend_public_key, world->backend_public, sizeof( config.backend_public_key ) );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
+    check( server && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    rocketnet_server_public_key( server, world->server_public );
+    snprintf( world->server_address, sizeof( world->server_address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+    world->server_ready.store( true );
+
+    const double deadline = rocketnet_time() + 60.0;
+    while ( world->clients_done.load() < TWO_THREADS_CLIENTS )
+    {
+        check( rocketnet_time() < deadline );
+        rocketnet_server_update( server, rocketnet_time() );
+        const struct rocketnet_message_batch_t * batch;
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; m++ )
+            {
+                world->server_received.fetch_add( 1 );
+                uint8_t * echo = rocketnet_server_start_message( server, (uint64_t) batch->client_index[m], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                if ( echo )
+                {
+                    memcpy( echo, batch->data[m], 4 );
+                    rocketnet_server_finish_message( server, 4 );
+                }
+            }
+        }
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.001 );
+    }
+    rocketnet_server_stop( server );
+    while ( !rocketnet_server_stopped( server ) )
+        rocketnet_sleep( 0.001 );
+    rocketnet_server_destroy( server );
+}
+
+static void two_threads_client( void * data )
+{
+    two_threads_client_t * self = (two_threads_client_t *) data;
+    two_threads_world_t * world = self->world;
+    for ( int round = 0; round < TWO_THREADS_ROUNDS; round++ )
+    {
+        rocketnet_client_config_t config;
+        check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+        config.transport = "loopback";
+        rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
+        check( client );
+        const char * addresses[] = { world->server_address };
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        check( rn_test_production_token_string( world->backend_secret, world->server_public, TWO_THREADS_PROTOCOL, addresses, 1,
+            (uint64_t) ( 1 + self->index * TWO_THREADS_ROUNDS + round ), (uint64_t) time( NULL ), (uint64_t) time( NULL ) + 60u, 10,
+            NULL, token ) == ROCKETNET_STATUS_OK );
+        check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+
+        uint32_t sent = 0, echoed = 0;
+        const double deadline = rocketnet_time() + 30.0;
+        while ( echoed < TWO_THREADS_MESSAGES )
+        {
+            check( rocketnet_time() < deadline );
+            check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
+            rocketnet_client_update( client, rocketnet_time() );
+            const struct rocketnet_message_batch_t * batch;
+            while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+            {
+                for ( int m = 0; m < batch->num_messages; m++ )
+                {
+                    check( batch->bytes[m] == 4 );
+                    check( two_threads_read( batch->data[m] ) == echoed );
+                    echoed++;
+                    world->echoes.fetch_add( 1 );
+                }
+            }
+            if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && sent < TWO_THREADS_MESSAGES )
+            {
+                uint8_t * buffer = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
+                if ( buffer )
+                {
+                    two_threads_write( buffer, sent );
+                    if ( rocketnet_client_finish_message( client, 4 ) )
+                        sent++;
+                }
+            }
+            rocketnet_client_send_packets( client );
+            rocketnet_sleep( 0.001 );
+        }
+
+        // the server may still be sending to this client while it goes
+        rocketnet_client_disconnect( client );
+        check( rocketnet_client_disconnected( client ) );
+        rocketnet_client_destroy( client );
+    }
+    world->clients_done.fetch_add( 1 );
+}
+
+static void check_loopback_two_threads()
+{
+    // a transport pin in the environment (CI runs this binary with portable
+    // pins) would move both ends off loopback: clear it for the check
+    const char * pins[2] = { "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT" };
+    char saved[2][256];
+    bool had[2];
+    for ( int i = 0; i < 2; i++ )
+    {
+        had[i] = rocketnet_test_getenv( pins[i], saved[i], sizeof( saved[i] ) );
+        unsetenv( pins[i] );
+    }
+
+    two_threads_world_t * world = new two_threads_world_t();
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x2A ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_platform_thread_t * server = rocketnet_platform_thread_create( NULL, two_threads_server, world );
+    check( server );
+    while ( !world->server_ready.load() )
+        rocketnet_sleep( 0.001 );
+
+    two_threads_client_t clients[TWO_THREADS_CLIENTS];
+    rocketnet_platform_thread_t * threads[TWO_THREADS_CLIENTS];
+    for ( int i = 0; i < TWO_THREADS_CLIENTS; i++ )
+    {
+        clients[i].world = world;
+        clients[i].index = i;
+        threads[i] = rocketnet_platform_thread_create( NULL, two_threads_client, &clients[i] );
+        check( threads[i] );
+    }
+    for ( int i = 0; i < TWO_THREADS_CLIENTS; i++ )
+    {
+        rocketnet_platform_thread_join( threads[i] );
+        rocketnet_platform_thread_destroy( threads[i] );
+    }
+    rocketnet_platform_thread_join( server );
+    rocketnet_platform_thread_destroy( server );
+
+    check( world->echoes.load() == TWO_THREADS_CLIENTS * TWO_THREADS_ROUNDS * TWO_THREADS_MESSAGES );
+    check( world->server_received.load() >= TWO_THREADS_CLIENTS * TWO_THREADS_ROUNDS * TWO_THREADS_MESSAGES );
+    delete world;
+
+    for ( int i = 0; i < 2; i++ )
+        if ( had[i] )
+            setenv( pins[i], saved[i], 1 );
+}
+
 int main()
 {
+    // first, on the default allocator, with the library initialized for it
+    // alone; the checks below start from an uninitialized library
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    check_loopback_two_threads();
+    rocketnet_term();
+
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_allocator_ex( allocate, release );
@@ -772,6 +966,6 @@ int main()
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_term();
     check( state.live == 0 );
-    printf( "lifecycle OK: aligned allocator, component create sweeps, thread refusal and init/term\n" );
+    printf( "lifecycle OK: aligned allocator, component create sweeps, thread refusal, loopback across threads and init/term\n" );
     return 0;
 }

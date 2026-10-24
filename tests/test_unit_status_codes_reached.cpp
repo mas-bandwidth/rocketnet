@@ -202,6 +202,12 @@ static void reached_release( void * context, void * pointer )
     free( pointer );
 }
 
+extern void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable );
+
+// THREAD_CREATE_FAILED: a client whose transport runs an I/O thread. The
+// memory plan seam stands in for the portable transport's socket and thread
+// (it allocates their bytes and opens and starts neither), so the failing
+// allocation is the thread's, with no socket and no thread.
 static void test_client_connect_thread_create_failed_reached()
 {
     reached_allocator_t state = { 0, 0, 0 };
@@ -218,13 +224,14 @@ static void test_client_connect_thread_create_failed_reached()
 
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
-    config.transport = "loopback";
+    config.transport = "portable";
     config.step_driven = false;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     rocketnet_client_t * client = rocketnet_client_create( &state, &config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    rocketnet_client_transport_set_memory_plan_seam_for_test( true );
     int out_of_memory = 0;
     int thread_create_failed = 0;
     enum rocketnet_status_t thread_create_status = ROCKETNET_STATUS_OK;
@@ -246,6 +253,7 @@ static void test_client_connect_thread_create_failed_reached()
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     }
     state.fail_at = 0;
+    rocketnet_client_transport_set_memory_plan_seam_for_test( false );
     check( out_of_memory > 0 );
     check( thread_create_failed == 1 );
     check( thread_create_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );

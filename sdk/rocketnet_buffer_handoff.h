@@ -114,6 +114,32 @@ template<int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet
     handoff->free_count++;
 }
 
+// tla/RNLoopbackWire.tla Reserve: a sender takes the oldest free buffer and
+// appends it to the ready queue in the same exchange, so the queue keeps send
+// order with any number of senders; the sender then fills it outside the
+// mutex and marks it filled, and the consumer takes only filled buffers from
+// the head (rocketnet_buffer_handoff_ready_head). Returns the buffer, or -1
+// when none is free. Mutex held.
+
+template<int NumBuffers> inline int rocketnet_buffer_handoff_reserve( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
+{
+    if ( handoff->free_count == 0 )
+        return -1;
+    const int index = handoff->free_index[handoff->free_head];
+    handoff->free_head = ( handoff->free_head + 1 ) % NumBuffers;
+    handoff->free_count--;
+    handoff->ready_index[( handoff->ready_head + handoff->ready_count ) % NumBuffers] = index;
+    handoff->ready_count++;
+    return index;
+}
+
+// The oldest ready buffer without taking it, or -1 when none is ready. Mutex held.
+
+template<int NumBuffers> inline int rocketnet_buffer_handoff_ready_head( const rocketnet_buffer_handoff_t<NumBuffers> * handoff )
+{
+    return handoff->ready_count > 0 ? handoff->ready_index[handoff->ready_head] : -1;
+}
+
 // RNBufferHandoff Owed: the consumer reads and clears the owed flag at the end
 // of its exchange. True when the producer held back a publish: the caller
 // wakes the producer after dropping the mutex, never under it. Mutex held.

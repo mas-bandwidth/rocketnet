@@ -7,12 +7,17 @@
 // declarations below are for the unit suite only; none of this file is a
 // public C export.
 //
-// The process-wide endpoint table is guarded by one mutex. Each live endpoint
-// allocates its full ROCKETNET_LOOPBACK_QUEUE_PACKETS queue at create and frees
-// it at destroy. Send and receive never allocate or grow storage. A datagram
-// arriving at the queue ceiling is dropped and counted; queued datagrams keep
-// their arrival order. Production local play must budget this capacity for
-// each live endpoint. Lookups scan the table linearly under the mutex.
+// Each live endpoint allocates its inbox of ROCKETNET_LOOPBACK_QUEUE_PACKETS
+// datagrams at create and frees it at destroy. Datagrams move on the caller
+// threads of the two endpoints, with no thread of the transport's own
+// (tla/RNLoopbackWire.tla): a send fills a slot of the receiver's inbox and
+// marks it before it returns, and the receiver's next update takes it. Only
+// slot indices cross threads, under the inbox mutex. Send and receive never
+// allocate or grow storage. A datagram arriving at a full inbox is dropped
+// and counted; each sender's datagrams keep their order. Production local
+// play must budget this capacity for each live endpoint. The process-wide
+// endpoint table is guarded by one mutex, taken at create, destroy and a
+// sender's first send to each address.
 
 #include "rocketnet.h"
 #include "rocketnet_constants.h"
@@ -45,8 +50,9 @@ uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 // The number of live endpoints in the process-wide table.
 int rocketnet_loopback_endpoints_live();
 
-// The bytes a queue of this many datagrams allocates, before the allocator
-// header rocketnet_malloc adds.
+// The bytes an endpoint with an inbox of this many datagrams allocates at
+// create (the inbox, its mutex and the endpoint's route cache), before the
+// allocator header rocketnet_malloc adds.
 size_t rocketnet_loopback_queue_bytes( int packets );
 
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)

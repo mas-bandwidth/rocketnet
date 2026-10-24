@@ -357,3 +357,10 @@ MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoff
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenDeferred.cfg	MCRNBufferHandoffBase.tla	invariant	OneOwner	check	rnbufferhandoffbase	required	-
+MCRNLoopbackWire.cfg	MCRNLoopbackWire.tla	pass	-	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenFillLate.cfg	MCRNLoopbackWire.tla	invariant	SentIsVisible	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenCheckBeforePin.cfg	MCRNLoopbackWire.tla	invariant	NoUseAfterFree	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenReleaseBeforeCopy.cfg	MCRNLoopbackWire.tla	invariant	NoOverlap	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenTakeUnfilled.cfg	MCRNLoopbackWire.tla	invariant	InOrder	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenNoDestroyWait.cfg	MCRNLoopbackWire.tla	invariant	NoUseAfterFree	check	rnloopbackwire	required	-
+MCRNLoopbackWireBrokenDropWithSender.cfg	MCRNLoopbackWire.tla	invariant	NoLoss	check	rnloopbackwire	required	-

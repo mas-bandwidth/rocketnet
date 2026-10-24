@@ -43,11 +43,23 @@ and be pin-only on the other: the `gso` client is pin-only
 server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
-records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
-allocates its full `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue at create, so
-runtime sends never allocate or grow it. A process using loopback must budget
-for every live endpoint's complete queue capacity. The cost is paid only by a
-process that selects loopback by name. Lookups scan the table linearly under the mutex.
+records of 64 bytes each (64,064 bytes) under one mutex. Each live endpoint
+allocates its full inbox of `ROCKETNET_LOOPBACK_QUEUE_PACKETS` datagrams at
+create, so runtime sends never allocate or grow it. A process using loopback
+must budget for every live endpoint's complete inbox. The cost is paid only by
+a process that selects loopback by name.
+
+Loopback runs no thread of its own, on either side: a datagram moves on the
+caller threads of its two endpoints, which in a multiplayer game over loopback
+are usually different threads (`tla/RNLoopbackWire.tla`). A send, inside
+`send_packets`, writes the datagram into a slot of the receiver's inbox and
+marks it filled before it returns; the receiver's next update takes it. Only
+slot indices cross between the threads, under the inbox mutex; no send touches
+any other state of the receiver. A client on loopback therefore steps its I/O
+on its own thread in update and `send_packets`, and a message it sends before
+the server's update is taken by that update. A datagram survives its sender's
+destroy, as it does in a socket buffer. The table mutex is taken at create,
+destroy and a sender's first send to each address, whose route it then caches.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_transports` are internal transport helpers
