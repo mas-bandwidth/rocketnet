@@ -20,7 +20,7 @@
 // transport the default ladder can grant, so it differs by platform and by
 // ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
 // bound is the figure this test read at rn-no-alloc-after-create.w9 (merge of
-// f61bb5d9 and main 5805e488): rocketnet_server_required_memory at
+// f61bb5d9 and main c662672e, with the thread record change): rocketnet_server_required_memory at
 // max_clients 1000 and rocketnet_client_required_memory under the profile,
 // Release, on hetzner2 (Linux x86-64, io_uring and XDP built), mini-m5
 // (macOS arm64) and captain (Windows x64, MSVC). A host whose ladder grants
@@ -35,19 +35,19 @@
 #endif
 #elif defined(__APPLE__)
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523801591 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745716 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523801417 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745629 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517405227 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959912 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517405053 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959825 )
 #endif
 #else
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3233438755ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745708 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3233438146ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745621 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3227042391ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959904 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3227041782ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959817 )
 #endif
 #endif
 

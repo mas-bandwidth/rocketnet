@@ -299,7 +299,7 @@ the worker has not exited.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 20.9 GB (20,911,422,255 bytes)
+A default 1,000-client server requires approximately 20.9 GB (20,911,421,646 bytes)
 of memory, which scales to approximately 19.0 MB (19,034,484 bytes) per client slot.
 This is the lifecycle peak the server's allocator sees over create, start, stop,
 restart and destroy, for the largest transport the default ladder can grant
@@ -336,7 +336,7 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ```
 
 On Linux x86-64 with io_uring and XDP built (the default development build) it
-prints `1000 clients: 20911422255`, `1 client: 1895908931`, `2 clients: 1914943415`
+prints `1000 clients: 20911421646`, `1 client: 1895908322`, `2 clients: 1914942806`
 and `delta: 19034484` on this SDK revision. The figures differ by platform and
 build, because each counts the largest transport that platform's ladder can grant.
 
@@ -352,18 +352,19 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 3,233,438,755 bytes (about 3.2 GB) on Linux x86-64 with io_uring
+reports 3,233,438,146 bytes (about 3.2 GB) on Linux x86-64 with io_uring
 and XDP built. The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 22,745,708 bytes.
+`rocketnet_client_required_memory` report 22,745,621 bytes.
 
 Both figures are the lifecycle peak the caller's allocator sees: create, the
 transport connect or start allocates for the largest transport the ladder can
 grant, disconnect or stop, the next cycle, and destroy. They exclude the
 memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
 rings, kernel socket buffers) and process overhead. In a production build
-(`ROCKETNET_DEV=OFF`) they are 3,227,042,391 and 21,959,904 bytes; on macOS
-arm64 they are 1,523,801,567 and 22,745,716 bytes. The default profile
-remains the stock acceptance.
+(`ROCKETNET_DEV=OFF`) they are 3,227,041,782 and 21,959,817 bytes. Other
+platforms report their own figures (macOS has no io_uring or XDP, so its
+server figure is about half). The default profile remains the stock
+acceptance.
 
 ```c
 #include "rocketnet.h"
