@@ -24,6 +24,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_memory.h"
 
 #include <sodium.h>
 
@@ -610,7 +611,16 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
         return 0;
     const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
-    const uint64_t total = connection_bytes == 0 ? 0 : rn_client_header_bytes + connection_bytes;
+    if ( connection_bytes == 0 )
+        return 0;
+    // the peak over the lifecycle: create's one block as the allocator sees
+    // it, plus the transport connect creates for the candidate it grants;
+    // disconnect retires it and the next connect frees it before it creates
+    // the next, so a reconnect takes the same bytes again
+    uint64_t total = rn_client_header_bytes + connection_bytes;
+    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) ||
+         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) )
+        return 0;
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 
@@ -1421,8 +1431,17 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
     }
     const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    // the peak over the lifecycle: create's one block as the allocator sees
+    // it, plus the transport start creates for the candidate it grants; stop
+    // retires it and the next start frees it before it creates the next, so
+    // a restart takes the same bytes again
+    const uint64_t transport_bytes = rocketnet_server_transport_ladder_allocator_bytes( &transport );
     sodium_memzero( &transport, sizeof( transport ) );
-    const uint64_t total = running_bytes == 0 ? 0 : rn_server_header_bytes + running_bytes;
+    if ( running_bytes == 0 )
+        return 0;
+    uint64_t total = rn_server_header_bytes + running_bytes;
+    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) )
+        return 0;
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
 }
 

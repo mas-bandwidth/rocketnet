@@ -16,6 +16,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_driver_loopback.h"
 #include "rocketnet_memory_checks.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_jitter_tracker.h"
@@ -547,10 +548,12 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // concrete built-in for this platform; unknown names, "auto" and transport lists
 // are not concrete and return false.
 
+// total_bytes is all through the caller's allocator; thread_stack_bytes is
+// the OS-owned default stack of the network thread a threaded client starts.
 struct rocketnet_client_memory_plan_t
 {
     uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, total_bytes;
+    uint64_t transport_io_bytes, total_bytes, thread_stack_bytes;
     int sockets;
 };
 
@@ -633,7 +636,18 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
-    if ( strcmp( transport, "portable" ) == 0
+    bool threaded = !config->step_driven;
+    if ( strcmp( transport, "loopback" ) == 0 )
+    {
+        // one endpoint's queue; the endpoint record is in the process-wide
+        // table, and loopback opens no socket. A threaded client still starts
+        // its network thread.
+        plan.transport_io_bytes = rocketnet_memory_allocations( { rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) } );
+        if ( threaded && !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
+            return false;
+        plan.sockets = 0;
+    }
+    else if ( strcmp( transport, "portable" ) == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
          || strcmp( transport, "msgx" ) == 0
 #endif
@@ -648,7 +662,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #else
         plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif
-        if ( !config->step_driven )
+        if ( threaded )
         {
             if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
                 return false;
@@ -660,7 +674,31 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes ) return false;
     for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) ) return false;
+    if ( threaded )
+    {
+        plan.thread_stack_bytes = rocketnet_thread_stack_bytes();
+        if ( !plan.thread_stack_bytes ) return false;
+    }
     return plan.total_bytes <= SIZE_MAX;
+}
+
+uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config )
+{
+    rocketnet_client_transport_config_t defaults;
+    if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
+    int num_available = 0;
+    const int * available = rocketnet_client_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder ) )
+        return 0;
+    uint64_t most = 0;
+    for ( int i = 0; i < ladder.num_candidates; ++i )
+    {
+        rocketnet_client_memory_plan_t plan;
+        if ( rocketnet_client_transport_memory_plan( config, rocketnet_transport_name( ladder.candidates[i] ), plan ) && plan.total_bytes > most )
+            most = plan.total_bytes;
+    }
+    return most;
 }
 
 uint64_t rocketnet_client_transport_required_memory( const rocketnet_client_transport_config_t * config, const char * transport )
