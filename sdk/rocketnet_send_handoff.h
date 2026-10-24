@@ -34,6 +34,8 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     bool publish()
     {
         rocketnet_assert(filling >= 0 && count < NumBuffers);
+        // tla/SendHandoff.tla Publish is enabled only with a filling generation.
+        if (filling < 0) return false;
         if (count == NumBuffers - 1) return false;
         queued[(head + count) % NumBuffers] = filling;
         ++count;
@@ -60,6 +62,8 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     void retire()
     {
         rocketnet_assert(count > 0);
+        // tla/SendHandoff.tla Retire is enabled only with a non-empty queue.
+        if (count == 0) return;
         free[queued[head]] = true;
         head = (head + 1) % NumBuffers;
         --count;
