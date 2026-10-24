@@ -112,7 +112,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] =
     RN_STANDARD_VECTOR( "t17.timing-defaults", "0a0000000000000005000000000000000a000000000000000300000000000000"
     "3c000000000000000a000000000000000a000000000000000100000000000000"
     "00040000000000005a000000000000000a00000000000000" ),
-    // Vector reflects the nine message-violation counters plus XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE, XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED appended in sdk/rocketnet_counters.h.
+    // Vector reflects the nine message-violation counters plus XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE, XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, MESSAGE_NOT_RECEIVED and CONNECTION_REQUEST_CLAIM_TABLE_FULL appended in sdk/rocketnet_counters.h.
     RN_STANDARD_VECTOR( "t18.counter-registry",
     "8472d40203000064f915d0000000ed4bcc7f000000d0a5f5ee000000a0f3313d000000b6f1b51a00"
     "0000c4cd1cf70000007b0a16790300009f6c53a8000800f4318ea9010800e9bb27a7010800e2b441"
@@ -161,7 +161,8 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] =
     "f50000000a0426b7000000dd1a0477000000ee4e501b00000037af52db0000007a31932200"
     "000079b815e7000000"
     "395ff812000000a458a7b3000000"
-    "98214ffa002100" ), // CONNECTION_RESPONSE_PADDING_NOT_ZERO appended in sdk/rocketnet_counters.h
+    "98214ffa002100" // CONNECTION_RESPONSE_PADDING_NOT_ZERO appended in sdk/rocketnet_counters.h
+    "49b0ba62000800" ), // CONNECTION_REQUEST_CLAIM_TABLE_FULL appended in sdk/rocketnet_counters.h
 };
 
 static void test_standard_timing_and_counters_vectors()
