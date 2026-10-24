@@ -207,9 +207,30 @@ template <typename transport_config_t> static bool rn_dev_simulator_env( const c
 static void rn_client_default_config_current( struct rocketnet_client_config_t * config );
 static void rn_server_default_config_current( struct rocketnet_server_config_t * config );
 
+// The transport half of the one resolution create makes: every transport
+// table row's override (ROCKETNET_<SIDE>_<FIELD>) over the struct's values,
+// and the operator memory budget (ROCKETNET_<SIDE>_MEMORY_BUDGET_BYTES), read
+// here once, so validation and sizing at create see the same values start and
+// connect use, and neither reads the environment again
+// (rocketnet_*_transport_create_resolved).
+static bool rn_transport_env( const char * side, void * transport, const struct rocketnet_config_field_t * fields, int num_fields,
+                              uint64_t * memory_budget, enum rocketnet_status_t * failure )
+{
+    uint64_t budget = 0;
+    if ( !rocketnet_config_apply_env( side, transport, fields, num_fields ) ||
+         !rocketnet_config_apply_env_uint64( side, "memory_budget_bytes", &budget ) )
+    {
+        if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        return false;
+    }
+    if ( memory_budget )
+        *memory_budget = budget;
+    return true;
+}
+
 static bool rn_client_split( const struct rocketnet_client_config_t * config, bool read_env,
                              struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
-                             const struct rocketnet_client_testing_t * testing = NULL )
+                             const struct rocketnet_client_testing_t * testing = NULL, uint64_t * memory_budget = NULL )
 {
     struct rocketnet_client_config_t defaults;
     if ( !config )
@@ -232,6 +253,15 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     {
         transport->time_callback = testing->time_callback;
         transport->step_driven = testing->step_driven ? 1 : 0;
+    }
+    if ( memory_budget )
+        *memory_budget = 0;
+    if ( read_env )
+    {
+        int num_fields = 0;
+        const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+        if ( !rn_transport_env( "client", transport, fields, num_fields, memory_budget, failure ) )
+            return false;
     }
     if ( read_env && !rn_dev_simulator_env( "client", transport ) )
     {
@@ -266,7 +296,8 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 }
 
 static bool rn_server_split( const struct rocketnet_server_config_t * config, bool read_env,
-                             struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL )
+                             struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
+                             uint64_t * memory_budget = NULL )
 {
     struct rocketnet_server_config_t defaults;
     if ( !config )
@@ -305,20 +336,19 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     RN_PUBLIC_MESSAGE_FIELDS( RN_COPY )
 #undef RN_COPY
 
-    // max_clients sizes the message server as well as the transport, so its
-    // env override applies here, before either is made: the transport's
-    // create reads the same variable again and agrees. every other transport
-    // field takes its override at the transport's create, as before.
+    // every transport override applies here, before validation and before
+    // the message server and the transport are sized: max_clients sizes
+    // both, the filter is checked against the production posture, and
+    // start creates the transport from this config without reading the
+    // environment again
+    if ( memory_budget )
+        *memory_budget = 0;
     if ( read_env )
     {
         int num_fields = 0;
         const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-        for ( int i = 0; i < num_fields; i++ )
-            if ( strcmp( fields[i].name, "max_clients" ) == 0 && !rocketnet_config_apply_env( "server", transport, &fields[i], 1 ) )
-            {
-                if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-                return false;
-            }
+        if ( !rn_transport_env( "server", transport, fields, num_fields, memory_budget, failure ) )
+            return false;
     }
 
     int send_kbps = config->per_client_send_kbps;
@@ -420,13 +450,13 @@ enum rn_server_count_t
 struct rocketnet_client_t
 {
     void * context;
-    struct rocketnet_client_transport_config_t transport;
+    struct rocketnet_client_transport_config_t transport;   // resolved once at create; connect reads no environment
     struct rocketnet_message_config_t message;
     uint32_t kbps;
+    uint64_t memory_budget_bytes;                       // ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES as create read it; 0 is none
     int owns_block;                                     // 1: this struct and the block are one rocketnet_malloc
     uint8_t * block;                                    // the connection's memory, ROCKETNET_ALLOCATION_ALIGNMENT aligned
     uint64_t block_bytes;
-    int block_used;                                     // 1 once a connect handed the block to a connection
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
@@ -577,6 +607,8 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     uint32_t kbps = 0;
     if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
         return 0;
+    if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
+        return 0;
     const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
     const uint64_t total = connection_bytes == 0 ? 0 : rn_client_header_bytes + connection_bytes;
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -609,8 +641,9 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
+    uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, testing ) )
+    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, testing, &memory_budget ) )
     {
         if ( status )
             *status = failure;
@@ -661,6 +694,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     client->transport = transport;
     client->message = message;
     client->kbps = kbps;
+    client->memory_budget_bytes = memory_budget;
     client->owns_block = memory ? 0 : 1;
     client->block = base + rn_client_header_bytes;
     client->block_bytes = connection_bytes;
@@ -697,6 +731,11 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context, con
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
+// An early destroy drives a caller-stepped transport through its stop with
+// at most this many updates; a threaded worker that has not exited by then is
+// left owning its memory rather than freed under it.
+static const int RN_DESTROY_STOP_UPDATES = 32;
+
 // End then Reset (tla/ClientSession.tla): the connection's counters move into
 // the lifetime counters, its reason is kept, and its destroy -- which sends
 // the redundant disconnects from a live state and runs the connection reset
@@ -710,7 +749,8 @@ static void rn_client_end_connection( struct rocketnet_client_t * client )
     rn_client_connection_counts( client->retiring, counts, NULL );
     for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
         client->lifetime[i] += counts[i];
-    rocketnet_client_connection_reset( &client->retiring->object );
+    // no connection reset: the object goes, and the next connect creates its
+    // connection fresh in the same block
     rocketnet_message_client_destroy( client->retiring );
     client->retiring = NULL;
 }
@@ -789,9 +829,9 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     // DISCONNECTED, while invalid/expired token failures set their own state.
     client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
     int status = ROCKETNET_STATUS_OK;
-    client->block_used = 1;
-    client->connection = rocketnet_message_client_create_ex( client->context, connect_token, &client->transport, &client->message,
-                                                              client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0 );
+    client->connection = rocketnet_message_client_create_resolved( client->context, connect_token, &client->transport, &client->message,
+                                                                    client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0,
+                                                                    client->memory_budget_bytes );
     sodium_memzero( connect_token, sizeof( connect_token ) );
     if ( client->connection )
         return ROCKETNET_STATUS_OK;
@@ -808,18 +848,33 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_client_disconnected( client ) );
     if ( !rocketnet_client_disconnected( client ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped. Updates are bounded and never sleep: a
+        // worker that has not exited still owns the memory, so it is kept.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_client_destroy: the client is not disconnected; call rocketnet_client_disconnect and poll rocketnet_client_disconnected before destroy" );
+        rocketnet_client_disconnect( client );
+        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_client_disconnected( client ); update++ )
+        {
+            struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
+            if ( transport )
+                rocketnet_client_transport_update( transport, 0.0 );
+        }
+        if ( !rocketnet_client_disconnected( client ) )
+        {
+            rocketnet_error( "rocketnet_client_destroy: the worker has not exited; the client is kept, not freed" );
+            return;
+        }
+    }
     rn_client_end_connection( client );
-    // the header and the connection block after it hold the last
-    // connection's message bytes: all of it is wiped, then freed or given
-    // back (an adopted client is the header alone). A block no connect ever
-    // used holds nothing, and wiping it would touch every page it plans.
-    void * context = client->context;
-    const int owns_block = client->owns_block;
-    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + ( client->block_used ? client->block_bytes : 0 ) ) : sizeof( *client );
-    sodium_memzero( client, bytes );
-    if ( owns_block )
-        rocketnet_free( context, client );
+    // the connection's keys were wiped by its transport's destroy; the header
+    // and the block hold config and message bytes, no secret, so they are
+    // freed or given back as they are. The OS zero-fills a page before
+    // another process gets it, and wiping the block would touch every page
+    // of its plan.
+    if ( client->owns_block )
+        rocketnet_free( client->context, client );
 }
 
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -1003,6 +1058,18 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( client->connection );
 }
 
+// the room query: rn_message_object_send_room shares start message's checks,
+// its route and the region's allocation decision, so the answer is the
+// start's. Pure; with no connection object there is nothing to send on
+bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return false;
+    if ( !client->connection )
+        return false;
+    return rn_message_object_send_room( &client->connection->object, 0, channel, (int) reliability, max_bytes );
+}
+
 
 const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client )
 {
@@ -1147,14 +1214,14 @@ struct rocketnet_server_t
 {
     void * context;
     char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    struct rocketnet_server_transport_config_t transport;   // holds the secret key: wiped at destroy
+    struct rocketnet_server_transport_config_t transport;   // holds the secret key: wiped at destroy; resolved once at create
     struct rocketnet_message_config_t message;
     uint32_t kbps;
+    uint64_t memory_budget_bytes;                           // ROCKETNET_SERVER_MEMORY_BUDGET_BYTES as create read it; 0 is none
     int max_clients;
     int owns_block;
     uint8_t * block;
     uint64_t block_bytes;
-    int block_used;                                         // 1 once a start handed the block to a message server
     struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
@@ -1327,17 +1394,12 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
             rocketnet_server_reassembly_delivered_capacity( requested_clients, requested_slots ),
             rocketnet_server_reassembly_delivered_bytes( requested_clients, requested_slots, requested_payload ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
-    // Resolve the transport env override here as start will, so public
-    // create and required_memory validate the same candidate list.
-    struct rocketnet_server_transport_config_t effective = *transport;
-    for ( int i = 0; i < num_fields; ++i )
-        if ( strcmp( fields[i].name, "transport" ) == 0 &&
-             !rocketnet_config_apply_env( "server", &effective, &fields[i], 1 ) )
-            return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+    // the list is the resolved one (rn_server_split applied its override),
+    // the one start tries
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( effective.transport, available, num_available, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
@@ -1462,8 +1524,9 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
+    uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps, &failure ) )
+    if ( !rn_server_split( config, true, &transport, &message, &kbps, &failure, &memory_budget ) )
     {
         sodium_memzero( &transport, sizeof( transport ) );
         if ( status )
@@ -1536,6 +1599,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     server->transport = transport;
     server->message = message;
     server->kbps = kbps;
+    server->memory_budget_bytes = memory_budget;
     server->max_clients = transport.max_clients;
     server->owns_block = memory ? 0 : 1;
     server->block = base + rn_server_header_bytes;
@@ -1584,9 +1648,9 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
         return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
     }
     int status = ROCKETNET_STATUS_OK;
-    server->block_used = 1;
-    server->running = rocketnet_message_server_create_ex( server->context, server->address, &server->transport, &server->message,
-                                                          server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0 );
+    server->running = rocketnet_message_server_create_resolved( server->context, server->address, &server->transport, &server->message,
+                                                                server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0,
+                                                                server->memory_budget_bytes );
     if ( server->running )
         return ROCKETNET_STATUS_OK;
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
@@ -1664,8 +1728,8 @@ static void rn_server_finish_stop( struct rocketnet_server_t * server )
     rn_server_running_counts( server, counts, NULL );
     for ( int i = 0; i < RN_SERVER_COUNT; i++ )
         server->lifetime[i] += counts[i];
-    for ( int i = 0; i < server->max_clients; i++ )
-        rocketnet_server_connection_reset( &server->running->object, i );
+    // no per-slot reset: the object goes, and the next start creates every
+    // slot fresh in the same block
     rocketnet_message_server_destroy( server->running );
     server->running = NULL;
     server->retiring = NULL;
@@ -1678,25 +1742,52 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
     return server->running != NULL;
 }
 
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    if ( max < 1 )
+        return 0;
+    offsets[0] = offsetof( struct rocketnet_server_t, transport ) + offsetof( struct rocketnet_server_transport_config_t, server_secret_key );
+    bytes[0] = sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->server_secret_key );
+    return 1;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
+
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !server )
         return;                                         // as free(NULL): silent, uncounted
     rocketnet_assert( rocketnet_server_stopped( server ) );
     if ( !rocketnet_server_stopped( server ) )
-        return;
+    {
+        // Release has no assert: say what was skipped, count it, then do the
+        // shutdown the caller skipped. Updates are bounded and never sleep: a
+        // worker that has not exited still owns the memory, so it is kept.
+        rocketnet_api_misuse_record();
+        rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
+        rocketnet_server_stop( server );
+        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_server_stopped( server ); update++ )
+        {
+            struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
+            if ( transport )
+                rocketnet_server_transport_update( transport, 0.0 );
+        }
+        if ( !rocketnet_server_stopped( server ) )
+        {
+            rocketnet_error( "rocketnet_server_destroy: the worker has not exited; the server is kept, not freed" );
+            return;
+        }
+    }
     rn_server_finish_stop( server );
-    // the header, keys included, and the running block after it, which held
-    // every connection's message bytes: all of it is wiped, then freed or
-    // given back (an adopted server is the header alone). A block no start
-    // ever used holds nothing, and wiping it would touch every page of a plan
-    // that can reach 13 GB.
-    void * context = server->context;
-    const int owns_block = server->owns_block;
-    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + ( server->block_used ? server->block_bytes : 0 ) ) : sizeof( *server );
-    sodium_memzero( server, bytes );
-    if ( owns_block )
-        rocketnet_free( context, server );
+    // the server's secret key is the header's one secret: it is wiped, and
+    // the rest of the header and the block, config and message bytes, are
+    // freed or given back as they are. The session keys went with the
+    // transport. Wiping the block would touch every page of a plan that can
+    // reach gigabytes, most of it never used; the OS zero-fills a page
+    // before another process gets it (tla/RNDestroyWipe.tla Destroy).
+    sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+    if ( server->owns_block )
+        rocketnet_free( server->context, server );
 }
 
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
@@ -1888,6 +1979,23 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
     if ( slot < 0 )
         return 0;
     return rocketnet_message_server_finish( rn_server( server ), slot, bytes_written );
+}
+
+// the room query for one slot: start message's destination rules (an index at
+// or past max_clients is misuse; a stopped server or an empty slot answers
+// false), then rn_message_object_send_room. Pure
+bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return false;
+    }
+    if ( !server->running )
+        return false;
+    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, (int) reliability, max_bytes );
 }
 
 void rocketnet_server_abort_message( struct rocketnet_server_t * server )

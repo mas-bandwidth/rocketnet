@@ -61,11 +61,15 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_xdp_socket_config.h"
 #include "rocketnet_gateway_netlink.h"
+#include "rocketnet_replay.h"
 
 #include <memory.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <atomic>
+
+// the kernel prefilter drops nothing the session replay window would accept
+static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
 
 // XDP umem frame size must match libxdp expectation
 static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
@@ -2006,7 +2010,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
     void * allocation_context = server_socket->context;
     server_socket->~rocketnet_server_socket_t();
-    rocketnet_clear_and_free( allocation_context, server_socket, sizeof(rocketnet_server_socket_t) );
+    rocketnet_free( allocation_context, server_socket );
 }
 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )

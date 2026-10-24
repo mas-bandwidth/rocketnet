@@ -19,6 +19,7 @@
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_config.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -337,3 +338,103 @@ static void test_client_io_update_exposes_published_batch()
 }
 
 REGISTER_UNIT_TEST( test_client_io_update_exposes_published_batch );
+
+// Stop must not run backend sends, including packets waiting in the link
+// simulator. The fake worker remains paused until explicitly stepped below.
+static void test_client_simulator_stop_defers_backend_send()
+{
+    rocketnet_public_link_simulator_test_development( 1 );
+    auto * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_io_transport_token( token );
+    rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_io_transport_time;
+    config.simulated_latency_ms = 500;
+    auto * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config,
+        clock.now, &rocketnet_fake_client_operations_base, fake );
+    check( transport );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( fake->send_calls == 0 ); // cookie request still held by latency
+    rocketnet_client_transport_stop( transport );
+    check( fake->send_calls == 0 );
+    check( !rocketnet_client_transport_network_simulator( transport, 0, 0, 100, 0 ) );
+    for ( int i = 0; i < 16; ++i )
+    {
+        rocketnet_client_transport_stop( transport );
+        check( !rocketnet_client_transport_stopped( transport ) );
+        check( fake->send_calls == 0 && fake->destroy_calls == 0 );
+    }
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( rocketnet_client_transport_stopped( transport ) );
+    check( fake->send_calls == 1 );
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( fake->send_calls == 1 );
+    rocketnet_client_transport_destroy( transport );
+    check( fake->destroy_calls == 1 );
+    delete fake;
+    rocketnet_public_link_simulator_test_development( 0 );
+}
+REGISTER_UNIT_TEST( test_client_simulator_stop_defers_backend_send );
+
+// Refuse both caller handoffs deterministically: READY packets remain queued,
+// and processed buffers stay caller-owned until their FREE publication succeeds.
+extern void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t * transport, unsigned mask );
+
+static void test_client_legacy_receive_defers_contended_handoffs()
+{
+    auto * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    auto * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_base, &clock );
+    rocketnet_address_t server;
+    check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
+    uint8_t datagram[64] = {};
+    int fill, ready, free_count;
+    for ( int i = 0; i < 3; ++i )
+    {
+        datagram[0] = (uint8_t) ( 0xA0 + i );
+        rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
+        rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    }
+    rocketnet_client_transport_legacy_busy_for_test( transport, 1 );
+    for ( int i = 0; i < 8; ++i )
+        rocketnet_client_transport_update( transport, clock.now );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
+    check( client_io_transport_packets_received( transport ) == 0 );
+    check( fill == -1 && ready == 3 && free_count == 0 );
+
+    // Expose succeeds; returning the processed buffers is contended.
+    rocketnet_client_transport_legacy_busy_for_test( transport, 2 );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( client_io_transport_packets_received( transport ) == 3 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
+    check( fill == -1 && ready == 0 && free_count == 0 );
+    rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
+    const int receives = fake->receive_calls;
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( fake->receive_calls == receives && fake->inbound_count == 1 );
+
+    rocketnet_client_transport_legacy_busy_for_test( transport, 3 );
+    for ( int i = 0; i < 8; ++i )
+        rocketnet_client_transport_update( transport, clock.now );
+    check( client_io_transport_packets_received( transport ) == 3 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
+    check( ready == 0 && free_count == 0 );
+
+    // Return-only progress when no READY packet exists must free all buffers.
+    rocketnet_client_transport_legacy_busy_for_test( transport, 0 );
+    rocketnet_client_transport_update( transport, clock.now );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
+    check( ready == 0 && free_count == 3 );
+    rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
+    check( fake->inbound_count == 0 );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( client_io_transport_packets_received( transport ) == 4 );
+    rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
+    check( fill == -1 && ready == 0 && free_count == 3 );
+    rn_test_client_transport_stop_and_destroy( transport );
+    check( fake->destroy_calls == 1 );
+    delete fake;
+}
+REGISTER_UNIT_TEST( test_client_legacy_receive_defers_contended_handoffs );

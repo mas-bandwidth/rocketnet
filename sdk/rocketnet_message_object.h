@@ -160,7 +160,18 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
+// One open outgoing packet per connection. Only headers are written when a
+// message finishes; its bytes already occupy their final position in the frame.
+struct rn_message_packet_build_t
+{
+    rocketnet_packet_context_t context;
+    rocketnet_message_writer_t writer;
+    uint32_t receipt_serials[16]; // bounded by the existing sent-reference map
+    uint32_t receipt_count;
+};
+
 #define RN_MESSAGE_CONNECTION_LAYOUT_FIELDS( X ) \
+    X( unreliable_build, rn_message_packet_build_t unreliable_build ) \
     X( hot, rn_message_connection_hot_t * hot ) /* stable parallel-array slot */                                         \
     X( disconnect_reason, int disconnect_reason ) /* ROCKETNET_DISCONNECT_REASON_* of the last connection that ended here */
 
@@ -212,7 +223,7 @@ struct rn_message_object_t
 
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
-    int in_place;                               // 1 while the pending start holds a frame
+    int in_place;                               // pending start: 0 region, 1 whole frame, 2 appended record
     struct rocketnet_packet_context_t in_place_context;
     uint8_t * in_place_payload;                 // the frame's payload root
     void * block;
@@ -251,6 +262,11 @@ void rn_message_object_send_packets( struct rn_message_object_t * object );
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
+
+// The room query: true when rn_message_object_start with these arguments, now,
+// would be given its room; false when it would be dropped or refused, or would
+// find no room and end the connection (R5). Pure, O(1), allocates nothing.
+bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
 

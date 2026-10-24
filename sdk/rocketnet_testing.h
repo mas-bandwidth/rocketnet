@@ -7,7 +7,7 @@
 // the receive stamp clock, and the step-driven client (no network thread;
 // update and send_packets run its I/O step on the caller's thread). Games
 // include rocketnet.h alone. ROCKETNET_CLIENT_STEP_DRIVEN=1 in the
-// environment still turns the step-driven client on at connect.
+// environment still turns the step-driven client on, read at create.
 
 #ifndef ROCKETNET_TESTING_H
 #define ROCKETNET_TESTING_H

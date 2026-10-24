@@ -356,6 +356,45 @@ static void test_server_stats_worker_reused_slot_rejects_old_publication()
 
 REGISTER_UNIT_TEST(test_server_stats_worker_reused_slot_rejects_old_publication);
 
+// two deltas hold the same state: the dirty bits, generation, reset flag and
+// high-water marks, and each value its dirty bit says was written (a delta's
+// values are never zeroed; an unmarked value is not state)
+static bool stats_delta_state_equal( const rocketnet_ack_stats_delta_t * a, const rocketnet_ack_stats_delta_t * b )
+{
+    for (int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i)
+        if (a->sent_dirty.test(i) != b->sent_dirty.test(i)) return false;
+    for (int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i)
+        if (a->received_dirty.test(i) != b->received_dirty.test(i)) return false;
+    for (int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i)
+        if (a->rtt_dirty.test(i) != b->rtt_dirty.test(i)) return false;
+    if (a->sent_dirty.epoch != b->sent_dirty.epoch ||
+        a->received_dirty.epoch != b->received_dirty.epoch ||
+        a->rtt_dirty.epoch != b->rtt_dirty.epoch ||
+         a->generation != b->generation || a->reset != b->reset ||
+         a->values.highest_sent != b->values.highest_sent || a->values.highest_received != b->values.highest_received )
+        return false;
+    for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
+        if ( a->sent_dirty.test(i) )
+        {
+            const rocketnet_ack_stats_sent_t * x = &a->values.sent[i];
+            const rocketnet_ack_stats_sent_t * y = &b->values.sent[i];
+            if ( x->sequence != y->sequence || x->send_time != y->send_time || x->wire_bytes != y->wire_bytes || x->acked != y->acked )
+                return false;
+        }
+    for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
+        if ( a->received_dirty.test(i) )
+        {
+            const rocketnet_ack_stats_received_t * x = &a->values.received[i];
+            const rocketnet_ack_stats_received_t * y = &b->values.received[i];
+            if ( x->sequence != y->sequence || x->receive_time != y->receive_time || x->wire_bytes != y->wire_bytes )
+                return false;
+        }
+    for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
+        if ( ( a->rtt_dirty.test(i) ) && a->values.rtt_history[i] != b->values.rtt_history[i] )
+            return false;
+    return true;
+}
+
 static void test_server_stats_worker_coalesces_wrapped_history_and_late_ack()
 {
     stats_env_pin_t pin;
@@ -419,7 +458,7 @@ static void test_server_stats_worker_coalesces_wrapped_history_and_late_ack()
     check(stats_ack_one(endpoint, late_sequence, late_time + 9.0) == 0);
     // The duplicate must neither resample RTT nor re-ACK another record.
     check(fabsf(endpoint->rtt_history[late_sequence % ROCKETNET_RTT_HISTORY_SIZE] - 11.0f) < 0.001f);
-    check(memcmp(active, sealed_copy, sizeof(*active)) == 0);
+    check(stats_delta_state_equal(active, sealed_copy));
     rocketnet_ack_endpoint_t * after_ack = stats_reference(endpoint);
     check(after_ack->packet_loss < before_ack->packet_loss);
     check(after_ack->rtt < before_ack->rtt);
