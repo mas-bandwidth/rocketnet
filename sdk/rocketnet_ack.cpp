@@ -376,6 +376,20 @@ static inline bool rocketnet_ack_stats_received_present( const struct rocketnet_
     return rocketnet_ack_bit( endpoint->received_written, slot ) && endpoint->received[slot].sequence == sequence;
 }
 
+// the window edges move one record per send or receive, each endpoint in
+// turn: fetching the edge records a little ahead keeps the next updates'
+// edge reads in cache instead of a memory miss per endpoint per edge
+static inline void rocketnet_ack_stats_prefetch( const void * address )
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch( address );
+#elif defined(_MSC_VER) && ( defined(_M_X64) || defined(_M_IX86) )
+    _mm_prefetch( (const char*) address, _MM_HINT_T0 );
+#else
+    (void) address;
+#endif
+}
+
 static inline int rocketnet_ack_ctz64( uint64_t v )
 {
 #if defined(_MSC_VER)
@@ -572,6 +586,9 @@ static void rocketnet_ack_stats_sent_advance( struct rocketnet_ack_endpoint_t * 
     for ( uint64_t sequence = enter_low; sequence <= enter_high; sequence++ )
         if ( rocketnet_ack_stats_sent_present( endpoint, sequence ) )
             rocketnet_ack_stats_sent_add( endpoint, sequence, sequence <= eligible );
+
+    rocketnet_ack_stats_prefetch( &endpoint->sent[( base + 2 ) % ring] );
+    rocketnet_ack_stats_prefetch( &endpoint->sent[( top + 2 ) % ring] );
 }
 
 static void rocketnet_ack_stats_received_clear( struct rocketnet_ack_endpoint_t * endpoint )
@@ -693,6 +710,9 @@ static void rocketnet_ack_stats_received_advance( struct rocketnet_ack_endpoint_
     for ( uint64_t sequence = enter_low; sequence <= enter_high; sequence++ )
         if ( rocketnet_ack_stats_received_present( endpoint, sequence ) )
             rocketnet_ack_stats_received_link( endpoint, sequence );
+
+    rocketnet_ack_stats_prefetch( &endpoint->received[( base + 2 ) % ring] );
+    rocketnet_ack_stats_prefetch( &endpoint->received[( top + 2 ) % ring] );
 }
 
 static inline float rocketnet_ack_stats_rtt_node( const struct rocketnet_ack_endpoint_t * endpoint, int node )
