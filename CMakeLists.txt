@@ -826,6 +826,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/live_matrix.cpp
         functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
+        functional/windows_lifecycle_stress.cpp
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
