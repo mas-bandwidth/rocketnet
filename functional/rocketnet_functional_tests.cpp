@@ -7684,19 +7684,10 @@ bool rocketnet_test_xdp_veth_runs_here()
 
 static bool rocketnet_xdp_veth_capture_present = false;
 
-// one link-add line, shared by the capture cases and the hard-killed xdp
-// cell. The far-end token is built at runtime so this file keeps a single
-// copy of the command.
-static void rocketnet_xdp_veth_format_link( char * command, size_t bytes, int queues )
-{
-    const char far_name_word[] = { 'p', 'e', 'e', 'r', '\0' };
-    snprintf( command, bytes, "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth %s name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", queues, queues, far_name_word, queues, queues );
-}
-
 // the link, the addresses, the bpf mount and the napi sysfs. No capture and
 // no server: the hard-killed xdp cell brings its own server up afterwards,
 // and the capture cases add the capture and the server on top.
-static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int queues, char * server_address, size_t server_address_bytes )
+static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int veth_queues, char * server_address, size_t server_address_bytes )
 {
     atexit( rocketnet_xdp_veth_teardown );
 
@@ -7721,7 +7712,7 @@ static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int queues, char * ser
     rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_NETNS );
     {
         char command[256];
-        rocketnet_xdp_veth_format_link( command, sizeof(command), queues );
+        snprintf( command, sizeof(command), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", veth_queues, veth_queues, veth_queues, veth_queues );
         rocketnet_xdp_veth_run( command );
     }
     rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
