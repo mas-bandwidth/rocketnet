@@ -51,10 +51,10 @@
 (* the slot grain: ClaimSlots slots, a free list and an order list of live *)
 (* claims.  Request checks the claim and the O(1) capacity rule before the *)
 (* verify and records the claim after it; RequestRefused records and then  *)
-(* releases it (a refusal past the verify); HalfOpenLeaves releases it     *)
-(* with the mapping (the idle timeout or the integrity limit); a mapping   *)
-(* swept by Tick at its handshake deadline releases nothing, its claim     *)
-(* expires with it.  ReleaseToFree FALSE is the code before the free list *)
+(* releases it (a refusal past the verify, or a same-address request whose *)
+(* live claim it then releases, the release from the middle of the order   *)
+(* list); a mapping swept by Tick at its handshake deadline releases       *)
+(* nothing, its claim expires with it.  ReleaseToFree FALSE is the code before the free list *)
 (* without its scan: a release zeroes the deadline and leaves the slot in  *)
 (* place, so the O(1) rule no longer equals the scan                       *)
 (* (CanRecordMatchesScan).  ReleaseChecksLive FALSE pushes the slot on the *)
@@ -180,7 +180,10 @@ CanRecord(tk) == \/ Found(ClaimState, tk) # {}
 CanRecordScan(tk) == \/ Found(ClaimState, tk) # {}
                      \/ freeList # <<>>
                      \/ \E s \in ClaimSlots : ~LiveAt(ClaimState, s)
-ClaimDeadline == clock + HandshakeDeadline
+\* clock + HandshakeDeadline, held at MaxClock + 1: the clock never passes
+\* MaxClock, so every live-or-expired answer is unchanged, and the clamp is
+\* monotone, so it keeps the order list's deadline order
+ClaimDeadline == IF clock + HandshakeDeadline > MaxClock THEN MaxClock + 1 ELSE clock + HandshakeDeadline
 
 \* write slot s for tk at a and move it to the order list's tail
 Write(C, s, tk, a, fl, ol) ==
@@ -313,15 +316,6 @@ RequestRefused(a, tok, g) ==
     /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
                    gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
-\* A half-open mapping removed before its handshake deadline, by the idle
-\* timeout or the integrity limit (rocketnet_server_release_mapping_claim):
-\* its claim is released with it.
-HalfOpenLeaves(a) ==
-    /\ Live(a)
-    /\ SetClaimState(Release(ClaimState, map[a], a))
-    /\ map' = [map EXCEPT ![a] = None]
-    /\ UNCHANGED <<clock, history, admitted, insertOrder, mapGen, mapBorn, slots, others,
-                   gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 \* The response rung: the packet opened under the mapping, so only an
 \* address in Holds[tok] takes this step.  The record runs first (unless
@@ -400,7 +394,7 @@ Tick ==
                    deniedPulse, admits, lateAdmit, evictedLive, churnDenied, claimVars>>
 
 Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \/ RequestRefused(a, tok, g))
-           \/ (\E a \in Addrs : Response(a) \/ Disconnect(a) \/ HalfOpenLeaves(a))
+           \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
            \/ OtherJoins \/ OtherLeaves \/ Tick
         /\ UNCHANGED floodVars
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)

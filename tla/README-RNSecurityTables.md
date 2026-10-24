@@ -65,10 +65,14 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   the claim is recorded: the token's own entry (an expired one is
   rewritten and moved to the tail), else the free list's head, else the
   expired order head. `RequestRefused` records then releases (a refusal
-  past the verify); `HalfOpenLeaves` releases with the mapping (the idle
-  timeout or the integrity limit, `rocketnet_server_release_mapping_claim`);
-  a mapping swept by `Tick` at its handshake deadline releases nothing, as
-  its claim expires at the same instant. A release unlinks the entry and
+  past the verify; a same-address request after a disconnect finds its own
+  live claim, records nothing and releases it from wherever it sits in the
+  order list); a mapping swept by `Tick` at its handshake deadline
+  releases nothing, as its claim expires at the same instant. Claim
+  deadlines are held at `MaxClock + 1`, which changes no live-or-expired
+  answer and keeps their order; the claim actions take `ClaimTokens`
+  (`th` and `tf`), one token fewer than `Tokens`, so the instance stays
+  inside the checking budget. A release unlinks the entry and
   pushes its slot on the free list. `ReleaseToFree = FALSE` is the code
   before the free list, without its scan: the release zeroed the deadline
   and left the slot in place. `ReleaseChecksLive = FALSE` pushes the slot
@@ -232,6 +236,12 @@ as properties.
   cookies issued before a delayed sweep, both near a rotation deadline and
   after a full-window stall, plus refusal of the outgoing key after a stall.
 
+- A half-open mapping removed before its handshake deadline (the idle
+  timeout or the integrity limit, `rocketnet_server_release_mapping_claim`)
+  is not an action: it would release a live claim from anywhere in the
+  order list, which `RequestRefused` already does, and its mapping states
+  put the instance past the checking budget. `test_claim_released_with_half_open_idle_mapping`
+  and `test_claim_released_with_integrity_limit_mapping` pin it in the code.
 - Packets, the link, the replay window and the session keys stay in
   the held draft; a response here is a packet that has already opened
   under its mapping.
