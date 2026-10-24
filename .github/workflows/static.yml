@@ -1,6 +1,8 @@
 # The static-analysis gate for the sdk.
 #
-# WHAT IT IS. One job: the gcc -fanalyzer findings are compared against
+# WHAT IT IS. Two jobs. The second, `static analysis (clang-tidy, cppcheck)`,
+# runs tools/run_tidy.py under the same baseline rules (see the job). The
+# first: the gcc -fanalyzer findings are compared against
 # tools/static_baseline.txt. A finding that is present now but not in the
 # baseline fails the pull request. A finding that is baselined but gone also
 # fails it: the baseline only shrinks, and the stale line is deleted in the
@@ -75,3 +77,33 @@ jobs:
 
       - name: Run the static gate
         run: python3 tools/run_static.py
+
+  # clang-tidy (checks from .clang-tidy) and cppcheck over every sdk/*.cpp,
+  # rocketnet_tests.cpp included, compared with tools/tidy_baseline.txt and
+  # tools/cppcheck_baseline.txt by tools/run_tidy.py. The same baseline rules
+  # as the gcc job: a new finding fails, and a baselined finding that is gone
+  # fails until its line is deleted (the baselines only shrink). The fleet
+  # runners carry clang-tidy-18 and cppcheck 2.13; a runner without them
+  # prints a TOOL-MISSING line and fails rather than passing unanalyzed.
+  tidy:
+    name: static analysis (clang-tidy, cppcheck)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 15
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang clang-tidy-18 cppcheck libbpf-dev libxdp-dev libsodium-dev xxd
+
+      # the same Release configure the gcc job uses; run_tidy.py builds the
+      # generated xdp header itself and analyzes the first compile command
+      # of each sdk/*.cpp
+      - name: Configure with compile_commands.json
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run the clang-tidy and cppcheck gate
+        run: python3 tools/run_tidy.py --jobs 8
