@@ -234,7 +234,6 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<int> send_flow_index{-1};
 
     uint8_t server_ethernet_address[ETH_ALEN];
-    uint8_t gateway_ethernet_address[ETH_ALEN];
     rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
     int serves_both;                        // 1: ipv4_address and ipv6_address are both live
     rocketnet_address_t ipv4_address;
@@ -252,8 +251,6 @@ struct rocketnet_server_socket_t
     void * context;
     int state;
     rocketnet_address_t public_address;
-    uint64_t server_id;
-    uint64_t match_id;
 
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
@@ -286,6 +283,7 @@ struct rocketnet_server_socket_t
     std::atomic<uint64_t> packet_id{0};
 
     int num_queues;
+    int receive_start_queue; // the next receive_packets call starts at this queue
     rocketnet_server_xdp_socket_t * socket;
 
     rocketnet_server_socket_process_packets_t process_packets;
@@ -389,8 +387,7 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         return true;
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
-        if ( ipv6 )
-            rocketnet_error( "ipv6 gateway discovery: no neighbor entry with a link-layer address for %s on %s", gateway_ip_string, interface_name );
+        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
         return false;
     }
     rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
@@ -1404,7 +1401,30 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    if ( server_socket->gateway_known )
+    if ( server_socket->serves_both )
+    {
+        if ( server_socket->reply_macs.gateway_ipv4_known )
+            rocketnet_info( "ipv4 gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+                server_socket->reply_macs.gateway_ipv4[0],
+                server_socket->reply_macs.gateway_ipv4[1],
+                server_socket->reply_macs.gateway_ipv4[2],
+                server_socket->reply_macs.gateway_ipv4[3],
+                server_socket->reply_macs.gateway_ipv4[4],
+                server_socket->reply_macs.gateway_ipv4[5] );
+        else
+            rocketnet_warn( "no ipv4 gateway on %s: ipv4 replies go only to clients learned on link", interface_name );
+        if ( server_socket->reply_macs.gateway_ipv6_known )
+            rocketnet_info( "ipv6 gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+                server_socket->reply_macs.gateway_ipv6[0],
+                server_socket->reply_macs.gateway_ipv6[1],
+                server_socket->reply_macs.gateway_ipv6[2],
+                server_socket->reply_macs.gateway_ipv6[3],
+                server_socket->reply_macs.gateway_ipv6[4],
+                server_socket->reply_macs.gateway_ipv6[5] );
+        else
+            rocketnet_warn( "no ipv6 gateway on %s: ipv6 replies go only to clients learned on link", interface_name );
+    }
+    else if ( server_socket->gateway_known )
     {
         rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
             server_socket->gateway_ethernet_address[0],
@@ -1792,7 +1812,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // copy across data needed by the socket to send packets
 
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
-        memcpy( socket->gateway_ethernet_address, server_socket->gateway_ethernet_address, ETH_ALEN );
         socket->server_address = public_address;
         socket->serves_both = server_socket->serves_both;
         if ( server_socket->serves_both )
@@ -1909,11 +1928,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     server_socket->public_address = public_address;
     server_socket->state = ROCKETNET_SERVER_SOCKET_RUNNING;
-    server_socket->server_id = rocketnet_hash_string( public_address_string );
-    server_socket->match_id = rocketnet_random_uint64();
-
-    rocketnet_info( "server id is %016" PRIx64, server_socket->server_id );
-    rocketnet_info( "match id is %016" PRIx64, server_socket->match_id );
 
     return server_socket;
 }
@@ -2803,8 +2817,12 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
     server_socket->process_packets.num_packets = 0;
 
-    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    const int num_queues = server_socket->num_queues;
+    int filled_queue = -1;
+    // a rotating start: queue 0 is not served first on every call
+    for ( int step = 0; step < num_queues; step++ )
     {
+        const int queue = rocketnet_xdp_drain_queue( server_socket->receive_start_queue, step, num_queues );
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
         // Last call's view has expired. A partly consumed buffer remains
@@ -2831,11 +2849,18 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         }
 
         if ( socket->receive_held_index < 0 ) continue;
+        // the budget already ended on an earlier queue: still recycle this
+        // one, and take no packet from it
+        if ( filled_queue >= 0 )
+            continue;
         rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_held_index];
         for ( uint32_t i = socket->receive_read_index; i < receive_buffer->num_packets; i++ )
         {
             if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+            {
+                filled_queue = queue;
                 break;
+            }
             uint8_t * eth = receive_buffer->eth[i];
             rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * packet_data = receive_buffer->packet_data[i];
@@ -2845,7 +2870,14 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
             rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
             socket->receive_read_index = i + 1;
         }
-    }        
+    }
+    if ( num_queues > 0 )
+    {
+        // the budget ended on filled_queue: the next call starts after it.
+        // a call that did not fill the budget still advances by one.
+        const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
+        server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
+    }
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data )

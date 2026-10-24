@@ -998,3 +998,47 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     check( changed > 0 && changed <= sizeof(user_data) );
 }
 REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );
+
+// audit finding 3 (docs/audits/2026-10-24-code-quality-johnny.md): releasing a
+// free slot is refused in every build, so no index is handed out twice and
+// num_connected never goes negative. the hook keeps assert-on builds quiet.
+static void secrets_wiped_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+}
+
+static void test_client_slots_release_of_free_slot_is_refused()
+{
+    auto * slots = rocketnet_client_slots_create( NULL, 4 );
+    check( slots );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    const int first = rocketnet_client_slots_assign( slots, 1, 0, user_data );
+    check( first >= 0 );
+    const int never_assigned = first == 3 ? 0 : 3;
+    rocketnet_assert_function( secrets_wiped_quiet_assert );
+    rocketnet_client_slots_release( slots, never_assigned );
+    const bool free_release_refused = rocketnet_client_slots_num_connected( slots ) == 1 && rocketnet_client_slots_num_free( slots ) == 3;
+    rocketnet_client_slots_release( slots, first );
+    const bool first_release_taken = rocketnet_client_slots_num_connected( slots ) == 0 && rocketnet_client_slots_num_free( slots ) == 4;
+    rocketnet_client_slots_release( slots, first );
+    const bool second_release_refused = rocketnet_client_slots_num_connected( slots ) == 0 && rocketnet_client_slots_num_free( slots ) == 4;
+    rocketnet_assert_function( NULL );
+    int indices[4];
+    for ( int i = 0; i < 4; ++i )
+        indices[i] = rocketnet_client_slots_assign( slots, (uint64_t) ( 10 + i ), i, user_data );
+    bool distinct = true;
+    for ( int i = 0; i < 4; ++i )
+    {
+        distinct &= indices[i] >= 0 && indices[i] < 4;
+        for ( int j = 0; j < i; ++j )
+            distinct &= indices[i] != indices[j];
+    }
+    const bool all_connected = rocketnet_client_slots_num_connected( slots ) == 4 && rocketnet_client_slots_num_free( slots ) == 0;
+    rocketnet_client_slots_destroy( slots );
+    check( free_release_refused );
+    check( first_release_taken );
+    check( second_release_refused );
+    check( distinct && all_connected );
+}
+REGISTER_UNIT_TEST( test_client_slots_release_of_free_slot_is_refused );

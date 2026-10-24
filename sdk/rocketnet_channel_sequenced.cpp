@@ -119,14 +119,26 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
-    const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
+
+    int64_t base = 0;
+    if ( !rn_block_shape_valid( channels, record, &base ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
+                                      ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
     const bool last = index + 1 == count;
-    const int64_t base = (int64_t) record->ring - (int64_t) index * ( F / 16 );
     const uint64_t end = base < 0 ? UINT64_MAX : (uint64_t) base * 16 + (uint64_t) ( count - 1 ) * F +
         ( last ? ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) : 16 );
-    if ( record->fragments == 0 || count > max_count || count > region->window || index >= count ||
-         ( last ? record->bytes < 1 || (uint32_t) record->bytes > F : (uint32_t) record->bytes != F ) ||
-         base < 0 || end > region->ring_bytes )
+    if ( base < 0 || end > region->ring_bytes )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
