@@ -99,7 +99,7 @@ static bool srb_payload_matches( const uint8_t * data, int client, int k )
 static void test_server_reassembled_batch_holds_legitimate_load()
 {
     const int num_slots = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
 
     // the server protocol at the default geometry, its reassembly sized
     // exactly as the server transport sizes it at create

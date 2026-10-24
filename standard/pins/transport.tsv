@@ -77,3 +77,4 @@ server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_secon
 client max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 client transport	rn_pin_client_default_transport	"auto"
 fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728
+reassembled payload maximum	ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES	16384

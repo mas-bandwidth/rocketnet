@@ -115,18 +115,6 @@
 
 #define ROCKETNET_MAX_PACKET_PAYLOAD_BYTES                 1416
 
-/// The wire's fragment ceiling: the transport's fragment mechanism carries
-/// 256 fragments of the payload capacity less the fragment header and the
-/// form byte.
-#define ROCKETNET_TRANSPORT_FRAGMENT_CEILING_BYTES  ( 256 * ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 3 ) )
-
-/// The transport's fragmentation capacity: the smaller of the wire's fragment
-/// ceiling and the message tier's maximum. An unreliable message is held to
-/// the smaller of max_message_bytes and this.
-#define ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES \
-    ( ROCKETNET_MAX_MESSAGE_BYTES < ROCKETNET_TRANSPORT_FRAGMENT_CEILING_BYTES ? \
-      ROCKETNET_MAX_MESSAGE_BYTES : ROCKETNET_TRANSPORT_FRAGMENT_CEILING_BYTES )
-
 /// Maximum message bytes that fit in one packet.
 /// The limit is the same for every reliability type.
 /// Larger unreliable messages use the matching reliable type.
@@ -1113,8 +1101,9 @@ struct rocketnet_client_config_t
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144. An unreliable message is held to the smaller of
-    /// max_message_bytes and ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES.
+    /// Default is 262144. It is the one size limit for every reliability
+    /// type: an unreliable message larger than one packet is sent as its
+    /// reliable twin, so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1277,8 +1266,9 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144. An unreliable message is held to the smaller of
-    /// max_message_bytes and ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES.
+    /// Default is 262144. It is the one size limit for every reliability
+    /// type: an unreliable message larger than one packet is sent as its
+    /// reliable twin, so it is held to max_message_bytes too.
 
     int max_message_bytes;
 

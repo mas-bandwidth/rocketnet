@@ -84,7 +84,7 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     check( after.reassembly_bytes == before.reassembly_bytes );
     check( after.send_arena_bytes == before.send_arena_bytes );
     check( after.total_bytes == before.total_bytes );
-    const int payload = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     check( payload == 16384 );
     check( rocketnet_reassembly_memory_allowed_delivered( 1000, 8, payload,
         rocketnet_server_reassembly_delivered_capacity( 1000, 8 ), rocketnet_server_reassembly_delivered_bytes( 1000, 8, payload ) ) );
@@ -159,18 +159,55 @@ static void message_limit_pump( rocketnet_server_t * server, rocketnet_client_t 
     message_limit_now += 0.01;
 }
 
+// sends one unreliable message of the given size from the client and pumps
+// until the server receives it whole, draining every batch
+static bool message_limit_send_and_receive( rocketnet_server_t * server, rocketnet_client_t * client, int payload )
+{
+    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload );
+    if ( !out )
+        return false;
+    for ( int i = 0; i < payload; i++ )
+        out[i] = (uint8_t) ( i * 7 );
+    if ( rocketnet_client_finish_message( client, payload ) == 0 )
+        return false;
+    bool received_whole = false;
+    for ( int tick = 0; tick < 4000 && !received_whole; tick++ )
+    {
+        message_limit_pump( server, client );
+        const rocketnet_message_batch_t * batch;
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; i++ )
+            {
+                if ( batch->bytes[i] != payload )
+                    continue;
+                bool same = true;
+                for ( int j = 0; j < payload; j++ )
+                    if ( batch->data[i][j] != (uint8_t) ( j * 7 ) )
+                        same = false;
+                if ( same )
+                    received_whole = true;
+            }
+        }
+    }
+    return received_whole;
+}
+
 static void test_public_message_limit_unreliable_up_to_max_message_bytes()
 {
     rocketnet_quiet( 1 );
     message_limit_now = 1000.0;
 
     // one size field: neither public config carries a second payload limit,
-    // and the transport's fragmentation capacity is a derived constant
+    // and the transport's reassembled payload maximum is a named constant,
+    // within the fragment limits and at the size the 1000-client plan budgets
 
 #ifdef ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES
-    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES == 361728 );
+    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES == 16384 );
+    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES );
 #else
-    check( false );                              // the transport's fragmentation capacity is a define
+    check( false );                              // the transport's payload maximum is a define
 #endif
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
@@ -218,34 +255,15 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
         message_limit_pump( server, client );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
-    const int payload = 20000;
-    uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload );
-    check( out != NULL );
-    for ( int i = 0; i < payload; i++ )
-        out[i] = (uint8_t) i;
-    check( rocketnet_client_finish_message( client, payload ) != 0 );
-
-    bool received_whole = false;
-    for ( int tick = 0; tick < 800 && !received_whole; tick++ )
-    {
-        message_limit_pump( server, client );
-        const rocketnet_message_batch_t * batch;
-        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
-        {
-            for ( int i = 0; i < batch->num_messages; i++ )
-            {
-                if ( batch->bytes[i] == payload )
-                {
-                    bool ok = true;
-                    for ( int j = 0; j < payload; j++ )
-                        if ( batch->data[i][j] != (uint8_t) j )
-                            ok = false;
-                    received_whole = ok;
-                }
-            }
-        }
-    }
-    check( received_whole );
+    // an unreliable message above the transport's payload maximum and above
+    // one packet is accepted and received whole; so is one of exactly
+    // max_message_bytes; one byte more is refused at start. max_message_bytes
+    // is the only limit an unreliable message meets.
+    check( message_limit_send_and_receive( server, client, 20000 ) );
+    check( 20000 > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    check( client_config.max_message_bytes == 262144 );
+    check( message_limit_send_and_receive( server, client, client_config.max_message_bytes ) );
+    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, client_config.max_message_bytes + 1 ) == NULL );
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );

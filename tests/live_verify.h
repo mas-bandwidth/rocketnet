@@ -39,7 +39,7 @@
 #define ROCKETNET_LIVE_SLOTS                    32u
 
 // The transport's default payload capacity (the SDK's
-// ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, internal to the library): the live
+// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, internal to the library): the live
 // schedule's payload bound, now that the field is gone.
 
 // The limits the schedule is computed against (section 4, "The modes'

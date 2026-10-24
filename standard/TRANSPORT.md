@@ -219,6 +219,7 @@ field's default.
 | client max_fragmented_messages | `8` | integer | `ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES` | as the server field |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
+| reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
 The server's X25519 keypair has no configuration field and no environment
 variable. The server generates it at create.

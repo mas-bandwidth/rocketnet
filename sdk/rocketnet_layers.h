@@ -31,8 +31,15 @@ extern "C" {
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
 #define ROCKETNET_RECEIVE_PAYLOAD_BYTES                    ROCKETNET_MAX_PACKET_PAYLOAD_BYTES
 
+/// The largest payload the transport sends fragmented and reassembles. Not
+/// a config field: the message layer sends at most one packet's payload per
+/// transport payload (larger messages ride its own reliable fragments), so
+/// this bounds only the transport layer's own callers. It sizes the
+/// reassembly arena, max_clients x slots x this, so it stays at the size the
+/// 1000-client plan was budgeted for.
+#define ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES              16384
+
 /// The defaults the public header states as numbers in each field's comment.
-#define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
 /// The largest message one packet carries, written in place: the payload
@@ -478,8 +485,8 @@ void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t
  */
 int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity );
 
-// the configured maximum payload this transport sends and reassembles --
-// the config's max_payload_bytes after defaulting -- so a caller can size
+// the maximum payload this transport sends and reassembles --
+// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES -- so a caller can size
 // its receive buffers without carrying the config around
 
 // a NULL client_transport is a counted no-op that returns 0.
@@ -714,10 +721,10 @@ struct rocketnet_address_t
 // transport and refused loudly at create, never clamped: the xdp transport takes any
 // count from 1, the gso transport refuses past 32.
 //
-// The fragmentation shape rides max_payload_bytes and
+// The fragmentation shape rides ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES and
 // max_fragmented_messages: the largest payload this server sends and
-// reassembles, and the per-client reassembly slot count. zero means the
-// defaults. budget arithmetic, all spent once at create, approximately --
+// reassembles, and the per-client reassembly slot count. zero slots means
+// the default. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
 // (max payload + 1413 staging) per the standard; the delivered mirror of
 // slots x max payload per client -- the per-update home of completed
@@ -1284,8 +1291,8 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
 // a NULL server_transport is a counted no-op that returns NULL.
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
-// the configured maximum payload this transport sends and reassembles --
-// the config's max_payload_bytes after defaulting -- so a caller can size
+// the maximum payload this transport sends and reassembles --
+// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES -- so a caller can size
 // the buffers it copies payloads into
 
 // a NULL server_transport is a counted no-op that returns 0.

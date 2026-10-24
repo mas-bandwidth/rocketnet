@@ -222,6 +222,8 @@ structs, except `config_bytes`.
 The fields the header marks "must match on both ends" must be identical on
 both ends. The connection verifies them. `max_message_bytes` must not exceed
 `receive_message_buffer_bytes`, and create refuses a config that breaks it.
+`max_message_bytes` is the one size limit for every reliability type: an
+unreliable message too large for one packet is sent as its reliable twin.
 
 ### Operator-only environment variables
 

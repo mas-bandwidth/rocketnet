@@ -21,13 +21,11 @@
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_fragment.h"
 
-// The public fragmentation capacity and the wire's fragment ceiling are one
-// number: the public header derives it from the payload capacity, the wire
-// derives it from the fragment stride.
-ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES ==
-    ( ROCKETNET_MAX_MESSAGE_BYTES < ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ?
-      ROCKETNET_MAX_MESSAGE_BYTES : ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ),
-    "the public fragmentation capacity and the fragment ceiling agree" );
+// The transport's reassembled payload maximum lies between one packet's
+// payload and the wire's fragmented payload maximum.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
+    ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+    "the transport's payload maximum is within the fragment limits" );
 #include "rocketnet_base64.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
@@ -562,7 +560,7 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
@@ -1324,7 +1322,7 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_MAX_CLIENTS;
     if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
