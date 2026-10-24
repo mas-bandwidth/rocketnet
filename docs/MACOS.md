@@ -438,7 +438,7 @@ member's CI runner. The step timeouts are about twice these times.
 | leaks | unit | msgx | 1 (finding 3), 954 of 955 cases 0 leaks | 1972 s (the hung case held one of four slots about ten minutes) |
 | leaks | unit | portable | 1 (finding 3), 954 of 955 cases 0 leaks | 1472 s |
 | leaks | functional | msgx | 0, 163 cases and the three exec binaries 0 leaks | 2103 s |
-| leaks | functional | portable | not finished by the card deadline (started 23:54, about 35 min like msgx) | - |
+| leaks | functional | portable | 1 (findings 4 and 2, in the plain suite run, before the per-case pass) | 556 s; rerun alone 25 s |
 
 Findings at 010c816:
 
@@ -458,7 +458,10 @@ Findings at 010c816:
    `functional/rocketnet_functional_tests.cpp:6503`. The case paces its sends
    with a 0.5 ms sleep and expects the msgx send ring never to fill; under
    TSan's slowdown it fills. The suite stops there, so the msgx cases after it
-   have not run under TSan yet. The same leg on portable is green.
+   have not run under TSan yet. The same leg on portable is green, but the
+   leaks leg's plain run (unsanitized Debug, `MallocStackLogging=1`) on
+   portable, rerun alone on the member, fails the same check in the same case:
+   the case is load-sensitive on macOS, not a data race.
 3. **leaks, unit suite, both pins**. `test_channels_allocator_trap_witness`
    (`tests/test_channels.cpp:1613`) hangs under `leaks --atExit`: its forked
    child's allocator trap ends in `_Exit` (`tests/test_channels.cpp:807`),
@@ -467,6 +470,12 @@ Findings at 010c816:
    returns. This lies in the system tool, outside the product; the case keeps
    running and the leg's 180 s case limit names it red. Every other unit case
    reports 0 leaks.
+4. **leaks, functional suite, portable**, the plain run, once:
+   `check failed: ( unplanned disconnect )` in `live_matrix_window` at
+   `functional/live_matrix.cpp:971` (`client_reason=-3`, the server still
+   connected), in the case after `test_loopback_transport_live_message_matrix`.
+   Two Release builds and a unit run were going on the member beside it; the
+   rerun alone stopped earlier, at finding 2, so it is not yet reproduced.
 
 ## Fuzzing
 
