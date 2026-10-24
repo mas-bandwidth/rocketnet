@@ -36,8 +36,10 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
   per call in Release builds. This target is not yet established under a
   1000-client load. Create may take longer. Client disconnect and server stop
   request shutdown without waiting for workers. Poll client disconnected or
-  server stopped before synchronous destroy joins and frees resources. Long
-  soak, load and profiling runs remain part of hardening.
+  server stopped before synchronous destroy joins and frees resources. An early
+  destroy logs and counts the misuse, then completes the shutdown and join
+  itself with bounded updates and no sleep; a worker that has not exited is
+  logged and its object kept, not freed. Long soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -126,7 +128,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
-4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. Only after the corresponding query returns true may `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously join and free the object. Destroy asserts this precondition. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
+4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object. Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
 
 ### Compilable loopback integration example
 

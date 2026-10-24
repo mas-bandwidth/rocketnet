@@ -137,6 +137,18 @@ static int handshake_server_process( struct handshake_server_t * test, const uin
                                                                  response, response_bytes );
 }
 
+static int handshake_server_process_from( struct handshake_server_t * test,
+                                          const struct rocketnet_address_t * from,
+                                          const uint8_t * request, double current_time,
+                                          uint8_t * response, int * response_bytes )
+{
+    *response_bytes = 0;
+    return rocketnet_server_protocol_process_connection_request( &test->server, from,
+                                                                 request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                 ROCKETNET_TEST_CREATE_TS, current_time,
+                                                                 response, response_bytes );
+}
+
 static int handshake_server_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "t12.cookie" ) == 0 )
@@ -325,3 +337,109 @@ REGISTER_UNIT_TEST( test_claim_released_after_private_open_refusal );
 REGISTER_UNIT_TEST( test_claim_released_after_client_id_refusal );
 REGISTER_UNIT_TEST( test_claim_released_after_full_server_refusal );
 REGISTER_UNIT_TEST( test_claim_released_after_small_order_refusal );
+
+// A claim is bound by its mapping, not by the handshake deadline alone: when
+// the half-open idle timeout removes a slotless mapping, the claim leaves with
+// it, so another address may present the token at once (tla/MCReceiveOrder.tla,
+// IdleRemove; STANDARD.md t12, the claim window).
+static void test_claim_released_with_half_open_idle_mapping()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+    test.server.handshake_deadline_seconds = 30;
+
+    struct rocketnet_address_t attacker_address;
+    struct rocketnet_address_t client_address;
+    check( rocketnet_address_parse( &attacker_address, "198.51.100.66:40001" ) );
+    check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
+    uint8_t attacker_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t client_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( attacker_request, "198.51.100.66:40001",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+    handshake_server_build_request( client_request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process_from( &test, &attacker_address, attacker_request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    const double idle_time = 1000.0 + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS;
+    rocketnet_server_protocol_update( &test.server, idle_time );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
+
+    response_bytes = 0;
+    check( handshake_server_process_from( &test, &client_address, client_request, idle_time,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+
+    handshake_server_teardown( &test );
+}
+
+// The integrity limit removes a slotless mapping too, and its claim goes with
+// it: one more sealed packet that does not open tears the mapping down, after
+// which the token is free for another address (tla/MCReceiveOrder.tla,
+// IdleRemove; STANDARD.md t12, the claim window).
+static void test_claim_released_with_integrity_limit_mapping()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+    test.server.handshake_deadline_seconds = 30;
+
+    struct rocketnet_address_t attacker_address;
+    struct rocketnet_address_t client_address;
+    check( rocketnet_address_parse( &attacker_address, "198.51.100.66:40001" ) );
+    check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
+    uint8_t attacker_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t client_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( attacker_request, "198.51.100.66:40001",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+    handshake_server_build_request( client_request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process_from( &test, &attacker_address, attacker_request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address );
+    check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    check( mapping->control->client_index == -1 );
+    mapping->integrity_failures = ROCKETNET_INTEGRITY_LIMIT - 1;
+
+    uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                      rocketnet_test_filter_value, 1, NULL,
+                                                      padding, (int) sizeof(padding),
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      mapping->client_ephemeral_public_key,
+                                                      mapping->keys.session_client_to_server );
+    check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    check( rocketnet_server_protocol_process_packet( &test.server, &attacker_address, packet, packet_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                      response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    response_bytes = 0;
+    check( handshake_server_process_from( &test, &client_address, client_request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+
+    handshake_server_teardown( &test );
+}
+REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
+REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
