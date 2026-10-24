@@ -1104,7 +1104,7 @@ void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
 
     void * allocation_context = gso->context;
     gso->~rocketnet_server_gso_t();
-    rocketnet_clear_and_free( allocation_context, gso, sizeof(rocketnet_server_gso_t) );
+    rocketnet_free( allocation_context, gso );
 }
 
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso )

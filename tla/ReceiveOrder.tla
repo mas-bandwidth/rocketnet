@@ -145,7 +145,12 @@ RefuseStep ==
     /\ spentAtRefusal' = spent
     /\ spentKpAtRefusal' = spentKp
     /\ pos' = MaxPos + 1
-    /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, claims, maps,
+    \* a refusal after the claim write releases the request's claim, as the
+    \* code does on every refusal; only a live mapping retains it
+    /\ claims' = IF claimWritten /\ claims[reqToken] = reqAddr
+                  THEN [u \in Tokens |-> IF u = reqToken THEN None ELSE claims[u]]
+                  ELSE claims
+    /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, maps,
                    claimWritten, verified>>
 
 AdvanceStep ==

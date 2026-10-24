@@ -133,6 +133,66 @@ static int server_disconnected_connect( const server_disconnected_identity_t * i
     return index;
 }
 
+// Interleaved destinations own distinct open frames, including when stop
+// interrupts one pending reservation after both have committed records.
+static void test_unreliable_packing_interleaved_clients_and_stop()
+{
+    rocketnet_quiet( 1 );
+    server_disconnected_identity_t identity;
+    server_disconnected_identity( &identity );
+    double time = 1000.0;
+    server_disconnected_now = time;
+    rocketnet_server_t * server = server_disconnected_server_create( &identity );
+    rocketnet_client_t * clients[2] = { server_disconnected_client_create(), server_disconnected_client_create() };
+    int slots[2];
+    for ( int c = 0; c < 2; ++c )
+        slots[c] = server_disconnected_connect( &identity, server, clients[c], 0x6A00 + (uint64_t) c, 300,
+                                                ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
+    for ( int i = 0; i < 4; ++i )
+        for ( int c = 0; c < 2; ++c ) server_disconnected_pump( server, clients[c], &time );
+    rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
+    for ( int i = 0; i < 32; ++i )
+        for ( int c = 0; c < 2; ++c )
+        {
+            uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slots[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
+            check( p ); p[0] = (uint8_t) c; p[1] = (uint8_t) i;
+            check( rocketnet_server_finish_message( server, 2 ) );
+        }
+    const auto & a = object->connections[slots[0]].unreliable_build;
+    const auto & b = object->connections[slots[1]].unreliable_build;
+    check( a.writer.records == 32 && b.writer.records == 32 );
+    check( a.context.frame && b.context.frame && a.context.frame != b.context.frame );
+    rocketnet_server_send_packets( server );
+    uint32_t seen[2] = {};
+    for ( int i = 0; i < 10; ++i )
+        for ( int c = 0; c < 2; ++c )
+        {
+            server_disconnected_pump( server, clients[c], &time );
+            const rocketnet_message_batch_t * batch;
+            while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
+                for ( int j = 0; j < batch->num_messages; ++j )
+                {
+                    check( batch->bytes[j] == 2 && batch->data[j][0] == c && batch->data[j][1] < 32 );
+                    const uint32_t bit = 1u << batch->data[j][1];
+                    check( !(seen[c] & bit) ); seen[c] |= bit;
+                }
+        }
+    check( seen[0] == UINT32_MAX && seen[1] == UINT32_MAX );
+    for ( int c = 0; c < 2; ++c )
+    {
+        uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slots[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
+        check( p ); memset( p, 0, 2 ); check( rocketnet_server_finish_message( server, 2 ) );
+    }
+    check( rocketnet_server_start_message( server, (uint64_t) slots[0], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) );
+    rocketnet_server_stop( server );
+    check( object->pending_connection == -1 && object->in_place == 0 );
+    for ( int c = 0; c < 2; ++c )
+        check( object->connections[slots[c]].unreliable_build.writer.payload == NULL );
+    for ( int c = 0; c < 2; ++c ) rn_test_client_stop_and_destroy( clients[c] );
+    rn_test_server_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_unreliable_packing_interleaved_clients_and_stop );
+
 enum server_disconnected_how_t
 {
     SERVER_DISCONNECTED_BY_DISCONNECT_CLIENT,
@@ -396,7 +456,7 @@ static void server_disconnect_now_case( bool all )
     // an in-place start, open when the disconnect comes
     rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
     check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) != NULL );
-    check( object->in_place == 1 );
+    check( object->in_place != 0 );
     check( object->pending_connection == (int) index );
     const uint64_t drops = rn_server_stats_of( server ).messages_dropped_not_connected;
 

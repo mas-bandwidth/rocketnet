@@ -40,6 +40,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_xdp_replay_marks.h"
+#include "../sdk/rocketnet_replay.h"
 #include "../sdk/rocketnet_xdp_frame.h"
 #include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_config.h"
@@ -1446,9 +1447,20 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 // ---------------------------------------------------------------------------
 // replay: the read-only high-water map (tla/RNXdpReplay.tla, KernelFilter).
 // With an entry for the source address and port, a session packet whose
-// sequence is ROCKETNET_XDP_REPLAY_WINDOW (16) or more behind the high-water
+// sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind the high-water
 // drops; inside the window or ahead it goes on; handshake types and sources
-// with no entry are not checked.
+// with no entry are not checked. The kernel window is the userspace replay
+// window (ROCKETNET_REPLAY_WINDOW_BITS, 4096 by default), so the kernel
+// never drops a reordered packet that userspace would accept.
+
+static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
+
+static const uint32_t xdp_host_replay_high_water = 2u * ROCKETNET_XDP_REPLAY_WINDOW;
+
+static uint32_t xdp_host_replay_behind( uint32_t distance )
+{
+    return xdp_host_replay_high_water - distance;
+}
 
 static xdp_host_row_t xdp_host_replay_row( const char * label, int family, uint8_t type, uint32_t sequence, uint32_t high_water )
 {
@@ -1467,42 +1479,58 @@ static xdp_host_row_t xdp_host_replay_row( const char * label, int family, uint8
 static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows )
 {
     const int replayed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
+    const uint32_t window = ROCKETNET_XDP_REPLAY_WINDOW;
+    const uint32_t high_water = xdp_host_replay_high_water;
 
-    rows.push_back( xdp_host_expect( xdp_host_replay_row( "payload 16 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 ),
+    rows.push_back( xdp_host_expect( xdp_host_replay_row( "payload a window + 1 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                          xdp_host_replay_behind( window + 1 ), high_water ),
                                      XDP_HOST_DROP, replayed ) );
-    rows.push_back( xdp_host_replay_row( "payload 15 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 85, 100 ) );
-    rows.push_back( xdp_host_replay_row( "payload at the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 100, 100 ) );
-    rows.push_back( xdp_host_replay_row( "payload one ahead of the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 101, 100 ) );
+    rows.push_back( xdp_host_expect( xdp_host_replay_row( "payload a window behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                          xdp_host_replay_behind( window ), high_water ),
+                                     XDP_HOST_DROP, replayed ) );
+    rows.push_back( xdp_host_replay_row( "payload a window - 1 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                         xdp_host_replay_behind( window - 1 ), high_water ) );
+    rows.push_back( xdp_host_replay_row( "payload 4000 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                         xdp_host_replay_behind( 4000 ), high_water ) );
+    rows.push_back( xdp_host_replay_row( "payload 16 behind the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                         xdp_host_replay_behind( 16 ), high_water ) );
+    rows.push_back( xdp_host_replay_row( "payload at the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water, high_water ) );
+    rows.push_back( xdp_host_replay_row( "payload one ahead of the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water + 1, high_water ) );
 
     const struct { uint8_t type; const char * label; } session[] =
     {
-        { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive 16 behind the high-water" },
-        { ROCKETNET_CONNECTION_ACK_PACKET, "ack 16 behind the high-water" },
-        { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect 16 behind the high-water" },
-        { ROCKETNET_CONNECTION_FRAGMENT_PACKET, "fragment 16 behind the high-water" },
+        { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive a window behind the high-water" },
+        { ROCKETNET_CONNECTION_ACK_PACKET, "ack a window behind the high-water" },
+        { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect a window behind the high-water" },
+        { ROCKETNET_CONNECTION_FRAGMENT_PACKET, "fragment a window behind the high-water" },
     };
     for ( size_t i = 0; i < sizeof(session) / sizeof(session[0]); i++ )
-        rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, 84, 100 ),
+        rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, xdp_host_replay_behind( window ), high_water ),
                                          XDP_HOST_DROP, replayed ) );
 
     // the handshake types are not checked
-    rows.push_back( xdp_host_replay_row( "connection request at 84 is not checked", family, ROCKETNET_CONNECTION_REQUEST_PACKET, 84, 100 ) );
-    rows.push_back( xdp_host_replay_row( "connection response at 84 is not checked", family, ROCKETNET_CONNECTION_RESPONSE_PACKET, 84, 100 ) );
+    rows.push_back( xdp_host_replay_row( "connection request a window behind is not checked", family, ROCKETNET_CONNECTION_REQUEST_PACKET,
+                                         xdp_host_replay_behind( window ), high_water ) );
+    rows.push_back( xdp_host_replay_row( "connection response a window behind is not checked", family, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                         xdp_host_replay_behind( window ), high_water ) );
 
     // another source port has no entry
-    xdp_host_row_t other = xdp_host_replay_row( "another source port has no entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 );
+    xdp_host_row_t other = xdp_host_replay_row( "another source port has no entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                xdp_host_replay_behind( window ), high_water );
     other.frame.source_port = xdp_host_client_port + 1;
     rows.push_back( other );
 
     // no entry at all
-    xdp_host_row_t none = xdp_host_replay_row( "no replay entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100 );
+    xdp_host_row_t none = xdp_host_replay_row( "no replay entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, xdp_host_replay_behind( window ), high_water );
     none.replay_entry = false;
     rows.push_back( none );
 
     // the wrap: the difference is modulo 2^32, read as signed
-    rows.push_back( xdp_host_expect( xdp_host_replay_row( "high-water 5, sequence 0xfffffff0 is behind across the wrap", family,
-                                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5 ),
+    rows.push_back( xdp_host_expect( xdp_host_replay_row( "high-water 5, sequence a window behind is behind across the wrap", family,
+                                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5u - window, 5 ),
                                      XDP_HOST_DROP, replayed ) );
+    rows.push_back( xdp_host_replay_row( "high-water 5, sequence 0xfffffff0 is inside the window across the wrap", family,
+                                         ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5 ) );
     rows.push_back( xdp_host_replay_row( "high-water 0xfffffff0, sequence 5 is ahead across the wrap", family,
                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u ) );
 }
@@ -1515,10 +1543,11 @@ static void test_xdp_transport_host_replay_drops_behind_the_window()
     xdp_host_run_rows( rows );
 }
 
-// The program never writes the map: one entry at high-water 100, then a
-// forged payload far ahead and a hundred more session packets through the
-// same state, each asserting its verdict and that exactly its counter moved
-// by one, and the entry still reads 100 with no other entry made.
+// The program never writes the map: one entry at a high-water a window past
+// sequence 84, then a forged payload far ahead and a hundred more session
+// packets through the same state, each asserting its verdict and that
+// exactly its counter moved by one, and the entry still reads its
+// high-water with no other entry made.
 
 static void test_xdp_transport_host_replay_never_writes_the_map()
 {
@@ -1532,7 +1561,8 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
         xdp_host_apply_config( xdp_host_config_t() );
         rocketnet_xdp_host_set_socket_slot( 0, 1 );
         const struct rocketnet_server_xdp_replay_key_t key = xdp_host_client_key( families[f], xdp_host_client_port );
-        rocketnet_xdp_host_set_replay_entry( &key, 100 );
+        const uint32_t entry_high_water = ROCKETNET_XDP_REPLAY_WINDOW + 84u;
+        rocketnet_xdp_host_set_replay_entry( &key, entry_high_water );
 
         for ( int i = -1; i < 100; i++ )
         {
@@ -1540,7 +1570,7 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
             frame.family = families[f];
             frame.packet_type = i < 0 ? ROCKETNET_CONNECTION_PAYLOAD_PACKET : session[i % 5];
             frame.sequence = i < 0 ? 0x7fffffffu : (uint32_t) ( i * 3 );
-            const bool behind = (int32_t) ( 100u - frame.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
+            const bool behind = (int32_t) ( entry_high_water - frame.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
             const int want_verdict = behind ? XDP_HOST_DROP : XDP_HOST_REDIRECT;
             const int want_counter = behind ? XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED )
                                             : XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
@@ -1566,7 +1596,7 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 
             uint32_t high_water = 0;
             rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
-            rocketnet_unit_check( high_water == 100 );
+            rocketnet_unit_check( high_water == entry_high_water );
         }
 
         // 1 forged redirect, then rows 0..28 (sequence 0..84) drop and rows
@@ -1576,7 +1606,7 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 
         uint32_t high_water = 0;
         rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
-        rocketnet_unit_check( high_water == 100 );
+        rocketnet_unit_check( high_water == entry_high_water );
         const struct rocketnet_server_xdp_replay_key_t other = xdp_host_client_key( families[f], xdp_host_client_port + 1 );
         rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &other, &high_water ) == 0 );
     }

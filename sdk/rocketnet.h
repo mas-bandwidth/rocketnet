@@ -1011,6 +1011,9 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// field except callbacks and config_bytes names its environment variable.
 /// Overrides are logged with the displaced value. Invalid values refuse
 /// create. Values are not clamped. Empty variables are ignored and logged.
+/// Create reads the environment once, before it validates the config and
+/// sizes memory; connect and start use that resolved config and never read
+/// the environment again.
 ///
 /// Integers use decimal. Byte arrays use base64 with exactly the field's
 /// length. Strings are used as-is.
@@ -1101,19 +1104,19 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES sets the reassembly
     /// buffer. Both ends must match. It must be a multiple of 16 from 4096 ..
-    /// 1048576. Default is 262144.
+    /// 1048576. Default is 1048576.
 
     int receive_message_buffer_bytes;
 
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 1048576.
 
     int max_message_bytes;
 
     /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes.
-    /// Range is 12288 .. 268435456. Default is 800000.
+    /// Range is 12288 .. 268435456. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1271,19 +1274,19 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES sets the reassembly
     /// buffer. Both ends must match. It must be a multiple of 16 from 4096 ..
-    /// 1048576. Default is 262144.
+    /// 1048576. Default is 1048576.
 
     int receive_message_buffer_bytes;
 
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 262144.
+    /// Default is 1048576.
 
     int max_message_bytes;
 
     /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes
-    /// per client. Range is 12288 .. 268435456. Default is 800000.
+    /// per client. Range is 12288 .. 268435456. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1357,7 +1360,8 @@ struct rocketnet_server_config_t
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
 /// Running out of message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED.
+/// MESSAGE_MEMORY_EXHAUSTED. Ask first with rocketnet_client_can_send_message
+/// or rocketnet_server_can_send_message.
 
 struct rocketnet_message_batch_t;
 
@@ -1523,9 +1527,13 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token );
 
-/// Requires rocketnet_client_disconnected(client) to be true; asserts otherwise.
-/// Synchronously joins completed workers, wipes and frees the client memory.
-/// All client pointers become invalid. NULL is allowed.
+/// Expects rocketnet_client_disconnected(client) to be true; asserts otherwise.
+/// Called early, it logs one error naming the skipped completion poll, records
+/// the misuse, requests disconnect and updates the transport a bounded number
+/// of times without sleeping. Once disconnected it joins, wipes and frees; if
+/// the worker has not exited it logs a second error and keeps the client, which
+/// stays owned by that worker. Client pointers become invalid only when destroy frees
+/// the client; on the keep path the client and its pointers stay valid. NULL is allowed.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1606,6 +1614,22 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 /// Does nothing if no message is open.
 
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
+
+/// Returns true if rocketnet_client_start_message with the same channel,
+/// reliability and max_bytes would be given room now. Returns false if it
+/// would not: the message memory is full, or the start would be dropped or
+/// refused (not CONNECTED, a message already open, a bad argument).
+///
+/// Ask before a start you cannot afford to lose. A start that finds no room
+/// still ends the connection with MESSAGE_MEMORY_EXHAUSTED. Only start and
+/// update take room, so a true answer holds until the next of either. Room
+/// returns as the server acknowledges messages.
+///
+/// Changes no state, counts nothing and allocates nothing. Constant time.
+/// A false answer may be pessimistic for a small unreliable message: start
+/// can write it straight into a transport frame without message memory.
+
+ROCKETNET_EXPORT bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Returns the next batch of messages from the server.
 /// Each message has client_index 0. Keep calling until NULL is returned.
@@ -1722,9 +1746,13 @@ ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t 
 
 ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t * server );
 
-/// Requires rocketnet_server_stopped(server) to be true; asserts otherwise.
-/// Synchronously joins completed workers, wipes and frees memory and keys.
-/// All pointers from the server become invalid.
+/// Expects rocketnet_server_stopped(server) to be true; asserts otherwise.
+/// Called early, it logs one error naming the skipped completion poll, records
+/// the misuse, requests stop and updates the transport a bounded number of times
+/// without sleeping. Once stopped it joins, wipes and frees memory and keys; if
+/// the worker has not exited it logs a second error and keeps the server, which
+/// stays owned by that worker. Pointers from the server become invalid only when destroy
+/// frees the server; on the keep path the server and its pointers stay valid.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
@@ -1839,6 +1867,15 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// Does nothing if no message is open.
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
+
+/// Returns true if rocketnet_server_start_message to client_index with the
+/// same channel, reliability and max_bytes would be given room now.
+/// Use it like rocketnet_client_can_send_message. Each client has its own
+/// message memory. Returns false while stopped and for an index without a
+/// connected client. An index outside 0 .. max_clients - 1 is misuse and
+/// returns false.
+
+ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Returns the next batch of messages from all clients.
 /// Each message names its sender in client_index.

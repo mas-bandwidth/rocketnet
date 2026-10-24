@@ -19,8 +19,10 @@ def line(name, fields):
     return name + ": " + " ".join(f"{key}={value}" for key, value in fields.items())
 
 
-def receipt(role, first, count, total=2):
+def receipt(role, first, count, total=2, rate=1):
     server = role == "server"
+    offers = 60 * rate
+    load = "full" if rate == 10 else "rate_1hz"
     window = 60.0
     max_rate = 10000 * 8 / (window * 1000)
     aggregate_rate = max_rate * count
@@ -30,12 +32,12 @@ def receipt(role, first, count, total=2):
                 traffic_actual_s="60.01", drain_actual_s="3.01", barrier_actual_s="4.0",
                 startup_utc_s=1000, traffic_start_utc_s=1002, traffic_end_utc_s=1062,
                 connected=count, startup_complete=1, traffic_complete=1, drain_complete=1,
-                barrier_complete=1, expected_offers=60 * count, missed_due_slots=0, load_complete=1,
+                barrier_complete=1, expected_offers=offers * count, missed_due_slots=0, load_complete=1,
                 late_application_deliveries=0,
-                c2s_offered=0 if server else 60 * count, c2s_accepted=0 if server else 60 * count,
-                c2s_received=60 * count if server else 0,
-                s2c_offered=60 * count if server else 0, s2c_accepted=60 * count if server else 0,
-                s2c_received=0 if server else 60 * count,
+                c2s_offered=0 if server else offers * count, c2s_accepted=0 if server else offers * count,
+                c2s_received=offers * count if server else 0,
+                s2c_offered=offers * count if server else 0, s2c_accepted=offers * count if server else 0,
+                s2c_received=0 if server else offers * count,
                 identity_errors=0, payload_errors=0, order_errors=0,
                 duplicate_errors=0, unexpected_disconnects=0,
                 offer_refusals=0, protocol_errors=0, wire_valid=1,
@@ -45,7 +47,7 @@ def receipt(role, first, count, total=2):
                 aggregate_limit_kbps="1000.0", wire_rate_denominator_s=60,
                 wire_scope="pre_run_to_traffic_end_conservative",
                 workload_scope="traffic_plus_drain", transport="portable",
-                profile="default", payload_bytes=32, rate_target_hz=1,
+                profile="default", payload_bytes=32, rate_target_hz=rate, load=load,
                 fds_pre_init=97, fds_post_init=101, fds_pre_term=103, fds_post_term=99,
                 threads_pre_init=4, threads_post_init=4,
                 threads_pre_term=6, threads_post_term=6,
@@ -58,18 +60,19 @@ def receipt(role, first, count, total=2):
                 timing_budget_basis="server_update_send_p99_upper", verdict="PASS")
 
 
-def stream_lines(role, clients):
+def stream_lines(role, clients, rate=1):
+    offers = 60 * rate
     lines = []
     for client in clients:
         for combo in range(8):
-            due = 60 // 8 + int((combo - client % 8) % 8 < 60 % 8)
+            due = offers // 8 + int((combo - client % 8) % 8 < offers % 8)
             lines.append(line("split_stream", dict(role=role, run_id=RUN, client=client,
                         direction="c2s", combo=combo,
                         sent=due if role == "client-shard" else 0,
                         received=due if role == "server" else 0)))
         lines.append(line("split_stream", dict(role=role, run_id=RUN, client=client,
-                    direction="s2c", combo=3, sent=60 if role == "server" else 0,
-                    received=60 if role == "client-shard" else 0)))
+                    direction="s2c", combo=3, sent=offers if role == "server" else 0,
+                    received=offers if role == "client-shard" else 0)))
     return lines
 
 
@@ -95,25 +98,26 @@ def allocation(server, shards):
                               index, 1) for index, text in enumerate(shards)])
 
 
-def fixture():
+def fixture(rate=1):
+    load = "full" if rate == 10 else "rate_1hz"
     ready = line("split_ready", dict(schema="split_v1", role="server", run_id=RUN,
                  total=2, duration_s=60, profile="default", payload_bytes=32,
-                 rate_target_hz=1, address="192.0.2.1:40000", key="ab" * 32,
+                 rate_target_hz=rate, load=load, address="192.0.2.1:40000", key="ab" * 32,
                  transport="portable"))
     timing = line("split_server_timing", dict(run_id=RUN, scope="traffic_plus_drain",
                   server_update_count=100, server_update_p50_upper_us=20,
                   server_update_p99_upper_us=80, server_update_max_us="89.3",
                   server_send_count=100, server_send_p99_upper_us=80, clock_pair_count=10000))
-    server = "\n".join([ready, *stream_lines("server", range(2)), *wire_lines("server", range(2)), timing,
-                       line("split_receipt", receipt("server", 0, 2))])
+    server = "\n".join([ready, *stream_lines("server", range(2), rate), *wire_lines("server", range(2)), timing,
+                       line("split_receipt", receipt("server", 0, 2, rate=rate))])
     shards = []
     for client in range(2):
         shard_ready = line("split_shard_ready", dict(schema="split_v1", role="client-shard",
                            run_id=RUN, total=2, first=client, count=1, duration_s=60,
-                           profile="default", payload_bytes=32, rate_target_hz=1))
-        shards.append("\n".join([shard_ready, *stream_lines("client-shard", [client]),
+                           profile="default", payload_bytes=32, rate_target_hz=rate, load=load))
+        shards.append("\n".join([shard_ready, *stream_lines("client-shard", [client], rate),
                       *wire_lines("client-shard", [client]),
-                      line("split_receipt", receipt("client-shard", client, 1))]))
+                      line("split_receipt", receipt("client-shard", client, 1, rate=rate))]))
     return server, shards
 
 
@@ -153,6 +157,23 @@ class SplitReceiptTests(unittest.TestCase):
 
     def test_good_partition(self):
         self.assertEqual(self.check(*fixture())["verdict"], "PASS")
+
+    def test_full_load_partition(self):
+        server, shards = fixture(rate=10)
+        result = validate(server, shards, RUN, 2, 60, 1000.0,
+                          allocation_manifest=allocation(server, shards), load="full")
+        self.assertEqual(result["verdict"], "PASS")
+
+    def test_full_load_logs_refused_as_default_load(self):
+        server, shards = fixture(rate=10)
+        with self.assertRaisesRegex(ValueError, "rate_target_hz|load"):
+            self.check(server, shards)
+
+    def test_default_logs_refused_as_full_load(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "rate_target_hz|load"):
+            validate(server, shards, RUN, 2, 60, 1000.0,
+                     allocation_manifest=allocation(server, shards), load="full")
 
     def test_missing_shard(self):
         server, shards = fixture()

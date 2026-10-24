@@ -81,6 +81,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+// the page-tracked restore (see "save and restore") is Linux only
+#if defined(__linux__)
+#define ROCKETNET_FUZZ_PAGE_RESTORE 1
+#include <signal.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#include <sanitizer/asan_interface.h>
+#define ROCKETNET_FUZZ_POISON( p, n ) __asan_poison_memory_region( ( p ), ( n ) )
+#endif
+#endif
+#if !defined(ROCKETNET_FUZZ_POISON) && defined(__SANITIZE_ADDRESS__)
+#include <sanitizer/asan_interface.h>
+#define ROCKETNET_FUZZ_POISON( p, n ) __asan_poison_memory_region( ( p ), ( n ) )
+#endif
+#if !defined(ROCKETNET_FUZZ_POISON)
+#define ROCKETNET_FUZZ_POISON( p, n ) ( (void) ( p ), (void) ( n ) )
+#endif
+#endif
+
 static inline void rocketnet_fuzz_pair_require( bool condition, const char * property )
 {
     if ( condition ) return;
@@ -177,10 +198,39 @@ static struct rocketnet_fuzz_block_t rocketnet_fuzz_blocks[ROCKETNET_FUZZ_MAX_BL
 static int rocketnet_fuzz_num_blocks = 0;
 static bool rocketnet_fuzz_states_saved = false;
 
+#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+static size_t rocketnet_fuzz_page_bytes = 0;
+
+// Every block owns whole pages, so the restore can write-protect a block's
+// pages without touching anything else's. The slack past the block's end is
+// poisoned, so AddressSanitizer still reports a write one byte past it.
+static inline void * rocketnet_fuzz_block_alloc( size_t bytes )
+{
+    if ( rocketnet_fuzz_page_bytes == 0 )
+    {
+        const long page = sysconf( _SC_PAGESIZE );
+        rocketnet_fuzz_pair_require( page > 0, "the page size is known" );
+        rocketnet_fuzz_page_bytes = (size_t) page;
+    }
+    const size_t page_bytes = rocketnet_fuzz_page_bytes;
+    const size_t rounded = bytes == 0 ? page_bytes : ( bytes + page_bytes - 1 ) / page_bytes * page_bytes;
+    void * p = NULL;
+    if ( posix_memalign( &p, page_bytes, rounded ) != 0 )
+        return NULL;
+    if ( rounded > bytes )
+        ROCKETNET_FUZZ_POISON( (uint8_t*) p + bytes, rounded - bytes );
+    return p;
+}
+#endif
+
 static inline void * rocketnet_fuzz_malloc( void *, size_t bytes )
 {
     rocketnet_fuzz_allocations++;
+#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+    void * p = rocketnet_fuzz_block_alloc( bytes );
+#else
     void * p = malloc( bytes );
+#endif
     if ( p )
     {
         rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks < ROCKETNET_FUZZ_MAX_BLOCKS, "the fuzz block table holds every live block" );
@@ -709,12 +759,219 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
     saved->next_port = state.next_port;
 }
 
+// The page-tracked restore (Linux). A full restore copies every live block
+// back, about 112 MB for the pair, and that copy was most of each input's
+// time. Once both states are saved, every block page is write-protected;
+// the first write to a page faults, the handler records the page and makes
+// it writable, and the restore copies back only the recorded pages (plus,
+// when the input asks for the other saved state, the pages where the two
+// saved states differ) and protects them again. It fails closed: if protection
+// cannot be set up, every restore is a full copy, and
+// ROCKETNET_FUZZ_CHECK_RESTORE=1 compares every block with its saved copy
+// after every restore. The pair runs no thread and makes no system call that
+// writes a block (the loopback transport is memory only), so every write to
+// a block is a fault in this thread.
+
+static bool rocketnet_fuzz_check_restore = false;   // ROCKETNET_FUZZ_CHECK_RESTORE=1
+
+static inline void rocketnet_fuzz_restore_full( int which )
+{
+    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+        memcpy( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
+}
+
+#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+
+struct rocketnet_fuzz_page_t
+{
+    int block;
+    uint32_t page;          // the page's index within its block
+};
+
+static struct rocketnet_fuzz_page_t * rocketnet_fuzz_dirty = NULL;     // pages written since the last restore
+static volatile size_t rocketnet_fuzz_num_dirty = 0;
+static uint8_t * rocketnet_fuzz_page_marks[ROCKETNET_FUZZ_MAX_BLOCKS];  // per block page: 1 when in the dirty list
+static struct rocketnet_fuzz_page_t * rocketnet_fuzz_differ = NULL;    // pages where the two saved states differ
+static size_t rocketnet_fuzz_num_differ = 0;
+static int rocketnet_fuzz_protect_state = 0;     // 0 not set up, 1 protected, -1 full copies only
+static int rocketnet_fuzz_live_image = -1;       // the saved state the blocks hold, the dirty pages aside
+static struct sigaction rocketnet_fuzz_old_segv;
+
+static inline size_t rocketnet_fuzz_block_pages( int block )
+{
+    const size_t bytes = rocketnet_fuzz_blocks[block].bytes;
+    return bytes == 0 ? 1 : ( bytes + rocketnet_fuzz_page_bytes - 1 ) / rocketnet_fuzz_page_bytes;
+}
+
+static inline uint8_t * rocketnet_fuzz_page_address( struct rocketnet_fuzz_page_t page )
+{
+    return (uint8_t*) rocketnet_fuzz_blocks[page.block].p + (size_t) page.page * rocketnet_fuzz_page_bytes;
+}
+
+static void rocketnet_fuzz_segv( int sig, siginfo_t * info, void * context )
+{
+    const uintptr_t address = (uintptr_t) info->si_addr;
+    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+    {
+        const uintptr_t begin = (uintptr_t) rocketnet_fuzz_blocks[i].p;
+        const uintptr_t end = begin + rocketnet_fuzz_block_pages( i ) * rocketnet_fuzz_page_bytes;
+        if ( address < begin || address >= end )
+            continue;
+        const uint32_t page = (uint32_t) ( ( address - begin ) / rocketnet_fuzz_page_bytes );
+        if ( rocketnet_fuzz_page_marks[i][page] )
+            break;      // already writable: not our fault
+        rocketnet_fuzz_page_marks[i][page] = 1;
+        struct rocketnet_fuzz_page_t * entry = &rocketnet_fuzz_dirty[rocketnet_fuzz_num_dirty];
+        entry->block = i;
+        entry->page = page;
+        rocketnet_fuzz_num_dirty = rocketnet_fuzz_num_dirty + 1;
+        if ( mprotect( (void*) ( begin + (size_t) page * rocketnet_fuzz_page_bytes ), rocketnet_fuzz_page_bytes, PROT_READ | PROT_WRITE ) == 0 )
+            return;
+        break;
+    }
+    // not a tracked page: hand the fault to whoever had it before
+    if ( rocketnet_fuzz_old_segv.sa_flags & SA_SIGINFO )
+    {
+        if ( rocketnet_fuzz_old_segv.sa_sigaction )
+        {
+            rocketnet_fuzz_old_segv.sa_sigaction( sig, info, context );
+            return;
+        }
+    }
+    else if ( rocketnet_fuzz_old_segv.sa_handler != SIG_DFL && rocketnet_fuzz_old_segv.sa_handler != SIG_IGN )
+    {
+        rocketnet_fuzz_old_segv.sa_handler( sig );
+        return;
+    }
+    sigaction( SIGSEGV, &rocketnet_fuzz_old_segv, NULL );    // the fault repeats under the old disposition
+}
+
+static inline bool rocketnet_fuzz_protect_page( struct rocketnet_fuzz_page_t page, int prot )
+{
+    return mprotect( rocketnet_fuzz_page_address( page ), rocketnet_fuzz_page_bytes, prot ) == 0;
+}
+
+// after both states are saved: the blocks hold the connected image; list the pages
+// where the two images differ, then protect every block page
+static inline bool rocketnet_fuzz_protect_setup()
+{
+    size_t total = 0;
+    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+        total += rocketnet_fuzz_block_pages( i );
+    rocketnet_fuzz_dirty = (struct rocketnet_fuzz_page_t*) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
+    rocketnet_fuzz_differ = (struct rocketnet_fuzz_page_t*) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
+    if ( !rocketnet_fuzz_dirty || !rocketnet_fuzz_differ )
+        return false;
+    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+    {
+        const size_t pages = rocketnet_fuzz_block_pages( i );
+        rocketnet_fuzz_page_marks[i] = (uint8_t*) calloc( pages, 1 );
+        if ( !rocketnet_fuzz_page_marks[i] )
+            return false;
+        const uint8_t * a = (const uint8_t*) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CREATED][i];
+        const uint8_t * b = (const uint8_t*) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CONNECTED][i];
+        const size_t bytes = rocketnet_fuzz_blocks[i].bytes;
+        for ( size_t k = 0; k < pages; k++ )
+        {
+            const size_t from = k * rocketnet_fuzz_page_bytes;
+            if ( from >= bytes )
+                break;
+            const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
+            if ( memcmp( a + from, b + from, n ) != 0 )
+            {
+                rocketnet_fuzz_differ[rocketnet_fuzz_num_differ].block = i;
+                rocketnet_fuzz_differ[rocketnet_fuzz_num_differ].page = (uint32_t) k;
+                rocketnet_fuzz_num_differ++;
+            }
+        }
+    }
+    struct sigaction action;
+    memset( &action, 0, sizeof( action ) );
+    action.sa_sigaction = rocketnet_fuzz_segv;
+    action.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset( &action.sa_mask );
+    if ( sigaction( SIGSEGV, &action, &rocketnet_fuzz_old_segv ) != 0 )
+        return false;
+    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+    {
+        if ( mprotect( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_pages( i ) * rocketnet_fuzz_page_bytes, PROT_READ ) != 0 )
+        {
+            sigaction( SIGSEGV, &rocketnet_fuzz_old_segv, NULL );
+            for ( int j = 0; j <= i; j++ )
+                mprotect( rocketnet_fuzz_blocks[j].p, rocketnet_fuzz_block_pages( j ) * rocketnet_fuzz_page_bytes, PROT_READ | PROT_WRITE );
+            return false;
+        }
+    }
+    rocketnet_fuzz_live_image = ROCKETNET_FUZZ_STATE_CONNECTED;
+    return true;
+}
+
+static inline void rocketnet_fuzz_copy_page( struct rocketnet_fuzz_page_t page, int which )
+{
+    const size_t from = (size_t) page.page * rocketnet_fuzz_page_bytes;
+    const size_t bytes = rocketnet_fuzz_blocks[page.block].bytes;
+    if ( from >= bytes )
+        return;
+    const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
+    memcpy( (uint8_t*) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t*) rocketnet_fuzz_block_copies[which][page.block] + from, n );
+}
+
+static inline void rocketnet_fuzz_restore_pages( int which )
+{
+    // pages the last input wrote: still writable, copy then protect
+    for ( size_t d = 0; d < rocketnet_fuzz_num_dirty; d++ )
+        rocketnet_fuzz_copy_page( rocketnet_fuzz_dirty[d], which );
+    // the other image: the pages where the two saved states differ
+    if ( which != rocketnet_fuzz_live_image )
+    {
+        for ( size_t d = 0; d < rocketnet_fuzz_num_differ; d++ )
+        {
+            const struct rocketnet_fuzz_page_t page = rocketnet_fuzz_differ[d];
+            const bool writable = rocketnet_fuzz_page_marks[page.block][page.page] != 0;
+            if ( !writable )
+                rocketnet_fuzz_pair_require( rocketnet_fuzz_protect_page( page, PROT_READ | PROT_WRITE ), "a differing page opens for the restore" );
+            rocketnet_fuzz_copy_page( page, which );
+            if ( !writable )
+                rocketnet_fuzz_pair_require( rocketnet_fuzz_protect_page( page, PROT_READ ), "a differing page closes after the restore" );
+        }
+        rocketnet_fuzz_live_image = which;
+    }
+    for ( size_t d = 0; d < rocketnet_fuzz_num_dirty; d++ )
+    {
+        const struct rocketnet_fuzz_page_t page = rocketnet_fuzz_dirty[d];
+        rocketnet_fuzz_pair_require( rocketnet_fuzz_protect_page( page, PROT_READ ), "a written page closes after the restore" );
+        rocketnet_fuzz_page_marks[page.block][page.page] = 0;
+    }
+    rocketnet_fuzz_num_dirty = 0;
+}
+
+#endif // #if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+
+static inline void rocketnet_fuzz_restore_blocks( int which )
+{
+#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+    if ( rocketnet_fuzz_protect_state == 0 )
+        rocketnet_fuzz_protect_state = rocketnet_fuzz_protect_setup() ? 1 : -1;
+    if ( rocketnet_fuzz_protect_state == 1 )
+        rocketnet_fuzz_restore_pages( which );
+    else
+        rocketnet_fuzz_restore_full( which );
+#else
+    rocketnet_fuzz_restore_full( which );
+#endif
+    if ( rocketnet_fuzz_check_restore )
+    {
+        for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+            rocketnet_fuzz_pair_require( memcmp( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes ) == 0,
+                                         "a restore leaves every block equal to its saved copy" );
+    }
+}
+
 static inline void rocketnet_fuzz_state_restore( struct rocketnet_fuzz_pair_t * pair, int which )
 {
     const struct rocketnet_fuzz_saved_state_t * saved = &rocketnet_fuzz_saved_states[which];
     rocketnet_fuzz_pair_require( rocketnet_fuzz_num_blocks == rocketnet_fuzz_saved_blocks, "the live blocks are the saved blocks" );
-    for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
-        memcpy( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
+    rocketnet_fuzz_restore_blocks( which );
     *pair = saved->pair;
     rocketnet_fuzz_random_state = saved->random_state;
     rocketnet_fuzz_client_clock_time = saved->client_clock_time;
@@ -1063,6 +1320,8 @@ static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PA
         rocketnet_fuzz_check_replay = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_REPLAY", check, sizeof( check ) ) && check[0] == '1'; \
         char dump[8];                                                                                   \
         rocketnet_fuzz_dump_counters = rocketnet_test_getenv( "ROCKETNET_FUZZ_DUMP_COUNTERS", dump, sizeof( dump ) ) && dump[0] == '1'; \
+        char restore[8];                                                                                \
+        rocketnet_fuzz_check_restore = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_RESTORE", restore, sizeof( restore ) ) && restore[0] == '1'; \
         if ( rocketnet_fuzz_pair_initialize() != 0 )                                                    \
             return 1;                                                                                   \
         char seed_dir[1024];                                                                            \
