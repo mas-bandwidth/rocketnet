@@ -10,6 +10,7 @@
 
 #include "test_unit_registry.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_stats_window.h"
 #include <string.h>
 #include <math.h>
 
@@ -267,3 +268,96 @@ static void test_server_stats_current_rtt_minimum_moves()
 }
 
 REGISTER_UNIT_TEST( test_server_stats_current_rtt_minimum_moves );
+
+// The bucket window (sdk/rocketnet_stats_window.h) the client and the server
+// both advance through. A backwards clock step is not elapsed time: it keeps
+// the current bucket instead of advancing into and zeroing the next one, so a
+// rewound or step-driven clock cannot wipe the published window. Steps of
+// 0.125 seconds, exact in binary, keep every step at or past the 0.1 second
+// bucket width without rounding.
+
+struct stats_window_test_bucket_t
+{
+    uint64_t frame;
+    double time;
+    uint64_t value;
+};
+
+#define STATS_WINDOW_TEST_BUCKETS 11
+
+static const double stats_window_test_step = 0.125;
+
+static int stats_window_test_fill( struct stats_window_test_bucket_t (&buckets)[STATS_WINDOW_TEST_BUCKETS], uint64_t * frame )
+{
+    memset( buckets, 0, sizeof(buckets) );
+    int index = STATS_WINDOW_TEST_BUCKETS - 1;
+    for ( int k = 0; k < STATS_WINDOW_TEST_BUCKETS; k++ )
+    {
+        const int previous = index;
+        *frame += 1;
+        index = rocketnet_stats_window_advance( buckets, index, *frame, 1000.0 + (double) k * stats_window_test_step );
+        check( index == ( previous + 1 ) % STATS_WINDOW_TEST_BUCKETS );
+        buckets[index].value = (uint64_t) k + 1;
+    }
+    return index;
+}
+
+static void test_stats_window_backwards_step_keeps_bucket()
+{
+    struct stats_window_test_bucket_t buckets[STATS_WINDOW_TEST_BUCKETS];
+    uint64_t frame = 0;
+    const int filled = stats_window_test_fill( buckets, &frame );
+    const double newest = buckets[filled].time;
+
+    int index = filled;
+    for ( int i = 0; i < 2 * STATS_WINDOW_TEST_BUCKETS; i++ )
+    {
+        frame++;
+        index = rocketnet_stats_window_advance( buckets, index, frame, 999.0 );
+        check( index == filled );
+    }
+    frame++;
+    index = rocketnet_stats_window_advance( buckets, index, frame, 1000.05 );
+    check( index == filled );
+
+    for ( int i = 0; i < STATS_WINDOW_TEST_BUCKETS; i++ )
+        check( buckets[i].value != 0 && buckets[i].frame != 0 );
+    check( buckets[filled].time == newest );
+}
+
+REGISTER_UNIT_TEST( test_stats_window_backwards_step_keeps_bucket );
+
+static void test_stats_window_advances_after_backwards_step()
+{
+    struct stats_window_test_bucket_t buckets[STATS_WINDOW_TEST_BUCKETS];
+    uint64_t frame = 0;
+    const int filled = stats_window_test_fill( buckets, &frame );
+    const double newest = buckets[filled].time;
+
+    int index = filled;
+    for ( int i = 0; i < 2 * STATS_WINDOW_TEST_BUCKETS; i++ )
+    {
+        frame++;
+        index = rocketnet_stats_window_advance( buckets, index, frame, 999.0 );
+    }
+
+    // one bucket width past the newest bucket's time: exactly one advance,
+    // into the oldest bucket, and every other bucket keeps its value
+    frame++;
+    const double later = newest + stats_window_test_step;
+    index = rocketnet_stats_window_advance( buckets, index, frame, later );
+    const int advanced = ( filled + 1 ) % STATS_WINDOW_TEST_BUCKETS;
+    check( index == advanced );
+    check( buckets[advanced].frame == frame && buckets[advanced].time == later && buckets[advanced].value == 0 );
+    for ( int i = 0; i < STATS_WINDOW_TEST_BUCKETS; i++ )
+    {
+        if ( i != advanced )
+            check( buckets[i].value != 0 );
+    }
+
+    // and again at the same time: still that one bucket
+    frame++;
+    check( rocketnet_stats_window_advance( buckets, index, frame, later ) == advanced );
+}
+
+REGISTER_UNIT_TEST( test_stats_window_advances_after_backwards_step );
