@@ -130,6 +130,21 @@ table). The files have three origins:
 - **regressions** (`regress_<name>`), minimized findings kept forever (see
   "Replaying a crash").
 
+`corpus_config/regress_config_f80d0030` is the four bytes `f8 0d 00 30`:
+table 2 (the message table, as "client"), field 13
+(`message_resend_delay_max_ms`), mode 0 (the per-endpoint name), value "0".
+It is the input that raised the ASan heap oracle "an overlay leaves the heap
+as it found it" at de53cc6a, when `fuzz_setenv` called glibc `setenv`, which
+keeps every NAME=value string it makes for the life of the process. 9e9bac41
+moved `fuzz_setenv` to `putenv` over one harness buffer, and the signal has
+been gone since: on an ASan replay build the input aborts with that oracle
+line at de53cc6a and passes at 9e9bac41 and at main 830c5437; a plain replay
+build never trips it, because the heap check exists only under ASan.
+The library was never at fault. The seed is kept as a regression input for
+that oracle, and the unit case `test_message_config_resend_delay_max_zero_refused`
+in `tests/test_unit_message_config.cpp` pins the library side of the same
+input: the value is refused by the table's range and never clamped.
+
 ## Seed generators
 
 `rocketnet_fuzz_server_transport`, `rocketnet_fuzz_client_transport`,

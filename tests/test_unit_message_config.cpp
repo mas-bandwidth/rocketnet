@@ -25,6 +25,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
+#include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_message_object.h"
@@ -890,8 +891,59 @@ static void test_config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
+// The fuzz seed f8 0d 00 30 (fuzz/corpus_config/regress_config_f80d0030)
+// applies "0" to message_resend_delay_max_ms (range 10..60000, zero is not
+// "use the default"). The harness expects validation to refuse it exactly as
+// it refuses any out-of-range INT; this pins that the library does, by setting
+// the struct field directly, and that the refusal never clamps the value.
+static void test_message_config_resend_delay_max_zero_refused()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    config.message_resend_delay_max_ms = 0;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 0 );
+    config.message_resend_delay_max_ms = 9;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 9 );
+    config.message_resend_delay_max_ms = 60001;
+    check( !rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( config.message_resend_delay_max_ms == 60001 );
+    config.message_resend_delay_max_ms = 2000;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+}
+
+// The message table's range is the table's own; the message config's contract
+// is the range and the cross-field resend rules together (the initial delay
+// must sit inside the min..max the operator chose). A value the table's range
+// accepts can still break the cross rule: a min above the initial delay is
+// refused by the cross rule alone.
+static void test_message_config_resend_delay_cross_rule_refused()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+
+    // 60000 is inside the table's range for the min (0..60000), so the table
+    // accepts it; the cross rule does not, because the initial delay (2000)
+    // would sit below the floor
+    config.message_resend_delay_min_ms = 60000;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( !rocketnet_message_validate_config( &config ) );
+    check( config.message_resend_delay_min_ms == 60000 );
+    config.message_resend_delay_min_ms = 0;
+    check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
+    check( rocketnet_message_validate_config( &config ) );
+}
+
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
+REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
+REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
