@@ -127,9 +127,9 @@ struct rocketnet_received_packet_record_t
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
-// Server statistics observe only these fields. The live ACK endpoint remains
-// the protocol authority; a worker merges dirty projections into its own
-// history and never reads an endpoint concurrently with the update/fill paths.
+// The fields the statistics definition reads, as a standalone history for the
+// reference recompute (rocketnet_ack_stats_history_compute). The live ACK
+// endpoint keeps its own running aggregates; nothing copies into this form.
 struct rocketnet_ack_stats_sent_t
 {
     uint64_t sequence;
@@ -191,21 +191,9 @@ struct rocketnet_ack_stats_validity_t
     void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
 };
 
-struct rocketnet_ack_stats_delta_t
-{
-    rocketnet_ack_stats_history_t values;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent_dirty;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received_dirty;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt_dirty;
-    uint64_t generation;
-    uint8_t reset;
-};
 
 struct rocketnet_ack_endpoint_t
 {
-    // NULL for clients. The server binds this pointer
-    // after endpoint initialization and preserves it across slot reset.
-    rocketnet_ack_stats_delta_t * stats_delta;
     uint64_t sent_lock;                         // guards sent-record reservation and publication
     // highest_sequence folds under fill-phase threads with an atomic max;
     // ack_debt increments on the update thread alone and resets from fill
@@ -422,8 +410,8 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 
-// Shared six-field result for direct worker-history calculation. The caller
-// owns the history exclusively while computing; this function never mutates it.
+// The six-field result of the reference recompute over a standalone history.
+// The function never mutates the history.
 struct rocketnet_ack_stats_result_t
 {
     float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;

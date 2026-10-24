@@ -14682,17 +14682,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         rocketnet_check( estimate.sockets == plan.sockets );
         rocketnet_check( estimate.worker_threads == plan.worker_threads );
 
-        // The host plan describes native production resources even when a
-        // unit build runs the stats worker manually. Stats add one worker
-        // and its stack, but their event-only wake adds no network socket.
+        // The host plan describes native production resources: the transport's
+        // own I/O workers and sockets, and nothing for statistics, which run
+        // on the ack path with no thread of their own.
         rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         rocketnet_server_memory_plan_t io_plan = {};
         rocketnet_check( rocketnet_builtin_server_memory_plan( &config, transport, io_plan ) );
         rocketnet_check( estimate.sockets == io_plan.sockets );
-        rocketnet_check( estimate.worker_threads == io_plan.worker_threads + 1 );
+        rocketnet_check( estimate.worker_threads == io_plan.worker_threads );
         rocketnet_check( estimate.thread_stack_bytes ==
-                         ( (uint64_t) io_plan.worker_threads + 1 ) * estimate.thread_stack_bytes_per_thread );
+                         (uint64_t) io_plan.worker_threads * estimate.thread_stack_bytes_per_thread );
 
         if ( strcmp( transport, "xdp" ) == 0 )
         {
@@ -14706,13 +14706,13 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
             rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
         }
-        // portable: its RX and TX workers and the stats worker
+        // portable: its RX and TX workers
         if ( strcmp( transport, "portable" ) == 0 )
-            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 3 &&
-                             estimate.thread_stack_bytes == 3 * estimate.thread_stack_bytes_per_thread );
-        // rio: its I/O worker and the stats worker
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 2 &&
+                             estimate.thread_stack_bytes == 2 * estimate.thread_stack_bytes_per_thread );
+        // rio: its I/O worker
         if ( strcmp( transport, "rio" ) == 0 )
-            rocketnet_check( estimate.worker_threads == 2 );
+            rocketnet_check( estimate.worker_threads == 1 );
         if ( strcmp( transport, "rio" ) == 0 )
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
@@ -14720,17 +14720,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // The socket requests and transport stacks scale with the configured
-    // queue count; the GSO transmit worker and the stats worker contribute
-    // one additional fixed stack each.
+    // queue count; the GSO transmit worker contributes one additional fixed
+    // stack.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.num_xdp_queues = 8;
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 10 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.thread_stack_bytes == 10ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif

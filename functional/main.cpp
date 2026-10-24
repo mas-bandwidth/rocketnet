@@ -91,8 +91,8 @@ static int rocketnet_functional_test_group( const char * name )
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
 // clients, one process: each builds a loopback server from the development
 // config with the default packet payload limit and one reassembly slot, and
-// seeds a real ACK observation into every slot, so the stats worker's
-// per-slot delta buffers and history become resident by design. Its
+// seeds a real ACK observation into every slot, so the per-slot ACK
+// history becomes resident by design. Its
 // footprint is those servers' memory plans, not the suite-wide bound. The
 // 300-client server is destroyed before the full-capacity one is created,
 // but an allocator may keep its freed pages resident: macOS does (a 994 MiB

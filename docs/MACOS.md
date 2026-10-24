@@ -241,9 +241,7 @@ that waits in frame sync, put back to the standard policy afterwards
 
 Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
-do not receive the client thread's `SCHED_RR` priority request. Every server
-also has the separate background stats worker described in [BUILDING.md,
-"Pre-allocation server resource plans"](../BUILDING.md#pre-allocation-server-resource-plans).
+do not receive the client thread's `SCHED_RR` priority request.
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging

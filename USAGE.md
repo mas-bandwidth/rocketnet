@@ -285,11 +285,7 @@ thread for bounded batched I/O and hands buffers to the frame thread; the
 fallback path uses it as a polling receive worker while sends stay on the frame
 thread. The client transport memory plan includes the SDK allocations for that
 thread, its socket and wake object, but excludes the operating system's thread
-stack reserve and kernel socket queues. Starting a server also prepares
-the background stats worker and its delta-buffer storage. If that storage cannot
-be allocated, `rocketnet_server_start` returns
-`ROCKETNET_STATUS_OUT_OF_MEMORY`; if the worker thread cannot be created, it
-returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
+stack reserve and kernel socket queues.
 The server does not fall back to computing these stats synchronously on the
 frame thread. After a successful start, stop requests worker shutdown;
 `rocketnet_server_stopped` remains false until both transport I/O and the stats
@@ -699,27 +695,14 @@ client and server structs also carry the process-wide counts `api_misuses` and
 
 Client quality stats are computed synchronously when `rocketnet_client_stats`
 is called. Server-wide totals are copied from the server's current counters.
-Server per-client stats combine current counters with the latest published
-ACK-derived quality values. The per-client API call copies those published
-values; it does not calculate them or wait for the stats worker. Server update
-first applies results from at most one previously completed batch (at most 20
-slots), then submits a batch that visits at most 20 configured slots in one
-modulo phase and hands off delta buffers for connected slots. Results from a
-newly submitted batch can be published no earlier than a later update. The
-worker folds those deltas into its rolling ACK history and computes RTT,
-jitter, loss and bandwidth while the main thread continues its frame work. A
-busy worker does not block update. Submission requires a free job bank, a
-spare delta buffer for every selected connected slot, and an immediately
-available exchange mutex. If any condition is missing, update defers the phase
-without advancing the submitted-job ordinal; deltas continue coalescing in the
-producer buffers, and the same phase is retried later. At 1,000 configured slots, a full set of phases spans 50
-successfully submitted jobs; when the worker falls behind, published quality
-values can lag further. Each result carries its connection ID, so a result for
-a reset or reused slot is discarded. Reset clears that slot's published quality
-values immediately. Preallocated delta buffers let the worker retain rolling
-ACK history without a full-history copy on the update path. The bounded
-ownership exchange covers at most 20 slots per submitted batch; this
-design makes no 100-us update-time promise.
+Server per-client stats combine current counters with ACK-derived quality
+values that are always current: each slot keeps running aggregates that every
+send, receive and ack updates in O(1) (the rtt minimum in O(log n)), so RTT,
+jitter, loss and bandwidth equal a full recompute over the retained history at
+every read, and an idle slot costs nothing. The per-client API call copies
+those values; server update does no statistics pass and runs no statistics
+thread. Reset clears that slot's quality values immediately
+(sdk/rocketnet_ack.cpp, tla/RNServerStats.tla).
 
 Watch jitter and loss when conditions worsen; the rtt figure is the minimum
 over the retained history, so it cannot track latency upward until every lower

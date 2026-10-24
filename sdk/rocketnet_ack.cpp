@@ -298,35 +298,6 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->stats_rtt_min_tree[i] = 1e9f;                 // ROCKETNET_ACK_RTT_NONE: no positive sample
 }
 
-static inline void rocketnet_ack_stats_record_sent( rocketnet_ack_stats_delta_t * delta,
-                                                     const rocketnet_sent_packet_record_t * record,
-                                                     uint64_t highest_sequence )
-{
-    const uint32_t slot = (uint32_t) ( record->sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
-    rocketnet_ack_stats_sent_t * projected = &delta->values.sent[slot];
-    projected->sequence = record->sequence;
-    projected->send_time = record->send_time;
-    projected->wire_bytes = record->wire_bytes;
-    projected->acked = record->acked;
-    if ( highest_sequence > delta->values.highest_sent )
-        delta->values.highest_sent = highest_sequence;
-    delta->sent_dirty.set((int)slot);
-}
-
-static inline void rocketnet_ack_stats_record_received( rocketnet_ack_stats_delta_t * delta,
-                                                         const rocketnet_received_packet_record_t * record,
-                                                         uint64_t highest_sequence )
-{
-    const uint32_t slot = (uint32_t) ( record->sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    rocketnet_ack_stats_received_t * projected = &delta->values.received[slot];
-    projected->sequence = record->sequence;
-    projected->receive_time = record->receive_time;
-    projected->wire_bytes = record->wire_bytes;
-    if ( highest_sequence > delta->values.highest_received )
-        delta->values.highest_received = highest_sequence;
-    delta->received_dirty.set((int)slot);
-}
-
 // -----------------------------------------
 //                 the running stats aggregates
 // -----------------------------------------
@@ -856,8 +827,6 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
          sequence <= rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
         rocketnet_ack_stats_sent_add( endpoint, sequence, sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) );
     rocketnet_ack_stats_publish_sent( endpoint );
-    if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
-        rocketnet_ack_stats_record_sent( delta, record, endpoint->highest_sequence );
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
     return result;
 }
@@ -953,8 +922,6 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
     if ( sequence >= base && sequence <= top )
         rocketnet_ack_stats_received_link( endpoint, sequence );
     rocketnet_ack_stats_publish_received( endpoint );
-    if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
-        rocketnet_ack_stats_record_received( delta, record, endpoint->highest_received_sequence );
 }
 
 // Bitmap helpers over the sent ring: slot = sequence % N maps to word
@@ -1156,8 +1123,6 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                 if ( sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) )
                     endpoint->stats_eligible_unacked--;
             }
-            if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
-                rocketnet_ack_stats_record_sent( delta, record, endpoint->highest_sequence );
             newly_acked++;
 
             uint32_t s = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
@@ -1185,12 +1150,6 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             if ( sample >= 0.0 )
             {
                 rocketnet_ack_stats_rtt_write( endpoint, (int) ( sequence % ROCKETNET_RTT_HISTORY_SIZE ), (float) ( sample * 1000.0 ) );
-                if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
-                {
-                    const uint32_t rtt_slot = (uint32_t) ( sequence % ROCKETNET_RTT_HISTORY_SIZE );
-                    delta->values.rtt_history[rtt_slot] = endpoint->rtt_history[rtt_slot];
-                    delta->rtt_dirty.set((int)rtt_slot);
-                }
                 endpoint->has_rtt_sample = 1;
             }
 
@@ -1310,9 +1269,10 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     return newly_acked;
 }
 
-// The endpoint and the worker's compact history use the same calculations.
+// The reference recompute: the endpoint and a standalone history use the same
+// calculations, which the running aggregates must equal at every step.
 // Typed array views keep their native strides and require no scratch copy.
-// sent_written and received_written guard both endpoint and worker rings: an
+// sent_written and received_written guard both kinds of ring: an
 // unwritten record is empty without reading its cold bytes. A fully initialized
 // standalone history may omit the masks.
 template <typename SentRecord, typename ReceivedRecord>
@@ -1579,22 +1539,5 @@ void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, in
 {
     rocketnet_assert( acks );
     rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
-    rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[client_index];
-    // A server reset owns an already initialized endpoint. The generic reset
-    // also serves clients and uninitialized create storage, so keep its full
-    // zeroing contract and restore only this server's bound stats sink here.
-    rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta;
-    const uint64_t next_generation = delta ? ( delta->generation == UINT64_MAX ? 1 : delta->generation + 1 ) : 0;
-    rocketnet_ack_endpoint_reset( endpoint );
-    endpoint->stats_delta = delta;
-    if ( delta )
-    {
-        delta->generation = next_generation;
-        delta->reset = 1;
-        delta->values.highest_sent = 0;
-        delta->values.highest_received = 0;
-        delta->sent_dirty.invalidate();
-        delta->received_dirty.invalidate();
-        delta->rtt_dirty.invalidate();
-    }
+    rocketnet_ack_endpoint_reset( &acks->endpoints[client_index] );
 }

@@ -406,7 +406,6 @@ static void sequence_burn_round( struct sequence_burn_pair_t * pair, int side, i
 
     rocketnet_server_transport_send_packets( pair->server );
     rocketnet_client_transport_send_packets( pair->client );
-    rocketnet_unit_check( rocketnet_server_transport_stats_worker_step_for_test( pair->server ) );
 }
 
 static void sequence_burn_run( int side, int kind, bool burn, const int * control_counts, struct sequence_burn_measures_t * m )

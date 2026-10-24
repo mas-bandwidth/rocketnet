@@ -267,9 +267,6 @@ and `:3573`):
 | portable/msgx socket | one receive worker and one transmit worker | nothing |
 | io_uring | none | nothing |
 
-Every server also runs one background stats worker. It uses a socket-free wake
-and does not receive the network-thread priority override described above.
-
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it; the XDP thread's pin to its queue's cpu always runs.
 A refused call is counted in the stats structs' `thread_priority_refusals` and
@@ -361,8 +358,7 @@ went to a closed port.
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
 is a staged Linux server transport with one io_uring per transport, used only on the
-main thread, with no I/O worker threads. The server still has its separate
-background stats worker. An `SO_REUSEPORT` socket group, bound the
+main thread, with no I/O worker threads. An `SO_REUSEPORT` socket group, bound the
 way the GSO transport binds its group, shards receives across queues. Each queue
 has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
 receive buffers with no syscall per datagram; `send_packets` submits one
