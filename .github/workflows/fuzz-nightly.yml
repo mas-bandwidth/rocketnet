@@ -429,10 +429,10 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/dict/rocketnet_fuzz_message.dict"}'
           - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'

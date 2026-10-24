@@ -13,9 +13,9 @@ connect tokens use only the published development keys from
 |---|---|---|---|
 | `rocketnet_fuzz` | the stateless wire parsers: prefilter, fragment header and reassembly, base64, config values (`input[0] & 3` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
 | `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
-| `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `rocketnet.dict` |
+| `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
-| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `rocketnet.dict` |
+| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
 | `rocketnet_fuzz_round_trip` | every wire form encoded then decoded; the values read must equal the values written | `corpus_round_trip/` | `dict/rocketnet_fuzz_round_trip.dict` |
 | `rocketnet_fuzz_config` | `rocketnet_config_apply_env` over every env-backed config field | `corpus_config/` | `dict/rocketnet_fuzz_config.dict` |
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
