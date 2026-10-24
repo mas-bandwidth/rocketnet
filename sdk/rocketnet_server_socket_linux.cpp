@@ -67,6 +67,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include <stdlib.h>
 #include <stdio.h>
 #include <atomic>
+#include "rocketnet_send_handoff.h"
 
 // the kernel prefilter drops nothing the session replay window would accept
 static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
@@ -211,6 +212,10 @@ struct rocketnet_server_xdp_socket_t
     // past ROCKETNET_RECEIVE_CEILING (rocketnet_xdp_send_copy); written by
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{0};
+
+    // Staged sends this queue refused because the buffer was already full.
+    std::atomic<uint64_t> send_refused_overflow{0};
+    uint64_t send_refused_overflow_reported = 0;
 
     uint8_t padding_5[4096];
 
@@ -2110,17 +2115,13 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( flow_index < 0 ) return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
-    int packet_index = send_buffer->num_packets.fetch_add(1);
-
     // the lower bound matters too: an app that stages forever without ever
     // flushing wraps this counter negative after ~2^31 packets, and a
     // negative index here is an out-of-bounds write, not a dropped packet
 
-    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
-    {
-        rocketnet_warn( "sent too many packets!" );
+    const int packet_index = rocketnet_xdp_send_claim( send_buffer->num_packets, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow );
+    if ( packet_index < 0 )
         return NULL;
-    }
 
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
@@ -2257,6 +2258,14 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        // One warning per queue on a flush that saw new full-buffer refusals, naming the queue and the count.
+        const uint64_t overflow = socket->send_refused_overflow.load( std::memory_order_relaxed );
+        if ( overflow != socket->send_refused_overflow_reported )
+        {
+            const uint64_t newly_refused = overflow - socket->send_refused_overflow_reported;
+            socket->send_refused_overflow_reported = overflow;
+            rocketnet_warn( "xdp queue %d send staging full: refused %llu packets", queue, (unsigned long long) newly_refused );
+        }
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
             continue;
@@ -2731,9 +2740,10 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 }
 
 // The transport's send_failures operation sums frames each queue's flush drops
-// because the copy rejects their length or the codec refuses to build them.
-// The worker publishes these counts atomically so a request/query never waits
-// behind its send mutex while it copies a batch into UMEM.
+// because the copy rejects their length or the codec refuses to build them,
+// plus packets start refused because the staging buffer was full.
+// Those counts are atomic, so a request/query never waits behind the send
+// mutex while the worker copies a batch into UMEM.
 
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket )
 {
@@ -2743,7 +2753,8 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
-                    socket->send_refused_build.load( std::memory_order_relaxed );
+                    socket->send_refused_build.load( std::memory_order_relaxed ) +
+                    socket->send_refused_overflow.load( std::memory_order_relaxed );
     }
     return failures;
 }

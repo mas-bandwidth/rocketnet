@@ -75,4 +75,34 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
 
+// limit claims succeed, the next five are refused and counted, then the same after reset.
+static void test_xdp_transport_send_overflow_counted_once_per_flush()
+{
+    std::atomic<int> num_packets{0};
+    std::atomic<uint64_t> refused{0};
+    const int limit = 4;
+    for (int n = 0; n < limit + 5; ++n)
+    {
+        const int index = rocketnet_xdp_send_claim(num_packets, limit, refused);
+        if (n < limit)
+            rocketnet_unit_check(index == n);
+        else
+            rocketnet_unit_check(index == -1);
+    }
+    rocketnet_unit_check(refused.load() == 5);
+
+    num_packets.store(0);
+    refused.store(0);
+    for (int n = 0; n < limit + 5; ++n)
+    {
+        const int index = rocketnet_xdp_send_claim(num_packets, limit, refused);
+        if (n < limit)
+            rocketnet_unit_check(index == n);
+        else
+            rocketnet_unit_check(index == -1);
+    }
+    rocketnet_unit_check(refused.load() == 5);
+}
+REGISTER_UNIT_TEST(test_xdp_transport_send_overflow_counted_once_per_flush);
+
 #endif // #if defined(__linux__)
