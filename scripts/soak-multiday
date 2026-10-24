@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+#
+# The multi-day soak: one connection, unbounded, past 2^32 packets each way so
+# the wire's 32-bit sequence field wraps on a live connection
+# (standard/TRANSPORT.md t4; docs/roadmap.sexp "Multi-day soaks past 2^32
+# packets on one connection"). Run it on one held bench and leave it.
+#
+#   bash scripts/soak-multiday [--rate R] [--assert-every S] [--summary-every S]
+#                              [--log-dir DIR] [--rotate-bytes B] [--keep-logs N]
+#                              [--seconds S]
+#
+# It starts `soak --one-connection --rate R --assert-every S` (R default 25000
+# packets per second each way; 2^32 in 72 h needs about 16,600; S default 60)
+# and supervises it:
+#
+#   - soak's output goes to DIR/soak.log (DIR default ./soak-multiday-<UTC
+#     start>), rotated to soak.log.1 .. soak.log.N when it passes B bytes
+#     (default 64 MiB, N default 8), oldest dropped;
+#   - every --summary-every seconds (default 3600) one "soak-multiday
+#     summary:" line goes to stdout and DIR/summary.log: elapsed seconds,
+#     packets each way, highest session sequence each way (and whether each
+#     has passed 0xFFFFFFFF), payloads verified each way, peak resident
+#     memory, how many running checks soak has made and whether every one
+#     held (soak's --assert-every line: conservation, every REFUSAL counter 0,
+#     and the resident check);
+#   - it never restarts soak: a restart would be a second connection and hide
+#     the failure. When soak exits the script prints one last summary line,
+#     copies soak's own "soak summary:" lines (every counter) to
+#     DIR/summary.log, and exits with soak's status: 0 only for a clean end.
+#
+# SIGINT or SIGTERM to the script is passed to soak as SIGINT, so an operator
+# stop still ends with soak's full counter summary. --seconds S bounds the run
+# (soak's own --seconds), for checking the harness itself.
+#
+# ROCKETNET_DEV_SESSION_SEQUENCE_START, when set, reaches soak unchanged
+# (sdk/rocketnet_test_seams.h): a bounded check of the harness can start the
+# sequences near the wrap; the multi-day run itself leaves it unset.
+
+set -u
+
+cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
+
+usage()
+{
+    echo "usage: scripts/soak-multiday [--rate R] [--assert-every S] [--summary-every S] [--log-dir DIR] [--rotate-bytes B] [--keep-logs N] [--seconds S]" >&2
+    exit 2
+}
+
+positive()
+{
+    case "$1" in
+        ''|*[!0-9]*|0*) return 1 ;;
+    esac
+    return 0
+}
+
+RATE=25000
+ASSERT_EVERY=60
+SUMMARY_EVERY=3600
+ROTATE_BYTES=$(( 64 * 1024 * 1024 ))
+KEEP_LOGS=8
+SECONDS_BOUND=""
+LOG_DIR=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --rate|--assert-every|--summary-every|--rotate-bytes|--keep-logs|--seconds)
+            [ $# -ge 2 ] || { echo "soak-multiday: missing argument for $1" >&2; usage; }
+            positive "$2" || { echo "soak-multiday: $1 must be a positive integer" >&2; usage; }
+            case "$1" in
+                --rate) RATE="$2" ;;
+                --assert-every) ASSERT_EVERY="$2" ;;
+                --summary-every) SUMMARY_EVERY="$2" ;;
+                --rotate-bytes) ROTATE_BYTES="$2" ;;
+                --keep-logs) KEEP_LOGS="$2" ;;
+                --seconds) SECONDS_BOUND="$2" ;;
+            esac
+            shift 2 ;;
+        --log-dir)
+            [ $# -ge 2 ] && [ -n "$2" ] || { echo "soak-multiday: missing argument for --log-dir" >&2; usage; }
+            LOG_DIR="$2"
+            shift 2 ;;
+        *)
+            echo "soak-multiday: unknown argument '$1'" >&2
+            usage ;;
+    esac
+done
+
+SOAK=./bin/soak
+if [ ! -x "$SOAK" ] && [ -x ./bin/Release/soak.exe ]; then
+    SOAK=./bin/Release/soak.exe
+fi
+if [ ! -x "$SOAK" ]; then
+    echo "soak-multiday: $SOAK not built -- run make first" >&2
+    exit 1
+fi
+
+[ -n "$LOG_DIR" ] || LOG_DIR="./soak-multiday-$( date -u +%Y%m%dT%H%M%SZ )"
+mkdir -p "$LOG_DIR" || exit 1
+LOG="$LOG_DIR/soak.log"
+SUMMARY="$LOG_DIR/summary.log"
+: > "$LOG"
+
+ARGS=( --one-connection --rate "$RATE" --assert-every "$ASSERT_EVERY" )
+[ -n "$SECONDS_BOUND" ] && ARGS+=( --seconds "$SECONDS_BOUND" )
+
+LINEBUF=()
+command -v stdbuf > /dev/null 2>&1 && LINEBUF=( stdbuf -oL -eL )
+
+START=$( date +%s )
+echo "soak-multiday: start $( date -u +%Y-%m-%dT%H:%M:%SZ ) host $( hostname ) soak ${ARGS[*]} log $LOG" | tee -a "$SUMMARY"
+
+# soak writes into a pipe the supervisor reads; the fifo keeps soak's pid ours
+FIFO="$LOG_DIR/.soak.fifo"
+rm -f "$FIFO"
+mkfifo "$FIFO" || exit 1
+"${LINEBUF[@]}" "$SOAK" "${ARGS[@]}" > "$FIFO" 2>&1 &
+SOAK_PID=$!
+
+stop()
+{
+    kill -INT "$SOAK_PID" 2> /dev/null
+}
+trap stop INT TERM
+
+rotate()
+{
+    local i=$KEEP_LOGS
+    rm -f "$LOG.$KEEP_LOGS"
+    while [ "$i" -gt 1 ]; do
+        [ -f "$LOG.$(( i - 1 ))" ] && mv "$LOG.$(( i - 1 ))" "$LOG.$i"
+        i=$(( i - 1 ))
+    done
+    mv "$LOG" "$LOG.1"
+    : > "$LOG"
+}
+
+# the last "soak assert:" line's fields, kept for the summaries
+LAST_ASSERT=""
+ASSERTS=0
+ASSERTS_FAILED=0
+
+field()
+{
+    # the value after "<name> " in the last assert line, up to the comma
+    echo "$LAST_ASSERT" | sed -n "s/.* $1 \([^,]*\),.*/\1/p"
+}
+
+wrapped()
+{
+    # 1 when a hex sequence is past 0xFFFFFFFF
+    local hex="${1#0x}"
+    [ -n "$hex" ] || { echo 0; return; }
+    hex=$( echo "$hex" | sed 's/^0*//' )
+    [ ${#hex} -gt 8 ] && echo 1 || echo 0
+}
+
+summary()
+{
+    local now elapsed client_sequence server_sequence
+    now=$( date +%s )
+    elapsed=$(( now - START ))
+    client_sequence=$( field client_highest_sent_sequence )
+    server_sequence=$( field server_highest_sent_sequence )
+    echo "soak-multiday summary: $( date -u +%Y-%m-%dT%H:%M:%SZ ) elapsed ${elapsed} s," \
+         "client_sent $( field client_sent ), server_sent $( field server_sent )," \
+         "client_highest_sent_sequence ${client_sequence:-0x0} (wrapped $( wrapped "$client_sequence" ))," \
+         "server_highest_sent_sequence ${server_sequence:-0x0} (wrapped $( wrapped "$server_sequence" ))," \
+         "client_verified $( field client_verified ), server_verified $( field server_verified )," \
+         "peak_resident $( field peak_resident ), asserts ${ASSERTS}, asserts_failed ${ASSERTS_FAILED}" | tee -a "$SUMMARY"
+}
+
+NEXT_SUMMARY=$(( START + SUMMARY_EVERY ))
+BYTES=0
+while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$LOG"
+    BYTES=$(( BYTES + ${#line} + 1 ))
+    case "$line" in
+        "soak assert: "*)
+            LAST_ASSERT="$line"
+            ASSERTS=$(( ASSERTS + 1 ))
+            case "$line" in *", FAILED") ASSERTS_FAILED=$(( ASSERTS_FAILED + 1 )) ;; esac ;;
+    esac
+    if [ "$BYTES" -ge "$ROTATE_BYTES" ]; then
+        rotate
+        BYTES=0
+    fi
+    if [ "$( date +%s )" -ge "$NEXT_SUMMARY" ]; then
+        summary
+        NEXT_SUMMARY=$(( NEXT_SUMMARY + SUMMARY_EVERY ))
+    fi
+done < "$FIFO"
+
+wait "$SOAK_PID"
+STATUS=$?
+rm -f "$FIFO"
+
+summary
+# soak's closing lines, oldest log first: a rotation can fall inside them
+LOGS=()
+i=$KEEP_LOGS
+while [ "$i" -ge 1 ]; do
+    [ -f "$LOG.$i" ] && LOGS+=( "$LOG.$i" )
+    i=$(( i - 1 ))
+done
+LOGS+=( "$LOG" )
+grep -h '^soak summary: \|^soak finished: \|^soak: ' "${LOGS[@]}" >> "$SUMMARY"
+echo "soak-multiday: soak exited $STATUS after $(( $( date +%s ) - START )) s" | tee -a "$SUMMARY"
+exit "$STATUS"
