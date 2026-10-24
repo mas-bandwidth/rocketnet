@@ -61,6 +61,16 @@ inline void rocketnet_jitter_tracker_packet_received( rocketnet_jitter_tracker_t
     if ( sequence == tracker->last_packet_processed + 1 && tracker->last_packet_time > 0.0 )
     {
         const double delta = time - tracker->last_packet_time;
+
+        // a stamp that steps backwards is not a sample: re-seed and skip it,
+        // as the ack rtt sample discards a negative value
+        if ( delta < 0.0 )
+        {
+            tracker->last_packet_processed = sequence;
+            tracker->last_packet_time = time;
+            return;
+        }
+
         const double jitter = fabs( delta - tracker->last_packet_delta );
         tracker->last_packet_delta = delta;
 
