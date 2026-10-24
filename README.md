@@ -83,6 +83,7 @@ memory use and transport qualification still need attention; see the
 - [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
+- [KEYS.md](KEYS.md) — the backend and server keys: generating, where each lives, development versus production, rotation.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
   receiving, channels, configuration, and state transitions.
 - [docs/LINUX.md](docs/LINUX.md) — the Linux server guide: the transport ladder

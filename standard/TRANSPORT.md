@@ -216,17 +216,16 @@ field's default.
 | server max_clients limit | `1000` | integer | none: a limit of this revision | |
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
-| server max_payload_bytes | `16384` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
-| client max_payload_bytes | `16384` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
 | client max_fragmented_messages | `8` | integer | `ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES` | as the server field |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
+| reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
 The server's X25519 keypair has no configuration field and no environment
 variable. The server generates it at create.
@@ -2421,7 +2420,7 @@ The client is in exactly one of the states of the table below. A state number is
 
 1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
 2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
-3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it.
+3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it. When the token names both families and the host can use both, the selected address is the IPv6 address and the client MUST also dial the IPv4 address, from a socket of its own opened with the connect, and send each requesting cookie (1) packet to both addresses until the first valid connection cookie arrives. Only this stateless stage races: that first cookie commits the attempt to the family it arrived on, the committed family's address is the server address for the rest of the attempt, the client MUST send its connection request only to that family, and it MUST close the other family's socket. A packet from the other family's address after the commit, a late cookie included, MUST be dropped and counted as from a foreign source. The token's lifetime and timeout bound the attempt as for one address. With one family named, or one family usable, the choice is the single address exactly as above.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).

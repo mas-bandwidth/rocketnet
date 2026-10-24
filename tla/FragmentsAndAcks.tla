@@ -85,7 +85,7 @@ CONSTANTS
     Counts,         \* fragment counts the honest sender uses, within 2..MaxCount
     Stride,         \* the honest non-final fragment size
     FinalBytes,     \* the honest final fragment size, 1..Stride
-    MaxPayload,     \* max_payload_bytes at the receiver
+    MaxPayload,     \* ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES at the receiver
     MaxFragment,    \* ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES: the staging bound
     DrainCap,       \* packets the receiver drains per update
     DeliveredCap,   \* delivered_capacity: completions deliverable per update

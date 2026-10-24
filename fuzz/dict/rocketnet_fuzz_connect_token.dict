@@ -1,0 +1,116 @@
+# The connect-token fuzz target's own constants and field boundaries.
+# Every value is spelled in the byte order the parser reads it.
+
+# ROCKETNET_WIRE_VERSION, 0x4E7C1A93, little-endian (sdk/rocketnet_connect_token.h)
+version="\x93\x1a\x7c\x4e"
+
+# ROCKETNET_DEV_PROTOCOL_ID, 0x1122334455667788, little-endian (sdk/rocketnet_connect_token.h)
+protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
+
+# ROCKETNET_TEST_CREATE_TS, 1756166400, u64 little-endian (sdk/rocketnet_test_vectors.h)
+create_timestamp="\x00\xf9\xac\x68\x00\x00\x00\x00"
+
+# ROCKETNET_TEST_EXPIRE_TS, 1756166700, u64 little-endian (sdk/rocketnet_test_vectors.h)
+expire_timestamp="\x2c\xfa\xac\x68\x00\x00\x00\x00"
+
+# ROCKETNET_TEST_TIMEOUT, 10, int32 little-endian (sdk/rocketnet_test_vectors.h)
+timeout_seconds="\x0a\x00\x00\x00"
+
+# ROCKETNET_ADDRESS_FLAG_IPV4 (sdk/rocketnet_connect_token.h)
+address_ipv4="\x01"
+
+# ROCKETNET_ADDRESS_FLAG_IPV6 (sdk/rocketnet_connect_token.h)
+address_ipv6="\x02"
+
+# ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 (sdk/rocketnet_connect_token.h)
+address_both="\x03"
+
+# The first disallowed address-flags bit past the two defined flags (sdk/rocketnet_connect_token.h)
+address_reserved="\x04"
+
+# The vector server address 203.0.113.10:40000 in ROCKETNET_SIGNED_OFFSET_IPV4's layout (sdk/rocketnet_test_vectors.h)
+ipv4_address="\xcb\x00\x71\x0a\x40\x9c"
+
+# The vector IPv6 address [2001:db8::1]:65535 in ROCKETNET_SIGNED_OFFSET_IPV6's layout (tests/test_unit_connect_token_vectors.cpp)
+ipv6_address="\x01\x20\xb8\x0d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff"
+
+# rocketnet_dev_server_public_key (sdk/rocketnet_connect_token.cpp)
+server_public_key="\x3d\x24\x90\x88\x9d\x37\x4c\x29\x6f\xab\x1d\x57\x70\xcb\x71\x47\x6a\x06\xf7\x4e\xf2\xf2\x54\x0c\xf2\x21\x5f\x76\x14\xf4\x80\x1c"
+
+# rocketnet_dev_backend_public_key (sdk/rocketnet_connect_token.cpp)
+backend_public_key="\xb0\xab\x03\xb3\xe2\x6e\xf1\x7c\x72\xe3\xbd\x99\x29\xa5\xb4\xbf\x48\xbd\xba\x50\x57\x3f\x1b\x8d\x08\x4a\x08\xd8\x58\xbd\x24\x2c"
+
+# rocketnet_test_token_c2s_key (sdk/rocketnet_test_vectors.h)
+clear_client_to_server_key="\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"
+
+# rocketnet_test_token_s2c_key (sdk/rocketnet_test_vectors.h)
+clear_server_to_client_key="\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0"
+
+# rocketnet_test_token_identifier (sdk/rocketnet_test_vectors.h)
+token_identifier="\xf5\x20\xda\x9d\x95\xfd\x07\x22\x56\xb4\x7d\x75\x5f\x81\x0f\x61"
+
+# rocketnet_test_frozen_token at ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK (sdk/rocketnet_test_vectors.h)
+sealed_block_head="\xb3\x10\xfd\xd3\x03\xd6\xaa\xd8\xc7\x90\x0d\xfc\x42\x52\xd9\x4d"
+
+# rocketnet_test_frozen_token at the signature offset, after the signed data (sdk/rocketnet_test_vectors.h)
+signature_head="\x6b\x36\x92\xb4\x9d\x36\xb7\xa2\x76\x30\x33\x40\xab\x83\x99\xb9\x85\x61\xac\x68"
+
+# ROCKETNET_SIGNED_OFFSET_VERSION, 0 (sdk/rocketnet_connect_token.h)
+signed_version_offset="\x00"
+
+# ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID, 4 (sdk/rocketnet_connect_token.h)
+signed_protocol_id_offset="\x04"
+
+# ROCKETNET_SIGNED_OFFSET_CREATE, 12 (sdk/rocketnet_connect_token.h)
+signed_create_offset="\x0c"
+
+# ROCKETNET_SIGNED_OFFSET_EXPIRE, 20 (sdk/rocketnet_connect_token.h)
+signed_expire_offset="\x14"
+
+# ROCKETNET_SIGNED_OFFSET_TIMEOUT, 28 (sdk/rocketnet_connect_token.h)
+signed_timeout_offset="\x1c"
+
+# ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS, 32 (sdk/rocketnet_connect_token.h)
+signed_flags_offset="\x20"
+
+# ROCKETNET_SIGNED_OFFSET_IPV4, 33 (sdk/rocketnet_connect_token.h)
+signed_ipv4_offset="\x21"
+
+# ROCKETNET_SIGNED_OFFSET_IPV6, 39 (sdk/rocketnet_connect_token.h)
+signed_ipv6_offset="\x27"
+
+# ROCKETNET_SIGNED_OFFSET_SERVER_KEY, 57 (sdk/rocketnet_connect_token.h)
+signed_server_key_offset="\x39"
+
+# ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK, 89 (sdk/rocketnet_connect_token.h)
+signed_sealed_block_offset="\x59"
+
+# ROCKETNET_SIGNED_CONNECT_DATA_BYTES, 576, u16 little-endian (sdk/rocketnet_connect_token.h)
+signed_data_bytes="\x40\x02"
+
+# ROCKETNET_SIGNATURE_BYTES, 64, u16 little-endian (sdk/rocketnet_connect_token.h)
+signature_bytes="\x40\x00"
+
+# ROCKETNET_SEALED_BLOCK_BYTES, 432, u16 little-endian (sdk/rocketnet_connect_token.h)
+sealed_block_bytes="\xb0\x01"
+
+# ROCKETNET_PRIVATE_BLOCK_BYTES, 384, u16 little-endian (sdk/rocketnet_connect_token.h)
+private_block_bytes="\x80\x01"
+
+# ROCKETNET_CONNECT_TOKEN_BYTES, 768, u16 little-endian (sdk/rocketnet_connect_token.h)
+connect_token_bytes="\x00\x03"
+
+# ROCKETNET_KEY_BYTES, 32, u16 little-endian (sdk/rocketnet_connect_token.h)
+key_bytes="\x20\x00"
+
+# ROCKETNET_USER_DATA_BYTES, 256, u16 little-endian (sdk/rocketnet_connect_token.h)
+user_data_bytes="\x00\x01"
+
+# ROCKETNET_TOKEN_IDENTIFIER_BYTES, 16, u16 little-endian (sdk/rocketnet_connect_token.h)
+identifier_bytes="\x10\x00"
+
+# ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 710, u16 little-endian (sdk/rocketnet_wire.h)
+request_wire_bytes="\xc6\x02"
+
+# ROCKETNET_SEND_BUDGET, 1452, u16 little-endian (sdk/rocketnet_wire.h)
+send_budget_bytes="\xac\x05"

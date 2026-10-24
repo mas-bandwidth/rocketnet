@@ -452,7 +452,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
-// tla/RNReceipts.tla WritePacket
+// tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -550,6 +550,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // Processes one acked transport sequence `packet_id` at time `now`
 // (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
+// tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -752,6 +753,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 }
 
 // Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
+// tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
