@@ -215,13 +215,15 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
 
     frame_sync->waiter_thread = pthread_self();
 
+    // a period past the uint32_t policy fields (a very low frame rate) is
+    // refused rather than truncated into a wrong contract
     const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
-    const uint64_t period_mach = frame_sync->period_ns * timebase.denom / timebase.numer;
-
     thread_time_constraint_policy_data_t policy;
-    policy.period = (uint32_t) period_mach;
-    policy.computation = (uint32_t) ( period_mach / 4 );
-    policy.constraint = (uint32_t) ( period_mach / 2 );
+    if ( !rocketnet_frame_sync_time_constraint( frame_sync->period_ns, timebase.numer, timebase.denom, &policy.period, &policy.computation, &policy.constraint ) )
+    {
+        rocketnet_info( "frame sync: time constraint policy skipped, period out of range, plain absolute sleep" );
+        return;
+    }
     policy.preemptible = TRUE;
 
     // mach_thread_self returns a new send right on each call; it is released
@@ -324,17 +326,17 @@ void rocketnet_frame_sync_adapt_guard( double * guard_ewma_ns, uint64_t overslee
     *guard_ewma_ns = next;
 }
 
-int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, uint64_t woke_ns, uint64_t * error_ns )
+uint64_t rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, uint64_t woke_ns, uint64_t * error_ns )
 {
     rocketnet_assert( deadline_ns );
     rocketnet_assert( error_ns );
     rocketnet_assert( period_ns > 0 );
     const uint64_t error = woke_ns > *deadline_ns ? woke_ns - *deadline_ns : 0;
     *error_ns = error;
-    int drops = 0;
+    uint64_t drops = 0;
     if ( error > period_ns )
     {
-        drops = (int) ( error / period_ns );
+        drops = error / period_ns;
         *deadline_ns += ( ( error / period_ns ) + 1 ) * period_ns;
     }
     else
@@ -342,6 +344,25 @@ int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, ui
         *deadline_ns += period_ns;
     }
     return drops;
+}
+
+int rocketnet_frame_sync_time_constraint( uint64_t period_ns, uint32_t numer, uint32_t denom, uint32_t * period, uint32_t * computation, uint32_t * constraint )
+{
+    rocketnet_assert( numer > 0 );
+    rocketnet_assert( period );
+    rocketnet_assert( computation );
+    rocketnet_assert( constraint );
+    // range rule: period_ns * denom must fit uint64_t and the period in mach
+    // units must fit the uint32_t policy fields, else nothing is written
+    if ( denom != 0 && period_ns > UINT64_MAX / denom )
+        return 0;
+    const uint64_t period_mach = period_ns * denom / numer;
+    if ( period_mach > UINT32_MAX )
+        return 0;
+    *period = (uint32_t) period_mach;
+    *computation = (uint32_t) ( period_mach / 4 );
+    *constraint = (uint32_t) ( period_mach / 2 );
+    return 1;
 }
 
 // -------------------------------------------------------------------
@@ -495,11 +516,11 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 
     const uint64_t woke = rocketnet_frame_sync_now_ns();
 
-    const int drops = rocketnet_frame_sync_advance( &frame_sync->deadline_ns, frame_sync->period_ns, woke, &frame_sync->wakeup_error_ns );
+    const uint64_t drops = rocketnet_frame_sync_advance( &frame_sync->deadline_ns, frame_sync->period_ns, woke, &frame_sync->wakeup_error_ns );
     if ( drops > 0 )
     {
-        frame_sync->dropped_frames += (uint64_t) drops;
-        rocketnet_debug( "frame sync: dropped %d frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", (double) frame_sync->wakeup_error_ns / 1000000.0 );
+        frame_sync->dropped_frames += drops;
+        rocketnet_debug( "frame sync: dropped %" PRIu64 " frame%s (%.2fms late)", drops, drops == 1 ? "" : "s", (double) frame_sync->wakeup_error_ns / 1000000.0 );
     }
 
     frame_sync->frame++;

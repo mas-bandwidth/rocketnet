@@ -519,7 +519,7 @@ static inline int rocketnet_fuzz_pair_seal_c2s( struct rocketnet_fuzz_pair_t * p
     }
     if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
     {
-        const uint64_t sequence = m->replay_handshake.highest_opened + 1 + (uint64_t) skip;
+        const uint64_t sequence = m->handshake_highest_opened + 1 + (uint64_t) skip;
         return rocketnet_write_sealed_packet( packet, type, filter, sequence, NULL, plaintext, plaintext_bytes,
                                               protocol_id, m->connection_salt, m->client_ephemeral_public_key, m->keys.handshake_client_to_server );
     }

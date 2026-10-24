@@ -30,6 +30,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_hash.h"
+#include "rocketnet_send_handoff.h"
 
 #include <ifaddrs.h>
 #include <bpf/bpf.h>
@@ -212,6 +213,15 @@ struct rocketnet_server_xdp_socket_t
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{0};
 
+    // staged packets the start path refused because the queue was full or its
+    // counter had wrapped negative (rocketnet_xdp_send_claim); written by the
+    // fill threads, read by this queue's xdp thread at flush time
+    std::atomic<uint64_t> send_refused_overflow{0};
+
+    // the overflow count this queue's xdp thread already warned about; only
+    // that thread writes it
+    uint64_t send_refused_overflow_warned{0};
+
     uint8_t padding_5[4096];
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -319,31 +329,31 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
         return false;
     }
 
-    // xx.xx.xx.xx.xx.xx
-
-    char mac_address_string[18];
+    char mac_address_string[64];
 
     if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
     {
         fclose( file );
+        rocketnet_error( "could not parse mac address of network interface %s from %s (xx:xx:xx:xx:xx:xx)", interface_name, path );
         return false;
     }
 
-    mac_address_string[2] = 0;
-    mac_address_string[5] = 0;
-    mac_address_string[8] = 0;
-    mac_address_string[11] = 0;
-    mac_address_string[14] = 0;
-    mac_address_string[17] = 0;
-
-    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
-
     fclose( file );
+
+    // the same strict parse the override uses, so a short or empty line refuses
+
+    if ( !rocketnet_xdp_parse_mac_address( mac_address_string, mac_address ) )
+    {
+        rocketnet_error( "could not parse mac address of network interface %s from %s (xx:xx:xx:xx:xx:xx)", interface_name, path );
+        return false;
+    }
+
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    if ( memcmp( mac_address, zero_mac, 6 ) == 0 )
+    {
+        rocketnet_error( "mac address of network interface %s is all-zero in %s", interface_name, path );
+        return false;
+    }
 
     return true;
 }
@@ -418,39 +428,15 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     const int gateway_ethernet_address_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
     if ( gateway_ethernet_address_found < 0 || ( gateway_ethernet_address_found > 0 && gateway_ethernet_address_env[0] != '\0' ) )
     {
-        bool valid = gateway_ethernet_address_found > 0 && strlen( gateway_ethernet_address_env ) == 17;
-        for ( int i = 0; valid && i < 17; i++ )
-        {
-            const char c = gateway_ethernet_address_env[i];
-            if ( ( i % 3 ) == 2 )
-                valid = c == ':' || c == '.';
-            else
-                valid = ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) || ( c >= 'A' && c <= 'F' );
-        }
+        // the same strict parse the sysfs read uses
 
-        if ( !valid )
+        if ( gateway_ethernet_address_found <= 0 || !rocketnet_xdp_parse_mac_address( gateway_ethernet_address_env, mac_address ) )
         {
             rocketnet_error( "could not parse ROCKETNET_GATEWAY_ETHERNET_ADDRESS=\"%s\" as a mac address (xx:xx:xx:xx:xx:xx)", gateway_ethernet_address_env );
             return false;
         }
 
         rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
-
-        char mac_address_string[18];
-        memcpy( mac_address_string, gateway_ethernet_address_env, 17 );
-        mac_address_string[2] = 0;
-        mac_address_string[5] = 0;
-        mac_address_string[8] = 0;
-        mac_address_string[11] = 0;
-        mac_address_string[14] = 0;
-        mac_address_string[17] = 0;
-
-        mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-        mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-        mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-        mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-        mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-        mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
     }
     else
     {
@@ -809,7 +795,7 @@ static bool rocketnet_server_socket_interface_is_veth( const char * interface_na
     return veth;
 }
 
-bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
+static bool rocketnet_server_socket_preflight_with_cpus( const char * public_address_string, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( public_address_string );
     rocketnet_assert( num_queues >= 1 );
@@ -866,8 +852,10 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     // script does the clearing, deliberately).
 
     {
-        unsigned int attached_program_id = 0;
-        const int query_result = rocketnet_xdp_query_id( (int) interface_index, &attached_program_id );
+        // every attach mode is read: a multi-mode attachment reports prog_id 0
+        rocketnet_xdp_attached_t attached;
+        memset( &attached, 0, sizeof(attached) );
+        const int query_result = rocketnet_xdp_query_attached( (int) interface_index, &attached );
         if ( query_result != 0 )
         {
             // silence must never verify: an unanswerable exclusivity query
@@ -878,9 +866,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
             provisioned = false;
         }
-        else if ( attached_program_id != 0 )
+        else if ( rocketnet_xdp_attached_any( &attached ) )
         {
-            rocketnet_warn( "xdp pre-flight: an XDP program (id %u) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, interface_name, interface_name, num_queues );
+            unsigned int attached_program_id = attached.prog_id;
+            const char * attached_mode = "single";
+            if ( attached.drv_prog_id != 0 ) { attached_program_id = attached.drv_prog_id; attached_mode = "native"; }
+            else if ( attached.skb_prog_id != 0 ) { attached_program_id = attached.skb_prog_id; attached_mode = "generic"; }
+            else if ( attached.hw_prog_id != 0 ) { attached_program_id = attached.hw_prog_id; attached_mode = "offload"; }
+            rocketnet_warn( "xdp pre-flight: an XDP program (id %u, %s mode) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, attached_mode, interface_name, interface_name, num_queues );
             provisioned = false;
         }
     }
@@ -947,6 +940,19 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     {
         rocketnet_warn( "xdp pre-flight: only %d isolated cpus for %d queues (R4 scales with B1): one queue wants one isolated core", rocketnet_server_socket_count_cpu_list( isolated ), num_queues );
         provisioned = false;
+    }
+
+    // R4's pin targets: the threads pin to num_os_cpus .. num_os_cpus +
+    // num_queues - 1, and every one of those cpus must be isolated
+
+    if ( have_isolated )
+    {
+        int first_missing = -1;
+        if ( !rocketnet_xdp_pin_targets_isolated( isolated, num_os_cpus, num_queues, &first_missing ) )
+        {
+            rocketnet_warn( "xdp pre-flight: pin target cpu %d is not in the isolated set %s (R4): one queue, one core -- run scripts/rocketnet-provision %s %d", first_missing, isolated, interface_name, num_queues );
+            provisioned = false;
+        }
     }
 
     // R4: each of the interface's queue IRQs is pinned to exactly one cpu
@@ -1181,6 +1187,12 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
+bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
+{
+    // the public pre-flight answers for the transport's default cpu count
+    return rocketnet_server_socket_preflight_with_cpus( public_address_string, num_queues, 1 );
+}
+
 rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * packet_filter, int num_queues, int num_os_cpus, const char * second_server_address, int * create_status )
 {
     rocketnet_assert( num_queues >= 1 );
@@ -1270,7 +1282,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // is the library's own per-socket work: its BPF program built, loaded
     // and attached, AF_XDP binds, the memlock rlimit.
 
-    if ( !rocketnet_server_socket_preflight( public_address_string, num_queues ) )
+    if ( !rocketnet_server_socket_preflight_with_cpus( public_address_string, num_queues, num_os_cpus ) )
     {
         rocketnet_error( "xdp pre-flight failed: this machine is not provisioned for the XDP data plane (see scripts/rocketnet-provision)" );
         return NULL;
@@ -2110,17 +2122,14 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( flow_index < 0 ) return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
-    int packet_index = send_buffer->num_packets.fetch_add(1);
-
     // the lower bound matters too: an app that stages forever without ever
     // flushing wraps this counter negative after ~2^31 packets, and a
-    // negative index here is an out-of-bounds write, not a dropped packet
+    // negative index here is an out-of-bounds write, not a dropped packet.
+    // the claim counts a refusal instead of logging on this hot path
 
-    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
-    {
-        rocketnet_warn( "sent too many packets!" );
+    const int packet_index = rocketnet_xdp_send_claim( send_buffer->num_packets, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow );
+    if ( packet_index < 0 )
         return NULL;
-    }
 
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
@@ -2699,9 +2708,15 @@ static void pin_thread_to_cpu( int cpu )
         return;
     }
 
-    int num_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
-    rocketnet_assert( cpu < num_cpus );
-    (void) num_cpus; // read only by the assert above
+    // an offline cpu refuses like an out-of-set one: the queue stays
+    // unpinned rather than aborting inside its thread
+
+    const int num_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    if ( cpu >= num_cpus )
+    {
+        rocketnet_error( "xdp thread not pinned: cpu %d is not online (0 .. %d)", cpu, num_cpus - 1 );
+        return;
+    }
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
@@ -2731,7 +2746,8 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 }
 
 // The transport's send_failures operation sums frames each queue's flush drops
-// because the copy rejects their length or the codec refuses to build them.
+// because the copy rejects their length or the codec refuses to build them,
+// and the packet starts it refused because the queue was full.
 // The worker publishes these counts atomically so a request/query never waits
 // behind its send mutex while it copies a batch into UMEM.
 
@@ -2743,7 +2759,8 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
-                    socket->send_refused_build.load( std::memory_order_relaxed );
+                    socket->send_refused_build.load( std::memory_order_relaxed ) +
+                    socket->send_refused_overflow.load( std::memory_order_relaxed );
     }
     return failures;
 }
@@ -2767,7 +2784,8 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
     server->socket = queue;
     queue->send_refused_length.store( 5 );
     queue->send_refused_build.store( 7 );
-    const bool valid = rocketnet_server_socket_send_failures( server ) == 12;
+    queue->send_refused_overflow.store( 3 );
+    const bool valid = rocketnet_server_socket_send_failures( server ) == 15;
     queue->~rocketnet_server_xdp_socket_t();
     server->~rocketnet_server_socket_t();
     rocketnet_free( NULL, queue_storage );
@@ -2978,7 +2996,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // descriptor read and its frame held while the staging buffer has room.
             uint32_t num_consumed = 0;
 
+            // The frames this pass hands back to the fill ring: one per
+            // descriptor read whose frame lies in the receive region, so it
+            // can be fewer than num_consumed (rocketnet_xdp_fill_return).
+            uint32_t num_returned = 0;
+
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+            const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+            const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
             for ( uint32_t i = 0; i < num_packets; i++ ) 
             {
@@ -2987,18 +3013,22 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 
-                frame[num_consumed] = desc->addr;
                 num_consumed++;
+
+                // only a receive-region frame goes back to the fill queue; a
+                // descriptor naming any other frame is dropped, never refilled
+                // (tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
+                if ( rocketnet_xdp_fill_return( desc->addr, receive_region_begin, receive_region_end, &frame[num_returned] ) )
+                    num_returned++;
 
                 // the descriptor is checked against the receive region and
                 // its own frame before a byte of it is read; a refused one is
-                // counted in receive_drops.descriptor, and its address stays
-                // in frame[] above, so it goes back to the fill queue like any
-                // dropped frame
+                // counted once, in receive_drops.descriptor (a refused one in
+                // the receive region still went back to the fill queue above,
+                // like any dropped frame)
 
                 const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
+                    receive_region_begin, receive_region_end,
                     desc->addr, desc->len, &socket->receive_drops );
                 if ( !packet_data )
                     continue;
@@ -3038,8 +3068,11 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 &socket->receive_queue );
 
             // The peek was bounded by available pending storage, so every
-            // consumed frame remains owned until a full fill reservation.
-            const bool retained = pending_return.append(frame, num_consumed);
+            // returned frame remains owned until a full fill reservation. The
+            // fill credit is the returned count, not num_consumed: a refused
+            // descriptor outside the receive region is released from the RX
+            // ring above but never refilled.
+            const bool retained = pending_return.append(frame, num_returned);
             rocketnet_assert(retained);
             if (!retained)
             {
@@ -3184,6 +3217,16 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     rocketnet_platform_mutex_acquire( &socket->send_mutex );
                     socket->send_handoff.recycle( on_index );
                     rocketnet_platform_mutex_release( &socket->send_mutex );
+
+                    // one warning per queue per flush for the starts this
+                    // queue refused, naming the queue and the count
+                    const uint64_t refused_total = socket->send_refused_overflow.load( std::memory_order_relaxed );
+                    if ( refused_total > socket->send_refused_overflow_warned )
+                    {
+                        rocketnet_warn( "xdp queue %d refused %llu packet starts past its send queue size",
+                            socket->queue, (unsigned long long) ( refused_total - socket->send_refused_overflow_warned ) );
+                        socket->send_refused_overflow_warned = refused_total;
+                    }
                     send_worker_index = -1;
                 }
             }
