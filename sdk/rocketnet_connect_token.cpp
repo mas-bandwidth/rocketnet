@@ -258,6 +258,8 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
         struct rocketnet_address_t address;
         if ( !rocketnet_address_parse( &address, server_address_strings[i] ) )
             return ROCKETNET_STATUS_INVALID_ADDRESS;
+        // a token naming port 0 names no server: refuse the address before
+        // any field is written
         if ( address.port == 0 )
             return ROCKETNET_STATUS_INVALID_ADDRESS;
 
@@ -481,9 +483,10 @@ static bool rn_dev_token_address( const char * address, int family )
         rocketnet_error( "dev connect token refused: %s is not an %s address", address, family == ROCKETNET_ADDRESS_IPV4 ? "IPv4" : "IPv6" );
         return false;
     }
-    // Only reject when port is explicitly specified as 0 (e.g., "127.0.0.1:0" or "[::1]:0")
-    const char * colon = strchr( address, ':' );
-    if ( colon && colon[1] == '0' && ( colon[2] < '0' || colon[2] > '9' ) )
+    // a token naming port 0 names no server: the client refuses it with
+    // ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO, so the maker refuses the
+    // address here instead of minting a token the client rejects
+    if ( parsed.port == 0 )
     {
         rocketnet_error( "dev connect token refused: %s has port 0", address );
         return false;
