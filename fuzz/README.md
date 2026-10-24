@@ -55,11 +55,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C fuzz -j 4                 # all ten targets
+make -C fuzz -j 4                 # the ten targets (not the differential)
 make -C fuzz compile              # syntax check of all ten sources on any host
 ```
 
-`fuzz/Makefile` builds all ten targets with
+`fuzz/Makefile` builds the ten targets other than `rocketnet_fuzz_differential` with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:

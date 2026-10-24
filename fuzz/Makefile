@@ -4,7 +4,8 @@
 # compiled out of the release library, so they must link the development
 # archive and see ROCKETNET_DEV=1. ci.yml's fuzz-smoke covers
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives the
-# same ten targets this Makefile builds, with the same flags and link set.
+# ten targets this Makefile builds, with the same flags and link set, plus
+# rocketnet_fuzz_differential, which needs the pinned netcode checkout.
 #
 # The bpf/xdp link deps are Linux only; darwin links the same library without
 # them and adds the CoreFoundation and SystemConfiguration frameworks the
