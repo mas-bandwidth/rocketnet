@@ -617,9 +617,54 @@ static void test_sim_schedule_sequence_wrap()
 }
 
 // ---------------------------------------------------------------------------
+// Two pins on the simulator's stated behaviour (audit 2026-10-24 findings 7
+// and 8). Neither changes code; each holds a comment in
+// sdk/rocketnet_network_simulator.cpp to what the code does.
+// ---------------------------------------------------------------------------
+
+extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
+
+// created_active latches on the first config with a nonzero setting and is
+// never cleared: a later all-zero config leaves it set.
+static void test_simulator_created_active_is_sticky()
+{
+    struct rocketnet_network_simulator_t * sim = rocketnet_network_simulator_create( NULL, 16, 1 );
+    rocketnet_unit_check( sim != NULL );
+
+    rocketnet_network_simulator_config( sim, 0.0, 0.0, 0.0f, 0.0f );
+    rocketnet_unit_check( !rocketnet_network_simulator_created_active( sim ) );
+
+    rocketnet_network_simulator_config( sim, 0.05, 0.0, 0.0f, 0.0f );
+    rocketnet_unit_check( rocketnet_network_simulator_created_active( sim ) );
+
+    rocketnet_network_simulator_config( sim, 0.0, 0.0, 0.0f, 0.0f );
+    rocketnet_unit_check( rocketnet_network_simulator_created_active( sim ) );
+
+    rocketnet_network_simulator_destroy( sim );
+}
+
+// Two addresses of a type that is neither IPv4 nor IPv6 never compare equal,
+// even with identical bytes. The simulator's shard hash folds only the type
+// for them, which is conservative: equal still implies the same shard.
+static void test_address_equal_degenerate_types_never_equal()
+{
+    struct rocketnet_address_t a;
+    struct rocketnet_address_t b;
+    memset( &a, 0, sizeof(a) );
+    memset( &b, 0, sizeof(b) );
+    a.type = ROCKETNET_ADDRESS_NONE;
+    b.type = ROCKETNET_ADDRESS_NONE;
+    rocketnet_unit_check( memcmp( &a, &b, sizeof(a) ) == 0 );
+    rocketnet_unit_check( !rocketnet_address_equal( &a, &b ) );
+    rocketnet_unit_check( !rocketnet_address_equal( &a, &a ) );
+}
+
+// ---------------------------------------------------------------------------
 
 REGISTER_UNIT_TEST( test_sim_schedule_final_fragment_first );
 REGISTER_UNIT_TEST( test_sim_schedule_batch_cap );
 REGISTER_UNIT_TEST( test_sim_schedule_same_tick_slot_reuse );
 REGISTER_UNIT_TEST( test_sim_schedule_sequence_wrap );
 REGISTER_UNIT_TEST( test_sim_schedule_long_skip_stragglers );
+REGISTER_UNIT_TEST( test_simulator_created_active_is_sticky );
+REGISTER_UNIT_TEST( test_address_equal_degenerate_types_never_equal );

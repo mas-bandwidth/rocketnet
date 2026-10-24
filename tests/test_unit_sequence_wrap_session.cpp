@@ -55,6 +55,7 @@
 #include "rocketnet_message_object.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_window_ack.h"
+#include "rocketnet_protocol.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -537,5 +538,22 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 #endif // #if ROCKETNET_TEST_SEAMS
 }
 
+// rocketnet_reconstruct_near (sdk/rocketnet_protocol.cpp) on its own, no
+// session: of the three candidates sharing the wire value in their low 32
+// bits (expected's 2^32 block, the one below, the one above), the nearest to
+// expected wins and an exact tie takes the larger. Pins the behaviour the
+// session cases above rely on, at each edge: the same block, the block below,
+// the block above, a tie, and expected zero (no block below).
+
+static void test_reconstruct_near_picks_nearest_and_larger_on_tie( void )
+{
+    check( rocketnet_reconstruct_near( 3, 0x100000005ULL ) == 0x100000003ULL );
+    check( rocketnet_reconstruct_near( 0xFFFFFFF0U, 0x100000010ULL ) == 0x0FFFFFFF0ULL );
+    check( rocketnet_reconstruct_near( 5, 0x1FFFFFFF0ULL ) == 0x200000005ULL );
+    check( rocketnet_reconstruct_near( 0, 0x180000000ULL ) == 0x200000000ULL );
+    check( rocketnet_reconstruct_near( 0xFFFFFFFFU, 0 ) == 0xFFFFFFFFULL );
+}
+
 REGISTER_UNIT_TEST( test_sequence_wrap_session_both_directions );
 REGISTER_UNIT_TEST( test_sequence_wrap_session_starts_at_wrap_edge );
+REGISTER_UNIT_TEST( test_reconstruct_near_picks_nearest_and_larger_on_tie );
