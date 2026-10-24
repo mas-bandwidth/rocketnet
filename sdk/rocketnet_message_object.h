@@ -203,6 +203,8 @@ struct rn_message_object_t
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
+    double raw_time;                            // the caller's clock, last seen, beside the clamped one
+    double time_offset;                         // the backwards offset, exactly 0.0 until the first step
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
@@ -277,7 +279,6 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 // *channel (either NULL: not reported), 0 when the queue is empty. Release
 // finds the held view in whichever connection holds it.
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes );
-int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data );
 
 // The batch form over the same queue: releases the last batch, then fills
