@@ -322,6 +322,7 @@ static const char * const counters_appended_names[] =
     "CLIENT_RECEIVE_FOREIGN_SOURCE",
     "XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION",
     "MESSAGE_NOT_RECEIVED",
+    "CONNECTION_RESPONSE_PADDING_NOT_ZERO",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -419,6 +420,7 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_RESENT ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
@@ -957,3 +959,32 @@ static void test_counters_expect_fails_on_an_unnamed_move()
 }
 
 REGISTER_UNIT_TEST( test_counters_expect_fails_on_an_unnamed_move );
+
+// rocketnet_counter_value checks counters once, through rocketnet_api_null_guard:
+// a NULL is a counted misuse that reads 0, and an index outside the table reads 0.
+
+static void counter_value_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+}
+
+static void test_counter_value_null_and_out_of_range()
+{
+    rocketnet_assert_function( counter_value_quiet_assert );
+
+    const uint64_t before = rocketnet_api_misuse_count();
+    check( rocketnet_counter_value( NULL, 0 ) == 0 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    counters.values[3] = 42;
+    check( rocketnet_counter_value( &counters, -1 ) == 0 );
+    check( rocketnet_counter_value( &counters, ROCKETNET_NUM_COUNTERS ) == 0 );
+    check( rocketnet_counter_value( &counters, 3 ) == 42 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+
+    rocketnet_assert_function( NULL );
+}
+
+REGISTER_UNIT_TEST( test_counter_value_null_and_out_of_range );

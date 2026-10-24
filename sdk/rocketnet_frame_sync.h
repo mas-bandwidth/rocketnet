@@ -75,8 +75,18 @@ void rocketnet_frame_sync_adapt_guard( double * guard_ewma_ns, uint64_t overslee
 // wake more than one whole period late drops error/period frames and the
 // deadline resynchronizes to the next boundary ahead of the wake rather than
 // chasing the backlog. Returns the drops; writes the wake's lateness.
+// The drop count is uint64_t, the type of the dropped_frames it feeds, so a
+// wake 2^31 or more periods late never wraps.
 
-int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, uint64_t woke_ns, uint64_t * error_ns );
+uint64_t rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, uint64_t woke_ns, uint64_t * error_ns );
+
+// The time constraint policy values in mach time units for a period: period,
+// period / 4 of computation and period / 2 of constraint. Range rule: returns
+// 0 and writes nothing when period_ns * denom would overflow uint64_t or the
+// period in mach units exceeds UINT32_MAX (the policy fields are uint32_t);
+// else writes the three values and returns 1. Pure, compiled everywhere.
+
+int rocketnet_frame_sync_time_constraint( uint64_t period_ns, uint32_t numer, uint32_t denom, uint32_t * period, uint32_t * computation, uint32_t * constraint );
 
 // The monotonic clock the waits run against, nanoseconds.
 

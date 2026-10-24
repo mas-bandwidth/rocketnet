@@ -10,6 +10,12 @@
 // platform, for either flagged family, before any socket opens. A token whose
 // flagged addresses all name a nonzero port is accepted.
 //
+// The token makers refuse the same address, so no maker mints a token the
+// client refuses: the development maker returns ROCKETNET_STATUS_INVALID_ADDRESS
+// for an address naming port 0 and writes nothing into the caller's token
+// buffer, and the production writer refuses such an address before it writes
+// any field.
+//
 // Every case runs in memory: the fake client driver or the loopback
 // transport, no socket, and the game clock in place of the wall clock.
 
@@ -114,6 +120,88 @@ static void test_client_transport_refuses_connect_token_port_zero()
 }
 
 REGISTER_UNIT_TEST( test_client_transport_refuses_connect_token_port_zero );
+
+// the byte a refusal must leave in the caller's token buffer: the makers
+// write nothing into it, so every byte still holds the sentinel
+#define PORT_ZERO_SENTINEL 0xA5
+
+// true when every byte of the buffer still holds the sentinel, so a refusal
+// that wrote nothing left the caller's bytes alone
+static bool port_zero_buffer_untouched( const void * buffer, size_t bytes )
+{
+    const uint8_t * view = (const uint8_t*) buffer;
+    for ( size_t i = 0; i < bytes; ++i )
+    {
+        if ( view[i] != PORT_ZERO_SENTINEL )
+            return false;
+    }
+    return true;
+}
+
+static void test_token_makers_refuse_port_zero()
+{
+    rocketnet_quiet( true );
+
+    #if ROCKETNET_DEV
+    // the development maker refuses an address naming port 0, with or
+    // without an explicit ":0", and writes nothing into the token buffer
+    char dev_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( "127.0.0.1", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( "127.0.0.1:0", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( NULL, "[::1]:0", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+
+    // an address with a nonzero port is accepted in either family, and an
+    // IPv6 address is judged by its parsed port, not by the text of its
+    // groups: "[2001:0db8::1]:40000" carries port 40000
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
+    check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( NULL, "[::1]:40000", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
+    check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+
+    memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
+    check( rocketnet_create_dev_connect_token( NULL, "[2001:0db8::1]:40000", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
+    check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
+    #endif
+
+    // the production writer refuses an address naming port 0 before it
+    // writes any field, so the token buffer is left alone
+    uint8_t production_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    uint8_t production_public_key[ROCKETNET_KEY_BYTES];
+    uint8_t production_backend_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    memset( production_public_key, 0x52, sizeof( production_public_key ) );
+    memset( production_backend_key, 0x53, sizeof( production_backend_key ) );
+
+    const char * port_zero_addresses[] = { "127.0.0.1:0" };
+    memset( production_token, PORT_ZERO_SENTINEL, sizeof( production_token ) );
+    check( rocketnet_write_production_connect_token( production_backend_key, production_public_key, 1, port_zero_addresses, 1, 1, 1000, 1060, 15, NULL, production_token, sizeof( production_token ) ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( port_zero_buffer_untouched( production_token, sizeof( production_token ) ) );
+
+    const char * port_less_addresses[] = { "127.0.0.1" };
+    memset( production_token, PORT_ZERO_SENTINEL, sizeof( production_token ) );
+    check( rocketnet_write_production_connect_token( production_backend_key, production_public_key, 1, port_less_addresses, 1, 1, 1000, 1060, 15, NULL, production_token, sizeof( production_token ) ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( port_zero_buffer_untouched( production_token, sizeof( production_token ) ) );
+
+    const char * valid_addresses[] = { "127.0.0.1:40000" };
+    memset( production_token, PORT_ZERO_SENTINEL, sizeof( production_token ) );
+    check( rocketnet_write_production_connect_token( production_backend_key, production_public_key, 1, valid_addresses, 1, 1, 1000, 1060, 15, NULL, production_token, sizeof( production_token ) ) == ROCKETNET_STATUS_OK );
+    check( !port_zero_buffer_untouched( production_token, sizeof( production_token ) ) );
+
+    rocketnet_quiet( false );
+}
+
+REGISTER_UNIT_TEST( test_token_makers_refuse_port_zero );
 
 static double port_zero_clock( void * ) { return 1000.0; }
 

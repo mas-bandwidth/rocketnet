@@ -79,6 +79,7 @@ memory use and transport qualification still need attention; see the
 
 ## Documentation
 
+- [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
 - [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits.
 - [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
 
@@ -92,8 +93,11 @@ memory use and transport qualification still need attention; see the
 - [docs/MACOS.md](docs/MACOS.md) — building on macOS, the msgx and portable
   transports, App Nap and QoS, socket errors, the firewall prompt, lldb and
   verification on a Mac.
+- [docs/WINDOWS.md](docs/WINDOWS.md) — building with MSVC, the portable, iocp
+  and rio transports and pinning, host requirements, the firewall, connection
+  reset, limits and verifying a Windows host.
 - [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported, nightly, and unsupported platform rows and the CI workflows that prove them.
-- [TRANSPORTS.md](TRANSPORTS.md) — native transport registry, capabilities, and extension interface.
+- [TRANSPORTS.md](TRANSPORTS.md) — choosing a transport (every transport by platform, its `auto` rank and how to pin it), then the native transport registry, capabilities, and extension interface.
 - [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
   wherever a contract is written down.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.

@@ -10,9 +10,9 @@
     The macOS counters use libproc (proc_pidinfo PROC_PIDLISTFDS and
     PROC_PIDTASKINFO pti_threadnum); the Linux counters read /proc/self/fd,
     /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
-    umem is a posix_memalign block of ROCKETNET_XDP_NUM_FRAMES *
+    umem is a posix_memalign block of ROCKETNET_XDP_UMEM_FRAMES *
     ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
-    (sdk/rocketnet_server_socket_linux.cpp:1716-1718 and :1999), with no mlock,
+    (sdk/rocketnet_server_socket_linux.cpp:1723-1725 and :1995), with no mlock,
     so it moves neither VmLck nor VmPin; the kernel charges its pin to the
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
@@ -185,7 +185,7 @@ static int posix_threads()
 // difference, and the few MB the cells hold besides it never reach one. Zero
 // without glibc or xdp, and on macOS.
 #if defined(__GLIBC__) && ROCKETNET_XDP
-static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 #endif
 
 static long posix_heap_umems()
@@ -1125,12 +1125,25 @@ struct posix_sender_t
     std::atomic<bool> * running;
 };
 
+// each sender sends one packet every POSIX_SENDER_INTERVAL until it is told
+// to stop. A sender that sent in a tight loop flooded the server: eight of
+// them queued 0.1 to 1.6 million packets in the 20 ms traffic window, so the
+// window's first server update alone ran 0.4 to 1.2 s draining them, and
+// under the nightly's tsan build the io_uring case took 70 to 230 s against
+// its 120 s limit (16-core Linux at load 16 to 75). Paced, the eight still
+// send about 40k packets a second under tsan, before and all through the
+// server's destroy, and the window is 20 ms again.
+#define POSIX_SENDER_INTERVAL 0.0001
+
 static void posix_sender_thread( posix_sender_t * sender )
 {
     uint8_t payload[64];
     memset( payload, 0xA5, sizeof( payload ) );
     while ( sender->running->load( std::memory_order_acquire ) )
+    {
         rocketnet_client_transport_send_packet( sender->client, payload, (int) sizeof( payload ) );
+        rocketnet_platform_sleep( POSIX_SENDER_INTERVAL );
+    }
 }
 
 // the macOS nightly tier (functional/main.cpp, ROCKETNET_TEST_NIGHTLY=1):
@@ -1192,13 +1205,23 @@ void rocketnet_test_posix_destroy_under_traffic_100()
                 threads[i] = std::thread( posix_sender_thread, &senders[i] );
             }
 
-            const double traffic_deadline = rocketnet_platform_time() + 0.02;
-            while ( rocketnet_platform_time() < traffic_deadline )
+            // traffic runs for 20 ms and until the server has received a
+            // payload packet from the senders, so the destroy below is
+            // always under traffic that has reached the server
+            const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+            const uint64_t payload_received_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_RECEIVED );
+            const double traffic_start = rocketnet_platform_time();
+            const double traffic_deadline = traffic_start + 0.02;
+            while ( rocketnet_platform_time() < traffic_start + 5.0 )
             {
                 rocketnet_server_transport_update( server, rocketnet_platform_time() );
                 rocketnet_server_transport_send_packets( server );
+                if ( rocketnet_platform_time() >= traffic_deadline &&
+                     rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_RECEIVED ) != payload_received_before )
+                    break;
                 rocketnet_platform_sleep( 0.0005 );
             }
+            posix_check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_RECEIVED ) != payload_received_before );
 
             // destroy the server while all eight clients are sending, then
             // stop the senders before the clients themselves are destroyed
