@@ -30,12 +30,16 @@
  * each direction, the server ticking at 100 Hz. Full load is the worst case
  * the server budget is measured at: the server ticks at 10 Hz and offers one
  * message to every client every update, and every client updates at 10 Hz
- * and offers one message every update. Proof load has full load's offer
- * clock, and each offer is the proof's pair of messages (split_proof_offer). */
+ * and offers one message every update. Proof load offers on full load's
+ * clock, 10 Hz per client each way, and each offer is the proof's pair of
+ * messages (split_proof_offer); its server ticks at 100 Hz, like the default
+ * mode, with the clients' offer slots spread over five ticks. At 10 Hz the
+ * server socket's receive buffer (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE)
+ * overflows between updates: 1000 clients at 256 kbps are 32 MB/s inbound. */
 static int split_full_load = 0;
 static int split_proof_load = 0;
 
-static double split_server_tick_s( void ) { return split_full_load || split_proof_load ? 0.100 : 0.010; }
+static double split_server_tick_s( void ) { return split_full_load ? 0.100 : 0.010; }
 static double split_offer_period_s( void ) { return split_full_load || split_proof_load ? 0.100 : 1.0; }
 static int split_rate_hz( void ) { return split_full_load || split_proof_load ? 10 : 1; }
 static const char * split_load_name( void ) { return split_proof_load ? "proof" : split_full_load ? "full" : "rate_1hz"; }
@@ -124,6 +128,7 @@ struct split_result_t
     double min_client_up_kbps, min_client_down_kbps;
     int wire_sampled;
     uint64_t proof_checksum_errors, proof_receipt_errors, proof_receipts_dropped;
+    int proof_disconnected_clients;
     uint64_t startup_utc_s, traffic_start_utc_s, traffic_end_utc_s;
 };
 
@@ -929,7 +934,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            strcmp(role, "server") == 0 ? (timing ? "PASS" : "FAIL") : "NA",
            pass ? "PASS" : "FAIL");
     if ( split_proof_load )
-        split_proof_role_line(role, run_id, transport, result, result->unexpected_disconnects,
+        split_proof_role_line(role, run_id, transport, result, result->proof_disconnected_clients,
                               correctness && result->load_complete && bandwidth && resources);
     return pass;
 }
@@ -955,11 +960,12 @@ static int split_server_client_live( const struct rocketnet_server_t * server, c
 /* Proof: a disconnect between the population window and the planned close
  * fails the run (unexpected_disconnects); each client's first one is named
  * once with its reason. */
-static void split_server_note_disconnect( const struct rocketnet_server_t * server, struct split_server_client_t * clients,
-                                          int i, uint64_t run_id, const char * phase )
+static void split_server_note_disconnect( struct split_result_t * result, const struct rocketnet_server_t * server,
+                                          struct split_server_client_t * clients, int i, uint64_t run_id, const char * phase )
 {
     if ( !split_proof_load || clients[i].disconnect_reported ) return;
     clients[i].disconnect_reported = 1;
+    result->proof_disconnected_clients++;
     const int slot = clients[i].slot;
     const char * reason = slot < 0 ? "no_slot" :
         rocketnet_server_client_connected(server, slot) ? "slot_reused" :
@@ -968,10 +974,12 @@ static void split_server_note_disconnect( const struct rocketnet_server_t * serv
            run_id, i, phase, reason ? reason : "unknown");
 }
 
-static void split_client_note_disconnect( struct split_client_t * client, int global, uint64_t run_id, const char * phase )
+static void split_client_note_disconnect( struct split_result_t * result, struct split_client_t * client, int global,
+                                          uint64_t run_id, const char * phase )
 {
     if ( !split_proof_load || client->disconnect_reported ) return;
     client->disconnect_reported = 1;
+    result->proof_disconnected_clients++;
     const char * reason = rocketnet_client_state_name(rocketnet_client_state(client->api));
     printf("split_disconnect: role=client-shard run_id=%016" PRIx64 " client=%d phase=%s reason=%s\n",
            run_id, global, phase, reason ? reason : "unknown");
@@ -1340,7 +1348,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     const double traffic_start = rocketnet_time();
     result.traffic_start_utc_s = (uint64_t) time(NULL);
     for ( int i = 0; i < total; ++i )
-        clients[i].next_due = traffic_start;
+        clients[i].next_due = traffic_start + (split_proof_load ? (double) (i % 5) * 0.010 : 0.0);
     result.expected_offers = (uint64_t) total * (uint64_t) duration * (uint64_t) split_rate_hz();
     timing.enabled = 1;
     double next_tick = traffic_start;
@@ -1400,7 +1408,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
             {
                 result.unexpected_disconnects++;
-                split_server_note_disconnect(server, clients, i, run_id, "traffic");
+                split_server_note_disconnect(&result, server, clients, i, run_id, "traffic");
                 continue;
             }
             /* Use the offer-time clock for both the deadline and due phase.
@@ -1462,7 +1470,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
             {
                 result.unexpected_disconnects++;
-                split_server_note_disconnect(server, clients, i, run_id, "drain_barrier");
+                split_server_note_disconnect(&result, server, clients, i, run_id, "drain_barrier");
             }
         }
         rocketnet_server_send_packets(server);
@@ -1497,7 +1505,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                   rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1) )
             {
                 result.unexpected_disconnects++;
-                split_server_note_disconnect(server, clients, i, run_id, "finish_barrier");
+                split_server_note_disconnect(&result, server, clients, i, run_id, "finish_barrier");
             }
         }
         rocketnet_server_send_packets(server);
@@ -1846,7 +1854,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             if ( state != ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 result.unexpected_disconnects++;
-                split_client_note_disconnect(client, first + local, run_id, "traffic");
+                split_client_note_disconnect(&result, client, first + local, run_id, "traffic");
             }
             /* A client update can cross a due slot. The same fresh clock
              * decides traffic eligibility and counts every skipped slot. */
@@ -1921,7 +1929,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             if ( rocketnet_client_state(clients[i].api) != ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 result.unexpected_disconnects++;
-                split_client_note_disconnect(&clients[i], first + i, run_id, "drain_barrier");
+                split_client_note_disconnect(&result, &clients[i], first + i, run_id, "drain_barrier");
             }
             rocketnet_client_send_packets(clients[i].api);
         }
@@ -1953,7 +1961,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             if ( !clients[i].confirmed && rocketnet_client_state(clients[i].api) != ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 result.unexpected_disconnects++;
-                split_client_note_disconnect(&clients[i], first + i, run_id, "finish_barrier");
+                split_client_note_disconnect(&result, &clients[i], first + i, run_id, "finish_barrier");
             }
             rocketnet_client_send_packets(clients[i].api);
         }
