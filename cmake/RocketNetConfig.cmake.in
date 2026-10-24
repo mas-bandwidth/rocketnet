@@ -6,8 +6,9 @@ set(RocketNet_VERSION_STRING "@ROCKETNET_VERSION_STRING@")
 set(RocketNet_VERSION_PRERELEASE "@ROCKETNET_VERSION_PRERELEASE@")
 # Resolve only the dependencies used to build this package.
 set(ROCKETNET_XDP @ROCKETNET_XDP@)
-# a package built with the XDP server transport links libbpf and libxdp, so a
-# consumer requires both
+# Preserve the AF_XDP provider selected by the producer.
+set(ROCKETNET_XDP_LEGACY_LIBBPF "@ROCKETNET_XDP_LEGACY_LIBBPF@")
+# A consumer requires that provider as well as libbpf.
 set(ROCKETNET_XDP_REQUIRED @ROCKETNET_XDP@)
 set(ROCKETNET_USE_SYSTEM_SODIUM @ROCKETNET_USE_SYSTEM_SODIUM@)
 # whether the package was built against liburing: a consumer resolves the

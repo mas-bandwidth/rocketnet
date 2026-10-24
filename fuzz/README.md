@@ -30,6 +30,12 @@ They run with no sockets, no threads and no clock, and their randomness is
 deterministic. The pair is created and connected once per process and then
 restored from a saved state for each input, so an input replays the same way
 whether it runs alone or after other inputs.
+On Linux the restore copies back only the pages the last input wrote: every
+block owns whole pages, the pages are write-protected once both states are
+saved, and the first write to each page is recorded by a SIGSEGV handler.
+This took the transport targets from about 20 to 50-80 inputs a second per
+worker. Elsewhere, or if protection cannot be set up, every restore copies
+every block.
 
 ## Building
 
@@ -103,6 +109,7 @@ Environment switches that every pair target reads:
 | variable | effect |
 |---|---|
 | `ROCKETNET_FUZZ_CHECK_REPLAY=1` | runs every input twice and requires the same counters both times |
+| `ROCKETNET_FUZZ_CHECK_RESTORE=1` | after every restore, requires every block to equal its saved copy byte for byte |
 | `ROCKETNET_FUZZ_DUMP_COUNTERS=1` | prints every nonzero counter after each input, to show which branch an input reached |
 | `ROCKETNET_FUZZ_SEED_DIR=<dir>` | runs the seed generator into `<dir>` and exits (see below) |
 | `ROCKETNET_FUZZ_SEED_FROM=fuzz/corpus` | gives the generator the committed wire corpus to wrap |

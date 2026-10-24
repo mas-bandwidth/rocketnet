@@ -144,6 +144,13 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 // and returns its serial (serial 0: the next), abort returns the room.
 // transport_max_payload_bytes is the transport's payload cap now.
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+
+// The room query: true when rn_endpoint_start with these arguments, now,
+// would be given its room in the region; false when it would be refused or
+// would find no room (and so end the connection, R5). It shares the start's
+// route and the region's allocation decision (rn_region_send_fit), so the two
+// never disagree. Pure: changes nothing, counts nothing, allocates nothing.
+bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 
@@ -203,10 +210,12 @@ void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, 
 // One payload the transport opened. Its deliveries are appended to the
 // region's delivery table; out, when not NULL, also gets a copy of up to
 // out_capacity of them, and *out_count their number.
-void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
+bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
                              rn_delivery_t * out, int out_capacity, int * out_count, double now );
 
-// The receipts' LOSS sweep and the end of the update's receipt list.
+// The receipts' LOSS sweep, the end of the update's receipt list, and the
+// reliable timeout, which rn_endpoint_error then reports. Called once per
+// update for every connected endpoint, whether or not its write pass runs.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
 // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,

@@ -461,7 +461,7 @@ Current limits accepted for the preview-2 cut. These rows describe preview-2; th
 | AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server. | ❌ | — | ❌ |
 | The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified. | — | ❌ | — |
 | The big-endian full-system fixture has an endian mismatch, and emulated completion runs retain timeouts. | ❌ | — | — |
-| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. The AF_XDP cell and full soak are incomplete; no OOM cause is claimed. | ❌ | — | — |
+| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. Cause: the fixed 16G virtme-ng guest is under the default profile's 16.96 GiB create-only plan, so the guest OOM-kills the load process (exit 137). | ❌ | — | — |
 | Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
 | The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
 | Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |

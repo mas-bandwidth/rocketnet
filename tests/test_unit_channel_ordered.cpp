@@ -613,10 +613,10 @@ static void exchange_perfect( node_t * a, node_t * b, double * now, int updates,
 
 static void test_large_chunked_one_per_packet_and_delivered_whole()
 {
-    // the defaults: the largest message fits (max_message_bytes 262144, 228 chunks)
+    // the defaults: a 1 MiB message fits (911 chunks)
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    check( config.max_message_bytes >= 262144 );
+    check( config.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
     node_t * a = node_new( &config, 16 );
     node_t * b = node_new( &config, 16 );
 
@@ -631,9 +631,9 @@ static void test_large_chunked_one_per_packet_and_delivered_whole()
     double now = 1.0;
     int packets = 0;
     int records_max = 0;
-    exchange_perfect( a, b, &now, 40, &packets, &records_max );
+    exchange_perfect( a, b, &now, 80, &packets, &records_max );
 
-    // 228 chunks, each in its own packet: one record each, nothing resent
+    // One record per fragment, each in its own packet, nothing resent
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( packets == (int) ( ( bytes + F - 1 ) / F ) );
     check( records_max == 1 );

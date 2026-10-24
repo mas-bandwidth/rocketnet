@@ -30,7 +30,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <linux/if_xdp.h>
-#include <xdp/xsk.h>
+#include "rocketnet_xdp_compat.h"
 
 #include "rocketnet_constants.h"
 

@@ -119,12 +119,20 @@ static void rn_client_link_destroy( void * transport )
     rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
 }
 
+static void rn_client_link_accept_payload( void * transport, int k )
+{
+    rocketnet_client_transport_accept_payload( (rocketnet_client_transport_t *) transport, k );
+}
+
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
+    link->accept_payload = rn_client_link_accept_payload;
+    if ( transport )
+        rocketnet_client_transport_defer_payload_acks( transport );
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
     link->acked_connection = rn_client_link_entry_connection;
@@ -160,10 +168,37 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     return rocketnet_message_client_create_ex( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL, 0 );
 }
 
+// resolved_memory_budget NULL: the transport create reads the environment
+// (rocketnet_message_client_create_ex); set: transport_config is already
+// resolved and connect reads nothing (rocketnet_message_client_create_resolved)
+static struct rocketnet_message_client_t * rn_message_client_create( void * context, const uint8_t * connect_token,
+                                                                     const struct rocketnet_client_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
+                                                                     const uint64_t * resolved_memory_budget );
+
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited )
+{
+    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, NULL );
+}
+
+struct rocketnet_message_client_t * rocketnet_message_client_create_resolved( void * context, const uint8_t * connect_token,
+                                                                              const struct rocketnet_client_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
+                                                                              uint64_t memory_budget_bytes )
+{
+    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, &memory_budget_bytes );
+}
+
+static struct rocketnet_message_client_t * rn_message_client_create( void * context, const uint8_t * connect_token,
+                                                                     const struct rocketnet_client_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
+                                                                     const uint64_t * resolved_memory_budget )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -209,7 +244,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * c
     // first update, whatever the game's clock reads then. time comes in only
     // through update.
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
+    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ?
+        rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, status ) :
+        rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
     if ( !transport )
     {
         if ( *status == ROCKETNET_STATUS_OK )

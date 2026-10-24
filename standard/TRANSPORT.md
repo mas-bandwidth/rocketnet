@@ -197,6 +197,12 @@ of both configurations:
 5. An endpoint MUST refuse to create, with an error naming the field, when any
    field holds a value outside its valid range, from the struct or from the
    environment alike. It MUST NOT clamp or otherwise correct a value.
+6. An endpoint MUST resolve its configuration completely, every field through
+   rule 2, once at create, before it validates the configuration and before
+   it sizes any memory from it. It MUST keep that one resolved configuration
+   for its lifetime: client connect and server start MUST NOT read the
+   environment again, so a variable changed after create has no effect on
+   that endpoint.
 
 The fields of the connection layer. A Value of `none` is a field with no
 numeric default: a key the deployment sets, or a bytes field whose unset
@@ -2671,12 +2677,12 @@ The server turns a connection request into an encryption mapping, and a connecti
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
+9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
-14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -2706,7 +2712,7 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
-| no mapping | request | token claimed from another address until the handshake deadline | ignore, count | no mapping |
+| no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
@@ -3078,14 +3084,15 @@ connection on reaching the `integrity limit`.
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
 only by the endpoint after a packet opens. Such a prefilter MUST NOT drop a
-packet fewer than the `kernel replay window` sequences behind that high-water
-mark, and it MAY drop any packet at or beyond that distance. The prefilter
-never advances the mark and never accepts a packet the window would refuse.
+packet fewer than the endpoint's replay window depth behind that high-water
+mark, and it MAY drop any packet at or beyond that distance. The mark is never
+ahead of the window's high-water mark, so the prefilter drops only packets the
+window would refuse; a reordered packet the window accepts is never dropped
+in the kernel. The prefilter never advances the mark.
 
 | Name | Value | Unit | Kind | Meaning |
 |---|---|---|---|---|
 | integrity limit | `68719476736` | sealed packets | protocol value | failed opens that end a connection |
-| kernel replay window | `16` | sequences | protocol value | distance behind the kernel high-water mark that a prefilter may drop |
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -3153,7 +3160,7 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence successfully opened from the peer | Any u32; zero denotes no opened session packet only after reconstruction |
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero denotes no acknowledgement-eligible session packet only after reconstruction |
 | range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
 | first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
 | gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
@@ -3162,13 +3169,13 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 The block length is the [t3 Constants and registries](#t3) (ack block minimum row) plus each declared range entry's gap and range-length fields. Bytes after that length belong to the packet type's
 data, when present. The range count maximum is pinned below.
 
-A sender MUST construct ranges from the opened session-sequence state it
+A sender MUST construct ranges from the acknowledgement-eligible session-sequence state it
 maintains for the peer. The first range ends at largest received, inclusive.
 Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
 
-The largest received field is the low 32 bits of the highest opened 64-bit
+The largest received field is the low 32 bits of the highest acknowledgement-eligible 64-bit
 session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
 with those low 32 bits that is nearest to its own highest sent session sequence;
 the higher value wins an equidistant tie. The receiver MUST evaluate every
@@ -3203,9 +3210,17 @@ marked as specified by [t14 Replay protection](#t14).
 <a id="t15.3"></a>
 ### t15.3. Building and processing
 
-A sender MUST build a block from the single session replay state defined in
-[t14 Replay protection](#t14), shared by all opened session packet types. It
-MUST list the newest received run first and may include older
+A sender MUST build a block from a separate acknowledgement-eligible history.
+The security replay window in [t14 Replay protection](#t14) still marks every
+successfully opened packet immediately; opening alone MUST NOT acknowledge it.
+A session packet becomes eligible after its acknowledgement block and type data
+pass validation. A type 5 payload delivered to a message layer MUST remain
+ineligible until that layer confirms successful processing of the whole payload.
+If receive storage is unavailable, the receiver MUST withhold that payload's
+acknowledgement. A retransmitted message uses a fresh packet sequence; the
+receiver MUST NOT undo security replay protection to permit a retry.
+The eligible history has the same bounded depth as the replay window. It
+MUST list the newest eligible run first and may include older
 runs while its range-count and packet-capacity limits permit. When capacity
 omits entries, it MUST drop the oldest entries first and MUST NOT emit a
 trailing gap without a received run. Every session packet MUST have room for
@@ -3224,8 +3239,8 @@ that assertion and MUST process an in-window sent sequence as acknowledged.
 <a id="t15.4"></a>
 ### t15.4. Elicitation and standalone acknowledgement
 
-All opened session packet types contribute to the receive state represented
-by a block. Acknowledgement debt is the number of accepted eliciting packets
+All session packet types can contribute to the eligible history represented
+by a block after the acceptance conditions in [t15.3 Building and processing](#t15.3) hold. Acknowledgement debt is the number of accepted eliciting packets
 received since a session packet last carried a block. A receiver MUST add debt
 for each accepted connection keep-alive, connection payload, connection
 disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).
@@ -3597,9 +3612,10 @@ an input ([t1.4 Conventions](#t1.4)).
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
      first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline, when a response binds the
-     token, or immediately when processing the request refuses it without
-     retaining a mapping. A full mapping table refuses with no reply and is counted as a
+     the claim ends at the handshake deadline, when its half-open mapping is
+     removed before that deadline, when a response binds the token, or
+     immediately when processing the request refuses it without retaining a
+     mapping. A full mapping table refuses with no reply and is counted as a
      refusal. The request-claim table and the response-binding table are
      independent capacities: claim pressure cannot consume or evict a still
      live response binding.
@@ -4068,6 +4084,7 @@ the property the row it carries.
 | Packet type and salt unmodifiable | AEAD associated data |
 | Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
 | Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
 | A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
 | Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |

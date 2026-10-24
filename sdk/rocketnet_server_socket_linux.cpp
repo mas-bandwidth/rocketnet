@@ -34,8 +34,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include <ifaddrs.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
-#include <xdp/xsk.h>
-#include <xdp/libxdp.h>
+#include "rocketnet_xdp_compat.h"
 #include <sys/resource.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -62,11 +61,15 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_xdp_socket_config.h"
 #include "rocketnet_gateway_netlink.h"
+#include "rocketnet_replay.h"
 
 #include <memory.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <atomic>
+
+// the kernel prefilter drops nothing the session replay window would accept
+static_assert( ROCKETNET_XDP_REPLAY_WINDOW == ROCKETNET_REPLAY_WINDOW_BITS, "the kernel replay window is the userspace replay window" );
 
 // XDP umem frame size must match libxdp expectation
 static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
@@ -266,7 +269,7 @@ struct rocketnet_server_socket_t
 
     int interface_index;
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
-    struct xdp_program * program;
+    rocketnet_xdp_program_t * program;
     bool attached_native;
     bool attached_skb;
     char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
@@ -867,15 +870,13 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
     {
         unsigned int attached_program_id = 0;
-        const int query_result = bpf_xdp_query_id( (int) interface_index, 0, &attached_program_id );
+        const int query_result = rocketnet_xdp_query_id( (int) interface_index, &attached_program_id );
         if ( query_result != 0 )
         {
             // silence must never verify: an unanswerable exclusivity query
             // is an unmet condition, not a pass
 
-            // -errno is libbpf 1.0's uniform error convention, which is
-            // the tree's documented floor (BUILDING.md) -- pre-1.0 libbpf
-            // returned -1 with errno set and would misreport here
+            // Both XDP netlink query APIs return a negative error code.
 
             rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
             provisioned = false;
@@ -1168,7 +1169,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         instructions[0].imm = 2;
         instructions[1].code = BPF_JMP | BPF_EXIT;
 
-        int program_fd = bpf_prog_load( BPF_PROG_TYPE_XDP, "rocketnet_pf", "GPL", instructions, 2, NULL );
+        int program_fd = rocketnet_xdp_probe_program( instructions, 2 );
         if ( program_fd < 0 )
         {
             rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
@@ -1533,7 +1534,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         open_opts.pin_root_path = server_socket->pin_root;
 
         struct bpf_object * object = bpf_object__open_mem( rocketnet_server_xdp_o, rocketnet_server_xdp_o_len, &open_opts );
-        if ( libbpf_get_error( object ) )
+        if ( !object || libbpf_get_error( object ) )
         {
             rocketnet_error( "could not load server_xdp program" );
             rocketnet_server_socket_abort_create( server_socket );
@@ -1541,8 +1542,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         }
         server_socket->program_object = object;
 
-        struct xdp_program * program = xdp_program__from_bpf_obj( object, "server_xdp" );
-        if ( libxdp_get_error( program ) )
+        rocketnet_xdp_program_t * program = rocketnet_xdp_program_open( object );
+        if ( !program )
         {
             rocketnet_error( "could not load server_xdp program" );
             rocketnet_server_socket_abort_create( server_socket );
@@ -1555,7 +1556,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_info( "attaching server_xdp to network interface %s", interface_name );
 
-    int ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
+    int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, false );
     if ( ret == 0 )
     {
         server_socket->attached_native = true;
@@ -1563,7 +1564,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     else
     {
         rocketnet_info( "falling back to skb mode..." );
-        ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
+        ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, true );
         if ( ret == 0 )
         {
             server_socket->attached_skb = true;
@@ -1928,13 +1929,13 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     {
         if ( server_socket->attached_native )
         {
-            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
+            rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
         }
         if ( server_socket->attached_skb )
         {
-            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
+            rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
         }
-        xdp_program__close( server_socket->program );
+        rocketnet_xdp_program_close( server_socket->program );
     }
 
     if ( server_socket->program_object != NULL )
@@ -2009,7 +2010,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
     void * allocation_context = server_socket->context;
     server_socket->~rocketnet_server_socket_t();
-    rocketnet_clear_and_free( allocation_context, server_socket, sizeof(rocketnet_server_socket_t) );
+    rocketnet_free( allocation_context, server_socket );
 }
 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )

@@ -80,6 +80,15 @@ implementation, stated here because RN-2 is the party that relies on it.
    reports a type 5 packet acknowledged, the peer's connection layer MUST have
    handed its payload to the peer's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
+   The receiver MUST finish successful message-layer processing before ACK publication.
+   If a reliable record cannot reserve receive storage, the receiver MUST leave
+   that record's number, ordering state and received bit uncommitted, withhold
+   the carrying packet's ACK, and keep the connection alive for retry. Records
+   already accepted from the packet remain retained or delivered; a retry MUST
+   deduplicate that prefix. Once capacity returns, a fresh-sequence retransmission
+   MUST be accepted normally. Existing reliable-message timeouts still apply.
+   Admission MUST reserve space for every held delivery an ordered record can
+   release, not only the record itself. Malformed records remain protocol errors.
 3. **A fragmented payload carries no delivery fact.** An acknowledgement of
    the fragments of a type 9 payload does not prove the payload was
    delivered. A message layer sender MUST NOT place a reliable record or a
@@ -153,7 +162,7 @@ A payload ends with one form byte. A sender MUST write exactly one form byte, an
 
 A sender MAY use SINGLE only for a message whose reliability is UNRELIABLE and whose length is at most the row `SINGLE message limit`. The message starts at payload offset 0 and the form byte follows it. A receiver MUST deliver a SINGLE payload as one UNRELIABLE message on channel 0.
 
-A fitting unreliable message is written in place in the packet buffer, with no copy between the message layer and the connection layer. A message is fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and its data, its record header when it has one, and the form byte fit in one payload: UNRELIABLE travels in the SINGLE form and the other two as the one record of a RECORDS payload. A sender MUST write a fitting message in place, except that it MAY copy one into a shared RECORDS payload when the connection layer gives no packet buffer large enough for it, when messages queued before it would otherwise be overtaken by it, when the send budget cannot pay it, or when the update's packet allowance is spent; a sender counts each such message once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both alike.
+A fitting unreliable message is written in place in the packet buffer, with no copy between the message layer and the connection layer. A message is fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and its data, record header and form byte fit in one payload. A sender MUST aggregate fitting messages into back-to-back records of a shared RECORDS payload when room remains. Start reserves the declared maximum after the committed prefix; finish commits only the actual length, and abort leaves the prefix unchanged. Neither operation moves committed payloads. Seal the payload when the next reservation cannot fit, a receipt-reference bound is reached, or send_packets or update closes the build. A sender MAY use SINGLE for an otherwise fitting plain UNRELIABLE message that cannot fit with a record header. A sender MUST write a fitting message in place, except that it MAY copy one into a shared RECORDS payload when the connection layer gives no packet buffer large enough for it, when messages queued before it would otherwise be overtaken by it, when the send budget cannot pay it, or when the update's packet allowance is spent; a sender counts each such message once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both forms alike.
 
 A sender MUST encode every other message as one or more records in a RECORDS payload. The records MUST be written back to back, with no padding, and MUST fill the body exactly. An unreliable message that exceeds its one-record limit MUST be sent under its reliable twin as the promotion rule states; it MUST NOT be fragmented and MUST NOT be split across payloads.
 
@@ -1721,7 +1730,10 @@ The constants this section names are:
     fragment; a fragment that is not the last is measured as the shortest block
     it could belong to. Counter: `MESSAGE_BAD_RING`.
 9. A reliable or CONTROL record MUST NOT lie in a payload longer than
-   `payload capacity`. Counter: `MESSAGE_BAD_SIZE`.
+   `payload capacity`. A record's length, and a SINGLE payload's message
+   length, MUST be at most the receiver's maximum message size; check 7 holds a
+   block to the same limit. A SINGLE payload takes checks 1, 6 and this one.
+   Counter: `MESSAGE_BAD_SIZE`.
 10. A reliable record MUST have a number less than W ahead of the receiver's
      next number. Counter: `MESSAGE_NUMBER_OUTSIDE_WINDOW`. A record whose
      receive slot is live for a different number MUST be refused. Counter:
@@ -1879,6 +1891,100 @@ counter: `MESSAGE_BAD_SIZE`
 00 00 00 00 00 00 00 00 01
 ```
 
+```vector m4.check-9-over-maximum
+input: a SINGLE message of 1416 bytes at a receiver whose maximum message size is 1415
+counter: `MESSAGE_BAD_SIZE`
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
 ```vector m4.check-10-number-outside-window
 input: a code 2 record numbered one window above the next number
 counter: MESSAGE_NUMBER_OUTSIDE_WINDOW
@@ -2001,7 +2107,7 @@ n     = R + delta
 | ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
 | fragment bytes | `1152` | bytes | the block stride |
 | window messages default | `1024` | records | the default of `reliable_messages_in_flight` |
-| receive ring bytes default | `262144` | bytes | the default of `receive_message_buffer_bytes` |
+| receive ring bytes default | `1048576` | bytes | the default of `receive_message_buffer_bytes` |
 | window messages limit | `1048576` | records | the largest valid `reliable_messages_in_flight` |
 | replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
 | replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
@@ -2883,7 +2989,7 @@ differ in any compared field end the connection with `CONFIG_MISMATCH`.
 | version | `1` | none |
 | enabled default | `0xFF` | mask |
 | num channels default | `32` | channels |
-| max message bytes default | `262144` | bytes |
+| max message bytes default | `1048576` | bytes |
 | form | `1` | none |
 
 `enabled` with bit r set permits the application to send reliability r; the
@@ -2921,7 +3027,7 @@ for each of the others.
 ```vector m11.config-defaults
 config: library defaults
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2929,7 +3035,7 @@ config: library defaults
 field: version
 value: 2
 22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2937,7 +3043,7 @@ value: 2
 field: enabled
 value: 0x01
 22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2945,7 +3051,7 @@ value: 0x01
 field: num_channels
 value: 16
 22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2953,7 +3059,7 @@ value: 16
 field: reliable_messages_in_flight
 value: 512
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2961,7 +3067,7 @@ value: 512
 field: receive_message_buffer_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 02 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2969,7 +3075,7 @@ value: 131072
 field: max_message_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 02 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -2977,7 +3083,7 @@ value: 131072
 field: fragment_bytes
 value: 1024
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 00 04 00 00 00 00
 00 00 01
 ```
 

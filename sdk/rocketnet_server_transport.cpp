@@ -207,7 +207,8 @@ struct rocketnet_server_payloads_t
 {
     int num_payloads;
     int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
+    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    uint64_t sequence[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
     uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
@@ -219,6 +220,7 @@ struct rocketnet_server_stats_slot_t
     rocketnet_ack_stats_delta_t deltas[2];
     rocketnet_ack_stats_history_t history;       // worker-owned
     uint64_t history_generation;
+    rocketnet_ack_stats_validity_t validity;
 };
 
 typedef rocketnet_ack_stats_result_t rocketnet_server_stats_result_t;
@@ -352,11 +354,44 @@ struct rocketnet_server_transport_t
     uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
+// The server transport's state zeroed in its raw storage, then default
+// initialization, then the buffers' counts. The buffers (the payload ring's
+// slots, the send and receive buffers, the payloads and their storage: 49 MB
+// at the defaults) are never written here, so their pages are touched only
+// when a packet uses them.
+static void rocketnet_server_transport_construct( rocketnet_server_transport_t * server_transport )
+{
+    typedef rocketnet_server_transport_t T;
+    typedef rocketnet_server_payload_ring_t R;
+    typedef rocketnet_server_send_buffer_t B;
+    typedef rocketnet_server_payloads_t P;
+    const size_t ring = offsetof( T, payload_ring );
+    const size_t send = offsetof( T, send_buffer );
+    const size_t payloads = offsetof( T, payloads );
+    const rocketnet_span_t skip[] =
+    {
+        { ring, offsetof( R, num_packets ) },
+        { ring + offsetof( R, num_packets ) + sizeof( uint64_t ), sizeof( R ) - offsetof( R, num_packets ) - sizeof( uint64_t ) },
+        { send + offsetof( B, to ), sizeof( B ) - offsetof( B, to ) },
+        { offsetof( T, receive_buffer ), sizeof( rocketnet_server_receive_buffer_t ) },
+        { payloads + offsetof( P, client_index ), sizeof( P ) - offsetof( P, client_index ) },
+        { offsetof( T, payload_storage ), sizeof( ( (T *) 0 )->payload_storage ) },
+    };
+    static_assert( offsetof( T, payload_ring ) < offsetof( T, send_buffer ) && offsetof( T, send_buffer ) < offsetof( T, receive_buffer ) &&
+                   offsetof( T, receive_buffer ) < offsetof( T, payloads ) && offsetof( T, payloads ) < offsetof( T, payload_storage ),
+                   "the skipped buffers are listed in their order in the struct" );
+    rocketnet_zero_except( server_transport, sizeof( T ), skip, (int) ( sizeof( skip ) / sizeof( skip[0] ) ) );
+    new ( server_transport ) rocketnet_server_transport_t;
+    server_transport->payload_ring.num_packets = 0;
+    server_transport->send_buffer.num_packets = 0;
+    server_transport->payloads.num_payloads = 0;
+}
+
 static void rocketnet_server_stats_clear_delta( rocketnet_ack_stats_delta_t * delta )
 {
-    memset(delta->sent_dirty, 0, sizeof(delta->sent_dirty));
-    memset(delta->received_dirty, 0, sizeof(delta->received_dirty));
-    memset(delta->rtt_dirty, 0, sizeof(delta->rtt_dirty));
+    delta->sent_dirty.invalidate();
+    delta->received_dirty.invalidate();
+    delta->rtt_dirty.invalidate();
     delta->reset = false;
 }
 
@@ -374,19 +409,22 @@ static inline int rocketnet_server_stats_lowest_bit( uint64_t bits )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0 && ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 64 == 0 &&
                ROCKETNET_RTT_HISTORY_SIZE % 64 == 0, "the stats dirty bitmaps cover whole words" );
 
-// Copies the records whose dirty bit is set, one dirty word at a time: a
-// word with no change costs one test, never 64.
-template <typename Record>
+// Copies the records whose dirty bit is set into the history and marks them
+// valid, one dirty word at a time: a word with no change costs one test,
+// never 64.
+template <typename Record, unsigned Words>
 static void rocketnet_server_stats_copy_dirty( Record * history, const Record * values,
-                                               const uint64_t * dirty, int records )
+                                               const rocketnet_stats_epoch_bits_t<Words> & dirty,
+                                               rocketnet_stats_epoch_bits_t<Words> & validity )
 {
-    for ( int word = 0; word < records / 64; ++word )
+    for ( unsigned word = 0; word < Words; ++word )
     {
-        uint64_t bits = dirty[word];
+        uint64_t bits = dirty.word((int) word);
         while ( bits )
         {
-            const int i = word * 64 + rocketnet_server_stats_lowest_bit(bits);
+            const int i = (int) word * 64 + rocketnet_server_stats_lowest_bit(bits);
             history[i] = values[i];
+            validity.set(i);
             bits &= bits - 1;
         }
     }
@@ -401,21 +439,22 @@ static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot
     rocketnet_ack_stats_history_t * history = &slot->history;
     if ( input->reset || slot->history_generation != input->generation )
     {
-        memset(history, 0, sizeof(*history));
+        // Epoch mismatch makes old records absent; history bytes and validity
+        // bitmaps remain untouched until an actual new record is written.
+        slot->validity.invalidate();
         slot->history_generation = input->generation;
     }
     history->highest_sent = input->values.highest_sent;
     history->highest_received = input->values.highest_received;
-    rocketnet_server_stats_copy_dirty(history->sent, input->values.sent, input->sent_dirty,
-                                      ROCKETNET_SENT_PACKET_BUFFER_SIZE);
+    rocketnet_server_stats_copy_dirty(history->sent, input->values.sent, input->sent_dirty, slot->validity.sent);
     rocketnet_server_stats_copy_dirty(history->received, input->values.received, input->received_dirty,
-                                      ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE);
+                                      slot->validity.received);
     rocketnet_server_stats_copy_dirty(history->rtt_history, input->values.rtt_history, input->rtt_dirty,
-                                      ROCKETNET_RTT_HISTORY_SIZE);
+                                      slot->validity.rtt);
 
     // Read the worker-owned compact history directly. No scratch reset or
     // full-ring copy, and no calculation under the exchange mutex.
-    rocketnet_ack_stats_history_compute(history, output);
+    rocketnet_ack_stats_history_compute(history, output, NULL, NULL, &slot->validity);
 }
 
 static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t * worker )
@@ -530,16 +569,16 @@ static void rocketnet_server_stats_worker_destroy( void * context, rocketnet_ser
         if ( worker->banks[i] )
         {
             worker->banks[i]->~rocketnet_server_stats_bank_t();
-            rocketnet_clear_and_free(context, worker->banks[i], sizeof(*worker->banks[i]));
+            rocketnet_free(context, worker->banks[i]);
         }
     if ( worker->slots )
-        rocketnet_clear_and_free(context, worker->slots, (size_t)worker->max_clients * sizeof(*worker->slots));
+        rocketnet_free(context, worker->slots);
     if ( worker->spares )
-        rocketnet_clear_and_free(context, worker->spares, (size_t)worker->max_clients * sizeof(*worker->spares));
+        rocketnet_free(context, worker->spares);
     if ( worker->mutex_created )
         rocketnet_platform_mutex_destroy(&worker->exchange_mutex);
     worker->~rocketnet_server_stats_worker_t();
-    rocketnet_clear_and_free(context, worker, sizeof(*worker));
+    rocketnet_free(context, worker);
 }
 
 static int rocketnet_server_stats_worker_create( void * context, rocketnet_server_stats_worker_t ** out,
@@ -572,15 +611,29 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
     }
     worker->slots = (rocketnet_server_stats_slot_t*) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->slots));
     if ( !worker->slots ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
-    memset(worker->slots, 0, (size_t)max_clients * sizeof(*worker->slots));
     worker->spares = (rocketnet_ack_stats_delta_t**) rocketnet_malloc(context, (size_t)max_clients * sizeof(*worker->spares));
     if ( !worker->spares ) return ROCKETNET_STATUS_OUT_OF_MEMORY;
+    // Each slot's state, never its 469 KB of values and history: a delta's
+    // values are read only where its dirty bits say they were written, and
+    // the history is cleared by the slot's first compute (deltas[0] starts
+    // with reset set, and no history generation matches 0).
     for ( int i = 0; i < max_clients; ++i )
     {
-        worker->slots[i].deltas[0].generation = 1;
-        worker->slots[i].deltas[1].generation = 1;
-        worker->slots[i].deltas[0].reset = true;
-        worker->spares[i] = &worker->slots[i].deltas[1];
+        rocketnet_server_stats_slot_t * slot = &worker->slots[i];
+        for ( int d = 0; d < 2; ++d )
+        {
+            slot->deltas[d].sent_dirty.initialize();
+            slot->deltas[d].received_dirty.initialize();
+            slot->deltas[d].rtt_dirty.initialize();
+            slot->deltas[d].reset = false;
+            slot->deltas[d].generation = 1;
+            slot->deltas[d].values.highest_sent = 0;
+            slot->deltas[d].values.highest_received = 0;
+        }
+        slot->deltas[0].reset = true;
+        slot->history_generation = 0;
+        slot->validity.initialize();
+        worker->spares[i] = &slot->deltas[1];
     }
     if ( !rocketnet_platform_mutex_create(&worker->exchange_mutex) )
         return ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
@@ -644,7 +697,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         // The stats producer binding is transport-lifetime ownership, not
         // connection state. Reset preserves this one pointer deliberately.
         fresh->stats_delta = protocol->acks->endpoints[client_index].stats_delta;
-        if ( memcmp( fresh, &protocol->acks->endpoints[client_index], sizeof(*fresh) ) != 0 )
+        if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
             member = "rocketnet_server_acks_t.endpoints";
         free( fresh );
     }
@@ -1219,7 +1272,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                                        const char * public_address_string,
                                                                                        const struct rocketnet_server_transport_config_t * config,
-                                                                                       double time, int * status );
+                                                                                       double time, int * status,
+                                                                                       const uint64_t * resolved_memory_budget = NULL );
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
                                                                               const struct rocketnet_server_transport_config_t * config,
@@ -1245,10 +1299,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
 }
 
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
+                                                                                  const struct rocketnet_server_transport_config_t * config,
+                                                                                  uint64_t memory_budget_bytes, int * status )
+{
+    rocketnet_assert( config );
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
+}
+
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                            const char * public_address_string,
                                                                            const struct rocketnet_server_transport_config_t * config,
-                                                                           double time, int * status )
+                                                                           double time, int * status,
+                                                                           const uint64_t * resolved_memory_budget )
 {
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
     const int manual_override = rocketnet_server_stats_manual_next;
@@ -1299,7 +1362,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the default shape; the caller's struct is the middle layer; the
     // environment overlays both through the config table, every override
     // logged loudly with the value it displaced. validation refuses
-    // loudly and never clamps.
+    // loudly and never clamps. A config the public create already resolved
+    // (resolved_memory_budget set, rocketnet_server_transport_create_resolved)
+    // takes no second environment pass: start uses the config create
+    // validated and sized, whatever the environment says now.
 
     struct rocketnet_server_transport_config_t effective_config;
     if ( config )
@@ -1310,7 +1376,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1476,8 +1542,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    uint64_t memory_budget = 0;
-    if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+    uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1529,7 +1595,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server transport create: could not allocate server transport" );
         return NULL;
     }
-    new ( server_transport ) rocketnet_server_transport_t();
+    rocketnet_server_transport_construct( server_transport );
 
     server_transport->context = context;
     server_transport->time = time;
@@ -1964,6 +2030,26 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     return server_transport;
 }
 
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    const size_t protocol = offsetof( rocketnet_server_transport_t, protocol );
+    const size_t spans[3][2] =
+    {
+        { protocol + offsetof( rocketnet_server_protocol_t, server_secret_key ), ROCKETNET_KEY_BYTES },
+        { protocol + offsetof( rocketnet_server_protocol_t, cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
+        { protocol + offsetof( rocketnet_server_protocol_t, previous_cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
+    };
+    int count = 0;
+    for ( ; count < 3 && count < max; count++ )
+    {
+        offsets[count] = spans[count][0];
+        bytes[count] = spans[count][1];
+    }
+    return count;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
+
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -1976,6 +2062,13 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
     rocketnet_server_stats_worker_destroy(server_transport->context, server_transport->stats_worker);
     server_transport->stats_worker = NULL;
+
+    // the server's keys: its secret key and both cookie keys. The session
+    // keys are wiped with the encryption map below; nothing else here is a
+    // secret, and the OS zero-fills every page before another process gets it
+    sodium_memzero( server_transport->protocol.server_secret_key, sizeof(server_transport->protocol.server_secret_key) );
+    sodium_memzero( server_transport->protocol.cookie_key, sizeof(server_transport->protocol.cookie_key) );
+    sodium_memzero( server_transport->protocol.previous_cookie_key, sizeof(server_transport->protocol.previous_cookie_key) );
 
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
@@ -2010,7 +2103,7 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
     void * allocation_context = server_transport->context;
     server_transport->~rocketnet_server_transport_t();
-    rocketnet_clear_and_free( allocation_context, server_transport, sizeof(rocketnet_server_transport_t) );
+    rocketnet_free( allocation_context, server_transport );
 }
 
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )
@@ -2432,6 +2525,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
             server_transport->payloads.payload_data[index] = payload;
             server_transport->payloads.payload_bytes[index] = payload_bytes;
+            server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
             server_transport->payloads.num_payloads++;
         }
 
@@ -2450,6 +2544,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                 server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+                server_transport->payloads.sequence[index] = 0;
                 server_transport->payloads.num_payloads++;
             }
             else
@@ -2581,6 +2676,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = payload;
                 server_transport->payloads.payload_bytes[index] = payload_bytes;
+                server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
                 server_transport->payloads.num_payloads++;
             }
 
@@ -2599,6 +2695,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                     server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                     server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                     server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+                    server_transport->payloads.sequence[index] = 0;
                     server_transport->payloads.num_payloads++;
                 }
                 else
@@ -3660,6 +3757,19 @@ void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transp
     capture->keep_alive_acked = endpoint->keep_alive_acked ? 1 : 0;
 }
 #endif // #if ROCKETNET_DEV
+
+
+void rocketnet_server_transport_defer_payload_acks( struct rocketnet_server_transport_t * transport )
+{
+    transport->protocol.defer_payload_acks = 1;
+}
+
+void rocketnet_server_transport_accept_payload( struct rocketnet_server_transport_t * transport, int k )
+{
+    const rocketnet_server_payloads_t * batch = &transport->payloads;
+    if ( k >= 0 && k < batch->num_payloads )
+        rocketnet_server_protocol_accept_payload( &transport->protocol, batch->client_index[k], batch->connection_id[k], batch->sequence[k] );
+}
 
 #endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 

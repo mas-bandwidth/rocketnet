@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <initializer_list>
+#include <string.h>
 
 #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
 #define ROCKETNET_REASSEMBLY_MEMORY_MIB 512
@@ -72,3 +73,38 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
 
 bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan);
+
+// Zero an object's raw storage except its buffers, before it is constructed:
+// skip lists the buffers as (offset, bytes) spans, ascending and disjoint.
+// A buffer's bytes are written before they are read, below the count that
+// names them, so only its count is state, set after construction; its pages
+// are touched only by use. Zero only what is state (Glenn 2026-10-22).
+//
+// The zeroed state survives the default-initialization that follows
+// (`new ( p ) T;`, never `T()`, which would zero the buffers too) because the
+// types constructed this way have implicit constructors only: their own
+// members are left as the bytes are, and the only user-provided constructors
+// inside them are std::atomic's, which set their own value. GCC's lifetime
+// dead-store elimination clobbers an object only at the start of a
+// user-provided constructor, so it never discards these stores. The destroy
+// tests in test_unit_secrets_wiped.cpp construct both transports over a 0xC5
+// canary, so a lost store fails them.
+struct rocketnet_span_t
+{
+    size_t offset;
+    size_t bytes;
+};
+
+inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet_span_t * skip, int num_skip )
+{
+    uint8_t * base = (uint8_t *) storage;
+    size_t at = 0;
+    for ( int i = 0; i < num_skip; i++ )
+    {
+        if ( skip[i].offset > at )
+            memset( base + at, 0, skip[i].offset - at );
+        at = skip[i].offset + skip[i].bytes;
+    }
+    if ( at < bytes )
+        memset( base + at, 0, bytes - at );
+}

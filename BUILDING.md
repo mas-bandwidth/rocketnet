@@ -63,9 +63,28 @@ sibling binary that does), belongs in the functional suite:
 
     ./bin/functional
 
-The functional suite is its own target. It runs in parallel under the same
-120 second failure limit and prints the same way. Put a new test in `./bin/test` when the assertion can be
-reached through a state machine or the simulator. Put it in `./bin/functional`
+Each functional case targets completion within **60 seconds**, with a hard
+**120-second maximum**, including Debug, sanitizer and emulated builds. Cases
+should stop as soon as their correctness checks finish; they do not wait out
+that budget. The live message matrix reports elapsed time against both bounds,
+while preserving delivery, ordering, receipt and cleanup checks. This budget
+is separate from the library's main-call latency/performance qualification.
+`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases. Every functional
+case, including sibling binaries, runs alone on every platform. Setting
+`ROCKETNET_TEST_JOBS` cannot increase functional concurrency; deterministic
+unit cases may still run in parallel. Run separate functional invocations and
+other network workloads separately on the same test host as well.
+
+Functional assertions check delivery, ordering, state transitions and eventual
+recovery. Wall-clock latency and receive gaps are diagnostics, not pass/fail
+performance thresholds. Generous deadlines catch missing progress or hangs.
+Exact protocol timeout boundaries belong in deterministic tests with simulated
+time. Real pacing primitives may check that they wait at all, without imposing
+an upper latency threshold. Performance qualification is a separate workload.
+
+The functional suite is its own target and prints results in the same format.
+Put a new test in `./bin/test` when the assertion can be reached through a
+state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
@@ -169,6 +188,9 @@ Dependencies, per platform, as CI installs them:
     # io_uring server transport (without it that transport is absent); clang with the BPF target compiles the XDP
     # program at build time (the server host needs no compiler)
     sudo apt install cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
+
+    # Ubuntu 22.04: AF_XDP is in stock libbpf 0.5; libxdp-dev is not available
+    sudo apt install cmake build-essential clang libbpf-dev liburing-dev xxd
 
     # macOS
     brew install cmake
@@ -305,7 +327,8 @@ networks remote clients connect from.
 
 The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
-compiler. Without such a clang, without libbpf or libxdp, or with
+compiler. AF_XDP comes from libxdp on newer systems or from libbpf 0.5
+(`bpf/xsk.h`) on Ubuntu 22.04. Without such a clang or an AF_XDP provider, or with
 `-DROCKETNET_XDP=OFF`, the build still succeeds with the XDP transport compiled
 out: the library carries no XDP code and links neither library, and a
 transport list naming `xdp` refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. The generated header lives in each build tree, so concurrent
@@ -327,7 +350,7 @@ BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
 Configure with `-DROCKETNET_XDP=ON` (the default) to restore the native
 backend and its dependencies. With it on, a configure that finds no clang with
-the BPF target, or no libbpf or libxdp development files, is not an error: it
+the BPF target, or no libbpf and AF_XDP development files, is not an error: it
 says why and builds exactly as `-DROCKETNET_XDP=OFF` does
 (`tools/check_xdp_compiled_out.py --absent` checks the built library).
 
@@ -849,10 +872,30 @@ Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
 transport matrix. No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
-also sets the tree's libbpf floor at 1.0 — `bpf_xdp_query_id` plus the uniform
-negative-errno error convention the pre-flight's error reporting assumes
-(pre-1.0 libbpf returned -1 with errno set and would misreport there); Ubuntu
-22.04's libbpf 0.5 is below the floor, 24.04's 1.x is comfortably above.
+supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.
+On 22.04 the build selects `bpf/xsk.h`, loads the embedded BPF object directly,
+and uses the legacy XDP query/attach APIs. Attach refuses an occupied slot;
+detach supplies the expected program fd so it cannot remove a replacement.
+The modern libxdp path is unchanged. No process-global libbpf strict-mode
+setting is changed. Installed CMake packages retain their selected provider.
+
+### Ubuntu 22.04 build compatibility
+
+Use the stock package command above and the ordinary CMake build. Configure
+must report `XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`;
+`XDP off` does not qualify an XDP build. The default build includes the embedded
+BPF object, static/shared libraries, examples and XDP test executables. Run
+`./bin/test_xdp_compat` for the legacy loader/attachment adapter contract checks
+(no kernel operations), `./bin/test` for the unit suite, and
+`python3 tools/check_package.py build` for relocated C/C++ consumers of both
+libraries. Jammy's liburing 2.1 lacks multishot receive, so the existing
+io_uring guard leaves that transport unavailable; XDP is independent of it.
+
+Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and
+userspace libraries only. The host supplies the container's kernel. Loading,
+attaching, zero-copy support and performance on the original 5.15 kernel and
+the deployment NIC require separate runtime qualification.
+
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 
