@@ -115,6 +115,8 @@ void rocketnet_server_iocp_test_hold_publication( rocketnet_server_iocp_t * iocp
 int rocketnet_server_iocp_test_ready_banks( rocketnet_server_iocp_t * iocp, int worker_index );
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
+// The bound socket as an integer handle, for getsockopt checks.
+uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 
 // The fault seam. The next count events at a fault point fail with status, as
 // the host fails them: a send or receive completion reports status as its

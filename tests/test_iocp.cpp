@@ -1439,6 +1439,51 @@ static void test_windows_send_failures_counted()
     printf("test_windows_send_failures_counted\n");
 }
 
+// The bound socket of each native transport carries the don't-fragment
+// option on both families: IP_DONTFRAGMENT on IPv4, IPV6_DONTFRAG on IPv6,
+// each reading back 1.
+static void check_dont_fragment( uintptr_t handle, bool ipv6 )
+{
+    const SOCKET socket = (SOCKET) handle;
+    CHECK(socket != INVALID_SOCKET);
+    DWORD value = 0;
+    int value_bytes = (int) sizeof(value);
+    if ( ipv6 )
+        CHECK(getsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (char*) &value, &value_bytes ) == 0);
+    else
+        CHECK(getsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (char*) &value, &value_bytes ) == 0);
+    CHECK(value == 1);
+}
+
+static void test_iocp_socket_sets_dont_fragment()
+{
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int c = 0; c < 2; ++c )
+    {
+        rocketnet_address_t bind = address(binds[c]);
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 2);
+        CHECK(transport && bind.port != 0);
+        check_dont_fragment( rocketnet_server_iocp_test_socket(transport), c == 1 );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+    printf("test_iocp_transport_socket_sets_dont_fragment\n");
+}
+
+static void test_rio_socket_sets_dont_fragment()
+{
+    CHECK(rocketnet_server_rio_available());
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int c = 0; c < 2; ++c )
+    {
+        rocketnet_address_t bind = address(binds[c]);
+        rocketnet_server_rio_t * rio = rocketnet_server_rio_create(NULL, &bind);
+        CHECK(rio && bind.port != 0);
+        check_dont_fragment( rocketnet_server_rio_test_socket(rio), c == 1 );
+        rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    }
+    printf("test_rio_transport_socket_sets_dont_fragment\n");
+}
+
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
@@ -1454,6 +1499,8 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
+    { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_socket_sets_dont_fragment },
+    { "test_rio_transport_socket_sets_dont_fragment", test_rio_socket_sets_dont_fragment },
 };
 
 // With no argument every case runs; with names, only those cases run.

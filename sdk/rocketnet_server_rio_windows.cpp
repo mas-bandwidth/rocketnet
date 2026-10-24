@@ -623,6 +623,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
+    // the portable socket's rule: don't-fragment on, and a refusal is tolerated, never a create failure
+    if ( rio->ipv6 ) setsockopt( rio->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char*) &enabled, sizeof(enabled) );
+    else setsockopt( rio->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char*) &enabled, sizeof(enabled) );
     // windows-udp-connreset audit, rio socket: both ICMP reset reports off;
     // a refusal is logged once and the receive path skips the statuses
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
@@ -1413,6 +1416,11 @@ void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int faul
 int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault )
 {
     return rio->test_faults[fault].load( std::memory_order_acquire );
+}
+
+uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio )
+{
+    return (uintptr_t) rio->socket;
 }
 
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio )
