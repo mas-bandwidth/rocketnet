@@ -54,9 +54,10 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
 
     // A terminal state ends the attempt: the derived session keys, the
     // token's keys and the ephemeral secret are no longer needed and MUST be
-    // zeroed. STANDARD.md: both sides MUST zero their own ephemeral secret
-    // once it is no longer needed for a handshake in progress (1095-1098),
-    // and on a denied, "release all connection state" (2425-2426);
+    // zeroed. TRANSPORT.md t7 rule 10: both sides MUST erase their own
+    // ephemeral secret when no handshake that needs it remains, and MUST
+    // erase the four keys and the token keys when the attempt that owns them
+    // ends; t13.4 says the same for a client reset.
     // tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
     // state <= 0. Every automatic terminal transition passes through here,
     // after the state is stored, so the reason, the state-change report and
@@ -65,7 +66,7 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
         rocketnet_client_connection_reset( client );
 }
 
-// The AEAD integrity limit, per the standard's _Replay Protection_: one
+// The AEAD integrity limit, per TRANSPORT.md t14 Replay protection: one
 // more sealed packet that did not open this attempt, across its handshake
 // and session keys. On reaching ROCKETNET_INTEGRITY_LIMIT the attempt ends
 // in disconnected with its keys and ephemeral secret zeroed -- the zeroing
@@ -455,7 +456,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // anyone who sees the request can echo it. a cookie therefore never
     // refreshes the receive time and never gives a round-trip sample; both
     // come only from the challenge and later packets that open under the
-    // attempt's keys (STANDARD t11.1).
+    // attempt's keys (standard/TRANSPORT.md t11.1 Cookie processing).
 
     memcpy( client->return_cookie, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
     client->has_cookie = 1;
@@ -486,7 +487,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED]++;
 
-    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
+    // TRANSPORT.md t10 step 6: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored challenge. wrong size" );
@@ -613,7 +614,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
-    // STANDARD.md Reading packets: the per-type size check runs before the state gate.
+    // TRANSPORT.md t10 step 6: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored denied. wrong size" );
@@ -1222,8 +1223,8 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK,
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE };
 
-    // a fragment is accepted only in connected, per STANDARD.md
-    // _Fragmentation_ and FragmentOnlyWhenConnected in
+    // a fragment is accepted only on a connected slot, per TRANSPORT.md t16.2
+    // and FragmentOnlyWhenConnected in
     // tla/ClientConnection.tla: in any other state it is refused here,
     // before the open and before any reassembly call. Payload types other
     // than 9 keep their states in the shared open below.
