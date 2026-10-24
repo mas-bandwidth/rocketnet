@@ -620,6 +620,8 @@ size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t 
     return rn_client_required_memory_current( read );
 }
 
+// tla/ClientSession.tla Create: a fresh object, DISCONNECTED, with no token
+// and no connection, its resolved config and one memory block.
 static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
@@ -777,6 +779,9 @@ static bool rn_connect_token_decode( const char * connect_token, uint8_t token[R
     return true;
 }
 
+// tla/ClientSession.tla RetryPending: from a terminal state whose worker is
+// still running, connect asks that worker to stop and returns
+// CLIENT_NOT_DISCONNECTED, keeping the public state and starting nothing.
 enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
@@ -839,6 +844,9 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
 }
 
+// tla/ClientSession.tla Destroy: the object goes only once its worker has
+// stopped; an early destroy drives the stop first and keeps a client whose
+// worker has not exited.
 void rocketnet_client_destroy( struct rocketnet_client_t * client )
 {
     if ( !client )
@@ -874,6 +882,13 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
         rocketnet_free( client->context, client );
 }
 
+// tla/ClientSession.tla HandshakeStep: the connection's update moves the
+// handshake on as the server's replies arrive; Deny, TokenExpires, Timer and
+// ServerDisconnect: the same update ends the connection on a denial, the
+// token's expiry, a stage or connected timeout, or the server's disconnect;
+// Deliver: what arrives opens only under the connection's own keys;
+// WorkerComplete: a retiring connection's transport is stepped through its
+// stop until its worker completes.
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -899,6 +914,10 @@ void rocketnet_client_send_packets( struct rocketnet_client_t * client )
     rocketnet_message_client_send_packets( client->connection );
 }
 
+// tla/ClientSession.tla ClientDisconnect: from a live state the connection
+// is kicked (its disconnect burst) and its worker asked to stop;
+// DisconnectFromError: from an error state only the stop is asked; both
+// leave the client DISCONNECTED.
 void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -1022,6 +1041,8 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
 // NOT_CONNECTED_DROPS. With no connection object the count goes straight to
 // the lifetime counters; with one, the message layer drops it and counts
 // MESSAGE_SEND_NOT_CONNECTED, which the public counter reads.
+// tla/ClientSession.tla Send: while CONNECTED the start goes down to the
+// connection's message layer.
 uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -1493,6 +1514,8 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
     return ROCKETNET_STATUS_OK;
 }
 
+// tla/ServerSession.tla Create: STOPPED, no transport bound, the one memory
+// block made.
 static struct rocketnet_server_t * rn_server_create_current( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
@@ -1627,6 +1650,9 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 
 static void rn_server_finish_stop( struct rocketnet_server_t * server );
 
+// tla/ServerSession.tla Start: from STOPPED only, a new message server and
+// server transport in the block (a fresh used-token history, every slot's
+// reason NONE); a running server is refused.
 enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1678,6 +1704,9 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
     }
 }
 
+// tla/ServerSession.tla Stop: one call, every connected slot disconnected at
+// the transport and kicked, the bursts flushed, the transport stopped, and
+// the server no longer running on return.
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || !server->running )
@@ -1706,6 +1735,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         rocketnet_server_transport_stop( transport );
 }
 
+// tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
+// once its retiring transport's workers have exited and it stores STOPPED.
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || server->running )
@@ -1749,6 +1780,8 @@ int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, in
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/ServerSession.tla Destroy: from any state; a running server is
+// stopped first, then the object goes.
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !server )
@@ -1786,6 +1819,11 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         rocketnet_free( server->context, server );
 }
 
+// tla/ServerSession.tla Read, ClientConnects, Establish, Deny, SlotTimeout,
+// ClientLeaves and Deliver: only a running server's update reads datagrams;
+// it takes each client's request into a free slot, establishes it when its
+// response opens, ends a slot on a denial, a timeout or the client's own
+// disconnect, and opens a client's traffic only under its slot's session keys.
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1910,6 +1948,8 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
 // returns at once for a slot it does not hold
 // (rocketnet_server_transport_disconnect_client; tla/RNSlots.tla
 // PublicDisconnect).
+// tla/ServerSession.tla DisconnectClient: a CONNECTED slot is kicked and
+// disconnected at the transport, which sends its burst and resets the slot.
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1937,6 +1977,8 @@ enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const str
 // counted once in NOT_CONNECTED_DROPS (the message layer's
 // MESSAGE_SEND_NOT_CONNECTED while running, the lifetime counters while
 // stopped). An index at or past max_clients is misuse.
+// tla/ServerSession.tla ServerSend: to a CONNECTED slot of a running server
+// the start goes down to the message layer.
 uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )
