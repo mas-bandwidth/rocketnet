@@ -1735,6 +1735,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         rocketnet_server_transport_stop( transport );
 }
 
+// tla/ServerSession.tla StopCompletes: true once the retiring transport's
+// workers have exited and its update stored STOPPED.
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || server->running )
@@ -1822,6 +1824,11 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 // request into a free slot, establishes it when its response opens, ends a
 // slot on a denial, a timeout or the client's own disconnect, and opens a
 // client's traffic only under its slot's session keys.
+// tla/ServerSession.tla Read: the transport reads a datagram only while the
+// server is running, recording the state it read.
+// tla/RNDestroyWipe.tla Add: establishing a client adds its encryption-map
+// entry and writes the slot's user-data copy (rocketnet_encryption_map_add,
+// rocketnet_client_slots_assign).
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1948,6 +1955,8 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
 // PublicDisconnect).
 // tla/ServerSession.tla DisconnectClient: a CONNECTED slot is kicked and
 // disconnected at the transport, which sends its burst and resets the slot.
+// tla/RNDestroyWipe.tla Remove: the reset removes the slot's encryption-map
+// entry (secrets wiped) and releases its user data (rocketnet_server_connection_reset).
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )

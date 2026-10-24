@@ -7,6 +7,37 @@
 // Admit). It holds no time, allocates nothing and calls no transport: the
 // object hands it the transport's id for each slot and the id tagged on each
 // batch entry.
+// The rest of RNSlots is modeled at the message layer and the transport the
+// object drives; each action is cited here where its step runs:
+//   tla/RNSlots.tla BeginUpdate: rn_message_object_update checks every view
+//     released before the transport runs (sdk/rocketnet_message_server.cpp).
+//   tla/RNSlots.tla EndUpdate: that update returns with phase application,
+//     exposing this update's views.
+//   tla/RNSlots.tla Request: rn_message_object_start submits the next record
+//     against the slot's bound connection.
+//   tla/RNSlots.tla StartPending: rn_message_object_start holds one start
+//     pending per object on a connected slot.
+//   tla/RNSlots.tla FinishPending: rn_message_object_finish (and abort) end
+//     the pending start, accepted or refused.
+//   tla/RNSlots.tla Send: the transport send puts an opened packet on the
+//     wire (rocketnet_message_server_send_packets).
+//   tla/RNSlots.tla TransportOpen: the transport opens a received packet and
+//     stamps its connection at that moment (the receive path).
+//   tla/RNSlots.tla TransportAck: the transport's acked-packet-id
+//     notification (P2/P4) carries the original connection tag.
+//   tla/RNSlots.tla Kick: rn_message_object_kick ends an exhausted slot with
+//     reason MESSAGE_MEMORY_EXHAUSTED.
+//   tla/RNSlots.tla PublicDisconnect: rocketnet_server_disconnect_client and
+//     rocketnet_server_disconnect_all_clients end a slot between updates.
+//   tla/RNSlots.tla ResetFree: the next update resets a disconnected slot to
+//     Free, releasing its region and held views.
+//   tla/RNSlots.tla Release: rn_message_object_release gives a held view back
+//     so the region room is reusable.
+//   tla/RNSlots.tla CarryOn: the "carryon" defect recovers an exhausted slot
+//     to Connected (reversed witness MCRNSlotsBrokenKickCarriesOn.cfg only;
+//     no production path).
+//   tla/RNSlots.tla RejectUnreleasedUpdate: an update over unreleased views
+//     is refused with ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED.
 
 #include <string.h>
 
