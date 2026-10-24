@@ -639,6 +639,8 @@ static void test_public_light_config_honours_caller_size()
     client_config.config_bytes = client_bytes;
     check( rocketnet_client_light_config_internal( &client_config ) == ROCKETNET_STATUS_OK );
     check( client_config.config_bytes == client_bytes );
+    check( client_config.max_fragmented_messages == 1 );
+    check( client_config.send_kbps == 256 );
     const uint8_t * client_raw = (const uint8_t *) &client_config;
     for ( size_t i = client_bytes; i < sizeof( client_config ); i++ )
         check( client_raw[i] == 0xCD );
@@ -650,6 +652,8 @@ static void test_public_light_config_honours_caller_size()
     server_config.config_bytes = server_bytes;
     check( rocketnet_server_light_config_internal( &server_config ) == ROCKETNET_STATUS_OK );
     check( server_config.config_bytes == server_bytes );
+    check( server_config.max_fragmented_messages == 1 );
+    check( server_config.per_client_send_kbps == 256 );
     const uint8_t * server_raw = (const uint8_t *) &server_config;
     for ( size_t i = server_bytes; i < sizeof( server_config ); i++ )
         check( server_raw[i] == 0xCD );
