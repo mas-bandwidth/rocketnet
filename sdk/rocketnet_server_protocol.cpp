@@ -547,8 +547,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // to present a request whose signature verifies owns the token until the
     // handshake deadline or until its response binds the token; a request
     // from a second address is refused here, so one token buys one half-open
-    // mapping and no asymmetric work (STANDARD.md, Processing Connection
-    // Requests; tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
+    // mapping and no asymmetric work (TRANSPORT.md t12 rule 9;
+    // tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
     {
@@ -661,7 +661,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
     // for its address until the handshake deadline, but a request proves
     // nothing about who holds the token's keys, so the binding that outlives
     // the deadline waits for a response that opens under the handshake key
-    // (STANDARD.md, Processing Connection Response Packets;
+    // (TRANSPORT.md t12 rule 13;
     // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
@@ -671,8 +671,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        // Cheap refusals come before cryptography (STANDARD.md, Reading
-        // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // Cheap refusals come before cryptography (TRANSPORT.md t10 rules 6-7;
+        // ReceiveOrder CheapRefusalsFirst). The handshake keys need
         // no ephemeral pair, so derive them alone and check the slots before
         // any keypair or scalar multiplication. A full server seals the same
         // denial as before (same packet, sequence one, nonce in the clear).
@@ -829,7 +829,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     }
 
     // one token, one live connection (tla/RNSecurityTables.tla,
-    // OneTokenOneLiveConnection; docs/SESSION.md 1.6). a token carries one
+    // OneTokenOneLiveConnection; TRANSPORT.md t12 rule 13). a token carries one
     // client id, so with the binding at the response, when two addresses each
     // hold a mapping for one token, the first to be admitted connects and the
     // second is refused here while that connection lives. no admitted-token
@@ -1572,7 +1572,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( !control->established )
         {
-            // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
+            // TRANSPORT.md t12 rule 14: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= control->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
