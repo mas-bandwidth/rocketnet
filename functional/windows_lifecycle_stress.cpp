@@ -468,18 +468,47 @@ static void windows_connect_disconnect_cycle( const windows_cell_t * cell, rocke
     rn_native_client_transport_stop_and_destroy( client );
 }
 
-// stop and start the server on its one port, and a client reconnects to it
-static void windows_server_restart_cycle( const windows_cell_t * cell, const char * fixed_address, unsigned fixed_port, int cycle )
+// Keep one public server object through every stop/start. The transport-only
+// object used by the other cases has no restart operation.
+static void windows_server_restart_cycle( const windows_cell_t * cell, rocketnet_server_t * server,
+                                          const char * fixed_address, unsigned fixed_port, int cycle )
 {
-    rocketnet_server_transport_t * server = windows_server_create( cell, fixed_address, 4 );
-    windows_lifecycle_check( rocketnet_server_transport_port( server ) == fixed_port );
+    windows_lifecycle_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    windows_lifecycle_check( rocketnet_server_port( server ) == fixed_port );
     windows_client_clock_t clock;
     rocketnet_client_transport_t * client = windows_client_create( cell, fixed_address, &clock );
-    if ( !windows_wait_connected( server, client, &clock, 5.0 ) )
-        printf( "[%s]: reconnect stalled at restart %d\n", cell->name, cycle );
-    windows_lifecycle_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    const double deadline = rocketnet_platform_time() + 5.0;
+    int previous_state = rocketnet_client_transport_state( client );
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_client_transport_update( client, windows_client_clock_now( &clock ) );
+        rocketnet_server_update( server, rocketnet_platform_time() );
+        rocketnet_server_send_packets( server );
+        const int state = rocketnet_client_transport_state( client );
+        if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && rocketnet_server_num_connected_clients( server ) == 1 )
+            break;
+        if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            break;
+        if ( state != previous_state )
+        {
+            previous_state = state;
+            clock.skipped.fetch_add( 1, std::memory_order_acq_rel );
+            continue;
+        }
+        rocketnet_platform_sleep( 0.0002 );
+    }
+    if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+         rocketnet_server_num_connected_clients( server ) != 1 )
+        printf( "[%s]: reconnect stalled at restart %d, client state %d, server clients %d\n", cell->name, cycle,
+                rocketnet_client_transport_state( client ), rocketnet_server_num_connected_clients( server ) );
+    windows_lifecycle_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                             rocketnet_server_num_connected_clients( server ) == 1 );
     rn_native_client_transport_stop_and_destroy( client );
-    rn_native_server_transport_stop_and_destroy( server );
+    rocketnet_server_stop( server );
+    const double stop_deadline = rocketnet_platform_time() + 10.0;
+    while ( !rocketnet_server_stopped( server ) && rocketnet_platform_time() < stop_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    windows_lifecycle_check( rocketnet_server_stopped( server ) );
 }
 
 // The port the restart case binds for its whole life. A port the kernel picks
@@ -586,13 +615,25 @@ static void windows_server_restart_1000( const char * server_transport )
     windows_lifecycle_check( fixed_port != 0 );
     char fixed_address[64];
     snprintf( fixed_address, sizeof( fixed_address ), "127.0.0.1:%u", fixed_port );
-    windows_server_restart_cycle( cell, fixed_address, fixed_port, -1 );
+    struct rocketnet_server_config_t config;
+    windows_lifecycle_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, sizeof( config.backend_public_key ) );
+    config.max_clients = 4;
+    config.transport = cell->server_transport;
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, fixed_address, NULL, &config, &status );
+    if ( !server )
+        printf( "server create [%s] at %s failed: %s\n", cell->name, fixed_address, rocketnet_status_name( status ) );
+    windows_lifecycle_check( server != NULL );
+    windows_server_restart_cycle( cell, server, fixed_address, fixed_port, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
-        windows_server_restart_cycle( cell, fixed_address, fixed_port, i );
+        windows_server_restart_cycle( cell, server, fixed_address, fixed_port, i );
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    rocketnet_server_destroy( server );
     windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
 }
 
