@@ -93,12 +93,12 @@ it and is sealed.
 
 | Case | Expected | Instance | Distinct states | Seconds |
 |---|---|---|---|---|
-| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault | DISTINCT_CONTROL | SECONDS_CONTROL |
-| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | DISTINCT_REVERSED | SECONDS_REVERSED |
-| `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | DISTINCT_OWNQUOTA | SECONDS_OWNQUOTA |
-| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | DISTINCT_NORESERVE | SECONDS_NORESERVE |
-| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | DISTINCT_MOVES | SECONDS_MOVES |
-| `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | DISTINCT_REUSE | SECONDS_REUSE |
+| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault | 1,152,441 | 33.4 |
+| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 1.1 |
+| `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | 426 | 1.3 |
+| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,420 | 2.1 |
+| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 1.1 |
+| `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | 98 | 1.1 |
 
 States and seconds are the pinned runner's measurements in `tla/RUNS.tsv`
 (two workers for the control, one for the witnesses, 110-second budget).
