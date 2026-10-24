@@ -98,7 +98,7 @@ else
         -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$abs_build/lib" \
         -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$abs_build/lib"
 
-    cmake --build "$build_dir" --target test --parallel
+    cmake --build "$build_dir" --target test --parallel 4
 
     test_bin="$abs_build/bin/test"
 fi

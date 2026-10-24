@@ -182,7 +182,7 @@ jobs:
           # TCG gives each case a fraction of a native CPU. Keep the Release
           # workloads unchanged, but opt their completion bounds into the
           # suites' stated 5x emulation scale.
-          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel'
+          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel 4'
           "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
 
           "${SSH[@]}" bash -s << 'GUEST'

@@ -106,4 +106,4 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Run the clang-tidy and cppcheck gate
-        run: python3 tools/run_tidy.py --jobs 8
+        run: python3 tools/run_tidy.py --jobs 4

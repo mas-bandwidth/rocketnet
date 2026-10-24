@@ -106,7 +106,7 @@ jobs:
         run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build static and shared libraries, unit suite and functional suite (clang)
-        run: cmake --build build-clang --parallel
+        run: cmake --build build-clang --parallel 4
 
       - name: Unit suite (clang)
         run: ./bin/test
@@ -140,7 +140,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, through the Makefile)
-        run: make -j8
+        run: make -j4
 
       - name: Functional suite, nightly tier
         timeout-minutes: 20
@@ -203,7 +203,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
-        run: cmake --build build --target test functional --parallel
+        run: cmake --build build --target test functional --parallel 4
 
       - name: Run the unit suite under tsan
         env:
@@ -361,7 +361,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Debug --parallel
+        run: cmake --build build --config Debug --parallel 4
 
       - name: Run tests
         shell: bash
@@ -462,7 +462,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 4
 
       - name: External transport backend
         run: python tools/check_driver_extension.py build --config Release

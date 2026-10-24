@@ -51,7 +51,7 @@ jobs:
           exit "$missing"
 
       - name: Build
-        run: make
+        run: make JOBS=4
 
       - name: Sweep every channel case over seeds 1-2000
         run: |

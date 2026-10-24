@@ -32,7 +32,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: make
+        run: make JOBS=4
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024
@@ -54,7 +54,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: make
+        run: make JOBS=4
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024
