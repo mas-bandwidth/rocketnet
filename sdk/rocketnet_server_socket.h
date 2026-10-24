@@ -73,9 +73,11 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 
 // The replay high-water writer: the server socket is the only writer of the
 // pinned server_xdp_replay_map. These calls are main thread only. Forget and
-// mark append to the socket's pending buffer; a full buffer counts in the
-// buffer's refused count. Commit deletes every forget, then updates every
-// mark, then resets the buffer. A failed syscall adds to the commit failure
+// mark append to the socket's pending buffer; a full buffer refuses the entry
+// and the next commit adds the refusal to the commit failure count. Commit
+// deletes every forget, then updates every mark, then resets the buffer,
+// keeping every forget the kernel refused (anything but a missing key) to be
+// tried first in the next commit. A failed syscall adds to the commit failure
 // count and logs one debug line naming the call, never a key.
 
 void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
