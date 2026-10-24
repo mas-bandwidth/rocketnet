@@ -1130,8 +1130,11 @@ struct rocketnet_client_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1298,8 +1301,11 @@ struct rocketnet_server_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit per client. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1418,6 +1424,13 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
         config->config_bytes = sizeof( *config );
     return rocketnet_client_default_config_internal( config );
 }
+
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
+/// send budget. Use it in place of rocketnet_client_default_config. It changes
+/// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config );
 
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
@@ -1698,6 +1711,14 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
         config->config_bytes = sizeof( *config );
     return rocketnet_server_default_config_internal( config );
 }
+
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
+/// send budget per client. Use it in place of rocketnet_server_default_config.
+/// The caller still sets its protocol id and backend key. It changes no
+/// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config );
 
 /// As rocketnet_client_required_memory, for this config and max_clients.
 /// The defaults' test filter in a production build is an invalid config. A

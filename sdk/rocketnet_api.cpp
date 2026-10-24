@@ -550,6 +550,39 @@ enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketn
     return ROCKETNET_STATUS_OK;
 }
 
+// the light-client profile (sdk/rocketnet.h): the defaults, then the light
+// geometry; config_bytes is set first, as the inline default_config does
+enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    config->config_bytes = sizeof( *config );
+    const enum rocketnet_status_t status = rocketnet_client_default_config_internal( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1500-byte MTU each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
+    config->send_kbps = 256;                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
+    return ROCKETNET_STATUS_OK;
+}
+
 // the caller's config over the defaults, as far as both know; NULL is the
 // defaults (read stays NULL)
 static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t * current,
@@ -1368,6 +1401,39 @@ enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketn
     struct rocketnet_server_config_t defaults;
     rn_server_default_config_current( &defaults );
     rn_public_config_copy( config, &defaults, use );
+    return ROCKETNET_STATUS_OK;
+}
+
+// the light-client profile (sdk/rocketnet.h): the defaults, then the light
+// geometry; config_bytes is set first, as the inline default_config does
+enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    config->config_bytes = sizeof( *config );
+    const enum rocketnet_status_t status = rocketnet_server_default_config_internal( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1500-byte MTU each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
+    config->per_client_send_kbps = 256;                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
     return ROCKETNET_STATUS_OK;
 }
 
