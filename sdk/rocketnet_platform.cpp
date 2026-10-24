@@ -2390,6 +2390,19 @@ static mach_timebase_info_data_t timebase_info;
 
 static uint64_t time_start;
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+bool rocketnet_platform_mac_primary_interface_matches( const void * primary_interface_name, const void * bsd_name )
+{
+    if ( primary_interface_name == NULL || bsd_name == NULL )
+        return false;
+    if ( CFGetTypeID( primary_interface_name ) != CFStringGetTypeID() || CFGetTypeID( bsd_name ) != CFStringGetTypeID() )
+        return false;
+    return CFStringCompare( (CFStringRef) primary_interface_name, (CFStringRef) bsd_name, 0 ) == kCFCompareEqualTo;
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 bool rocketnet_platform_init()
 {
     if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
@@ -2417,16 +2430,23 @@ bool rocketnet_platform_init()
     CFPropertyListRef global = dynamic_store ? SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) ) : NULL;
     if ( global )
     {
-        CFStringRef primary_interface_name = (CFStringRef)( CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) ) );
-        CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
+        const void * primary_interface_name = CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) );
+        // an IPv4 state without a usable PrimaryInterface skips the lookup and keeps UNKNOWN
+        const bool primary_usable = primary_interface_name != NULL && CFGetTypeID( primary_interface_name ) == CFStringGetTypeID();
+        CFArrayRef interfaces = primary_usable ? SCNetworkInterfaceCopyAll() : NULL;
         CFIndex count = interfaces ? CFArrayGetCount( interfaces ) : 0;
         for ( CFIndex i = 0; i < count; i++ )
-        {   
+        {
             SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)( CFArrayGetValueAtIndex( interfaces, i ) );
             CFStringRef bsd_name = SCNetworkInterfaceGetBSDName( interface );
-            if ( CFStringCompare( primary_interface_name, bsd_name, 0 ) == kCFCompareEqualTo )
-            {   
+            // an interface with no BSD name is never the primary one
+            if ( bsd_name == NULL )
+                continue;
+            if ( rocketnet_platform_mac_primary_interface_matches( primary_interface_name, bsd_name ) )
+            {
                 CFStringRef interface_type = SCNetworkInterfaceGetInterfaceType( interface );
+                if ( interface_type == NULL )
+                    break;
                 if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeEthernet, 0 ) == kCFCompareEqualTo )
                 {
                     connection_type = ROCKETNET_CONNECTION_TYPE_WIRED;
@@ -2574,7 +2594,8 @@ bool rocketnet_platform_client_dual_stack()
 
 int rocketnet_platform_id()
 {
-    return ROCKETNET_PLATFORM_MAC;
+    // the build platform, as the linux section returns: an iOS build is iOS
+    return ROCKETNET_PLATFORM;
 }
 
 int rocketnet_platform_connection_type()

@@ -30,6 +30,10 @@
 #include <arpa/inet.h>
 #endif
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 static void test_platform_socket_hygiene_mapped_source_decision()
 {
     struct rocketnet_address_t mapped;
@@ -229,6 +233,33 @@ static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
 #endif
 }
 
+static void test_platform_id_is_the_build_platform()
+{
+    // the platform id is the platform this build compiles for: an iOS build
+    // reports iOS, never macOS
+    rocketnet_unit_check( rocketnet_platform_id() == ROCKETNET_PLATFORM );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+static void test_platform_mac_primary_interface_refuses_null()
+{
+    // a missing primary interface name, an interface without a BSD name, or a
+    // primary name that is not a string never matches and never reaches
+    // CFStringCompare
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( NULL, CFSTR( "en0" ) ) );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), NULL ) );
+    const int number_value = 0;
+    CFNumberRef number = CFNumberCreate( kCFAllocatorDefault, kCFNumberIntType, &number_value );
+    rocketnet_unit_check( number != NULL );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( number, CFSTR( "en0" ) ) );
+    CFRelease( number );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), CFSTR( "en1" ) ) );
+    rocketnet_unit_check( rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), CFSTR( "en0" ) ) );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_timeval );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_sleep_split );
@@ -236,3 +267,7 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
+REGISTER_UNIT_TEST( test_platform_id_is_the_build_platform );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+REGISTER_UNIT_TEST( test_platform_mac_primary_interface_refuses_null );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
