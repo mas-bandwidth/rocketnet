@@ -8863,10 +8863,11 @@ void rocketnet_test_ack_block_validity()
         rocketnet_check( rocketnet_ack_block_read( &decoded, data, 11, 100 ) == 11 );
     }
 
-    // validity is evaluated on the reconstructed 64-bit largest: a genuine
-    // sequence whose low 32 bits are zero does not read as a fresh
-    // connection -- wire zero against a highest sent near the epoch
-    // boundary reconstructs to 2^32, and a nonzero first range is required
+    // a genuine sequence whose low 32 bits are zero does not read as a fresh
+    // connection -- wire zero against a highest sent near the epoch boundary
+    // reconstructs to 2^32 when the first range is nonzero, and the all-zero
+    // wire block is the empty block at any highest sent
+    // (tla/AckBlockWrap.tla ReadBlock)
     {
         uint8_t * p = data;
         rocketnet_write_uint32( &p, 0 );
@@ -8879,7 +8880,8 @@ void rocketnet_test_ack_block_validity()
         rocketnet_write_uint32( &p, 0 );
         rocketnet_write_uint8( &p, 0 );
         rocketnet_write_uint16( &p, 0 );
-        rocketnet_check( rocketnet_ack_block_read( &decoded, data, 7, 0xFFFFFFF0ULL ) == 0 );
+        rocketnet_check( rocketnet_ack_block_read( &decoded, data, 7, 0xFFFFFFF0ULL ) == 7 );
+        rocketnet_check( decoded.largest == 0 );
     }
 
     // the ack largest reconstruction is the wire rule with expected = the

@@ -177,6 +177,95 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
+  # THE NDEBUG CAMPAIGN: the same eleven targets, but the library under them
+  # is built Release (NDEBUG) as well as the harness, so rocketnet_assert is
+  # compiled out (sdk/rocketnet_internal.h) and a bound that only an assert
+  # holds is fuzzed the way a release build runs it. The fuzz job above
+  # builds the library Debug, and ci.yml's fuzz-smoke-ndebug only replays the
+  # corpora over a Debug library. tools/fuzz_ndebug.sh does the build, checks
+  # that every sdk/ compile line carries -DNDEBUG and that no library object
+  # references the assert callback, and fuzzes the target with the nightly's
+  # flags; it exits 1 on a crash and names the reproducer.
+  fuzz-ndebug:
+    name: nightly fuzz NDEBUG (${{ matrix.target }})
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        target:
+          - rocketnet_fuzz
+          - rocketnet_fuzz_connect_token
+          - rocketnet_fuzz_receive_structured
+          - rocketnet_fuzz_message
+          - rocketnet_fuzz_token_private
+          - rocketnet_fuzz_round_trip
+          - rocketnet_fuzz_config
+          - rocketnet_fuzz_server_transport
+          - rocketnet_fuzz_client_transport
+          - rocketnet_fuzz_session
+          - rocketnet_fuzz_differential
+    concurrency:
+      group: fuzz-nightly-ndebug-${{ matrix.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake clang clang++ nm git pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: build-fuzz-ndebug/out/corpus/${{ matrix.target }}
+          key: fuzz-corpus-ndebug-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-ndebug-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }} with NDEBUG
+        run: |
+          set -euo pipefail
+          T="${{ github.event.inputs.max_total_time || '900' }}"
+          tools/fuzz_ndebug.sh --target "${{ matrix.target }}" --seconds "$T"
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-ndebug-${{ matrix.target }}-${{ steps.refslug.outputs.slug }}
+          path: |
+            build-fuzz-ndebug/out/crashes/
+            build-fuzz-ndebug/out/logs/
+          if-no-files-found: ignore
+
   # macOS Apple silicon on the fleet's darwin member, the same runner label
   # ci.yml's macOS rows use. Apple clang carries no libFuzzer runtime, so this
   # leg names the LLVM toolchain unpacked at $HOME/sdk/llvm through
