@@ -455,6 +455,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
 }
 
 // tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
+// tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -557,6 +558,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // tla/RNResendTiming.tla Sample).
 // tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
 // tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
+// tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
