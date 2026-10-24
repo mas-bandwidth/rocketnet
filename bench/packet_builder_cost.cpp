@@ -11,10 +11,10 @@
 // put back between calls outside the window. Prints the median and the best
 // nanoseconds per write.
 //
-// Built by hand against a Release build (no CMake target yet):
+// Built by hand against a Release build (no CMake target yet). On Linux,
+// after make:
 //
-//   make && c++ -O2 -std=c++11 -DROCKETNET_BUNDLED_SODIUM=1 -Isdk -Isodium \
-//       bench/packet_builder_cost.cpp build/librocketnet_dev.a -lpthread -o bin/packet_builder_cost
+//   c++ -O2 -std=c++11 -Isdk bench/packet_builder_cost.cpp build/librocketnet_dev.a -luring -lxdp -lbpf -lpthread -o bin/packet_builder_cost
 //   ./bin/packet_builder_cost
 
 #include <algorithm>
