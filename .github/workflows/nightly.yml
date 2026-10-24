@@ -45,10 +45,10 @@
 #                           an AddressSanitizer build: the matrix runs each
 #                           cell once, and a one-in-fifty flake needs fifty.
 #
-#   windows / transport     the portable-server and loopback cells of ci.yml's
-#   cells x50               Windows transport family matrix fifty times in a
-#                           row on the native Windows runner, for the same
-#                           one-in-fifty reason.
+#   windows / transport     every cell of ci.yml's Windows transport family
+#   cells x50               matrix (the portable, iocp and rio servers and
+#                           loopback) fifty times in a row on the native
+#                           Windows runner, for the same one-in-fifty reason.
 
 name: nightly
 
@@ -229,8 +229,9 @@ jobs:
   # check) fifty times in a row with the matrix's pins and pass rule, printing
   # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
   # keeping the first failing log. A failure is reported with its log, never
-  # retried. The cells named here are the portable server and loopback; the
-  # iocp and rio server cells join with rn-win-transport-family-50x-native.
+  # retried. The cells named here are the portable, iocp and rio servers and
+  # loopback: every cell of the Windows matrix, each named so a cell added to
+  # ci.yml is added here on purpose.
 
   windows-transport-cells-repeat:
     name: windows / transport cells x50
@@ -257,7 +258,7 @@ jobs:
       - name: The Windows transport cells, fifty times in a row
         timeout-minutes: 60
         shell: bash
-        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell loopback/loopback
+        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
 
       - name: Keep the logs of a failing run
         if: failure()
