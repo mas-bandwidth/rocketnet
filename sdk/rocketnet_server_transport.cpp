@@ -433,12 +433,8 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         if ( slice[i] != 0 )
             member = "rocketnet_reassembly_set_t.slots";
     if ( member )
-    {
-        if ( allocation_failed )
-            snprintf( failure, failure_bytes, "%s[%d]: check could not run (allocation failed)", member, client_index );
-        else
-            snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
-    }
+        snprintf( failure, failure_bytes, "%s[%d]: %s", member, client_index,
+                  allocation_failed ? "check could not run (allocation failed)" : "not reset when the connection ended" );
     return member == NULL;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
