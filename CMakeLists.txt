@@ -200,12 +200,15 @@ if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
     set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
     # the vendor has no configure step, so sodium_memzero (sodium/sodium.c:176)
     # falls to its volatile byte loop unless a HAVE_ macro names the platform
-    # wipe; glibc and musl have explicit_bzero, the wipe libsodium's own
-    # configure picks there. Only key material is wiped (a few hundred bytes
-    # per object), so the loop's speed no longer matters, but the platform
-    # wipe is the one libsodium itself uses.
+    # wipe; glibc and musl have explicit_bzero and Darwin has memset_s (C11
+    # Annex K, which sodium.c asks for with __STDC_WANT_LIB_EXT1__), the wipes
+    # libsodium's own configure picks there. Only key material is wiped (a few
+    # hundred bytes per object), so the loop's speed no longer matters, but the
+    # platform wipe is the one libsodium itself uses.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_EXPLICIT_BZERO=1)
+    elseif(APPLE)
+        set_property(SOURCE "${ROCKETNET_SODIUM_SOURCE}" APPEND PROPERTY COMPILE_DEFINITIONS HAVE_MEMSET_S=1)
     endif()
 endif()
 function(rocketnet_use_sodium target)
