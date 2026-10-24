@@ -224,4 +224,39 @@ static void test_standard_packet_protection_vectors()
     standard_packet_protection_opens();
 }
 
+static void test_open_sealed_packet_refuses_plaintext_over_capacity()
+{
+    uint8_t plaintext[64];
+    for ( int i = 0; i < (int) sizeof( plaintext ); i++ )
+        plaintext[i] = (uint8_t) i;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                            rocketnet_test_filter_value, 1, NULL,
+                                                            plaintext, (int) sizeof( plaintext ),
+                                                            ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                            NULL, rocketnet_test_session_s2c_key );
+    rocketnet_unit_check( packet_bytes > 0 );
+
+    uint8_t sentinel[64];
+    memset( sentinel, 0xA5, sizeof( sentinel ) );
+
+    uint8_t opened[64];
+    memcpy( opened, sentinel, sizeof( opened ) );
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, 63, packet, packet_bytes,
+                                                     ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1,
+                                                     ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                     NULL, rocketnet_test_session_s2c_key );
+    rocketnet_unit_check( opened_bytes == -1 );
+    rocketnet_unit_check( memcmp( opened, sentinel, sizeof( opened ) ) == 0 );
+
+    opened_bytes = rocketnet_open_sealed_packet( opened, NULL, 64, packet, packet_bytes,
+                                                 ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1,
+                                                 ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                 NULL, rocketnet_test_session_s2c_key );
+    rocketnet_unit_check( opened_bytes == 64 );
+    rocketnet_unit_check( memcmp( opened, plaintext, sizeof( plaintext ) ) == 0 );
+}
+
 REGISTER_UNIT_TEST( test_standard_packet_protection_vectors );
+REGISTER_UNIT_TEST( test_open_sealed_packet_refuses_plaintext_over_capacity );

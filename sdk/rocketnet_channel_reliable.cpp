@@ -34,12 +34,11 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
-    const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
     const bool last = index + 1 == count;
 
     RN_BLOCK_COST( chunks );
-    if ( count < 2 || count > max_count || count > region->window || index >= count ||
-         ( last ? ( record->bytes < 1 || (uint32_t) record->bytes > F ) : (uint32_t) record->bytes != F ) )
+    int64_t base_units = 0;
+    if ( !rn_block_shape_valid( channels, record, &base_units ) )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -54,7 +53,6 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    const int64_t base_units = (int64_t) record->ring - (int64_t) index * ( F / 16 );
     const uint64_t span_end = base_units < 0 ? UINT64_MAX :
         (uint64_t) base_units * 16 + (uint64_t) ( count - 1 ) * F + ( last ? rn_reliable_round16( (uint64_t) record->bytes ) : 16 );
     if ( base_units < 0 || span_end > region->ring_bytes ||
@@ -136,9 +134,9 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
         return rn_channels_dispatch_reliable_chunk( channels, record, out );
 
     rn_region_t * region = channels->region;
-    const uint32_t slot = record->number & ( region->window - 1 );
-    rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
-    if ( !descriptor->live || (uint32_t) ( descriptor->number & ROCKETNET_MESSAGE_U24_MASK ) != record->number )
+    uint32_t slot = 0;
+    rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
+    if ( !descriptor )
     {
         // the slot is live for another number (check 10, SLOT_COLLISION)
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
