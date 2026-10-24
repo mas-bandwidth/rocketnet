@@ -65,7 +65,6 @@ static void test_bundled_rng_closes_and_reopens_on_mac()
         {
             rocketnet_client_config_t config;
             check(rocketnet_client_default_config(&config) == ROCKETNET_STATUS_OK);
-            config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
             config.max_fragmented_messages = 1;
             rocketnet_status_t status = ROCKETNET_STATUS_OK;
             rocketnet_client_t * client = rocketnet_client_create(NULL, &config, &status);

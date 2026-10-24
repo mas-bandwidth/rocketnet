@@ -185,7 +185,7 @@ State 5 violates `WindowIsTruth`: the range is `10..21`, sequence 20 lives at bi
 least `W`, so the long-skip branch ran and cleared words `0..3` (bits `0..7`); bit 8,
 in word 4, kept the mark sequence 8 left there. `GenuineIsAccepted` fails on the same
 state (`AlreadyReceived(20)` is `TRUE`: a genuine packet 20 is refused) and so does
-`AckReportsOnlyReceived` (`AckReports(20)`: the block tells the peer 20 arrived).
+`AckReportsOnlyReceived` (`AckReports(20)`: the block tells the sender 20 arrived).
 
 Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
 
@@ -201,7 +201,7 @@ Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
    refused as already received.
 5. `rocketnet_ack_block_build` on the same struct: `largest = 4397`, `floor = 302`, the
    first-run loop at `:87-93` reads bit 301 (set) then bit 300 (set) then bit 299
-   (clear), so `first_range_length = 2`: the peer is told 4396 and 4397 arrived.
+   (clear), so `first_range_length = 2`: the sender is told 4396 and 4397 arrived.
 
 The card's own test (fill `1..W`, advance to `3W`) is the same shape at full width:
 after the jump every bit `256..4095` is stale, so every sequence `2W + 257 .. 3W - 1`

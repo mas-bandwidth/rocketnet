@@ -343,7 +343,7 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
-            if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES )
+            if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES )
             {
                 printf( "soak: unexpected client payload capacity\n" );
                 failures++;
@@ -409,7 +409,7 @@ int main( int argc, char ** argv )
             // config would size this by
             // rocketnet_client_transport_max_payload_bytes instead
 
-            static uint8_t received[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+            static uint8_t received[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
             int received_bytes;
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
             {

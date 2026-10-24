@@ -41,20 +41,20 @@
 
 #if !ROCKETNET_DEV
 
-    /// The SDK version as text. The release version string, or "dev" in a
-    /// development build.
+    /// The SDK version as text. Development builds use "dev" and 255 for each
+    /// numeric component.
 
     #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
 
-    /// The major component of the SDK version. Development builds use 255.
+    /// The major component of the SDK version.
 
     #define ROCKETNET_VERSION_MAJOR                                    1
 
-    /// The minor component of the SDK version. Development builds use 255.
+    /// The minor component of the SDK version.
 
     #define ROCKETNET_VERSION_MINOR                                    0
 
-    /// The patch component of the SDK version. Development builds use 255.
+    /// The patch component of the SDK version.
 
     #define ROCKETNET_VERSION_PATCH                                    0
 
@@ -100,18 +100,14 @@
 
 // The bounds are the transports' fixed geometry: below 512 a server's
 // per-update receive budget is smaller than its largest send ring allows,
-// and above 32768 the io_uring queues cannot serve every client (BUILDING.md,
-// "Maximum clients").
+// and above 32768 the io_uring queues cannot serve every client.
 
 #if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
 #error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
 #endif
 
-/// A destination ID is a uint64_t client index.
-/// Valid client indexes range from 0 through max_clients - 1.
-/// ROCKETNET_FLOW_ID_BIT is reserved.
-/// rocketnet_server_start_message refuses IDs with this bit set.
-/// The refusal counts as API misuse.
+/// A destination ID is a uint64_t client index. This bit is reserved;
+/// rocketnet_server_start_message refuses an ID with it set.
 
 #define ROCKETNET_FLOW_ID_BIT                                       ( 1ULL << 63 )
 
@@ -179,13 +175,11 @@
 #define ROCKETNET_MAX_CHANNELS                             32
 #endif
 
-/// The default client to server send budget, in kbps, used when the client
-/// config's send_kbps is 0.
+/// The default client to server send budget, in kbps.
 
 #define ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS            1000
 
-/// The default server to client send budget per client, in kbps, used when the
-/// server config's per_client_send_kbps is 0.
+/// The default server to client send budget per client, in kbps.
 
 #define ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS            10000
 
@@ -304,9 +298,8 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
 
-    /// Connect refused while an active attempt exists or a previous worker
-    /// still owns its storage. A terminal retry requests shutdown and keeps
-    /// the terminal state; poll disconnected and retry with the token.
+    /// Connect refused: an attempt is active, or an earlier attempt's worker
+    /// still owns its storage.
 
     ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
 
@@ -314,8 +307,7 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
 
-    /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set. The send is
-    /// refused.
+    /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set.
 
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
 
@@ -412,18 +404,18 @@ enum rocketnet_reliability_t
 
     ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED                  = 1,
 
-    /// Resent until the peer acknowledges it.
+    /// Resent until acknowledged.
     /// Delivered once without channel ordering.
 
     ROCKETNET_RELIABILITY_RELIABLE                              = 2,
 
-    /// Resent until the peer acknowledges it.
+    /// Resent until acknowledged.
     /// Delivered once in channel order.
     /// The receiver holds later messages until earlier ones arrive.
 
     ROCKETNET_RELIABILITY_RELIABLE_ORDERED                      = 3,
 
-    /// Resent until the peer acknowledges it. The receiver delivers only the
+    /// Resent until acknowledged. The receiver delivers only the
     /// newest message on the channel and can drop a stale one.
 
     ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED                    = 4,
@@ -454,7 +446,7 @@ enum rocketnet_receipt_status_t
 
     ROCKETNET_RECEIPT_STATUS_NONE                               =  0,
 
-    /// The peer acknowledged the message. This does not mean the peer
+    /// The receiver acknowledged the message. This does not mean its
     /// application read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED                              =  1
@@ -474,7 +466,7 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = -1,
 
-    /// The peer sent what the protocol forbids.
+    /// The client sent what the protocol forbids.
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = -2,
 
@@ -491,9 +483,8 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED             = -5,
 
-    /// The application called update while a message delivered on this
-    /// connection was still in the receive queue: it did not loop
-    /// receive_messages until NULL. API misuse.
+    /// A message from this client was still in the receive queue at update.
+    /// See rocketnet_server_update.
 
     ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED            = -6
 };
@@ -502,15 +493,11 @@ enum rocketnet_disconnect_reason_t
 /// rocketnet_client_state returns one of these values.
 /// A connect attempt moves from DISCONNECTED through the handshake states to
 /// CONNECTED. Negative values describe how an attempt or connection ended.
-/// rocketnet_client_disconnect clears a negative value to DISCONNECTED.
-/// rocketnet_client_connect can retry from any negative terminal state. If an
-/// old worker still owns the attempt, the state stays negative until retry.
 
 enum rocketnet_client_state_t
 {
-    /// The application called update while a message delivered on the
-    /// connection was still in the receive queue: it did not loop
-    /// rocketnet_client_receive_messages until NULL. API misuse.
+    /// A message was still in the receive queue at update. See
+    /// rocketnet_client_update.
 
     ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED             = -13,
 
@@ -587,7 +574,8 @@ enum rocketnet_client_state_t
 
 /// rocketnet_client_stats fills this struct.
 /// Per-client counts start at 0 on create and accumulate across connections.
-/// Rates cover the trailing second.
+/// Byte counts include the IP and UDP headers of the connection's address
+/// family. Rates cover the trailing second.
 /// Connection measurements are 0 without a connection.
 
 struct rocketnet_client_stats_t
@@ -600,11 +588,11 @@ struct rocketnet_client_stats_t
 
     uint64_t packets_received;
 
-    /// UDP payload plus the IP and UDP headers of the peer's family.
+    /// Bytes sent.
 
     uint64_t bytes_sent;
 
-    /// UDP payload plus the IP and UDP headers of the peer's family.
+    /// Bytes received.
 
     uint64_t bytes_received;
 
@@ -686,6 +674,7 @@ struct rocketnet_client_stats_t
 
 /// rocketnet_server_stats fills this struct for all clients.
 /// Per-server counts start at 0 on create and accumulate across starts and stops.
+/// Byte counts are as in rocketnet_client_stats_t.
 /// Rates cover the whole server over the trailing second.
 /// Rates are 0 while the server is stopped.
 
@@ -699,11 +688,11 @@ struct rocketnet_server_stats_t
 
     uint64_t packets_received;
 
-    /// UDP payload plus the IP and UDP headers of the peer's family.
+    /// Bytes sent.
 
     uint64_t bytes_sent;
 
-    /// UDP payload plus the IP and UDP headers of the peer's family.
+    /// Bytes received.
 
     uint64_t bytes_received;
 
@@ -780,6 +769,7 @@ struct rocketnet_server_stats_t
 
 /// rocketnet_server_client_stats fills this struct for one client slot.
 /// Values cover the current connection; a new connection resets them to 0.
+/// Byte counts, rtt, jitter and loss are as in rocketnet_client_stats_t.
 /// Rates cover the trailing second.
 
 struct rocketnet_server_client_stats_t
@@ -792,29 +782,23 @@ struct rocketnet_server_client_stats_t
 
     uint64_t packets_received;
 
-    /// UDP payload plus the IP and UDP headers of this client's family.
+    /// Bytes sent to this client.
 
     uint64_t bytes_sent;
 
-    /// UDP payload plus the IP and UDP headers of this client's family.
+    /// Bytes received from this client.
 
     uint64_t bytes_received;
 
-    /// Round-trip time in milliseconds.
-    /// This is the smallest recent sample.
+    /// Round-trip time in milliseconds, the smallest recent sample.
 
     double rtt_ms;
 
     /// Round-trip jitter in milliseconds.
-    /// Mean excess of retained positive first-ACK RTT samples over their
-    /// minimum. Zero without positive samples; samples do not expire with time.
 
     double jitter_ms;
 
-    /// Outbound session packets not yet acknowledged, as a percentage of
-    /// eligible retained sends. Excludes the newest half-window of sequences;
-    /// zero without eligible sends. Delayed or lost ACKs affect this estimate.
-    /// The window advances with sent sequences, not elapsed time.
+    /// The loss estimate, as a percentage.
 
     double packet_loss_percent;
 
@@ -973,8 +957,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 
 /// API misuse
 
-/// The stats structs' api_misuses field counts these errors process-wide
-/// since the process started.
+/// The stats structs' api_misuses field counts these errors.
 ///
 /// - A required argument is NULL.
 /// - A client index or destination id is outside 0 .. max_clients - 1. This
@@ -1005,8 +988,7 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - A send with invalid arguments returns NULL or 0 and logs. Examples are a
 ///   second start while one is pending, bytes_written outside the valid range,
 ///   or an invalid channel or reliability value.
-/// - A send while not CONNECTED is dropped and counted in
-///   messages_dropped_not_connected.
+/// - A send while not CONNECTED (see the start_message calls).
 /// - Update or send_packets on a stopped server does nothing.
 /// - A setter for a disconnected client or empty server slot returns OK and
 ///   does nothing. An invalid value returns INVALID_ARGUMENT.
@@ -1091,13 +1073,6 @@ struct rocketnet_client_config_t
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
-    /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// client fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
-
     /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets the limit. Range is 1 ..
     /// 256. Zero selects the default, 8.
 
@@ -1132,7 +1107,10 @@ struct rocketnet_client_config_t
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 1048576.
+    /// Default is 1048576. It is the one size limit for every reliability
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1248,13 +1226,6 @@ struct rocketnet_server_config_t
 
     int num_os_cpus;
 
-    /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// server fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
-
     /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets the limit per client.
     /// Range is 1 .. 256. Zero selects the default, 8.
 
@@ -1304,7 +1275,10 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 1048576.
+    /// Default is 1048576. It is the one size limit for every reliability
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1522,7 +1496,7 @@ ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_serve
 /// Creates a DISCONNECTED client without opening a socket.
 /// Validates the config and logs any failure. NULL config selects defaults.
 /// context is passed to the allocator and state_change_callback.
-/// Keep context valid until destroy.
+/// Keep the client and context valid until destroy.
 ///
 /// Returns NULL on failure. If status is supplied, it receives
 /// ROCKETNET_STATUS_OK on success or the failure code.
@@ -1541,8 +1515,11 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// worker still owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED
 /// and retains the terminal state. Poll rocketnet_client_disconnected and retry
 /// with the token. After completion connect joins and frees the old attempt,
-/// then starts the new one. Explicit disconnect still clears the state to
-/// DISCONNECTED. Active handshake and CONNECTED states are refused.
+/// then starts the new one. A connect from a negative state starts a fresh
+/// attempt that carries no key, replay window, sequence, cookie or message
+/// state of the earlier one. A negative state stays until disconnect or the
+/// next connect; explicit disconnect clears it to DISCONNECTED. Active
+/// handshake and CONNECTED states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
 /// A socket or thread failure leaves the client DISCONNECTED.
@@ -1557,7 +1534,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 /// of times without sleeping. Once disconnected it joins, wipes and frees; if
 /// the worker has not exited it logs a second error and keeps the client, which
 /// stays owned by that worker. Client pointers become invalid only when destroy frees
-/// the client; on the keep path the client and its pointers stay valid. NULL is allowed.
+/// the client; on the keep path the client and its pointers stay valid.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1584,8 +1561,8 @@ ROCKETNET_EXPORT void rocketnet_client_send_packets( struct rocketnet_client_t *
 ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * client );
 
 /// Returns true after disconnection has completed and workers no longer access
-/// client storage. Never waits, joins or frees. Keep the client and callback
-/// context alive until destroy. Caller-stepped clients progress via update.
+/// client storage. Never waits, joins or frees. Caller-stepped clients progress
+/// via update.
 ROCKETNET_EXPORT bool rocketnet_client_disconnected( const struct rocketnet_client_t * client );
 
 /// The client's state.
@@ -1644,10 +1621,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// would not: the message memory is full, or the start would be dropped or
 /// refused (not CONNECTED, a message already open, a bad argument).
 ///
-/// Ask before a start you cannot afford to lose. A start that finds no room
-/// still ends the connection with MESSAGE_MEMORY_EXHAUSTED. Only start and
-/// update take room, so a true answer holds until the next of either. Room
-/// returns as the server acknowledges messages.
+/// Ask before a start you cannot afford to lose. Only start and update take
+/// room, so a true answer holds until the next of either. Room returns as the
+/// server acknowledges messages.
 ///
 /// Changes no state, counts nothing and allocates nothing. Constant time.
 /// A false answer may be pessimistic for a small unreliable message: start
@@ -1655,10 +1631,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 
 ROCKETNET_EXPORT bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
-/// Returns the next batch of messages from the server.
-/// Each message has client_index 0. Keep calling until NULL is returned.
-/// The application must take every message before the next update, or the
-/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+/// Returns the next batch of messages from the server, or NULL when the
+/// queue is empty. Each message has client_index 0. Call until NULL before the
+/// next update (see rocketnet_client_update).
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
@@ -1669,29 +1644,23 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 ///
 /// Use each receipt's serial to identify its send.
 /// Only the three _WITH_ACK_RECEIPT reliability modes produce receipts.
-/// ACKED means the peer acknowledged the message, not that its application read
-/// it. LOSS means an unreliable receipt message was not acknowledged.
-/// That message is not resent.
-///
-/// Reliable receipts report ACKED only. This also applies to unreliable
-/// receipt messages larger than ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES.
-/// Ending a connection does not produce LOSS receipts for reliable messages.
+/// LOSS comes only from unreliable receipt messages. Reliable ones, including
+/// unreliable sends that became reliable, report ACKED only; ending a
+/// connection produces no LOSS for them.
 ///
 /// Read receipts after update. They remain until the next update.
 /// Reading does not consume them. Repeated reads copy the same first entries.
 /// If the returned count exceeds capacity, use a larger buffer and read again
 /// before the next update to get every available receipt.
-/// A full queue drops its oldest receipt and increments receipts_dropped.
-/// The queue holds max_message_receipts entries.
+/// The queue holds max_message_receipts entries; when full it drops its
+/// oldest receipt.
 
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
-/// Sets the send budget in kbps and returns ROCKETNET_STATUS_OK.
-/// Zero selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS.
-/// ROCKETNET_SEND_KBPS_UNLIMITED disables the budget.
-/// Other positive values cap the rate.
-/// A negative value returns ROCKETNET_STATUS_INVALID_ARGUMENT without changing
-/// it. The config's send_kbps sets the starting rate for each connection.
+/// Sets the connection's send budget in kbps and returns ROCKETNET_STATUS_OK.
+/// Takes the values the config's send_kbps takes, which sets each
+/// connection's starting rate; a negative value returns
+/// ROCKETNET_STATUS_INVALID_ARGUMENT and changes nothing.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
@@ -1703,6 +1672,8 @@ ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * 
 
 /// Clients occupy slots from 0 to max_clients - 1.
 /// Only start_message takes the destination index as uint64_t.
+/// A per-slot query on a free slot or a stopped server returns 0, false, NULL
+/// or ROCKETNET_DISCONNECT_REASON_NONE, and a per-slot action does nothing.
 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
@@ -1720,11 +1691,10 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
     return rocketnet_server_default_config_internal( config );
 }
 
-/// Returns the memory needed by create for this config and max_clients.
-/// Applies the same environment overrides as create.
-/// NULL config selects defaults. Invalid config returns 0, including the
-/// defaults' test filter in a production build. A named transport memory estimate is
-/// diagnostic and does not grant that transport at create or start.
+/// As rocketnet_client_required_memory, for this config and max_clients.
+/// The defaults' test filter in a production build is an invalid config. A
+/// named transport memory estimate is diagnostic and does not grant that
+/// transport at create or start.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
 
@@ -1742,14 +1712,11 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// carries the given address.
 /// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
 /// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
-/// Every server reads both at create. Each override is logged.
 /// Port 0 requests an ephemeral port. Read it after start with
 /// rocketnet_server_port.
 ///
-/// context is passed to allocator callbacks. Keep it valid until destroy.
-/// Returns NULL on failure. If status is supplied, it receives
-/// ROCKETNET_STATUS_OK on success or the failure code.
-/// Call rocketnet_init before create.
+/// context is passed to allocator callbacks. Returns, status and lifetime
+/// follow rocketnet_client_create.
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
@@ -1768,20 +1735,14 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
 
 /// Returns true once the stop request has completed. Never waits or joins.
-/// Keep the server and callback context alive until synchronous destroy.
 ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t * server );
 
 /// true while running, false while stopped.
 
 ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t * server );
 
-/// Expects rocketnet_server_stopped(server) to be true; asserts otherwise.
-/// Called early, it logs one error naming the skipped completion poll, records
-/// the misuse, requests stop and updates the transport a bounded number of times
-/// without sleeping. Once stopped it joins, wipes and frees memory and keys; if
-/// the worker has not exited it logs a second error and keeps the server, which
-/// stays owned by that worker. Pointers from the server become invalid only when destroy
-/// frees the server; on the keep path the server and its pointers stay valid.
+/// As rocketnet_client_destroy, with rocketnet_server_stopped and stop in place
+/// of disconnected and disconnect. Freeing also wipes the server's keys.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
@@ -1840,19 +1801,16 @@ ROCKETNET_EXPORT int rocketnet_server_max_clients( const struct rocketnet_server
 
 ROCKETNET_EXPORT int rocketnet_server_num_connected_clients( const struct rocketnet_server_t * server );
 
-/// Returns true if the slot has a connected client. Returns false while
-/// stopped.
+/// Returns true if the slot has a connected client.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index );
 
 /// Returns the client ID from the slot's connect token.
-/// Returns 0 for a free slot or a stopped server.
 /// Zero is also a valid ID. Check rocketnet_server_client_connected first.
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
 
 /// Disconnects a client and frees its slot.
-/// Does nothing for a free slot or a stopped server.
 
 ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index );
 
@@ -1862,7 +1820,6 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_
 
 /// Returns why the slot's last connection ended.
 /// The reason remains until the slot's next connection.
-/// Returns ROCKETNET_DISCONNECT_REASON_NONE while stopped.
 
 ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
 
@@ -1881,8 +1838,8 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// An index at or above max_clients is refused.
 /// A destination with ROCKETNET_FLOW_ID_BIT set is refused and logs
 /// ROCKETNET_STATUS_FLOW_ID_RESERVED.
-/// Sends to a slot without a connected client are dropped, including while
-/// stopped. Each dropped send increments messages_dropped_not_connected.
+/// Sends to a slot without a connected client are dropped as on the client,
+/// including while stopped.
 
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
@@ -1900,33 +1857,24 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// Returns true if rocketnet_server_start_message to client_index with the
 /// same channel, reliability and max_bytes would be given room now.
 /// Use it like rocketnet_client_can_send_message. Each client has its own
-/// message memory. Returns false while stopped and for an index without a
-/// connected client. An index outside 0 .. max_clients - 1 is misuse and
-/// returns false.
+/// message memory.
 
 ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
-/// Returns the next batch of messages from all clients.
-/// Each message names its sender in client_index.
-/// Keep calling until NULL is returned. Returns NULL while stopped.
-/// The application must take every message before the next update, or each
-/// client with a message left is disconnected with
-/// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
+/// Returns the next batch of messages from all clients, or NULL when the
+/// queue is empty. Each message names its sender in client_index. Call until
+/// NULL before the next update (see rocketnet_server_update). Returns NULL
+/// while stopped.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// Copies receipts for the client in this slot.
 /// Uses the same rules as rocketnet_client_receipts.
-/// Returns 0 for a free slot or a stopped server.
 
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
-/// Sets this client's send budget in kbps and returns ROCKETNET_STATUS_OK.
-/// Zero selects ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS.
-/// ROCKETNET_SEND_KBPS_UNLIMITED disables the budget.
-/// Other positive values cap the rate.
-/// A negative value returns ROCKETNET_STATUS_INVALID_ARGUMENT without changing
-/// it. The config's per_client_send_kbps sets each connection's starting rate.
+/// As rocketnet_client_set_send_kbps, for this client, with the values the
+/// config's per_client_send_kbps takes.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
 
@@ -1935,7 +1883,6 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct 
 ROCKETNET_EXPORT void rocketnet_server_stats( const struct rocketnet_server_t * server, struct rocketnet_server_stats_t * stats );
 
 /// Copies the current stats for this client slot.
-/// Writes zeros for a free slot or a stopped server.
 
 ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats );
 
@@ -1947,8 +1894,6 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 
 /// A batch of received messages. Entry i in each array describes message i.
 ///
-/// Receive returns the next batch or NULL when the queue is empty.
-/// Call it until NULL to drain all messages from the update.
 /// A batch holds up to ROCKETNET_RECEIVE_BATCH_MESSAGES.
 /// Each client and server owns one batch allocated at create.
 ///
@@ -1983,9 +1928,8 @@ struct rocketnet_message_batch_t
     int channel[ROCKETNET_RECEIVE_BATCH_MESSAGES];
 
     /// The received reliability mode. Receipt modes arrive without the receipt
-    /// flag. Unreliable messages larger than
-    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES
-    /// arrive as their reliable equivalents.
+    /// flag, and an unreliable message that became reliable arrives as its
+    /// reliable type.
 
     enum rocketnet_reliability_t reliability[ROCKETNET_RECEIVE_BATCH_MESSAGES];
 

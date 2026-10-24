@@ -15,7 +15,7 @@
 #endif
 
 // The upper bound keeps a contiguous retained run representable in one u16
-// ACK range. It also bounds per-peer processing and up-front allocations.
+// ACK range. It also bounds per-connection processing and up-front allocations.
 #if ROCKETNET_HISTORY_PACKETS < ROCKETNET_HISTORY_PACKETS_MIN || ROCKETNET_HISTORY_PACKETS > ROCKETNET_HISTORY_PACKETS_MAX || ROCKETNET_HISTORY_PACKETS % 64 != 0
 #error ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between ROCKETNET_HISTORY_PACKETS_MIN and ROCKETNET_HISTORY_PACKETS_MAX
 #endif
