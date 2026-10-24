@@ -63,6 +63,10 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
+// The receive deferred its whole payload: a reliable record could not reserve
+// its deliveries, so the payload ends part-way and its acknowledgement is
+// withheld for retry (standard/MESSAGES.md m1.4 rule 2). Not a violation.
+
 #define ROCKETNET_CHANNEL_RECEIVE_DEFERRED                    -1
 
 #define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
@@ -106,8 +110,8 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
 // The payload capacity a frame holds, 1 + the single-record room up to
 // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. A reliable ordered message whose record fits
 // it is SMALL (packed, one record) and a larger one is a block of chunks (8).
-// The default is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Refused (false) below the room
-// one chunk record needs.
+// The default is ROCKETNET_MESSAGE_SINGLE_BYTES; the m2.2 one-record limits
+// derive from it. Refused (false) below the room one chunk record needs.
 
 bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t payload_capacity );
 
@@ -400,6 +404,10 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // each record in wire order through layer 3's window and layer 4's dispatch.
 // Returns ROCKETNET_MESSAGE_VIOLATION_NONE, or the violation that ended the
 // payload (the connection is then to be disconnected: rn_ordered_decide).
+// When a reliable record cannot reserve its deliveries the payload ends
+// part-way and this returns ROCKETNET_CHANNEL_RECEIVE_DEFERRED; its
+// acknowledgement is withheld for retry (standard/MESSAGES.md m1.4 rule 2),
+// which is not a violation.
 // Deliveries are appended to the region's delivery table.
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
