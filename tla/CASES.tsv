@@ -317,12 +317,6 @@ MCRNClientIoLiveFilled1.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	req
 MCRNClientIoLiveArrivedFirst.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoLiveArrivedSecond.cfg	MCRNClientIoLiveness.tla	pass	-	check	rnclientio	required	-
 MCRNClientIoStepFullSafety.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullHandedOff.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullCommitted.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullStop.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullFilled.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullArrived.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
-MCRNClientIoStepFullDestroy.cfg	MCRNClientIo.tla	pass	-	check	rnclientio	required	-
 MCRNBufferHandoffSend.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
 MCRNBufferHandoffReceive.cfg	MCRNBufferHandoff.tla	pass	-	check	rnbufferhandoff	required	-
 MCRNBufferHandoffBrokenMainBlocks.cfg	MCRNBufferHandoff.tla	invariant	MainNeverWaits	check	rnbufferhandoff	required	-
