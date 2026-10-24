@@ -589,8 +589,9 @@ static void split_proof_print( struct split_result_t * result, const char * role
  * variable is unset, empty, "auto" or a list. */
 static const char * split_transport_pin( void )
 {
-    const char * pin = getenv("ROCKETNET_SERVER_TRANSPORT");
-    if ( !pin || !*pin || strchr(pin, ',') || strcmp(pin, "auto") == 0 ) return NULL;
+    static char pin[64];
+    if ( !rocketnet_test_getenv("ROCKETNET_SERVER_TRANSPORT", pin, sizeof(pin)) ||
+         !pin[0] || strchr(pin, ',') || strcmp(pin, "auto") == 0 ) return NULL;
     return pin;
 }
 
