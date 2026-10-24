@@ -1300,7 +1300,7 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );
 
 // Reuse the same server slot with deliberately dirty payload storage and an
-// unsealed aggregate from the former peer. Reset must clear ownership/state,
+// unsealed aggregate from the former client. Reset must clear ownership/state,
 // not the payload bytes. Each delivery mode must work for the replacement.
 static void test_connection_reset_dirty_slot_discards_open_aggregate()
 {

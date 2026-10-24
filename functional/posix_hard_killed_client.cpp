@@ -103,7 +103,7 @@ static void posix_hard_killed_check( bool condition, const char * expression, co
 static const double POSIX_HK_TICK = 1.0 / 60.0;
 static const double POSIX_HK_GAP_REFERENCE = POSIX_HK_TICK + 0.050;
 
-// Completion guard for connecting the test peers.
+// Completion guard for connecting the test client and server.
 static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
 
 #define POSIX_HK_CHILD_FLAG "--posix-hard-killed-child"
