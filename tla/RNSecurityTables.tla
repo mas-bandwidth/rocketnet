@@ -58,8 +58,10 @@
 (* without its scan: a release zeroes the deadline and leaves the slot in  *)
 (* place, so the O(1) rule no longer equals the scan                       *)
 (* (CanRecordMatchesScan).  ReleaseChecksLive FALSE pushes the slot on the *)
-(* free list without unlinking it from its chain, so a second release     *)
-(* finds it again and pushes it twice (FreeAndOrderPartitionSlots).        *)
+(* free list without unlinking it from its chain, so the released entry   *)
+(* is still found: a second release pushes the slot twice, and a record   *)
+(* of the same token puts it on the order list while it is still on the  *)
+(* free list (FreeAndOrderPartitionSlots).                                 *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets, Sequences
 
@@ -114,6 +116,10 @@ RefuseUnremembered == FALSE
 \* constants, as RefuseUnremembered is; a reversed witness overrides a
 \* switch with <-.
 ClaimSlots == 1..2
+\* the tokens the claim actions take: one token fewer than Tokens keeps the
+\* instance inside the checking budget; "te" (the expiring token) requests
+\* without the claim rungs, as before the claim table was modelled
+ClaimTokens == {"th", "tf"}
 ReleaseToFree == TRUE
 ReleaseChecksLive == TRUE
 
@@ -201,11 +207,15 @@ Record(C, tk, a) ==
 \* rocketnet_used_token_history_claim_release: when the entry is found and
 \* its address matches, it leaves its chain and the order list and its
 \* slot is pushed on the free list (ReleaseToFree), or (the code before)
-\* only its deadline is zeroed and the slot stays where it is.
+\* only its deadline is zeroed and the slot stays where it is.  In the
+\* code a slot off every chain is never read until it is written again, so
+\* the fixed code clears it here, which keeps the state space small; the
+\* witnesses keep the stale contents their bugs read.
 Release(C, tk, a) ==
     IF \E s \in Found(C, tk) : C.slot[s].addr = a
       THEN LET s == CHOOSE x \in Found(C, tk) : C.slot[x].addr = a
-           IN [slot |-> [C.slot EXCEPT ![s].dl = 0],
+           IN [slot |-> [C.slot EXCEPT ![s] = IF ReleaseToFree /\ ReleaseChecksLive THEN EmptyClaim
+                                                ELSE [C.slot[s] EXCEPT !.dl = 0]],
                free |-> IF ReleaseToFree THEN <<s>> \o C.free ELSE C.free,
                order |-> IF ReleaseToFree THEN Remove(C.order, s) ELSE C.order,
                replaced |-> C.replaced]
@@ -279,14 +289,14 @@ RequestRungs(a, tok, g) ==
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
        ELSE IF Used(tok) THEN FALSE
        ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
-       ELSE IF ~ClaimCheckOk(tok, a) THEN FALSE
-       ELSE IF ~CanRecord(tok) THEN FALSE
+       ELSE IF tok \in ClaimTokens /\ ~ClaimCheckOk(tok, a) THEN FALSE
+       ELSE IF tok \in ClaimTokens /\ ~CanRecord(tok) THEN FALSE
        ELSE TRUE
     /\ verifies' = verifies + 1
 
 Request(a, tok, g) ==
     /\ RequestRungs(a, tok, g)
-    /\ SetClaimState(Record(ClaimState, tok, a))
+    /\ IF tok \in ClaimTokens THEN SetClaimState(Record(ClaimState, tok, a)) ELSE UNCHANGED claimVars
     /\ IF BindAtRequest THEN Bind(tok, a, FALSE)
        ELSE UNCHANGED <<history, insertOrder, evictedLive>>
     /\ map' = [map EXCEPT ![a] = tok] /\ mapGen' = [mapGen EXCEPT ![a] = g] /\ mapBorn' = [mapBorn EXCEPT ![a] = clock]
@@ -297,6 +307,7 @@ Request(a, tok, g) ==
 \* mapping): the claim is recorded and released in the same step, and no
 \* mapping is made.
 RequestRefused(a, tok, g) ==
+    /\ tok \in ClaimTokens
     /\ RequestRungs(a, tok, g)
     /\ SetClaimState(Release(Record(ClaimState, tok, a), tok, a))
     /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
@@ -511,7 +522,7 @@ OrderIsDeadlineOrder ==
 \* a record never lands on another token's live claim
 LiveClaimNeverReplaced == ~claimReplaced
 \* the O(1) capacity answer equals the scan's, for every token
-CanRecordMatchesScan == \A tk \in Tokens : CanRecord(tk) = CanRecordScan(tk)
+CanRecordMatchesScan == \A tk \in ClaimTokens : CanRecord(tk) = CanRecordScan(tk)
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :

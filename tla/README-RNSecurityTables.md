@@ -54,6 +54,25 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   (`previous_cookie_key_expire_time`) to the rotation instant plus
   `RotatePeriod`; a stall past a whole window zeroes the previous key
   and clears `has_previous_cookie_key`.
+- **The request-claim table.** `ClaimSlots` (two) slots, each holding
+  the token, address and handshake deadline last written to it, a free
+  list and an order list of claims, head first
+  (`rocketnet_used_token_history_claim_can_record`, `_claim_record` and
+  `_claim_release` in `sdk/rocketnet_token_tables.cpp`). A request is
+  refused while another address holds a live claim on its token, and on
+  capacity by the O(1) rule: the token is in the table, or the free list
+  is not empty, or the order head's deadline has passed. Past the verify
+  the claim is recorded: the token's own entry (an expired one is
+  rewritten and moved to the tail), else the free list's head, else the
+  expired order head. `RequestRefused` records then releases (a refusal
+  past the verify); `HalfOpenLeaves` releases with the mapping (the idle
+  timeout or the integrity limit, `rocketnet_server_release_mapping_claim`);
+  a mapping swept by `Tick` at its handshake deadline releases nothing, as
+  its claim expires at the same instant. A release unlinks the entry and
+  pushes its slot on the free list. `ReleaseToFree = FALSE` is the code
+  before the free list, without its scan: the release zeroed the deadline
+  and left the slot in place. `ReleaseChecksLive = FALSE` pushes the slot
+  without unlinking it, so a second release finds it again.
 - **The verify budget.** Requests past the gate spend from a per-update
   budget (`verifies`, reset by the tick): the handshake work budget
   (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE`, checked in the request
@@ -97,6 +116,16 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   budget, while the cap switch is in its code position.
 - **`TablesBounded`**: neither table passes its capacity, and slots
   plus other clients never pass `MaxClients`.
+- **`FreeAndOrderPartitionSlots`**: every claim slot is on exactly one of
+  the free list or the order list, and neither list holds a slot twice.
+- **`OrderIsDeadlineOrder`**: the order list's deadlines never decrease
+  from head to tail, so the head holds the earliest deadline. It rests on
+  the clock never going backwards (the transport clamps a step backwards
+  to the last good time) and one fixed handshake deadline.
+- **`LiveClaimNeverReplaced`**: a claim record never lands on a slot
+  holding another token's live claim (ghost `claimReplaced`).
+- **`CanRecordMatchesScan`**: for every token, the O(1) capacity answer
+  equals the answer of the scan over every slot that the code ran before.
 
 ## Switches: the code and the fixed code
 
@@ -112,6 +141,8 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 | `CapVerifyBudget` | `TRUE`: the per-update budget caps verifies | mutant `FALSE` guards the cap |
 | `AcceptPrevious` | `TRUE`: previous generation accepted while `clock < prevUntil` | reversed witness `FALSE` drops the previous-key window |
 | `PreviousOutlivesWindow` | `FALSE`: a stall past the window drops the previous generation | mutant `TRUE` keeps the previous generation across a stall |
+| `ReleaseToFree` (definition) | `TRUE`: a released claim's slot goes back on the free list | reversed witness `FALSE`: the slot stays in place with a zeroed deadline |
+| `ReleaseChecksLive` (definition) | `TRUE`: a release unlinks the entry, so a second release finds nothing | reversed witness `FALSE`: the slot is pushed without unlinking it |
 
 ## Findings
 
@@ -156,8 +187,10 @@ Each reversed witness has a committed configuration registered in
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+| `BrokenReleaseKeepsSlot.cfg` | `ReleaseToFree <- MCReleaseToFree` (`FALSE`) | `CanRecordMatchesScan` |
+| `BrokenReleaseTwice.cfg` | `ReleaseChecksLive <- MCReleaseChecksLive` (`FALSE`) | `FreeAndOrderPartitionSlots` |
 
-Refresh all eleven cases through the pinned `tlacheck` runner and merge with
+Refresh all fifteen cases through the pinned `tlacheck` runner and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
