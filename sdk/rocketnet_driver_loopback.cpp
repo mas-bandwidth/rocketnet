@@ -80,6 +80,15 @@ static rocketnet_loopback_state_t & loopback_state()
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
 static bool loopback_test_send_contention = false;
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
+void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity )
+{
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) instance;
+    rocketnet_loopback_state_t & state = loopback_state();
+    rocketnet_platform_mutex_guard( &state.mutex );
+    *head = ep->head;
+    *tail = ep->tail;
+    *capacity = ep->capacity;
+}
 #endif
 
 static bool loopback_try_send_lock( rocketnet_loopback_state_t & state )
@@ -178,6 +187,8 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
 
 // The next queue slot, or NULL after counting a drop at the fixed ceiling.
 // All queue storage is allocated at create; traffic never allocates.
+// tla/LoopbackQueue.tla Send: enqueue at tail mod Capacity when count < Capacity;
+// a full queue drops and counts.
 
 static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
 {
@@ -187,6 +198,19 @@ static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_end
         return NULL;
     }
     return &dst->packets[dst->tail & ( dst->capacity - 1 )];
+}
+
+// Every dequeue goes through here, under the state mutex the caller holds:
+// advance head and shrink count, and when the queue empties restart both
+// indices at slot zero. A queue that empties therefore writes only the slots
+// its deepest backlog reached; FIFO cannot change because an empty queue has
+// nothing to reorder. tla/LoopbackQueue.tla Receive and Drop.
+static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
+{
+    ++ep->head;
+    --ep->count;
+    if ( ep->count == 0 )
+        ep->head = ep->tail = 0;
 }
 
 size_t rocketnet_loopback_queue_bytes( int packets )
@@ -405,15 +429,13 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
         if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
         {
             ++ep->dropped;
-            ++ep->head;
-            --ep->count;
+            loopback_queue_pop( ep );    // tla/LoopbackQueue.tla Drop
             continue;
         }
         from[received] = packet->from;
         bytes[received] = packet->bytes;
         memcpy( data + (size_t) received * (size_t) stride, packet->data, (size_t) packet->bytes );
-        ++ep->head;
-        --ep->count;
+        loopback_queue_pop( ep );        // tla/LoopbackQueue.tla Receive
         ++received;
     }
     return received;
@@ -430,15 +452,13 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     if ( packet->bytes > capacity )
     {
         ++ep->dropped;
-        ++ep->head;
-        --ep->count;
+        loopback_queue_pop( ep );        // tla/LoopbackQueue.tla Drop
         return 0;
     }
     *from = packet->from;
     const int bytes = packet->bytes;
     memcpy( data, packet->data, (size_t) bytes );
-    ++ep->head;
-    --ep->count;
+    loopback_queue_pop( ep );            // tla/LoopbackQueue.tla Receive
     return bytes;
 }
 
