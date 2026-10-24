@@ -380,8 +380,7 @@ queue space.
 
 Send segmentation is the GSO transport's tier, probed at create: every socket
 of the group must accept `UDP_SEGMENT` (set to 0), all or nothing, and the
-create info line names the result (`UDP_SEGMENT yes`, or `no (one SENDMSG per
-packet)`). With it, a run of consecutive staged slots to one destination whose
+create info line names the result (`UDP_SEGMENT yes`, or `no (one SENDMSG per packet)`). With it, a run of consecutive staged slots to one destination whose
 wire bytes are equal, the last allowed to be shorter, found by
 `rocketnet_coalesce_send_run` and bounded by `ROCKETNET_GSO_MAX_SEGMENTS` and
 `ROCKETNET_GSO_MAX_SUPER_BYTES`, goes out as one `SENDMSG` whose msghdr
