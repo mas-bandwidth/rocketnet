@@ -237,7 +237,8 @@ struct rocketnet_transport_ladder_t
 // transport set, an empty list element, "auto" inside a longer list, or a
 // list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
-bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder );
+// server: the endpoint whose registry column decides pin-only (auto skips it)
+bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
