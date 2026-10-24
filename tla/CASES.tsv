@@ -373,3 +373,4 @@ MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	
 MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
+MCRNBufferHandoffBrokenDiscardOnStop.cfg	MCRNBufferHandoff.tla	invariant	ExitSentAll	check	rnbufferhandoff	required	-
