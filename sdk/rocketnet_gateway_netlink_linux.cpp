@@ -169,28 +169,46 @@ struct rocketnet_gateway_netlink_route_context_t
     uint8_t * gateway;
 };
 
-// the first next hop of an IPv4 multipath route (RTA_MULTIPATH: rtnexthop
-// records, each followed by its own attributes): its interface and gateway
+// every next hop of a multipath default route (RTA_MULTIPATH: rtnexthop
+// records, each followed by its own attributes), for either family. The
+// first hop whose interface is this one and whose RTA_GATEWAY is the
+// family's address size is the route. A short or oversized record is
+// malformed. No hop on this interface is not this interface's route.
 
-static int rocketnet_gateway_netlink_first_next_hop( const uint8_t * data, size_t bytes, int * interface_index, const uint8_t ** gateway, size_t * gateway_bytes )
+static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * data, size_t bytes, int family, int want_interface,
+                                                              int * interface_index, const uint8_t ** gateway, size_t * gateway_bytes )
 {
-    struct rtnexthop next_hop;
-    if ( bytes < sizeof(next_hop) )
-        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
-    memcpy( &next_hop, data, sizeof(next_hop) );
-    if ( next_hop.rtnh_len < sizeof(next_hop) || next_hop.rtnh_len > bytes )
-        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
-    // the record's attributes start RTNH_ALIGN( sizeof(next_hop) ) in, which
-    // is sizeof(next_hop): the record is already a multiple of RTNH_ALIGNTO
+    const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
+    size_t offset = 0;
+    while ( offset < bytes )
+    {
+        if ( bytes - offset < sizeof( struct rtnexthop ) )
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        struct rtnexthop next_hop;
+        memcpy( &next_hop, data + offset, sizeof( next_hop ) );
+        const size_t raw = (size_t) next_hop.rtnh_len;
+        if ( raw < sizeof( next_hop ) || raw > bytes - offset )
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        // the record's attributes start RTNH_ALIGN( sizeof(next_hop) ) in, which
+        // is sizeof(next_hop): the record is already a multiple of RTNH_ALIGNTO
 
-    static_assert( sizeof(struct rtnexthop) % RTNH_ALIGNTO == 0, "an rtnexthop record ends aligned" );
-    rocketnet_gateway_netlink_attributes_t attributes;
-    if ( !rocketnet_gateway_netlink_walk_attributes( data + sizeof(next_hop), next_hop.rtnh_len - sizeof(next_hop), &attributes ) )
-        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
-    *interface_index = next_hop.rtnh_ifindex;
-    *gateway = attributes.value[RTA_GATEWAY];
-    *gateway_bytes = attributes.bytes[RTA_GATEWAY];
-    return ROCKETNET_GATEWAY_NETLINK_FOUND;
+        static_assert( sizeof( struct rtnexthop ) % RTNH_ALIGNTO == 0, "an rtnexthop record ends aligned" );
+        rocketnet_gateway_netlink_attributes_t attributes;
+        if ( !rocketnet_gateway_netlink_walk_attributes( data + offset + sizeof( next_hop ), raw - sizeof( next_hop ), &attributes ) )
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL && attributes.bytes[RTA_GATEWAY] == address_bytes )
+        {
+            *interface_index = next_hop.rtnh_ifindex;
+            *gateway = attributes.value[RTA_GATEWAY];
+            *gateway_bytes = attributes.bytes[RTA_GATEWAY];
+            return ROCKETNET_GATEWAY_NETLINK_FOUND;
+        }
+        const size_t step = ( raw + (size_t) RTNH_ALIGNTO - 1 ) & ~(size_t) ( RTNH_ALIGNTO - 1 );
+        if ( step < raw || step > bytes - offset )
+            return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        offset += step;
+    }
+    return ROCKETNET_GATEWAY_NETLINK_MORE;
 }
 
 static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context )
@@ -222,10 +240,17 @@ static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t b
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
         interface_index = (int) output_interface;
     }
-    else if ( attributes->value[RTA_MULTIPATH] && route->family == AF_INET )
+    else if ( attributes->value[RTA_MULTIPATH] )
     {
-        if ( rocketnet_gateway_netlink_first_next_hop( attributes->value[RTA_MULTIPATH], attributes->bytes[RTA_MULTIPATH], &interface_index, &gateway, &gateway_bytes ) != ROCKETNET_GATEWAY_NETLINK_FOUND )
+        // both families: the first next hop on this interface. Hops on
+        // another interface are not this route, so the walk keeps going.
+        const int hop = rocketnet_gateway_netlink_multipath_on_interface(
+            attributes->value[RTA_MULTIPATH], attributes->bytes[RTA_MULTIPATH],
+            route->family, route->interface_index, &interface_index, &gateway, &gateway_bytes );
+        if ( hop == ROCKETNET_GATEWAY_NETLINK_MALFORMED )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+        if ( hop != ROCKETNET_GATEWAY_NETLINK_FOUND )
+            return ROCKETNET_GATEWAY_NETLINK_MORE;
     }
 
     if ( interface_index != route->interface_index || gateway == NULL )
