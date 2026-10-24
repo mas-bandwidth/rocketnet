@@ -181,8 +181,10 @@
     X( CONNECTION_RESPONSE_NO_MAPPING, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE: Counts connection response packets with a zero session sequence. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_ZERO_SEQUENCE, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
-    /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN: Counts connection response packets whose authenticated contents fail to open. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
+      /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN: Counts connection response packets whose authenticated contents fail to open. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_DID_NOT_OPEN, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
+    /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO: Counts connection response packets that opened successfully but have non-zero padding bytes. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
+    X( CONNECTION_RESPONSE_PADDING_NOT_ZERO, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     /* EXPECTED: a response duplicate arriving after the first has connected. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED: Counts duplicate connection packets received after the connection is established. Unit: occurrences. Class: expected; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_ALREADY_CONNECTED, EXPECTED, CONNECTION_RESPONSE_RECEIVED ) \

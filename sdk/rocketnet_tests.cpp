@@ -5813,8 +5813,9 @@ void rocketnet_test_integrity_limit()
                                                         client_keys.handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
         rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
-        rocketnet_check( mapping->integrity_failures == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
         uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
@@ -5823,7 +5824,7 @@ void rocketnet_test_integrity_limit()
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-        rocketnet_check( mapping->integrity_failures == 2 );                    // a packet that opens does not count
+        rocketnet_check( mapping->integrity_failures == 1 );                    // a packet that opens does not count
 
         // seed to two below the limit. the sequences are fresh so the replay
         // window never refuses first: the open is what fails.
