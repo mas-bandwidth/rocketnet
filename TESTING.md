@@ -175,7 +175,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnchanneltypes (11 required) | planned for the final deliverable |
 | TLA+ model check: rnsenthistory (3 required) | planned for the final deliverable |
 | TLA+ model check: rnscheduler (3 required) | planned for the final deliverable |
-| TLA+ model check: rnresendtiming (3 required) | planned for the final deliverable |
+| TLA+ model check: rnresendtiming (5 required) | planned for the final deliverable |
 | TLA+ model check: rnfilterepochs (3 required) | planned for the final deliverable |
 | TLA+ model check: rnuringdriver (4 required) | planned for the final deliverable |
 | TLA+ model check: fragmentsandacks (18 required, 6 bench) | planned for the final deliverable |
