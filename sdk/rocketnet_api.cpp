@@ -889,7 +889,7 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // handshake on as the server's replies arrive; Deny, TokenExpires, Timer and
 // ServerDisconnect: the same update ends the connection on a denial, the
 // token's expiry, a stage or connected timeout, or the server's disconnect;
-// Deliver: the packets it reads open only under the connection's own keys;
+// Deliver: what arrives opens only under the connection's own keys;
 // WorkerComplete: a retiring connection's transport is stepped through its
 // stop until its worker completes.
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -1825,7 +1825,7 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 // ClientLeaves and Deliver: the running server's update takes each client's
 // request into a free slot, establishes it when its response opens, ends a
 // slot on a denial, a timeout or the client's own disconnect, and opens a
-// client's packets only under its slot's session keys.
+// client's traffic only under its slot's session keys.
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
