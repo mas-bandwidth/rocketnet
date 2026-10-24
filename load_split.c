@@ -8,6 +8,7 @@
 #include "tools/load_split_startup.h"
 #include "tools/load_split_barrier.h"
 #include "tools/load_split_capture.h"
+#include "tools/load_split_verify.h"
 
 #define SPLIT_ARM_MAGIC 0x524E414Du
 #define SPLIT_ACK_MAGIC 0x524E414Bu
@@ -29,13 +30,55 @@
  * each direction, the server ticking at 100 Hz. Full load is the worst case
  * the server budget is measured at: the server ticks at 10 Hz and offers one
  * message to every client every update, and every client updates at 10 Hz
- * and offers one message every update. */
+ * and offers one message every update. Proof load offers on full load's
+ * clock, 10 Hz per client each way, and each offer is the proof's pair of
+ * messages (split_proof_offer); its server ticks at 100 Hz, like the default
+ * mode, with the clients' offer slots spread over five ticks. At 10 Hz the
+ * server socket's receive buffer (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE)
+ * overflows between updates: 1000 clients at 256 kbps are 32 MB/s inbound. */
 static int split_full_load = 0;
+static int split_proof_load = 0;
 
 static double split_server_tick_s( void ) { return split_full_load ? 0.100 : 0.010; }
-static double split_offer_period_s( void ) { return split_full_load ? 0.100 : 1.0; }
-static int split_rate_hz( void ) { return split_full_load ? 10 : 1; }
-static const char * split_load_name( void ) { return split_full_load ? "full" : "rate_1hz"; }
+static double split_offer_period_s( void ) { return split_full_load || split_proof_load ? 0.100 : 1.0; }
+static int split_rate_hz( void ) { return split_full_load || split_proof_load ? 10 : 1; }
+static const char * split_load_name( void ) { return split_proof_load ? "proof" : split_full_load ? "full" : "rate_1hz"; }
+static const char * split_payload_label( void ) { return split_proof_load ? "proof" : "32"; }
+
+/* The proof load (docs/LOAD_SPLIT.md, "Proof load"). Every offer, in each
+ * direction, is one small message in one of the eight reliability modes and
+ * one fragmented message in one of the five reliable modes, each rotating by
+ * offer from the client's index: 3200 payload bytes per offer at 10 Hz, an
+ * offered 256 kbps per client per direction before packet overhead. Each
+ * (mode, size class) stream has its own channel. Payloads are written and
+ * checked by tools/load_split_verify.h. An unreliable mode has no fragmented
+ * stream: the SDK sends an unreliable message too large for one packet as its
+ * reliable twin. */
+#define SPLIT_PROOF_SMALL_BYTES 1200u
+#define SPLIT_PROOF_FRAGMENTED_BYTES 2000u
+#define SPLIT_PROOF_FIRST_CHANNEL 16
+#define SPLIT_PROOF_TARGET_KBPS 256.0
+#define SPLIT_PROOF_RECEIPT_BATCH 256
+#define SPLIT_PROOF_FRAGMENTED_MODES 5u
+
+static const uint32_t split_proof_fragmented_modes[SPLIT_PROOF_FRAGMENTED_MODES] =
+{
+    ROCKETNET_RELIABILITY_RELIABLE,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT,
+};
+
+/* One client's proof record at one end: the streams it receives, the count
+ * it sent on each stream, and its receipt ledger for the direction it sends. */
+struct split_proof_t
+{
+    struct split_verify_stream_t receive[SPLIT_VERIFY_STREAMS_PER_CLIENT];
+    uint32_t sent[SPLIT_VERIFY_STREAMS_PER_CLIENT];
+    struct split_verify_ledger_t ledger;
+    uint32_t offers;
+};
 
 struct split_message_t
 {
@@ -51,7 +94,8 @@ struct split_client_t
     double next_due;
     uint32_t next_combo;
     struct split_startup_t startup;
-    int connected, finish, confirmed;
+    int connected, finish, confirmed, disconnect_reported;
+    struct split_proof_t * proof;
 };
 
 struct split_server_client_t
@@ -59,8 +103,9 @@ struct split_server_client_t
     struct load_stream_state_t c2s[LOAD_NUM_COMBOS];
     struct load_stream_state_t s2c;
     struct load_wire_sample_t wire_start, wire_end;
-    int slot, connected, arm_acked, go_acked, done, drained, finish_sent, finish_acked;
+    int slot, connected, arm_acked, go_acked, done, drained, finish_sent, finish_acked, disconnect_reported;
     double next_due;
+    struct split_proof_t * proof;
 };
 
 struct split_result_t
@@ -80,6 +125,10 @@ struct split_result_t
     double connect_seconds, start_seconds, traffic_seconds, drain_seconds, barrier_seconds;
     double delivery_deadline;
     double aggregate_up_kbps, aggregate_down_kbps;
+    double min_client_up_kbps, min_client_down_kbps;
+    int wire_sampled;
+    uint64_t proof_checksum_errors, proof_receipt_errors, proof_receipts_dropped;
+    int proof_disconnected_clients;
     uint64_t startup_utc_s, traffic_start_utc_s, traffic_end_utc_s;
 };
 
@@ -358,6 +407,208 @@ static int split_client_send( struct rocketnet_client_t * client, uint32_t magic
     return rocketnet_client_finish_message(client, LOAD_PAYLOAD_BYTES) != 0;
 }
 
+static void split_proof_init( struct split_proof_t * proof, uint32_t client, uint32_t send_direction )
+{
+    memset(proof, 0, sizeof(*proof));
+    for ( uint32_t direction = 0; direction < SPLIT_VERIFY_NUM_DIRECTIONS; ++direction )
+        for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
+            for ( uint32_t size_class = 0; size_class < SPLIT_VERIFY_NUM_SIZE_CLASSES; ++size_class )
+                split_verify_stream_init(&proof->receive[split_verify_stream_index(direction, mode, size_class)],
+                                         client, direction, mode, size_class);
+    split_verify_ledger_init(&proof->ledger, client, send_direction);
+}
+
+/* Sends the next message of one stream through the server (to slot) or the
+ * client. A receipt mode's serial goes into the ledger. */
+static int split_proof_send( struct split_proof_t * proof, struct rocketnet_server_t * server, int slot,
+                             struct rocketnet_client_t * api, uint32_t client, uint32_t direction,
+                             uint32_t mode, uint32_t size_class, uint64_t run_id, struct load_timing_t * timing )
+{
+    if ( !timing ) timing = &split_untimed;
+    const uint32_t index = split_verify_stream_index(direction, mode, size_class);
+    struct split_verify_payload_t payload;
+    payload.run_id = run_id;
+    payload.client = client;
+    payload.direction = direction;
+    payload.mode = mode;
+    payload.size_class = size_class;
+    payload.sequence = proof->sent[index] + 1;
+    payload.length = size_class == SPLIT_VERIFY_SMALL ? SPLIT_PROOF_SMALL_BYTES : SPLIT_PROOF_FRAGMENTED_BYTES;
+    if ( !split_verify_payload_fields_valid(&payload) ) return 0;
+    const int channel = SPLIT_PROOF_FIRST_CHANNEL + (int) (mode * SPLIT_VERIFY_NUM_SIZE_CLASSES + size_class);
+    uint8_t * out = NULL;
+    if ( server )
+        LOAD_TIMED_VALUE(timing, LOAD_TIMING_SERVER_START_MESSAGE, out,
+                         rocketnet_server_start_message(server, (uint64_t) slot, channel,
+                                                        (enum rocketnet_reliability_t) mode, (int) payload.length));
+    else
+        out = rocketnet_client_start_message(api, channel, (enum rocketnet_reliability_t) mode, (int) payload.length);
+    if ( !out ) return 0;
+    split_verify_write_payload(out, payload.length, &payload);
+    uint32_t serial = 0;
+    if ( server )
+        LOAD_TIMED_VALUE(timing, LOAD_TIMING_SERVER_FINISH_MESSAGE, serial,
+                         rocketnet_server_finish_message(server, (int) payload.length));
+    else
+        serial = rocketnet_client_finish_message(api, (int) payload.length);
+    if ( serial == 0 ) return 0;
+    proof->sent[index] = payload.sequence;
+    if ( split_verify_mode_has_receipt(mode) )
+        (void) split_verify_ledger_send(&proof->ledger, serial, mode, size_class, payload.sequence);
+    return 1;
+}
+
+/* One proof offer: the small message and the fragmented message. */
+static int split_proof_offer( struct split_proof_t * proof, struct rocketnet_server_t * server, int slot,
+                              struct rocketnet_client_t * api, uint32_t client, uint32_t direction,
+                              uint64_t run_id, struct load_timing_t * timing )
+{
+    const uint32_t k = proof->offers++;
+    const uint32_t small_mode = (client + k) % SPLIT_VERIFY_NUM_MODES;
+    const uint32_t fragmented_mode = split_proof_fragmented_modes[(client + k) % SPLIT_PROOF_FRAGMENTED_MODES];
+    const int small = split_proof_send(proof, server, slot, api, client, direction, small_mode,
+                                       SPLIT_VERIFY_SMALL, run_id, timing);
+    const int fragmented = split_proof_send(proof, server, slot, api, client, direction, fragmented_mode,
+                                            SPLIT_VERIFY_FRAGMENTED, run_id, timing);
+    return small && fragmented;
+}
+
+/* Reads, verifies and records one received proof payload from client
+ * (server end) or for client (client end). */
+static void split_proof_receive( struct split_result_t * result, struct split_proof_t * proof, uint32_t client,
+                                 uint32_t direction, uint64_t run_id, const uint8_t * data, int bytes )
+{
+    struct split_verify_payload_t payload;
+    const enum split_verify_read_t read = bytes < 0 ? SPLIT_VERIFY_READ_SHORT :
+        split_verify_read_payload(data, (uint32_t) bytes, run_id, &payload);
+    if ( read == SPLIT_VERIFY_READ_CHECKSUM ) { result->proof_checksum_errors++; return; }
+    if ( read != SPLIT_VERIFY_READ_OK ) { result->payload_errors++; return; }
+    if ( payload.client != client || payload.direction != direction ) { result->identity_errors++; return; }
+    if ( result->barrier_active ||
+         (result->delivery_deadline > 0.0 && rocketnet_time() >= result->delivery_deadline) )
+    {
+        result->late_application_deliveries++;
+        return;
+    }
+    struct split_verify_stream_t * stream =
+        &proof->receive[split_verify_stream_index(direction, payload.mode, payload.size_class)];
+    const uint32_t duplicates = stream->duplicates;
+    const uint32_t order = stream->order_errors + stream->stale_deliveries;
+    const uint32_t identity = stream->identity_errors;
+    (void) split_verify_stream_deliver(stream, &payload);
+    result->duplicate_errors += (int) (stream->duplicates - duplicates);
+    result->order_errors += (int) (stream->order_errors + stream->stale_deliveries - order);
+    result->identity_errors += (int) (stream->identity_errors - identity);
+    if ( direction == SPLIT_VERIFY_CLIENT_TO_SERVER ) result->c2s_received++;
+    else result->s2c_received++;
+}
+
+/* Records the receipts the last update published. They are read once per
+ * update: a second read copies the same entries. */
+static void split_proof_take_receipts( struct split_result_t * result, struct split_proof_t * proof,
+                                       const struct rocketnet_receipt_t * receipts, int available )
+{
+    if ( available > SPLIT_PROOF_RECEIPT_BATCH )
+    {
+        result->proof_receipt_errors += (uint64_t) (available - SPLIT_PROOF_RECEIPT_BATCH);
+        available = SPLIT_PROOF_RECEIPT_BATCH;
+    }
+    for ( int i = 0; i < available; ++i )
+        (void) split_verify_ledger_outcome(&proof->ledger, receipts[i].serial, (int) receipts[i].status);
+}
+
+static void split_proof_client_receipts( struct split_result_t * result, struct split_client_t * client )
+{
+    static struct rocketnet_receipt_t receipts[SPLIT_PROOF_RECEIPT_BATCH];
+    if ( !client->proof ) return;
+    const int available = rocketnet_client_receipts(client->api, receipts, SPLIT_PROOF_RECEIPT_BATCH);
+    split_proof_take_receipts(result, client->proof, receipts, available);
+}
+
+/* A seen-bitmap as hex, through its last nonzero byte (at least one byte). */
+static const char * split_proof_hex( const uint8_t * seen )
+{
+    static char text[2 * (SPLIT_VERIFY_WINDOW_SEQUENCES / 8) + 1];
+    static const char digits[] = "0123456789abcdef";
+    uint32_t bytes = SPLIT_VERIFY_WINDOW_SEQUENCES / 8;
+    while ( bytes > 1 && seen[bytes - 1] == 0 ) bytes--;
+    for ( uint32_t i = 0; i < bytes; ++i )
+    {
+        text[2 * i] = digits[seen[i] >> 4];
+        text[2 * i + 1] = digits[seen[i] & 15];
+    }
+    text[2 * bytes] = 0;
+    return text;
+}
+
+/* One split_verify: line per client, direction, mode and size class the
+ * proof sends: the sending end's count (and receipt outcomes), the receiving
+ * end's deliveries. The merger joins the two ends of every stream. Adds the
+ * ledger's local failures to the result. */
+static void split_proof_print( struct split_result_t * result, const char * role, uint64_t run_id,
+                               uint32_t client, const struct split_proof_t * proof, uint32_t send_direction )
+{
+    static struct split_verify_ledger_stream_t share;
+    const uint32_t ledger_errors = split_verify_ledger_errors(&proof->ledger);
+    result->proof_receipt_errors += ledger_errors;
+    for ( uint32_t direction = 0; direction < SPLIT_VERIFY_NUM_DIRECTIONS; ++direction )
+        for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
+            for ( uint32_t size_class = 0; size_class < SPLIT_VERIFY_NUM_SIZE_CLASSES; ++size_class )
+            {
+                if ( size_class == SPLIT_VERIFY_FRAGMENTED && !split_verify_mode_is_reliable(mode) ) continue;
+                const uint32_t index = split_verify_stream_index(direction, mode, size_class);
+                printf("split_verify: role=%s run_id=%016" PRIx64 " client=%u direction=%s mode=%u size=%s ",
+                       role, run_id, client, direction == SPLIT_VERIFY_CLIENT_TO_SERVER ? "c2s" : "s2c", mode,
+                       size_class == SPLIT_VERIFY_SMALL ? "small" : "fragmented");
+                if ( direction == send_direction )
+                {
+                    printf("side=send sent=%u", proof->sent[index]);
+                    if ( split_verify_mode_has_receipt(mode) )
+                    {
+                        split_verify_ledger_stream(&proof->ledger, mode, size_class, &share);
+                        result->proof_receipt_errors += share.without_outcome;
+                        printf(" receipt_sends=%u acked=%u lost=%u without_outcome=%u ledger_errors=%u acked_map=%s",
+                               share.sends, share.acked, share.lost, share.without_outcome, ledger_errors,
+                               split_proof_hex(share.acked_seen));
+                    }
+                }
+                else
+                {
+                    const struct split_verify_stream_t * stream = &proof->receive[index];
+                    printf("side=receive delivered=%u newest=%u duplicates=%u order_errors=%u stale=%u identity_errors=%u",
+                           stream->delivered, stream->newest_sequence, stream->duplicates, stream->order_errors,
+                           stream->stale_deliveries, stream->identity_errors);
+                    if ( split_verify_mode_has_receipt(mode) )
+                        printf(" delivered_map=%s", split_proof_hex(stream->seen));
+                }
+                printf("\n");
+            }
+}
+
+/* The pin: ROCKETNET_SERVER_TRANSPORT naming one transport. NULL when the
+ * variable is unset, empty, "auto" or a list. */
+static const char * split_transport_pin( void )
+{
+    static char pin[64];
+    if ( !rocketnet_test_getenv("ROCKETNET_SERVER_TRANSPORT", pin, sizeof(pin)) ||
+         !pin[0] || strchr(pin, ',') || strcmp(pin, "auto") == 0 ) return NULL;
+    return pin;
+}
+
+static void split_proof_role_line( const char * role, uint64_t run_id, const char * transport,
+                                   const struct split_result_t * result, int disconnects, int pass )
+{
+    const char * pin = split_transport_pin();
+    printf("split_proof: role=%s run_id=%016" PRIx64 " transport=%s transport_pin=%s small_bytes=%u "
+           "fragmented_bytes=%u target_kbps=%.0f min_client_up_kbps=%.6f min_client_down_kbps=%.6f "
+           "checksum_errors=%" PRIu64 " receipt_errors=%" PRIu64 " receipts_dropped=%" PRIu64 " "
+           "disconnects=%d verdict=%s\n", role, run_id, transport ? transport : "none",
+           pin && strcmp(role, "server") == 0 ? pin : "none", SPLIT_PROOF_SMALL_BYTES,
+           SPLIT_PROOF_FRAGMENTED_BYTES, SPLIT_PROOF_TARGET_KBPS, result->min_client_up_kbps,
+           result->min_client_down_kbps, result->proof_checksum_errors, result->proof_receipt_errors,
+           result->proof_receipts_dropped, disconnects, pass ? "PASS" : "FAIL");
+}
+
 static void split_receive_c2s( struct split_result_t * result, struct split_server_client_t * clients,
                                int total, uint64_t run_id, const struct rocketnet_message_batch_t * batch,
                                const struct rocketnet_server_t * server )
@@ -380,6 +631,17 @@ static void split_receive_c2s( struct split_result_t * result, struct split_serv
             else if ( magic == SPLIT_DRAINED_MAGIC && client->done && !client->drained ) client->drained = 1;
             else if ( magic == SPLIT_FINISH_ACK_MAGIC && client->finish_sent && !client->finish_acked ) client->finish_acked = 1;
             else result->protocol_errors++;
+            continue;
+        }
+        if ( split_proof_load && magic == SPLIT_VERIFY_MAGIC )
+        {
+            /* The sender is the client in this slot; the payload must name it. */
+            const int slot = batch->client_index[j];
+            const uint64_t id = slot >= 0 && slot < total ? rocketnet_server_client_id(server, slot) : 0;
+            if ( id < 1 || id > (uint64_t) total || clients[id - 1].slot != slot || !clients[id - 1].proof )
+            { result->identity_errors++; continue; }
+            split_proof_receive(result, clients[id - 1].proof, (uint32_t) (id - 1), SPLIT_VERIFY_CLIENT_TO_SERVER,
+                                run_id, batch->data[j], batch->bytes[j]);
             continue;
         }
         if ( !split_verify_message(batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, run_id, &message) )
@@ -493,6 +755,13 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
             split_receive_s2c(result, client, global, run_id, split_batch_entry(batch, j));
             continue;
         }
+        /* Proof traffic rides its own channels, so it can overtake RUN. */
+        if ( split_proof_load && magic == SPLIT_VERIFY_MAGIC && client->proof )
+        {
+            split_proof_receive(result, client->proof, global, SPLIT_VERIFY_SERVER_TO_CLIENT, run_id,
+                                batch->data[j], batch->bytes[j]);
+            continue;
+        }
         if ( !split_verify_message(batch->data[j], batch->bytes[j], magic, run_id, &message) ||
              message.client != global || message.combo != 0 || message.seq != 1 ||
              batch->client_index[j] != 0 ||
@@ -540,6 +809,12 @@ static void split_client_runtime_batch( struct split_result_t * result, struct s
             else result->protocol_errors++;
             continue;
         }
+        if ( split_proof_load && magic == SPLIT_VERIFY_MAGIC && client->proof )
+        {
+            split_proof_receive(result, client->proof, global, SPLIT_VERIFY_SERVER_TO_CLIENT, run_id,
+                                batch->data[j], batch->bytes[j]);
+            continue;
+        }
         split_receive_s2c(result, client, global, run_id, split_batch_entry(batch, j));
     }
 }
@@ -548,6 +823,7 @@ static void split_print_streams( const char * role, uint64_t run_id, int first, 
                                  const struct split_server_client_t * server_clients,
                                  const struct split_client_t * shard_clients )
 {
+    if ( split_proof_load ) return;
     for ( int local = 0; local < count; ++local )
     {
         const int client = first + local;
@@ -599,8 +875,16 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
         result->connect_seconds <= LOAD_CONNECT_DEADLINE_S &&
         population && !result->identity_errors && !result->payload_errors && !result->order_errors &&
         !result->duplicate_errors && !result->unexpected_disconnects && !result->offer_refusals &&
-        !result->protocol_errors && !result->late_application_deliveries && result->wire_valid;
-    const int bandwidth = result->max_client_up_kbps < 100.0 && result->max_client_down_kbps < 100.0 &&
+        !result->protocol_errors && !result->late_application_deliveries && result->wire_valid &&
+        (!split_proof_load || (!result->proof_checksum_errors && !result->proof_receipt_errors &&
+                               !result->proof_receipts_dropped));
+    /* The proof's floor replaces the default 100 kbps per-client cap: every
+     * client at least SPLIT_PROOF_TARGET_KBPS on the wire each way. */
+    const int per_client = split_proof_load ?
+        result->wire_sampled == count && result->min_client_up_kbps >= SPLIT_PROOF_TARGET_KBPS &&
+            result->min_client_down_kbps >= SPLIT_PROOF_TARGET_KBPS :
+        result->max_client_up_kbps < 100.0 && result->max_client_down_kbps < 100.0;
+    const int bandwidth = per_client &&
         result->aggregate_up_kbps < aggregate_limit_kbps && result->aggregate_down_kbps < aggregate_limit_kbps;
     const int timing = strcmp(role, "server") != 0 ||
         (result->timing_valid && result->timing_budget_met);
@@ -620,7 +904,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            "max_client_up_kbps=%.6f max_client_down_kbps=%.6f aggregate_up_kbps=%.6f "
            "aggregate_down_kbps=%.6f aggregate_limit_kbps=%.6f wire_scope=pre_run_to_traffic_end_conservative "
            "wire_rate_denominator_s=%d "
-           "workload_scope=traffic_plus_drain transport=%s profile=default payload_bytes=32 "
+           "workload_scope=traffic_plus_drain transport=%s profile=default payload_bytes=%s "
            "rate_target_hz=%d load=%s fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
            "resource_baseline_schema=%s warm_cycle=1 survivor_threads_operational=%ld "
@@ -642,7 +926,7 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            result->wire_valid, result->wire_up, result->wire_down,
            result->max_client_up_kbps, result->max_client_down_kbps,
            result->aggregate_up_kbps, result->aggregate_down_kbps, aggregate_limit_kbps, duration,
-           transport ? transport : "none", split_rate_hz(), split_load_name(), fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+           transport ? transport : "none", split_payload_label(), split_rate_hz(), split_load_name(), fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
            threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
            census ? "census_v1" : "phase_counts_v1", operational.threads, operational.handles,
            whole.threads, whole.handles, whole.os_pool_threads,
@@ -650,6 +934,9 @@ static int split_print_receipt( const char * role, uint64_t run_id, int total, i
            result->load_complete ? "PASS" : "FAIL", bandwidth ? "PASS" : "FAIL",
            strcmp(role, "server") == 0 ? (timing ? "PASS" : "FAIL") : "NA",
            pass ? "PASS" : "FAIL");
+    if ( split_proof_load )
+        split_proof_role_line(role, run_id, transport, result, result->proof_disconnected_clients,
+                              correctness && result->load_complete && bandwidth && resources);
     return pass;
 }
 
@@ -669,6 +956,47 @@ static int split_server_client_live( const struct rocketnet_server_t * server, c
 {
     return clients[i].slot >= 0 && rocketnet_server_client_connected(server, clients[i].slot) &&
         rocketnet_server_client_id(server, clients[i].slot) == (uint64_t) i + 1;
+}
+
+/* Proof: a disconnect between the population window and the planned close
+ * fails the run (unexpected_disconnects); each client's first one is named
+ * once with its reason. */
+static void split_server_note_disconnect( struct split_result_t * result, const struct rocketnet_server_t * server,
+                                          struct split_server_client_t * clients, int i, uint64_t run_id, const char * phase )
+{
+    if ( !split_proof_load || clients[i].disconnect_reported ) return;
+    clients[i].disconnect_reported = 1;
+    result->proof_disconnected_clients++;
+    const int slot = clients[i].slot;
+    const char * reason = slot < 0 ? "no_slot" :
+        rocketnet_server_client_connected(server, slot) ? "slot_reused" :
+        rocketnet_disconnect_reason_name(rocketnet_server_disconnect_reason(server, slot));
+    printf("split_disconnect: role=server run_id=%016" PRIx64 " client=%d phase=%s reason=%s\n",
+           run_id, i, phase, reason ? reason : "unknown");
+}
+
+static void split_client_note_disconnect( struct split_result_t * result, struct split_client_t * client, int global,
+                                          uint64_t run_id, const char * phase )
+{
+    if ( !split_proof_load || client->disconnect_reported ) return;
+    client->disconnect_reported = 1;
+    result->proof_disconnected_clients++;
+    const char * reason = rocketnet_client_state_name(rocketnet_client_state(client->api));
+    printf("split_disconnect: role=client-shard run_id=%016" PRIx64 " client=%d phase=%s reason=%s\n",
+           run_id, global, phase, reason ? reason : "unknown");
+}
+
+static void split_proof_server_receipts( struct rocketnet_server_t * server, struct split_server_client_t * clients,
+                                         int total, struct split_result_t * result )
+{
+    static struct rocketnet_receipt_t receipts[SPLIT_PROOF_RECEIPT_BATCH];
+    if ( !split_proof_load ) return;
+    for ( int i = 0; i < total; ++i )
+    {
+        if ( !clients[i].proof || !split_server_client_live(server, clients, i) ) continue;
+        const int available = rocketnet_server_receipts(server, clients[i].slot, receipts, SPLIT_PROOF_RECEIPT_BATCH);
+        split_proof_take_receipts(result, clients[i].proof, receipts, available);
+    }
 }
 
 /* The delivery capture's SDK bindings (tools/load_split_capture.h). The
@@ -823,7 +1151,11 @@ static int split_server_start_phase( struct rocketnet_server_t * server, struct 
         {
             const int done = phase == SPLIT_START_STEP_ARM ? clients[i].arm_acked : clients[i].go_acked;
             acked += done;
-            if ( !done && !split_server_client_live(server, clients, i) ) disconnected++;
+            if ( !done && !split_server_client_live(server, clients, i) )
+            {
+                disconnected++;
+                split_server_note_disconnect(result, server, clients, i, run_id, split_start_step_name(phase));
+            }
         }
         rocketnet_server_send_packets(server);
         split_capture_tick(capture, rocketnet_time());
@@ -846,6 +1178,8 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     struct split_result_t result = { 0 };
     result.duration_target = duration;
     struct split_server_client_t * clients = NULL;
+    struct split_proof_t * proofs = NULL;
+    int transport_refused = 0;
     struct rocketnet_server_t * server = NULL;
     struct load_timing_t timing = { 0 };
     char transport[32] = "none";
@@ -879,10 +1213,33 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     server = rocketnet_server_create(NULL, server_endpoint, NULL, &config, &create_status);
     if ( !server || rocketnet_server_start(server) != ROCKETNET_STATUS_OK ) goto cleanup;
     snprintf(transport, sizeof(transport), "%s", rocketnet_server_transport_name(server));
+    {
+        /* Pinned transport: a grant other than the one transport
+         * ROCKETNET_SERVER_TRANSPORT names is a refusal (exit 2) before any
+         * client connects, never a silent fallback. The proof runs pinned. */
+        const char * pin = split_transport_pin();
+        if ( (pin && strcmp(pin, transport) != 0) || (split_proof_load && !pin) )
+        {
+            printf("split_transport_refused: role=server run_id=%016" PRIx64 " pin=%s granted=%s\n",
+                   run_id, pin ? pin : "none", transport);
+            transport_refused = 1;
+            goto cleanup;
+        }
+    }
     clients = (struct split_server_client_t *) calloc((size_t) total, sizeof(*clients));
     capture_entries = (struct split_capture_entry_t *) calloc((size_t) total, sizeof(*capture_entries));
     if ( !clients || !capture_entries ) goto cleanup;
     for ( int i = 0; i < total; ++i ) clients[i].slot = -1;
+    if ( split_proof_load )
+    {
+        proofs = (struct split_proof_t *) calloc((size_t) total, sizeof(*proofs));
+        if ( !proofs ) goto cleanup;
+        for ( int i = 0; i < total; ++i )
+        {
+            split_proof_init(&proofs[i], (uint32_t) i, SPLIT_VERIFY_SERVER_TO_CLIENT);
+            clients[i].proof = &proofs[i];
+        }
+    }
     {
         struct split_capture_source_t source;
         struct split_capture_emit_t emit;
@@ -903,10 +1260,11 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     split_encode_key(key, key_hex);
     result.startup_utc_s = (uint64_t) time(NULL);
     printf("split_ready: schema=split_v1 role=server run_id=%016" PRIx64 " total=%d "
-           "duration_s=%d profile=default payload_bytes=32 rate_target_hz=%d load=%s "
-           "address=%s:%u key=%s transport=%s startup_utc_s=%" PRIu64 "\n",
-           run_id, total, duration, split_rate_hz(), split_load_name(), ready_ipv4, (unsigned) rocketnet_server_port(server),
-           key_hex, transport, result.startup_utc_s);
+           "duration_s=%d profile=default payload_bytes=%s rate_target_hz=%d load=%s "
+           "address=%s:%u key=%s transport=%s startup_utc_s=%" PRIu64 "%s%s\n",
+           run_id, total, duration, split_payload_label(), split_rate_hz(), split_load_name(), ready_ipv4,
+           (unsigned) rocketnet_server_port(server), key_hex, transport, result.startup_utc_s,
+           split_proof_load ? " transport_pin=" : "", split_proof_load ? split_transport_pin() : "");
     fflush(stdout);
 
     /* The launcher has a 60-second readiness lease. Once the first client
@@ -995,7 +1353,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     const double traffic_start = rocketnet_time();
     result.traffic_start_utc_s = (uint64_t) time(NULL);
     for ( int i = 0; i < total; ++i )
-        clients[i].next_due = traffic_start;
+        clients[i].next_due = traffic_start + (split_proof_load ? (double) (i % 5) * 0.010 : 0.0);
     result.expected_offers = (uint64_t) total * (uint64_t) duration * (uint64_t) split_rate_hz();
     timing.enabled = 1;
     double next_tick = traffic_start;
@@ -1033,6 +1391,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
                 const double down_kbps = (double) down * 8.0 / ((double) duration * 1000.0);
                 if ( up_kbps > result.max_client_up_kbps ) result.max_client_up_kbps = up_kbps;
                 if ( down_kbps > result.max_client_down_kbps ) result.max_client_down_kbps = down_kbps;
+                if ( !result.wire_sampled || up_kbps < result.min_client_up_kbps ) result.min_client_up_kbps = up_kbps;
+                if ( !result.wire_sampled || down_kbps < result.min_client_down_kbps ) result.min_client_down_kbps = down_kbps;
+                result.wire_sampled++;
             }
             result.aggregate_up_kbps = (double) result.wire_up * 8.0 / ((double) duration * 1000.0);
             result.aggregate_down_kbps = (double) result.wire_down * 8.0 / ((double) duration * 1000.0);
@@ -1042,6 +1403,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         /* An update may itself cross the drain deadline. Do not let its
          * newly published batch repair delivery after the fixed window. */
         if ( rocketnet_time() >= drain_end ) result.barrier_active = 1;
+        split_proof_server_receipts(server, clients, total, &result);
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = split_server_receive(server, &timing)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
@@ -1049,13 +1411,26 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         {
             if ( !rocketnet_server_client_connected(server, clients[i].slot) ||
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
-            { result.unexpected_disconnects++; continue; }
+            {
+                result.unexpected_disconnects++;
+                split_server_note_disconnect(&result, server, clients, i, run_id, "traffic");
+                continue;
+            }
             /* Use the offer-time clock for both the deadline and due phase.
              * An update may have crossed one or more due slots since now. */
             const double offer_now = rocketnet_time();
             if ( offer_now >= end_time ) break;
             if ( !split_offer_due(offer_now, end_time, split_offer_period_s(), &clients[i].next_due,
                                   &result.missed_due_slots) ) continue;
+            if ( split_proof_load )
+            {
+                result.s2c_offered++;
+                if ( !split_proof_offer(clients[i].proof, server, clients[i].slot, NULL, (uint32_t) i,
+                                        SPLIT_VERIFY_SERVER_TO_CLIENT, run_id, &timing) )
+                { result.offer_refusals++; continue; }
+                result.s2c_accepted++;
+                continue;
+            }
             if ( clients[i].s2c.sent_count + 1 >= LOAD_MAX_SEQ_TRACKED )
             { result.protocol_errors++; continue; }
             result.s2c_offered++;
@@ -1088,6 +1463,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     while ( !quit && drained < total && rocketnet_time() - barrier_start < SPLIT_BARRIER_DEADLINE_S )
     {
         rocketnet_server_update(server, rocketnet_time());
+        split_proof_server_receipts(server, clients, total, &result);
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
@@ -1097,7 +1473,10 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
             drained += clients[i].drained;
             if ( !rocketnet_server_client_connected(server, clients[i].slot) ||
                  rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1 )
+            {
                 result.unexpected_disconnects++;
+                split_server_note_disconnect(&result, server, clients, i, run_id, "drain_barrier");
+            }
         }
         rocketnet_server_send_packets(server);
         split_capture_tick(&capture, rocketnet_time());
@@ -1118,6 +1497,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     while ( !quit && finish_acked < total && rocketnet_time() - ack_start < SPLIT_BARRIER_DEADLINE_S )
     {
         rocketnet_server_update(server, rocketnet_time());
+        split_proof_server_receipts(server, clients, total, &result);
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
@@ -1128,7 +1508,10 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
             if ( !clients[i].finish_acked &&
                  (!rocketnet_server_client_connected(server, clients[i].slot) ||
                   rocketnet_server_client_id(server, clients[i].slot) != (uint64_t) i + 1) )
+            {
                 result.unexpected_disconnects++;
+                split_server_note_disconnect(&result, server, clients, i, run_id, "finish_barrier");
+            }
         }
         rocketnet_server_send_packets(server);
         split_capture_tick(&capture, rocketnet_time());
@@ -1146,6 +1529,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     while ( !quit && rocketnet_time() - confirm_start < SPLIT_CONFIRM_GRACE_S )
     {
         rocketnet_server_update(server, rocketnet_time());
+        split_proof_server_receipts(server, clients, total, &result);
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( (batch = rocketnet_server_receive_messages(server)) != NULL )
             split_receive_c2s(&result, clients, total, run_id, batch, server);
@@ -1166,10 +1550,19 @@ cleanup:
             split_print_streams("server", run_id, 0, total, clients, NULL);
             split_print_wire("server", run_id, 0, total, clients, NULL);
         }
+        if ( proofs )
+        {
+            struct rocketnet_server_stats_t stats;
+            rocketnet_server_stats(server, &stats);
+            result.proof_receipts_dropped = stats.receipts_dropped;
+            for ( int i = 0; i < total; ++i )
+                split_proof_print(&result, "server", run_id, (uint32_t) i, &proofs[i], SPLIT_VERIFY_SERVER_TO_CLIENT);
+        }
         if ( capture.entries ) split_capture_end(&capture, rocketnet_time());
         rn_cli_server_stop_and_destroy(server);
     }
     free(clients);
+    free(proofs);
     free(capture_entries);
     if ( api_started )
     {
@@ -1208,6 +1601,7 @@ cleanup:
                                &result, fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                                threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
                                term_status, transport);
+    if ( transport_refused ) return 2;
     return pass ? 0 : 1;
 }
 
@@ -1246,6 +1640,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     struct split_result_t result = { 0 };
     result.duration_target = duration;
     struct split_client_t * clients = NULL;
+    struct split_proof_t * proofs = NULL;
     char transport[32] = "none";
     int api_started = 0, traffic_sampled = 0, pass = 0;
     struct split_capture_t capture;
@@ -1273,6 +1668,16 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     clients = (struct split_client_t *) calloc((size_t) count, sizeof(*clients));
     capture_entries = (struct split_capture_entry_t *) calloc((size_t) count, sizeof(*capture_entries));
     if ( !clients || !capture_entries ) goto cleanup;
+    if ( split_proof_load )
+    {
+        proofs = (struct split_proof_t *) calloc((size_t) count, sizeof(*proofs));
+        if ( !proofs ) goto cleanup;
+        for ( int i = 0; i < count; ++i )
+        {
+            split_proof_init(&proofs[i], (uint32_t) (first + i), SPLIT_VERIFY_CLIENT_TO_SERVER);
+            clients[i].proof = &proofs[i];
+        }
+    }
     {
         struct split_capture_source_t source;
         struct split_capture_emit_t emit;
@@ -1309,8 +1714,9 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
     result.startup_utc_s = (uint64_t) time(NULL);
     printf("split_shard_ready: schema=split_v1 role=client-shard run_id=%016" PRIx64
            " total=%d first=%d count=%d duration_s=%d profile=default "
-           "payload_bytes=32 rate_target_hz=%d load=%s startup_utc_s=%" PRIu64 "\n",
-           run_id, total, first, count, duration, split_rate_hz(), split_load_name(), result.startup_utc_s);
+           "payload_bytes=%s rate_target_hz=%d load=%s startup_utc_s=%" PRIu64 "\n",
+           run_id, total, first, count, duration, split_payload_label(), split_rate_hz(), split_load_name(),
+           result.startup_utc_s);
     fflush(stdout);
     const double connect_start = rocketnet_time();
     while ( !quit && rocketnet_time() - connect_start < LOAD_CONNECT_DEADLINE_S )
@@ -1423,6 +1829,9 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
                 const double down_kbps = (double) down * 8.0 / ((double) duration * 1000.0);
                 if ( up_kbps > result.max_client_up_kbps ) result.max_client_up_kbps = up_kbps;
                 if ( down_kbps > result.max_client_down_kbps ) result.max_client_down_kbps = down_kbps;
+                if ( !result.wire_sampled || up_kbps < result.min_client_up_kbps ) result.min_client_up_kbps = up_kbps;
+                if ( !result.wire_sampled || down_kbps < result.min_client_down_kbps ) result.min_client_down_kbps = down_kbps;
+                result.wire_sampled++;
             }
             result.aggregate_up_kbps = (double) result.wire_up * 8.0 / ((double) duration * 1000.0);
             result.aggregate_down_kbps = (double) result.wire_down * 8.0 / ((double) duration * 1000.0);
@@ -1442,16 +1851,31 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
             struct split_client_t * client = &clients[local];
             rocketnet_client_update(client->api, rocketnet_time());
             if ( rocketnet_time() >= drain_end ) result.barrier_active = 1;
+            split_proof_client_receipts(&result, client);
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(client->api)) != NULL )
                 split_client_runtime_batch(&result, client, (uint32_t) (first + local), run_id, batch);
             const enum rocketnet_client_state_t state = rocketnet_client_state(client->api);
             if ( state != ROCKETNET_CLIENT_STATE_CONNECTED )
+            {
                 result.unexpected_disconnects++;
+                split_client_note_disconnect(&result, client, first + local, run_id, "traffic");
+            }
             /* A client update can cross a due slot. The same fresh clock
              * decides traffic eligibility and counts every skipped slot. */
             const double offer_now = rocketnet_time();
-            if ( in_traffic && state == ROCKETNET_CLIENT_STATE_CONNECTED &&
+            if ( split_proof_load && in_traffic && state == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                 split_offer_due(offer_now, traffic_end, split_offer_period_s(), &client->next_due,
+                                 &result.missed_due_slots) )
+            {
+                result.c2s_offered++;
+                if ( !split_proof_offer(client->proof, NULL, 0, client->api, (uint32_t) (first + local),
+                                        SPLIT_VERIFY_CLIENT_TO_SERVER, run_id, NULL) )
+                    result.offer_refusals++;
+                else
+                    result.c2s_accepted++;
+            }
+            else if ( in_traffic && state == ROCKETNET_CLIENT_STATE_CONNECTED && !split_proof_load &&
                  split_offer_due(offer_now, traffic_end, split_offer_period_s(), &client->next_due,
                                  &result.missed_due_slots) )
             {
@@ -1502,12 +1926,16 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         for ( int i = 0; i < count; ++i )
         {
             rocketnet_client_update(clients[i].api, rocketnet_time());
+            split_proof_client_receipts(&result, &clients[i]);
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_runtime_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
             finished += clients[i].finish;
             if ( rocketnet_client_state(clients[i].api) != ROCKETNET_CLIENT_STATE_CONNECTED )
+            {
                 result.unexpected_disconnects++;
+                split_client_note_disconnect(&result, &clients[i], first + i, run_id, "drain_barrier");
+            }
             rocketnet_client_send_packets(clients[i].api);
         }
         split_capture_tick(&capture, rocketnet_time());
@@ -1530,12 +1958,16 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         for ( int i = 0; i < count; ++i )
         {
             rocketnet_client_update(clients[i].api, rocketnet_time());
+            split_proof_client_receipts(&result, &clients[i]);
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( (batch = rocketnet_client_receive_messages(clients[i].api)) != NULL )
                 split_client_runtime_batch(&result, &clients[i], (uint32_t) (first + i), run_id, batch);
             confirmed += clients[i].confirmed;
             if ( !clients[i].confirmed && rocketnet_client_state(clients[i].api) != ROCKETNET_CLIENT_STATE_CONNECTED )
+            {
                 result.unexpected_disconnects++;
+                split_client_note_disconnect(&result, &clients[i], first + i, run_id, "finish_barrier");
+            }
             rocketnet_client_send_packets(clients[i].api);
         }
         split_capture_tick(&capture, rocketnet_time());
@@ -1549,11 +1981,23 @@ cleanup:
     {
         split_print_streams("client-shard", run_id, first, count, NULL, clients);
         split_print_wire("client-shard", run_id, first, count, NULL, clients);
+        for ( int i = 0; proofs && i < count; ++i )
+        {
+            if ( clients[i].api )
+            {
+                struct rocketnet_client_stats_t stats;
+                rocketnet_client_stats(clients[i].api, &stats);
+                result.proof_receipts_dropped += stats.receipts_dropped;
+            }
+            split_proof_print(&result, "client-shard", run_id, (uint32_t) (first + i), &proofs[i],
+                              SPLIT_VERIFY_CLIENT_TO_SERVER);
+        }
         if ( capture.entries ) split_capture_end(&capture, rocketnet_time());
         for ( int i = 0; i < count; ++i )
             if ( clients[i].api ) rn_cli_client_stop_and_destroy(clients[i].api);
         free(clients);
     }
+    free(proofs);
     free(capture_entries);
     if ( api_started )
     {
@@ -1577,8 +2021,8 @@ static void split_usage( void )
     fprintf(stderr, "usage:\n"
             "  load_split plan-server <total>\n"
             "  load_split plan-client-shard <total> <local-count>\n"
-            "  load_split server <total> <seconds> <run-id-16hex> <server-ipv4:port> <ready-ipv4> <aggregate-limit-kbps> [full]\n"
-            "  load_split client-shard <total> <seconds> <run-id-16hex> <first> <count> <server-ipv4:port> <server-key-64hex> <aggregate-limit-kbps> [full]\n");
+            "  load_split server <total> <seconds> <run-id-16hex> <server-ipv4:port> <ready-ipv4> <aggregate-limit-kbps> [full|proof]\n"
+            "  load_split client-shard <total> <seconds> <run-id-16hex> <first> <count> <server-ipv4:port> <server-key-64hex> <aggregate-limit-kbps> [full|proof]\n");
 }
 
 int main( int argc, char ** argv )
@@ -1603,6 +2047,11 @@ int main( int argc, char ** argv )
     if ( argc == server_args + 1 && strcmp(argv[argc - 1], "full") == 0 )
     {
         split_full_load = 1;
+        argc--;
+    }
+    else if ( argc == server_args + 1 && strcmp(argv[argc - 1], "proof") == 0 )
+    {
+        split_proof_load = 1;
         argc--;
     }
     if ( strcmp(argv[1], "server") == 0 && argc == 8 &&
