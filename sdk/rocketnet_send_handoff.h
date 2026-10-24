@@ -23,8 +23,6 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         for (int i = 0; i < NumBuffers; ++i) free[i] = true;
     }
     // tla/SendHandoff.tla Acquire: reserves a free generation as the filling one.
-    // tla/SendHandoff.tla Finish: fills the next packet slot of the filling
-    // generation, counted as the next packet for it.
     int acquire()
     {
         if (filling >= 0) return filling;
@@ -49,8 +47,6 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     // back to the producer, which stages after its packets until the next
     // publish. -1 when only the front is queued. The caller tries acquire
     // first.
-    // tla/SendHandoff.tla StaleFinish: a finish through a pointer from before
-    // the reopen, below finish_base, is refused.
     int reopen()
     {
         if (filling >= 0) return filling;
