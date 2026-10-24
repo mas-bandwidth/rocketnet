@@ -12539,7 +12539,6 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, transport ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, state_change_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packet_filter ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_payload_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_kbps ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_channels ),
@@ -12568,7 +12567,6 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, backend_public_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_queues ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_os_cpus ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_payload_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
@@ -12706,7 +12704,6 @@ void rocketnet_test_public_config_resolve()
     rocketnet_client_default_config( &client );
     const uint8_t filter[4] = { 1, 2, 3, 4 };
     memcpy( client.packet_filter, filter, 4 );
-    client.max_payload_bytes = 2000;
     client.max_fragmented_messages = 3;
     client.transport = "portable";
     client.state_change_callback = rocketnet_test_resolve_state_change;
@@ -12717,7 +12714,7 @@ void rocketnet_test_public_config_resolve()
     client.message_resend_delay_min_ms = 20; client.message_resend_delay_max_ms = 300; client.reliable_message_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
-    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.max_fragmented_messages == 3 );
+    rocketnet_check( client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change );
     rocketnet_check( kbps == 1234 );
@@ -12769,7 +12766,7 @@ void rocketnet_test_public_config_resolve()
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
     memcpy( server.packet_filter, filter, 4 );
-    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.max_fragmented_messages = 4;
+    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_fragmented_messages = 4;
     server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
     server.per_client_send_kbps = 4321;
@@ -12780,7 +12777,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
-    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.max_fragmented_messages == 4 );
+    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_fragmented_messages == 4 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
@@ -13223,13 +13220,13 @@ void rocketnet_test_config_env_round_trip()
 void rocketnet_test_config_env_names_are_per_endpoint()
 {
     struct rocketnet_test_env_guard_t server_guard;
-    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     struct rocketnet_test_env_guard_t client_guard;
-    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
-    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
-    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
+    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
@@ -13243,23 +13240,23 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "19000", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
-    rocketnet_check( server_config.max_payload_bytes == 19000 );
-    rocketnet_check( client_config.max_payload_bytes == 0 );
-    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+    rocketnet_check( server_config.max_fragmented_messages == 19 );
+    rocketnet_check( client_config.max_fragmented_messages == 0 );
+    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     // the client name moves only the client config
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "17000", 1 );
+    setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
-    rocketnet_check( client_config.max_payload_bytes == 17000 );
-    rocketnet_check( server_config.max_payload_bytes == 0 );
-    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    rocketnet_check( client_config.max_fragmented_messages == 17 );
+    rocketnet_check( server_config.max_fragmented_messages == 0 );
+    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // a hand-built config gets no state-change callback it did not set: the
     // default-config function zeroes the struct and the table carries no
@@ -13316,11 +13313,11 @@ void rocketnet_test_config_validation()
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
 
     rocketnet_server_transport_default_config_current( &config );
-    config.max_payload_bytes = -1;
+    config.max_fragmented_messages = -1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+    config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = 0;
+    config.max_fragmented_messages = 0;
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
 
     // the table's num_xdp_queues range is structural; the per-transport
@@ -14685,17 +14682,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         rocketnet_check( estimate.sockets == plan.sockets );
         rocketnet_check( estimate.worker_threads == plan.worker_threads );
 
-        // The host plan describes native production resources even when a
-        // unit build runs the stats worker manually. Stats add one worker
-        // and its stack, but their event-only wake adds no network socket.
+        // The host plan describes native production resources: the transport's
+        // own I/O workers and sockets, and nothing for statistics, which run
+        // on the ack path with no thread of their own.
         rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         rocketnet_server_memory_plan_t io_plan = {};
         rocketnet_check( rocketnet_builtin_server_memory_plan( &config, transport, io_plan ) );
         rocketnet_check( estimate.sockets == io_plan.sockets );
-        rocketnet_check( estimate.worker_threads == io_plan.worker_threads + 1 );
+        rocketnet_check( estimate.worker_threads == io_plan.worker_threads );
         rocketnet_check( estimate.thread_stack_bytes ==
-                         ( (uint64_t) io_plan.worker_threads + 1 ) * estimate.thread_stack_bytes_per_thread );
+                         (uint64_t) io_plan.worker_threads * estimate.thread_stack_bytes_per_thread );
 
         if ( strcmp( transport, "xdp" ) == 0 )
         {
@@ -14709,13 +14706,13 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
             rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
         }
-        // portable: its RX and TX workers and the stats worker
+        // portable: its RX and TX workers
         if ( strcmp( transport, "portable" ) == 0 )
-            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 3 &&
-                             estimate.thread_stack_bytes == 3 * estimate.thread_stack_bytes_per_thread );
-        // rio: its I/O worker and the stats worker
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 2 &&
+                             estimate.thread_stack_bytes == 2 * estimate.thread_stack_bytes_per_thread );
+        // rio: its I/O worker
         if ( strcmp( transport, "rio" ) == 0 )
-            rocketnet_check( estimate.worker_threads == 2 );
+            rocketnet_check( estimate.worker_threads == 1 );
         if ( strcmp( transport, "rio" ) == 0 )
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
@@ -14723,17 +14720,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // The socket requests and transport stacks scale with the configured
-    // queue count; the GSO transmit worker and the stats worker contribute
-    // one additional fixed stack each.
+    // queue count; the GSO transmit worker contributes one additional fixed
+    // stack.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.num_xdp_queues = 8;
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 10 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.thread_stack_bytes == 10ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif

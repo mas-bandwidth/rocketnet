@@ -55,19 +55,11 @@ instrumented window, each measured tick runs:
 
 The clients then step and drain the replies outside the instrumented window.
 
-### The server's stats worker
+### The server's stats
 
-The server transport computes its ack statistics on a worker thread. Cachegrind's
-instrumentation switch is process-wide, so that thread's instructions inside the
-window were counted whenever it was scheduled there, and the measured thread's own
-path (publish, submit, or a busy skip) followed the worker's progress: on a loaded
-host `server_tick` read up to +80% with no code change. `instruction_count` links
-`rocketnet_dev_stats_manual`, the development library built with
-`ROCKETNET_STATS_MANUAL_TEST_HOOKS`, whose stats worker has no thread: the bench
-steps it to completion after every server update, outside the window, and fails if
-an update ever found it behind (`busy_skips`). Each measured tick then publishes the
-previous batch and submits the next, as a worker that keeps up does, and the count
-is the same on an idle and a loaded host.
+The server transport keeps its per-slot ack statistics current on the ack path
+itself (running aggregates, tla/RNServerStats.tla), with no worker thread, so
+every instruction of a server tick runs on the measured thread inside the window.
 
 ### Region isolation
 

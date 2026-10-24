@@ -1286,7 +1286,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
 
     const int capacity = rocketnet_client_transport_max_payload_bytes( client );
     rocketnet_check( capacity >= 8 );
-    static uint8_t packet[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t packet[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     int packet_bytes = rocketnet_client_transport_receive_packet( client, packet, capacity );
     rocketnet_check( packet_bytes == 8 );
     rocketnet_check( memcmp( packet, "capacity", 8 ) == 0 );
@@ -2920,7 +2920,7 @@ void rocketnet_test_transport_fragmentation()
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    static uint8_t pattern[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t pattern[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     for ( int i = 0; i < (int) sizeof(pattern); i++ )
         pattern[i] = (uint8_t) ( 0xC3 + i );
 
@@ -2930,7 +2930,7 @@ void rocketnet_test_transport_fragmentation()
     uint8_t * frame = rocketnet_client_transport_start_packet( client, 5000, &up_context );
     rocketnet_check( frame );
     rocketnet_check( up_context.payload_index == 0 );
-    rocketnet_check( up_context.payload_capacity == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( up_context.payload_capacity == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     memcpy( frame, pattern, 5000 );
     rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 5000 ) > 0 );
     rocketnet_client_transport_send_packets( client );
@@ -3052,8 +3052,8 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == (uint64_t) ( ( 5000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );        // unchanged
 
     // the configured maximum is readable, so callers can size buffers
-    rocketnet_check( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
 
     // the copying cursor carries reassembled payloads too, sized by the
     // configured maximum
@@ -3062,7 +3062,7 @@ void rocketnet_test_transport_fragmentation()
     memcpy( frame, pattern, 4000 );
     rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4000 ) > 0 );
 
-    static uint8_t cursor_buffer[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t cursor_buffer[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     int cursor_received = 0;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 && !cursor_received )
@@ -3163,8 +3163,8 @@ void rocketnet_test_transport_fragmentation()
     // NEGATIVE: a request past the configured maximum refuses outright
     {
         struct rocketnet_packet_context_t oversize_context;
-        rocketnet_check( rocketnet_client_transport_start_packet( client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
-        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
+        rocketnet_check( rocketnet_client_transport_start_packet( client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
+        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
     }
 
     // nothing died on the clean wire
@@ -3778,8 +3778,8 @@ void rocketnet_test_public_client_server_queries()
 
 void rocketnet_test_config_precedence()
 {
-    // DEFAULT < STRUCT < ENV, observed through the one config field with a
-    // public query: max_payload_bytes
+    // the transport's payload capacity is a constant now, so the removed
+    // field's env name is inert: nothing displaces anything
 
     struct rocketnet_test_env_guard_t payload_guard;
     rocketnet_test_env_clear( &payload_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
@@ -3793,23 +3793,16 @@ void rocketnet_test_config_precedence()
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
-    // struct displaces default
-
-    config.max_payload_bytes = 18000;
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // env displaces struct
+    // the removed field's env name moves nothing: the transport's payload
+    // capacity is a constant, not a configured one
 
     setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     rocketnet_test_env_restore( &payload_guard );
@@ -5068,9 +5061,8 @@ void rocketnet_test_server_transport_io_pin_msgx()
 // test_server_transport_io_ladder_fall, create the development config's
 // full-capacity server (ROCKETNET_MAX_CLIENTS slots) on "127.0.0.1:0" and
 // accept whichever rung the ladder grants, so their footprint is the server
-// memory plan, not the suite-wide bound: the stats worker's two delta buffers
-// and history per slot and the transport's owned receive buffers are
-// allocated up front by design. The rungs that can grant a port-zero address
+// memory plan, not the suite-wide bound: the per-slot ACK history and the
+// transport's owned receive buffers are allocated up front by design. The rungs that can grant a port-zero address
 // are the auto-order transports that are not pin-only and that discover
 // their bound port (the #109 rule refuses the rest before create); the
 // ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
@@ -5707,6 +5699,184 @@ void rocketnet_test_server_gso_wire_dual_stack()
 
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 peer
     rocketnet_test_server_gso_wire_exchange( "test_gso_transport_server_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
+}
+
+// The gso client over the wire (sdk/rocketnet_client_gso_linux.cpp): the
+// client pinned to gso and granted it, a portable server, equal-sized
+// payloads both ways so every client send batch is runs that leave as
+// UDP_SEGMENT messages (the segmented-message count proves the path ran), and
+// every payload byte-exact, none lost, none twice. segment false is the plain
+// tier: the probe is skipped and no message is segmented.
+
+#include "rocketnet_client_gso.h"
+
+static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment )
+{
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.transport, sizeof(server_config.transport), "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "%s:%d", server_host, rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.transport, sizeof(client_config.transport), "gso" );
+
+    rocketnet_client_gso_test_disable_segment.store( !segment );
+    const uint64_t segment_messages_before = rocketnet_client_gso_test_segment_messages_sent.load();
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "gso" ) == 0 );
+    rocketnet_check( rocketnet_client_transport_client_io( client ) != NULL );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    const int FRAMES = 40;
+    const int PACKETS_PER_FRAME = 32;
+    const int PAYLOAD_BYTES = 300;
+    const int TOTAL = FRAMES * PACKETS_PER_FRAME;
+
+    static uint8_t server_seen[FRAMES * PACKETS_PER_FRAME];
+    static uint8_t client_seen[FRAMES * PACKETS_PER_FRAME];
+    memset( server_seen, 0, sizeof(server_seen) );
+    memset( client_seen, 0, sizeof(client_seen) );
+    int server_received = 0;
+    int client_received = 0;
+
+    int client_sent = 0;
+    int server_sent = 0;
+    start = rocketnet_platform_time();
+    while ( ( server_received < TOTAL || client_received < TOTAL ) && rocketnet_platform_time() - start < 10.0 )
+    {
+        // a frame's worth each way, a tag in the first two bytes and a
+        // pattern of the tag after it; a refused start (a full ring) leaves
+        // the rest of the frame for the next pass, so no tag is lost or sent twice
+        for ( int i = 0; i < PACKETS_PER_FRAME && client_sent < TOTAL; i++ )
+        {
+            const int tag = client_sent;
+            struct rocketnet_packet_context_t context = {};
+            uint8_t * payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
+            if ( !payload )
+                break;
+            payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
+            payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+            for ( int j = 2; j < PAYLOAD_BYTES; j++ )
+                payload[context.payload_index + j] = (uint8_t) ( tag * 31 + j );
+            rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
+            client_sent++;
+        }
+
+        for ( int i = 0; i < PACKETS_PER_FRAME && server_sent < TOTAL; i++ )
+        {
+            const int tag = server_sent;
+            struct rocketnet_packet_context_t context;
+            uint8_t * packet = rocketnet_server_transport_start_packet( server, 0, PAYLOAD_BYTES, &context );
+            if ( !packet )
+                break;
+            packet[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
+            packet[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+            for ( int j = 2; j < PAYLOAD_BYTES; j++ )
+                packet[context.payload_index + j] = (uint8_t) ( tag * 17 + j );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) > 0 );
+            server_sent++;
+        }
+
+        rocketnet_client_transport_send_packets( client );
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            rocketnet_check( payload_bytes == PAYLOAD_BYTES );
+            const int tag = payload[0] | ( payload[1] << 8 );
+            rocketnet_check( tag >= 0 && tag < TOTAL );
+            for ( int j = 2; j < PAYLOAD_BYTES; j++ )
+                rocketnet_check( payload[j] == (uint8_t) ( tag * 31 + j ) );
+            rocketnet_check( !server_seen[tag] );
+            server_seen[tag] = 1;
+            server_received++;
+        }
+
+        static uint8_t received[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+        int received_bytes;
+        while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, (int) sizeof(received) ) ) > 0 )
+        {
+            rocketnet_check( received_bytes == PAYLOAD_BYTES );
+            const int tag = received[0] | ( received[1] << 8 );
+            rocketnet_check( tag >= 0 && tag < TOTAL );
+            for ( int j = 2; j < PAYLOAD_BYTES; j++ )
+                rocketnet_check( received[j] == (uint8_t) ( tag * 17 + j ) );
+            rocketnet_check( !client_seen[tag] );
+            client_seen[tag] = 1;
+            client_received++;
+        }
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_check( server_received == TOTAL );
+    rocketnet_check( client_received == TOTAL );
+
+    const uint64_t segment_messages = rocketnet_client_gso_test_segment_messages_sent.load() - segment_messages_before;
+    if ( segment )
+        rocketnet_check( segment_messages > 0 );
+    else
+        rocketnet_check( segment_messages == 0 );
+
+    rocketnet_client_gso_test_disable_segment.store( false );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+}
+
+void rocketnet_test_gso_client_wire_ipv4()
+{
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true );
+}
+
+void rocketnet_test_gso_client_wire_ipv6()
+{
+    rocketnet_test_gso_client_wire_exchange( "[::1]", "[::1]", true );
+}
+
+void rocketnet_test_gso_client_wire_plain()
+{
+    // the plain tier over the same wire: no UDP_SEGMENT, one datagram per
+    // sendmmsg message. the fallback tier is never the untested tier.
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
 }
 
 void rocketnet_test_server_gso_send_overflow()
@@ -8856,6 +9026,296 @@ bool rocketnet_test_linux_xdp_weather_runs_here();
 #endif
 #endif
 
+// ---------------------------------------------------
+// The macOS msgx client (docs/MACOS.md, "The msgx client"): the msgx backend's
+// client is the portable client table (sdk/rocketnet_driver_builtin.cpp,
+// rocketnet_msgx_transport), and the pin picks the pump through the name its
+// create hands the socket create (portable_io_client_create ->
+// portable_socket_create -> rocketnet_platform_socket_create_with_pump): "msgx"
+// the sendmsg_x/recvmsg_x pump, "portable" the per-packet loop. These cases
+// read the pump off the client's live socket, drive the runtime refusal
+// through the platform's send seam, and carry payloads both ways per family
+// against the msgx server and the portable server. The socket a client create
+// made is the registry diff across the create.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
+#define MSGX_CLIENT_MAX_SOCKETS 256
+
+struct msgx_client_pair_t
+{
+    struct rocketnet_server_transport_t * server;
+    struct rocketnet_client_transport_t * client;
+    struct rocketnet_platform_socket_t * client_socket;
+};
+
+// server_bind is the server's bind string, token_host the host the connect
+// token names; client_transport NULL is the unpinned (auto) client
+static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const char * server_transport, const char * server_bind, const char * token_host, const char * client_transport )
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", server_transport );
+    pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
+    rocketnet_check( pair->server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), server_transport ) == 0 );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "%s:%d", token_host, rocketnet_server_transport_port( pair->server ) );
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    if ( client_transport )
+        snprintf( client_config.transport, sizeof(client_config.transport), "%s", client_transport );
+
+    struct rocketnet_platform_socket_t * before[MSGX_CLIENT_MAX_SOCKETS];
+    const int num_before = rocketnet_platform_sockets_for_testing( before, MSGX_CLIENT_MAX_SOCKETS );
+    pair->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( pair->client );
+    struct rocketnet_platform_socket_t * after[MSGX_CLIENT_MAX_SOCKETS];
+    const int num_after = rocketnet_platform_sockets_for_testing( after, MSGX_CLIENT_MAX_SOCKETS );
+    pair->client_socket = NULL;
+    for ( int i = 0; i < num_after; i++ )
+    {
+        bool old = false;
+        for ( int j = 0; j < num_before; j++ )
+            old = old || before[j] == after[i];
+        if ( !old )
+        {
+            rocketnet_check( pair->client_socket == NULL );
+            pair->client_socket = after[i];
+        }
+    }
+    rocketnet_check( pair->client_socket != NULL );
+    // the client I/O thread runs the transport (docs/CLIENT-IO.md, RNClientIo)
+    rocketnet_check( rocketnet_client_transport_client_io( pair->client ) != NULL );
+
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( pair->server ) == 1 );
+}
+
+static void msgx_client_pair_destroy( struct msgx_client_pair_t * pair )
+{
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( pair->client );
+    rocketnet_server_transport_stop( pair->server );
+    rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair->server );
+}
+
+static const int MSGX_CLIENT_PAYLOAD_BYTES = 100;
+
+static void msgx_client_fill_payload( uint8_t * payload, int tag )
+{
+    payload[0] = (uint8_t) tag;
+    for ( int j = 1; j < MSGX_CLIENT_PAYLOAD_BYTES; j++ )
+        payload[j] = (uint8_t) ( tag * 31 + j );
+}
+
+static int msgx_client_payload_tag( const uint8_t * payload, int bytes )
+{
+    rocketnet_check( bytes == MSGX_CLIENT_PAYLOAD_BYTES );
+    for ( int j = 1; j < MSGX_CLIENT_PAYLOAD_BYTES; j++ )
+        rocketnet_check( payload[j] == (uint8_t) ( payload[0] * 31 + j ) );
+    return payload[0];
+}
+
+// one hand-off of num_packets client payloads, then the server collects them
+// until every tag has arrived exactly once (num_packets <= 64: one client I/O
+// batch, ROCKETNET_CLIENT_IO_BATCH, so two sendmsg_x chunks of 32 at most)
+static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        struct rocketnet_packet_context_t context = {};
+        uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
+        rocketnet_check( payload );
+        msgx_client_fill_payload( payload + context.payload_index, tag );
+        rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, MSGX_CLIENT_PAYLOAD_BYTES ) > MSGX_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_client_transport_send_packets( pair->client );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        const int num_payloads = rocketnet_server_transport_num_payloads( pair->server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( pair->server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            const int tag = msgx_client_payload_tag( payload, payload_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        uint8_t drain[ROCKETNET_RECEIVE_CEILING];
+        while ( rocketnet_client_transport_receive_packet( pair->client, drain, (int) sizeof(drain) ) > 0 ) {}
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+// num_packets server payloads to the client, every one received exactly once
+static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    uint8_t payload[MSGX_CLIENT_PAYLOAD_BYTES];
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        msgx_client_fill_payload( payload, tag );
+        rocketnet_server_transport_send_packet( pair->server, 0, payload, MSGX_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_server_transport_send_packets( pair->server );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            const int tag = msgx_client_payload_tag( packet, packet_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+struct msgx_client_env_t
+{
+    struct rocketnet_test_env_guard_t server_guard;
+    struct rocketnet_test_env_guard_t client_guard;
+};
+
+// the pins are the case's own: a whole-suite env pin would override them
+static void msgx_client_env_clear( struct msgx_client_env_t * env )
+{
+    rocketnet_test_env_clear( &env->server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &env->client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+}
+
+static void msgx_client_env_restore( struct msgx_client_env_t * env )
+{
+    rocketnet_test_env_restore( &env->client_guard );
+    rocketnet_test_env_restore( &env->server_guard );
+}
+
+// a pinned client's socket runs the pump its name asks for, before and after
+// traffic both ways (the first batch call is the msgx probe and keeps msgx)
+static void msgx_client_pin_selects( const char * client_transport, const char * pump )
+{
+    struct msgx_client_env_t env;
+    msgx_client_env_clear( &env );
+    struct msgx_client_pair_t pair;
+    msgx_client_pair_create( &pair, "portable", "127.0.0.1", "127.0.0.1", client_transport );
+    rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair.client ), client_transport ? client_transport : "msgx" ) == 0 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), pump ) == 0 );
+    msgx_client_send_and_collect( &pair, 48 );
+    msgx_client_receive_from_server( &pair, 48 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), pump ) == 0 );
+    msgx_client_pair_destroy( &pair );
+    msgx_client_env_restore( &env );
+}
+
+void rocketnet_test_msgx_client_pin_selects_batch_pump()
+{
+    msgx_client_pin_selects( "msgx", "msgx" );
+    // the auto choice on macOS is the msgx client, on the batch pump
+    msgx_client_pin_selects( NULL, "msgx" );
+}
+
+void rocketnet_test_portable_client_pin_selects_portable_pump()
+{
+    msgx_client_pin_selects( "portable", "portable" );
+}
+
+// the darwin pump's runtime refusal mid-batch: one hand-off of 48 payloads is
+// one client I/O batch, two sendmsg_x chunks (32 + 16). The send seam refuses
+// the first sendmsg_x with ENOTSUP (not weather), which pauses the pump
+// (ROCKETNET_MSGX_RETRY_SECONDS); the refused chunk finishes per-packet and
+// the second chunk goes the portable loop, so every datagram of the batch is
+// sent and none is counted as a failed send.
+void rocketnet_test_msgx_client_degrades_without_loss()
+{
+    struct msgx_client_env_t env;
+    msgx_client_env_clear( &env );
+    struct msgx_client_pair_t pair;
+    msgx_client_pair_create( &pair, "portable", "127.0.0.1", "127.0.0.1", "msgx" );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "msgx" ) == 0 );
+
+    // quiet: no client update, so the I/O thread finishes what it was handed
+    // and the next batch it sends is the one below
+    rocketnet_platform_sleep( 0.1 );
+    const uint64_t failures_before = rocketnet_platform_socket_send_failures( pair.client_socket );
+    rocketnet_platform_socket_fail_next_sends( pair.client_socket, 1, ENOTSUP );
+    msgx_client_send_and_collect( &pair, 48 );
+    rocketnet_platform_socket_fail_next_sends( pair.client_socket, 0, 0 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
+    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before );
+
+    // the paused socket keeps carrying both ways on the portable loop
+    msgx_client_send_and_collect( &pair, 48 );
+    msgx_client_receive_from_server( &pair, 48 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
+    msgx_client_pair_destroy( &pair );
+    msgx_client_env_restore( &env );
+}
+
+// the wire per family, the msgx client pinned, against the msgx server and
+// the portable server: payloads both ways, the client socket on the batch pump
+static void msgx_client_wire( const char * server_bind, const char * token_host )
+{
+    const char * servers[2] = { "msgx", "portable" };
+    for ( int s = 0; s < 2; s++ )
+    {
+        struct msgx_client_env_t env;
+        msgx_client_env_clear( &env );
+        struct msgx_client_pair_t pair;
+        msgx_client_pair_create( &pair, servers[s], server_bind, token_host, "msgx" );
+        rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair.client ), "msgx" ) == 0 );
+        msgx_client_send_and_collect( &pair, 64 );
+        msgx_client_receive_from_server( &pair, 64 );
+        rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "msgx" ) == 0 );
+        msgx_client_pair_destroy( &pair );
+        msgx_client_env_restore( &env );
+    }
+}
+
+void rocketnet_test_msgx_client_transport_wire_ipv4() { msgx_client_wire( "127.0.0.1", "127.0.0.1" ); }
+void rocketnet_test_msgx_client_transport_wire_ipv6() { msgx_client_wire( "[::1]", "[::1]" ); }
+// a server on the IPv6 wildcard serving an IPv4 client
+void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+
 // getaddrinfo can open a socket (the nscd lookup on glibc), so name
 // resolution is a functional case, never a unit one.
 
@@ -9069,6 +9529,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_server_wire_plain", rocketnet_test_server_gso_wire_plain, NULL },
     { "test_gso_transport_server_wire_ipv6", rocketnet_test_server_gso_wire_ipv6, NULL },
     { "test_gso_transport_server_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack, NULL },
+    { "test_gso_client_transport_wire_ipv4", rocketnet_test_gso_client_wire_ipv4, NULL },
+    { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
+    { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
@@ -9081,6 +9544,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_msgx_transport_server_io_pin", rocketnet_test_server_transport_io_pin_msgx, rocketnet_test_server_pin_allows_msgx },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    { "test_msgx_client_pin_selects_batch_pump", rocketnet_test_msgx_client_pin_selects_batch_pump, NULL },
+    { "test_portable_client_pin_selects_portable_pump", rocketnet_test_portable_client_pin_selects_portable_pump, NULL },
+    { "test_msgx_client_degrades_without_loss", rocketnet_test_msgx_client_degrades_without_loss, NULL },
+    { "test_msgx_client_transport_wire_ipv4", rocketnet_test_msgx_client_transport_wire_ipv4, NULL },
+    { "test_msgx_client_transport_wire_ipv6", rocketnet_test_msgx_client_transport_wire_ipv6, NULL },
+    { "test_msgx_client_transport_wire_dual_stack", rocketnet_test_msgx_client_transport_wire_dual_stack, NULL },
 #endif
     { "test_transport_all_skipped_uses_auto", rocketnet_test_transport_all_skipped_uses_auto, rocketnet_test_server_pin_allows_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases, NULL },

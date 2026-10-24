@@ -166,7 +166,8 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// tla/ClientConnection.tla AppConnect
+// tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
+// from any failure state carries nothing of the earlier attempt
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,

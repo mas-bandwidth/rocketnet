@@ -60,6 +60,85 @@ version bump that will make `main` truthful after merge. The tag may follow in
 the release, but the version in `sdk/rocketnet.h` must no longer name the newest
 release once a wire change is on `main`.
 
+## The space vendor gate
+
+The integrating application (`robotgamedevelopers/space`, private) vendors
+rocketnet into `game/ThirdParty/rocketnet/` with its own re-vendor script,
+which archives five paths at a pinned commit -- `sdk`, `sodium`,
+`server_xdp/server_xdp.c`, `cmake/EmbedXdp.cmake` and
+`cmake/XdpSources.cmake` -- and records the pin in
+`game/ThirdParty/rocketnet/VENDOR.md` as `| commit | **<sha40>** |`. A
+release of rocketnet is only real if the application that ships it vendors
+exactly the commit being released: a release built against another copy of the
+library is a release nobody tested, and the difference is invisible in the
+release notes.
+
+The `space vendors the release` job in
+[release-check.yml](../.github/workflows/release-check.yml) proves it. It is a
+release gate, not a per-commit check: it runs on a `v*` tag push and on a
+manual dispatch, never on a pull request, so the one-minute CI budget is
+untouched. The commit it checks is the one the run is on: the tag's commit on
+a tag push, the dispatched ref's head on a dispatch.
+
+The gate reads the pin from the application's vendored record and requires it
+to be the release commit. It then compares git blob ids, which is byte
+identity without moving any content, so every vendored file is present, none
+is extra, and every file's bytes are the released bytes. It prints one verdict
+line naming the application commit, the pin it records and the number of
+files compared.
+
+The application is read through the GitHub API with the `SPACE_READ_TOKEN`
+secret. The token is read from the environment, is never an argument and is
+never printed. A missing token is a failure that says the secret is not set,
+never a skip and never a pass: an unproven release is not a release. The
+owner adds the secret to the repository; until then the gate fails loudly,
+which is the correct answer and not a reason to skip it.
+
+The same gate runs locally against a clone of the application, which is how
+the owner reproduces a failure:
+
+    python3 tools/check_space_vendor.py --release <release commit> --space-dir <clone>
+
+Its own cases live in `tools/test_check_space_vendor.py` and run with
+`python3 tools/test_check_space_vendor.py`. They build temporary git
+repositories and read canned answers; no case opens a socket.
+
+## The space soak gate
+
+Vendoring the release byte for byte is not the same as running on it. The
+`space builds and soaks on the release` job in
+[release-check.yml](../.github/workflows/release-check.yml) runs
+`tools/space_release_soak.sh <space ref> 90`, after the vendor job and on the
+same triggers (a `v*` tag push and a manual dispatch, whose `space_ref` input
+defaults to `main`). The harness clones the application read-only into a
+temporary directory under `tmp/`, runs `tools/check_space_vendor.py --space-dir` on the clone, builds it with its own `make` (`./space env local`,
+then `make build-fast`), runs its `scripts/bot_swarm.sh 8 90`, and passes the
+dedicated server's `logs/server` and the swarm's output to
+`tools/check_space_soak_log.py`.
+
+The dedicated server pegs its loop to real time and logs every frame it
+drops. The log check fails on any dropped-frame line from the first frame on,
+with no warm-up window; any `large hitch detected!` line; a server exit
+before the bound (no `shutting down` line, a segmentation fault, or a
+shutdown less than the hold after the last client connected); a `BOTS FAIL`
+line; or no client connected. The harness prints one verdict line carrying
+the vendor and build results, the dropped-frame count, the hitch count and
+the swarm's `BOTS` line. A fail is reported with its lines; it is never
+retried into a pass, and the bound is never relaxed.
+
+The token is `SPACE_READ_TOKEN`, handed to git as an `http.extraHeader`
+through git's environment, never on a command line and never in a log.
+`SPACE_URL` points the clone at another URL (a bench's read-only deploy key
+alias), and then no token is read. The machine needs Linux with four or more
+CPUs, passwordless sudo, Go, cmake and libcurl headers. The owner reproduces
+a failure with the same command:
+
+    tools/space_release_soak.sh main 90
+
+Its log check's own cases live in `tools/test_check_space_soak_log.py` and run
+with `python3 tools/test_check_space_soak_log.py`, on canned logs. The
+multi-hour soak is a separate run, not this gate.
+
 ## Preview-2 qualification
 
 For `v1.0.0-preview-2`, fully recorded manual qualification is the release
@@ -120,6 +199,10 @@ whose required runs are green. Those runs are:
   change touches `sdk/**` or `proofs/cbmc/**`.
 - **Release Check**'s `version-consistency` job on the pull request that carries
   the release version, and on the tag push itself.
+- **Release Check**'s `space vendors the release` job, dispatched on the
+  release commit before the tag is cut, and again on the tag push itself.
+- **Release Check**'s `space builds and soaks on the release` job, in the same
+  dispatch and on the same tag push, after the vendor job.
 
 The nightly discovery and soak workflows are watches, not release gates, except
 for the bounded `nightly.yml` threaded-transport TSAN run listed above, which is
@@ -144,14 +227,23 @@ also be the commit the tag points at, not a later merge.
 5. Open the release pull request against `main` with the version change and
    qualification record. Merge after the applicable qualification is complete,
    then reconcile the merged source with the tested inputs.
-6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
+6. Re-vendor the integrating application at the release commit: run its
+   re-vendor script so that `game/ThirdParty/rocketnet/` holds that commit,
+   and commit the result with the pin in `game/ThirdParty/rocketnet/VENDOR.md`
+   naming it. Then dispatch the `space vendors the release` gate on that
+   commit and let it pass before the tag is cut; the same dispatch runs the
+   `space builds and soaks on the release` gate, which must pass too. The gate fails when the
+   application pins another commit, when a vendored file is missing or extra,
+   or when a vendored file's bytes differ from the released ones.
+7. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-2`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it, except for the authorized preview-2 recut
    above. Verify its consistency with the header before
-   pushing it. Release Check also performs this check on the tag push.
-7. Publish the GitHub release for that tag.
+   pushing it. Release Check also performs this check on the tag push, and
+   the space vendor gate runs there too.
+8. Publish the GitHub release for that tag.
 
 ## Release notes
 
