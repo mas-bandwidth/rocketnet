@@ -1,12 +1,12 @@
-RESULT: rn-uring-gso-gro-b sha=HEADSHA tier: frontier
+RESULT: rn-uring-gso-gro-b sha=b6d614eb2e8db0b183c5728c5aeae99cf8ed0271 tier: frontier
 
 Verdict: HOLD
-Head: HEADSHA
+Head: b6d614eb2e8db0b183c5728c5aeae99cf8ed0271
 Branch: sprint/rn-uring-gso-gro-b.w4.g2.e1
 
 Why HOLD: the branch carries rn-uring-gso-gro-a (newest head ada3673b, merged) because this card builds on its send side, and gro-a has not landed. Until it lands, the diff against main names files outside this card's PATHS: tla/MCRNUringDriver.cfg, tla/MCRNUringDriverBrokenFreeRunAtSubmit.cfg, the four other MCRNUringDriverBroken*.cfg (RunRetiredByCqe = TRUE), and RESULT.md. After gro-a lands, a merge of main removes them and the card can land.
 
-Carried: attempt 2's local head a1ec49f3 (pushed head 0e21a26f plus the docs commit), merged; then gro-a ada3673b, merged; then main 3a0b... (d18e95df merge). No reader findings were open.
+Carried: attempt 2's local head a1ec49f3 (pushed head 0e21a26f plus the docs commit), merged; then gro-a ada3673b, merged; then main (merge d18e95df). No reader findings were open.
 
 Fixed this attempt:
 - MCRNUringDriver.cfg timed out at the 110 s budget once KernelFill could coalesce (exit 124, 184189 distinct at 110 s on hetzner2). The reap now removes the segments it copies from bufdg, and BufferReturnedAfterCopy reads "a returned buffer holds no datagram still to copy": the same rule without per-buffer history. PASS in 53.0 s, 93559 distinct.
@@ -14,7 +14,7 @@ Fixed this attempt:
 
 TLC (pinned tlacheck 0c97d595, jar 936a2620, hetzner2, workers 2, 110 s; vision was at load 81 on 64 cores): MCRNUringDriver.cfg PASS exit 0; BrokenReturnBeforeSplit exit 12 BufferReturnedAfterCopy (trace Init, Submit, KernelFill(1) with 1..2, Reap copies {1} leaving {2}, ReturnBuffer(1) -> Ring holding 2; checked by hand against rocketnet_server_uring_receive_cqe: io_uring_buf_ring_add follows the segment loop); ResetBeforeReap 12 NoReuseWhileKernelOwned; OneBank 12 ExposedStable; UnboundedReap 12 ReapWithinBudget; NoRearmRetry 13 temporal; FreeRunAtSubmit 12 NoReuseWhileKernelOwned.
 
-Gate, amd-2 at d18e95df (main 2a.. merged): gcc DEV ON make 0 warnings, ./bin/test exit 0 (test_uring_recvmsg_gro_stride runs), ./bin/functional exit 0 (test_io_uring_transport_server_wire_gro_ipv4, _wire_gro_ipv6, _receive_rearms_after_no_buffers run); gcc DEV OFF, clang DEV ON, clang DEV OFF all build exit 0 with 0 warnings; clang ./bin/test exit 0. amd-2 lo has tx-udp-segmentation on, so the wire_gro cases' GRO_BATCHES > 0 assertion is armed there. test_uring_recvmsg_gro_stride does not compile at BASE (no stride parse), so it is red at BASE.
+Gate, amd-2 at d18e95df (main merged): gcc DEV ON make 0 warnings, ./bin/test exit 0 (test_uring_recvmsg_gro_stride runs), ./bin/functional exit 0 (test_io_uring_transport_server_wire_gro_ipv4, _wire_gro_ipv6, _receive_rearms_after_no_buffers run); gcc DEV OFF, clang DEV ON, clang DEV OFF all build exit 0 with 0 warnings; clang ./bin/test exit 0. amd-2 lo has tx-udp-segmentation on, so the wire_gro cases' GRO_BATCHES > 0 assertion is armed there. test_uring_recvmsg_gro_stride does not compile at BASE (no stride parse), so it is red at BASE.
 
 Memory per queue: before 4096 x 2048 B = 8 MiB; after 4096 x 67584 B = 264 MiB (4 default queues: 32 MiB -> 1056 MiB), all allocated at create; pages become resident only where the kernel writes.
 
