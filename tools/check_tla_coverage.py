@@ -134,12 +134,329 @@ def owed_but_cited(rows):
     return failures
 
 
+# ---------------------------------------------------------------------------
+# Per-action citation checks (--actions / --actions-strict).
+#
+# A module's actions are the operators its Next definition reaches, followed
+# through operators that are only disjunctions or existentials of other
+# operators, stopping at an operator whose body primes a variable or uses
+# UNCHANGED.  Parameters and quantifiers are dropped (Connect(s) is Connect).
+# ---------------------------------------------------------------------------
+
+_OP_LONG = ["\\notin", "\\subseteq", "\\cup", "\\cap", "\\div", "\\cdot",
+            "\\times", "\\x", "\\geq", "\\leq", "\\in", "\\E", "\\A",
+            "\\/", "/\\", "\\", "<=>", "~>", "|->", "<<", ">>", ">=",
+            "<=", ":=", "/=", "@@", "##", ".."]
+_OP_SET = set("()+[]{}.,!:'=<>+-*/%^@#$")
+
+_ACTION_PRIME_RE = re.compile(r"[A-Za-z0-9_)\]']'")
+_DEF_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)\s*(?:\((.*?)\))?\s*==", re.M)
+_ENV_RE = re.compile(r"environment actions\s+(.+?)(?:\.|$)", re.I)
+
+
+def strip_comments(text):
+    """Remove \\* line comments and (* *) block comments (nesting-aware)."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("\\*", i):
+            j = text.find("\n", i)
+            if j == -1:
+                break
+            i = j
+            continue
+        if text.startswith("(*", i):
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if text.startswith("(*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*)", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def tokenize(text):
+    toks = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c.isdigit():
+            j = i
+            while j < n and text[j].isdigit():
+                j += 1
+            toks.append(("num", text[i:j]))
+            i = j
+            continue
+        if c.isalpha() or c == "_":
+            j = i
+            while j < n and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            toks.append(("id", text[i:j]))
+            i = j
+            continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\":
+                    i += 1
+                i += 1
+            i += 1
+            toks.append(("str", ""))
+            continue
+        if c == "\\":
+            matched = False
+            for op in _OP_LONG:
+                if text.startswith(op, i):
+                    toks.append(op)
+                    i += len(op)
+                    matched = True
+                    break
+            if not matched:
+                toks.append("\\")
+                i += 1
+            continue
+        if c == "<" and text.startswith("<<", i):
+            toks.append("<<")
+            i += 2
+            continue
+        if c == ">" and text.startswith(">>", i):
+            toks.append(">>")
+            i += 2
+            continue
+        two = text[i:i + 2]
+        if two in ("<=", ">=", ":=", "/="):
+            toks.append(two)
+            i += 2
+            continue
+        if c in _OP_SET:
+            toks.append(c)
+            i += 1
+            continue
+        i += 1
+    return toks
+
+
+def find_definitions(text):
+    defs = {}
+    matches = list(_DEF_RE.finditer(text))
+    for idx, m in enumerate(matches):
+        name = m.group(1)
+        start = m.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        defs[name] = text[start:end]
+    return defs
+
+
+def scan_refs(text, defnames):
+    """Named operators applied in text (skipping fields, instance members and
+    bound variables)."""
+    toks = tokenize(text)
+    refs = set()
+    bound = set()
+    prev = None
+    for t in toks:
+        if isinstance(t, tuple) and t[0] == "id":
+            v = t[1]
+            if prev in ("\\E", "\\A", "CHOOSE"):
+                bound.add(v)
+            elif v in defnames and v not in bound and prev not in (".", "!", "'"):
+                refs.add(v)
+            prev = v
+        else:
+            prev = t
+    return refs
+
+
+_CONNECTOR_ALLOWED = {"\\E", "\\/", "\\in", "(", ")", ",", ":", "\\A"}
+
+
+def is_connector(body):
+    for t in tokenize(body):
+        if isinstance(t, tuple) and t[0] == "id":
+            continue
+        if t not in _CONNECTOR_ALLOWED:
+            return False
+    return True
+
+
+def state_changing(name, defs, memo, visiting):
+    """An operator changes state when its body primes a variable, uses
+    UNCHANGED, or reaches (through helpers) an operator that does."""
+    if name in memo:
+        return memo[name]
+    if name in visiting:
+        return False
+    body = defs.get(name)
+    if body is None:
+        return False
+    if "UNCHANGED" in body or _ACTION_PRIME_RE.search(body):
+        memo[name] = True
+        return True
+    visiting.add(name)
+    result = False
+    for r in scan_refs(body, set(defs)):
+        if state_changing(r, defs, memo, visiting):
+            result = True
+            break
+    visiting.discard(name)
+    memo[name] = result
+    return result
+
+
+def module_actions(module):
+    path = TLA_DIR / f"{module}.tla"
+    if not path.exists():
+        return set(), [f"{module}: tla/{module}.tla does not exist"]
+    text = strip_comments(path.read_text(errors="replace"))
+    defs = find_definitions(text)
+    if "Next" not in defs:
+        return set(), [f"{module}: no Next definition to follow"]
+    actions = set()
+    names = set(defs)
+    frontier = set(scan_refs(defs["Next"], names))
+    seen = set()
+    memo = {}
+    visiting = set()
+    while frontier:
+        name = frontier.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        body = defs.get(name)
+        if body is None:
+            continue
+        if is_connector(body):
+            frontier |= scan_refs(body, names)
+        elif state_changing(name, defs, memo, visiting):
+            actions.add(name)
+    return actions, []
+
+
+def code_files_for_module(rows, module):
+    files = set()
+    for r in rows:
+        if r["status"] == "current" and r["module"] == module:
+            code = r.get("code", "")
+            if code not in ("", "-"):
+                files.add(code)
+    return sorted(files)
+
+
+def comment_blocks(text):
+    blocks = []
+    cur = None
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        s = line.strip()
+        if s.startswith("//"):
+            if cur is None:
+                cur = []
+            cur.append(line)
+        elif s.startswith("/*"):
+            buf = [line]
+            while "*/" not in line and i + 1 < len(lines):
+                i += 1
+                line = lines[i]
+                buf.append(line)
+            if cur is None:
+                cur = []
+            cur.extend(buf)
+        else:
+            if cur is not None:
+                blocks.append("\n".join(cur))
+                cur = None
+            # A trailing comment after code is a comment of its own.
+            idx = line.find("//")
+            if idx >= 0:
+                blocks.append(line[idx:])
+        i += 1
+    if cur is not None:
+        blocks.append("\n".join(cur))
+    return blocks
+
+
+def is_action_cited(code_text, module, action):
+    # The module name starts the word: line start, whitespace or tla/
+    # before it, so tla/MCActMod.tla never cites ActMod.
+    mod_pat = re.compile(r"(?:^|(?<=\s)|(?<=tla/))" + re.escape(module)
+                         + r"\.tla", re.MULTILINE)
+    act_pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(action)
+                         + r"(?![A-Za-z0-9_])")
+    for block in comment_blocks(code_text):
+        if mod_pat.search(block) and act_pat.search(block):
+            return True
+    return False
+
+
+def environment_exempt(notes):
+    exempt = set()
+    for note in notes:
+        m = _ENV_RE.search(note)
+        if m:
+            parts = re.split(r",|\band\b", m.group(1))
+            exempt |= {p.strip() for p in parts if p.strip()}
+    return exempt
+
+
+def actions_report(rows, modules):
+    lines = []
+    total = 0
+    failures = []
+    for module in modules:
+        actions, issues = module_actions(module)
+        for issue in issues:
+            failures.append(issue)
+            lines.append(issue)
+        notes = [r.get("note", "") for r in rows
+                 if r["status"] == "current" and r["module"] == module]
+        files = code_files_for_module(rows, module)
+        texts = {}
+        for f in files:
+            p = ROOT / f
+            if p.is_file():
+                texts[f] = p.read_text(errors="replace")
+        exempt = environment_exempt(notes)
+        for name in sorted(exempt - actions):
+            fail = f"{module}: environment note names unknown action {name}"
+            failures.append(fail)
+            lines.append(fail)
+        uncited = []
+        for a in sorted(actions - exempt):
+            cited = any(is_action_cited(t, module, a) for t in texts.values())
+            if not cited:
+                uncited.append(a)
+        for a in uncited:
+            lines.append(f"{module} {a}: {', '.join(files)}")
+            total += 1
+    lines.append(f"ACTIONS UNCITED {total}")
+    return lines, total, failures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require", action="append", default=[], metavar="MODULES",
                         help="comma-separated modules that must each have a coverage row")
     parser.add_argument("--all", action="store_true",
                         help="every tla module (MC wrappers and Link excluded) must have a row")
+    parser.add_argument("--actions", action="store_true",
+                        help="report per-action citations for current-row modules")
+    parser.add_argument("--actions-strict", action="store_true",
+                        help="exit 1 while uncited actions remain")
     args = parser.parse_args()
 
     rows = list(iter_rows())
@@ -167,12 +484,23 @@ def main():
 
     failures.extend(owed_but_cited(rows))
 
+    if args.actions or args.actions_strict:
+        action_modules = sorted({r["module"] for r in rows
+                                if r["status"] == "current" and r["module"] != "Link"})
+        action_lines, uncited, action_failures = actions_report(rows, action_modules)
+
     if failures:
         for failure in sorted(failures):
             print(failure)
         print(f"COVERAGE FAIL {len(failures)}")
         return 1
     print(f"COVERAGE OK {len(rows)} rows")
+
+    if args.actions or args.actions_strict:
+        for line in action_lines:
+            print(line)
+        if args.actions_strict and (uncited > 0 or action_failures):
+            return 1
     return 0
 
 

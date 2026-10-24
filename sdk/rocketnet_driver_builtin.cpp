@@ -995,6 +995,7 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_se
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
+#include "rocketnet_client_gso.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif // #if ROCKETNET_XDP
@@ -1036,7 +1037,8 @@ static const rocketnet_server_transport_io_operations_t gso_operations =
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL
 };
-extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_operations, NULL };
+// the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
+extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_operations, &rocketnet_client_gso_operations };
 
 #include "rocketnet_server_uring.h"
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // sdk/rocketnet_server_uring_linux.cpp:1223

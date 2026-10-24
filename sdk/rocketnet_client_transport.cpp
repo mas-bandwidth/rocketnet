@@ -835,7 +835,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !transport ) return false;
     rocketnet_client_transport_config_t defaults;
     if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
-    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
@@ -1048,7 +1048,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
-    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
     {
@@ -1065,7 +1065,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
@@ -1138,7 +1138,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
 
-    client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    client_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     // the arena's slot stride stays 16-aligned so every root handed to a

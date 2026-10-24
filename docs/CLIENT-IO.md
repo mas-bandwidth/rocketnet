@@ -39,6 +39,19 @@ sends remain caller-owned. Its shutdown drain transfers to the worker as
 described above. This exception is development-only and does not change the
 normal built-in transport handoff contract.
 
+Each built-in client transport fills the same operations
+(`rocketnet_client_transport_io_operations_t`, `sdk/rocketnet_driver.h`) and
+runs under this I/O thread: create opens the socket and its wake and
+allocates everything, connect connects the socket to the one server, and the
+I/O thread alone calls send_batch, receive_batch and wait. On Linux, `portable`
+batches with plain `sendmmsg` and `recvmmsg`, and `gso`
+(`sdk/rocketnet_client_gso_linux.cpp`, pin-only) sends each run of
+equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
+messages without loss when the kernel refuses (TRANSPORTS.md, UDP
+coalescing). Its send batch is one synchronous call that returns with every
+datagram sent or counted dropped, so it adds no state to `tla/RNClientIo.tla`.
+On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`.
+
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
 
