@@ -2156,6 +2156,9 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
 }
 
+// tla/SendHandoff.tla Finish: writes the byte count of the packet slot start_packet staged in the filling buffer
+// tla/SendHandoff.tla StaleFinish: refuses a packet pointer outside the filling buffer (one from before the last flip) instead of rewriting a published packet
+
 void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
     rocketnet_assert( server_socket );
