@@ -482,41 +482,51 @@ machine, one command at a time, and record the wall time of each step.
 
 | Job | Workflow and line | By hand | Last green, or the card that owns its red |
 |---|---|---|---|
-| `soak-macos` | `.github/workflows/nightly-soak.yml:216` | `make && ./bin/test && ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000 && ./bin/soak_sim 10000000 && ./bin/soak 200000` | main: run 39928961016 at 19eaa61d. Red at d6dbd0a8: `./bin/soak 200000` ends `REFUSAL on a clean run at client: SEND_RING_FULL`, owned by rn-macos-sanitizers-nightly (the SEND_RING_FULL finding) |
-| `macos-frame-budget` | `.github/workflows/nightly-frame-budget.yml:56` | `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target client_main_thread_cost --parallel 4 && python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only` | run 39729082455 (2026-10-22). Red in run 39906750528: the runner could not resolve `github.com` (below); by hand at d6dbd0a8 it prints `verdict=PASS` |
-| `fuzz-macos` | `.github/workflows/fuzz-nightly.yml:185` | the job's steps: LLVM clang with libFuzzer, `cmake -B build-fuzz` instrumented, one target per leg | run 39741413602 (2026-10-22). Red in run 39918593768 at the target build, owned by rn-fuzz-nightly-build-red |
-| `coverage-macos` | `.github/workflows/fuzz-nightly.yml:544` | `CC=clang CXX=clang++ tools/fuzz_coverage.sh` | no recorded run; it waits on `fuzz-macos` |
-| `examples-macos` | `.github/workflows/nightly-examples.yml:71` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 | no green run recorded; owned by rn-examples-macos-windows |
+| `soak-macos` | `.github/workflows/nightly-soak.yml:216` | `make && ./bin/test && ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000 && ./bin/soak_sim 10000000 && ./bin/soak 200000` | run 39928961016 (main at 19eaa61d, 2026-10-23). Red in run 40080339910 (221e3bee) at `./bin/test`: `check failed: test_server_stats_current_every_update peak_rss_mb=1164 bound_mb=698`; no card owns it yet (below) |
+| `macos-frame-budget` | `.github/workflows/nightly-frame-budget.yml:56` | `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target client_main_thread_cost --parallel 4 && python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only` | run 40066869774 (84c3c50b, 2026-10-24) |
+| `fuzz-macos` | `.github/workflows/fuzz-nightly.yml:185` | the job's steps: LLVM clang with libFuzzer, `cmake -B build-fuzz` instrumented, one target per leg | run 40074127124 (221e3bee, 2026-10-24), every target |
+| `coverage-macos` | `.github/workflows/fuzz-nightly.yml:544` | `CC=clang CXX=clang++ tools/fuzz_coverage.sh` | run 40074127124 (221e3bee, 2026-10-24) |
+| `examples-macos` | `.github/workflows/nightly-examples.yml:71` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 | no green run recorded; red in run 40070921798 at "Check the examples against the house rules", owned by rn-examples-macos-windows |
+| `macos-transport-cells-repeat` | `.github/workflows/nightly.yml:237` | `make -j4 && scripts/transport-cells-repeat --runs 50` | run 40079431071 (221e3bee, 2026-10-24) |
 | `macos-functional-nightly` | `.github/workflows/nightly.yml`, added by rn-macos-functional-reliable (not on main yet) | `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | not landed; owned by rn-macos-functional-reliable |
 | `sanitizers-macos` | `.github/workflows/nightly-macos-sanitizers.yml`, added by rn-macos-sanitizers-nightly (not on main yet) | that workflow's ASan+UBSan, TSan and leaks legs | not landed; owned by rn-macos-sanitizers-nightly |
 
-By hand on `mini-m5-1` at d6dbd0a8, Release, 2026-10-24:
+By hand on `mini-m5-1` at 5c2aa60f (main 1a2f2c43 plus this section), Release, 2026-10-24:
 
-- frame budget: configure 1 s, build 3 s, report 5 s:
-  `frame_budget transport=msgx P=32 total_us_p99_median=16.46 runs=22.75,16.46,9.38 gate=100 verdict=PASS`.
-  A first run under a 1-minute load of 64 on 18 cores printed `VOID load=64.13 cores=18`; the
-  script voids any run whose load is above cores / 4.
-- soak: `make` 27 s; `./bin/test` 14 s, `*** ALL TESTS PASSED ***`; wire audit 100000 14 s,
-  0 failures; simulator soak 10000000 566 s, 0 failures, 0 hangs; UDP soak 200000 304 s and 301 s,
-  exit 1 both times on the client's `SEND_RING_FULL` refusal (99, then 55 and 53). The same UDP
-  soak at 19eaa61d on the same machine: 301 s, 0 failures, `conservation ok`.
+- frame budget: configure 1 s, build 2 s, report 4 s:
+  `frame_budget transport=msgx P=32 total_us_p99_median=8.79 runs=8.67,9.58,8.79 gate=100 verdict=PASS`.
+  The first two tries printed `VOID load=6.68 cores=18` and `VOID load=4.56 cores=18`: the
+  script voids any run whose 1-minute load is above cores / 4, and other jobs shared the machine.
+- soak: `make -j4` 26 s; `./bin/test` 8 s, exit 1 on
+  `check failed: test_server_stats_current_every_update peak_rss_mb=1164 bound_mb=698`
+  (the same case alone, `./bin/test --run test_server_stats_current_every_update`, exits 0);
+  wire audit 100000 14 s, 0 failures, 0 hangs; simulator soak 10000000 554 s, 0 failures,
+  0 hangs; UDP soak 200000 312 s, exit 0. The `SEND_RING_FULL` refusal seen at d6dbd0a8
+  did not recur.
+
+The `./bin/test` red is macOS only: the same head passes `./bin/test` on Linux. The bound is
+the suite-wide one, and the case passes when run alone, so the measured peak is the suite's
+(how `wait4` reports `ru_maxrss` for a case run inside the full suite on macOS), not the case's
+plan. It needs its own card; the bound is not loosened here.
 
 ### The runner's resolver
 
 The frame budget red of run 39906750528 (2026-10-23 05:37 UTC, `Could not
 resolve host: github.com` on every checkout try) was the LAN resolver, not the
-workflow. The Ethernet service has its DNS servers set by hand to
+workflow. The Ethernet service had its DNS servers set by hand to
 `192.168.1.1` (the router) then `1.1.1.1`. From 03:33 UTC the router answered
 `github.com IN A` with REFUSED (rcode 5). mDNSResponder takes REFUSED as an
 answer and does not try the second server, and it held the negative answer
 in its cache: between 05:03:09 and 06:15:24 UTC it sent no query upstream and
 answered 2825 lookups of `github.com` with no address and none with one. The
 first good answer came at 06:15:24 UTC. The machine did not sleep: `pmset -g`
-shows `sleep 0`, and `pmset -g log` has no Sleep or Wake entry since the boot
-at 2026-10-22 05:24 UTC.
+shows `sleep 0` and `standby 0`, and `pmset -g log` has no Sleep or Wake entry since
+the boot at 2026-10-22 05:24 UTC (01:24 EDT); around 01:37 EDT on 2026-10-23 it has only
+assertion entries.
 
-Check a Mac's resolver with `scutil --dns` (resolver #1 lists its servers) and
-`networksetup -getdnsservers Ethernet`. The fix is to take the router out of
-the Ethernet service's server list (an administrator runs
-`sudo networksetup -setdnsservers Ethernet 1.1.1.1 1.0.0.1`), and it is owed:
-see the card's report.
+The fix, made on 2026-10-24 at 12:35 UTC: the router is out of the Ethernet
+service's server list, `networksetup -setdnsservers Ethernet 1.1.1.1 1.0.0.1`.
+`scutil --dns` resolver #1 now lists `1.1.1.1` then `1.0.0.1` (before:
+`192.168.1.1` then `1.1.1.1`), and `dscacheutil -q host -a name github.com`
+answers an address. Check a Mac's resolver the same way, with `scutil --dns`
+and `networksetup -getdnsservers Ethernet`.
