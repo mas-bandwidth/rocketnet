@@ -720,11 +720,17 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // ownership overhead is added per allocation. The transport name must be a
 // concrete built-in for this platform; unknown names, "auto" and transport lists
 // are not concrete and return false.
+//
+// The plan takes no token, so it is the bound for the worst token: one naming
+// both families on a host that can use both, whose create opens the family
+// race's second socket of the granted transport (no second thread) and its
+// rocketnet_client_race_t (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
+// RaceFamilies). A one-family create allocates less than the plan.
 
 struct rocketnet_client_memory_plan_t
 {
     uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, total_bytes;
+    uint64_t transport_io_bytes, race_bytes, total_bytes;
     int sockets;
 };
 
@@ -822,17 +828,22 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #else
         plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif
+        // the family race's second socket, the same allocations as the first,
+        // and the race block that routes the two
+        plan.race_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_race_t) } );
+        if ( !plan.race_bytes || !rocketnet_memory_add( plan.race_bytes, 1, plan.transport_io_bytes ) )
+            return false;
         if ( !config->step_driven )
         {
             if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
                 return false;
         }
-        plan.sockets = 1;
+        plan.sockets = 2;
     }
     else return false;
 
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes ) return false;
-    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes } )
+    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes || !plan.race_bytes ) return false;
+    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) ) return false;
     return plan.total_bytes <= SIZE_MAX;
 }
