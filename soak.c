@@ -401,7 +401,6 @@ int main( int argc, char ** argv )
     int unplanned_disconnect_recorded = 0;
     int deadline_reached = 0;
     int payload_size = 1;
-    int client_sweeps = 0;      // full sweeps of payload sizes the current client has sent
     int resources_started = 0;
     int resources_ended = 0;
     double resources_start_time = 0.0;
@@ -440,6 +439,25 @@ int main( int argc, char ** argv )
                 soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
                 rn_native_client_transport_stop_and_destroy( client );
                 client = NULL;
+
+                // between clients: the post-warmup sample at the first
+                // planned reconnect, a peak sample at every later one
+
+                struct process_resources_t sample;
+                if ( !process_resources_read( &sample ) )
+                {
+                    printf( "soak: failed to read the process resource counts\n" );
+                    failures++;
+                    break;
+                }
+                if ( !resources_started )
+                {
+                    resources_started = 1;
+                    resources_start = sample;
+                    resources_peak = sample;
+                    resources_start_time = rocketnet_time();
+                }
+                process_resources_peak( &resources_peak, &sample );
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
             if ( !dev_token_binary( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
@@ -482,7 +500,7 @@ int main( int argc, char ** argv )
                 printf( "soak: client transport changed from %s to %s on a reconnect\n", client_transport_name, granted ? granted : "unknown" );
                 failures++;
             }
-            client_sweeps = 0;
+
             if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES )
             {
                 printf( "soak: unexpected client payload capacity\n" );
@@ -525,10 +543,7 @@ int main( int argc, char ** argv )
             rocketnet_server_transport_send_packet( server, rocketnet_client_transport_client_index( client ), payload, payload_size );
             rocketnet_server_transport_send_packets( server );
             server_sent++;
-            if ( payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-                payload_size++;
-            else
-                { payload_size = 1; client_sweeps++; }
+            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; i++ )
@@ -569,30 +584,10 @@ int main( int argc, char ** argv )
             }
         }
 
-        // the post-warmup sample: the second client (the first after the
-        // warm cycle's reconnect) has finished its first full sweep
-
-        if ( !resources_started && reconnects >= 1 && connected && client_sweeps >= 1 )
-        {
-            if ( process_resources_read( &resources_start ) )
-            {
-                resources_started = 1;
-                resources_start_time = rocketnet_time();
-                resources_peak = resources_start;
-                last_report_time = resources_start_time;
-            }
-            else
-            {
-                printf( "soak: failed to read the process resource counts\n" );
-                failures++;
-                break;
-            }
-        }
-
         if ( rocketnet_time() - last_report_time > 10.0 )
         {
             last_report_time = rocketnet_time();
-            if ( resources_started && connected )
+            if ( resources_started )
             {
                 struct process_resources_t sample;
                 if ( process_resources_read( &sample ) )
@@ -638,10 +633,50 @@ int main( int argc, char ** argv )
         }
     }
 
-    // the end sample, before the teardown, with a client connected as at
-    // the post-warmup sample
+    if ( !connects || !server_verified || !client_verified )
+    {
+        printf( "soak: insufficient coverage: require a connection and verified payloads in both directions\n" );
+        failures++;
+    }
+    if ( !quit && max_iterations && iteration < max_iterations && !deadline_reached )
+    {
+        printf( "soak: bounded run ended before its iteration target\n" );
+        failures++;
+    }
+    if ( !quit && max_seconds && !deadline_reached && ( !max_iterations || iteration < max_iterations ) )
+    {
+        printf( "soak: bounded run ended before its duration target\n" );
+        failures++;
+    }
 
-    if ( resources_started && connected && !unplanned_disconnect_recorded && process_resources_read( &resources_end ) )
+    // the discipline at the end of the run, on both ends. the server has
+    // processed everything it was handed and the client is idle, so every
+    // arrival has taken its outcome
+
+    if ( client )
+    {
+        if ( !unplanned_disconnect_recorded )
+        {
+            rocketnet_client_transport_disconnect( client );
+            soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
+        }
+        rocketnet_sleep( 0.05 );
+        rocketnet_server_transport_update( server, rocketnet_time() );
+        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
+        soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
+        rn_native_client_transport_stop_and_destroy( client );
+        client = NULL;
+    }
+    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
+    if ( counter_violations )
+        failures += (uint64_t) counter_violations;
+    else
+        printf( "soak: conservation ok (server and every client)\n" );
+
+    // the end sample, between clients as the post-warmup sample was: the
+    // last client is destroyed, the server is still running
+
+    if ( resources_started && process_resources_read( &resources_end ) )
     {
         resources_ended = 1;
         process_resources_peak( &resources_peak, &resources_end );
@@ -675,43 +710,6 @@ int main( int argc, char ** argv )
         }
     }
 
-    if ( !connects || !server_verified || !client_verified )
-    {
-        printf( "soak: insufficient coverage: require a connection and verified payloads in both directions\n" );
-        failures++;
-    }
-    if ( !quit && max_iterations && iteration < max_iterations && !deadline_reached )
-    {
-        printf( "soak: bounded run ended before its iteration target\n" );
-        failures++;
-    }
-    if ( !quit && max_seconds && !deadline_reached && ( !max_iterations || iteration < max_iterations ) )
-    {
-        printf( "soak: bounded run ended before its duration target\n" );
-        failures++;
-    }
-
-    // the discipline at the end of the run, on both ends. the server has
-    // processed everything it was handed and the client is idle, so every
-    // arrival has taken its outcome
-
-    if ( client )
-    {
-        if ( !unplanned_disconnect_recorded )
-        {
-            rocketnet_client_transport_disconnect( client );
-            soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
-        }
-        rocketnet_sleep( 0.05 );
-        rocketnet_server_transport_update( server, rocketnet_time() );
-        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
-        soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
-    }
-    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
-    if ( counter_violations )
-        failures += (uint64_t) counter_violations;
-    else
-        printf( "soak: conservation ok (server and every client)\n" );
 
     printf( "\nsoak finished: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
             (unsigned long long) iteration, (unsigned long long) connects,
@@ -754,8 +752,6 @@ int main( int argc, char ** argv )
 
     fflush( stdout );
 
-    if ( client )
-        rn_native_client_transport_stop_and_destroy( client );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_time() );
     rn_native_server_transport_stop_and_destroy( server );
