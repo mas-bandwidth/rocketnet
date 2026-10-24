@@ -484,7 +484,8 @@ resets before its token checks, so a connect from -6 is the same path, and
 `MCClientConnectionBrokenRetryKeepsAttempt.cfg` is the reversed witness:
 the pre-fix retry `AppConnectKeepsAttempt` (only in `SpecRetryKeepsAttempt`)
 keeps `cHasCookie` and `cSeen` from the failed attempt. TLC exits 13 with
-`FreshAttemptFromFailure` violated in 10 states: connect, the request, the
+`FreshAttemptFromFailure` violated (62 distinct states explored by the
+recorded run), a trace of 10 states: connect, the request, the
 server's cookie (`cHasCookie` TRUE, state 2), a tick, the request with the
 cookie, the server's denied at request (its one slot is held), state -1,
 then `AppConnectKeepsAttempt` to state 1 at attempt 2 still holding the
@@ -494,3 +495,11 @@ sets CONNECTION_DENIED through `rocketnet_client_set_state`, which runs
 and `rocketnet_client_protocol_connect` runs it again before anything else,
 so `has_cookie` and `return_cookie` are zero at the new attempt; only the
 pre-fix action carries them.
+
+The whole `clientconnection` group (28 cases) was re-measured on vision
+(Linux, pinned jar, `/opt/tla/tlacheck`, which prints `groups --stale` `[]`
+at main, one shard per case, 110 s each) and joined with `tlacheck merge
+--keep tla/RUNS.tsv`. Every declared outcome holds: `RetryFromFailure`
+passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`;
+the six bench debt cases (`LArbitrary`, `LCrash`, `SNone`, `SAlternate`,
+`SBurst`, `SArbitrary`) still exit 124.
