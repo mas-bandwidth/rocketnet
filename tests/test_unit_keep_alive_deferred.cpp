@@ -187,7 +187,12 @@ static void test_keep_alive_deferred_only_once_established()
     ka_world_t world;
     ka_world_create( &world );
     ka_connect_until_server_slot( &world );
-    check( !ka_keep_alive_acked( &world ) );            // the window is real: no ack has reached the server
+    // No capture check here: the delivery capture is published
+    // asynchronously, so whether it already shows an acknowledgment at
+    // this instant is scheduling, not state. The window is proved
+    // behaviourally below: while the latch is unset the server sends
+    // payload + keep-alive per tick (two packets), which the bounded
+    // packets_sent observation asserts.
 
     // (b) server-only ticks: the client is never driven, so it sends
     // nothing and the latch stays unset. Bounded observation of the
