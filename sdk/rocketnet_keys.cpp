@@ -62,19 +62,19 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
                                       const uint8_t * connection_salt,
                                       const uint8_t * session_nonce,
                                       const uint8_t * own_ephemeral_secret_key,
-                                      const uint8_t * peer_ephemeral_public_key,
+                                      const uint8_t * remote_ephemeral_public_key,
                                       const uint8_t * client_ephemeral_public_key,
                                       const uint8_t * server_ephemeral_public_key )
 {
     rocketnet_assert( keys );
     rocketnet_assert( own_ephemeral_secret_key );
-    rocketnet_assert( peer_ephemeral_public_key );
+    rocketnet_assert( remote_ephemeral_public_key );
     rocketnet_assert( client_ephemeral_public_key );
     rocketnet_assert( server_ephemeral_public_key );
 
     uint8_t shared_secret[32];
     rocketnet_crypto_tally.scalarmult++;
-    if ( crypto_scalarmult( shared_secret, own_ephemeral_secret_key, peer_ephemeral_public_key ) != 0 )
+    if ( crypto_scalarmult( shared_secret, own_ephemeral_secret_key, remote_ephemeral_public_key ) != 0 )
         return 0;
 
     rocketnet_derive_handshake_keys( keys, token_client_to_server_key, token_server_to_client_key, connection_salt, session_nonce );

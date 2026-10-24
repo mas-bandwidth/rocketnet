@@ -241,7 +241,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 
     rocketnet_client_transport_default_config_current( transport );
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
     {
@@ -313,7 +312,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
@@ -501,7 +499,6 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     struct rocketnet_client_transport_config_t transport;
     rocketnet_client_transport_default_config_current( &transport );
     memcpy( config->packet_filter, transport.packet_filter, sizeof( config->packet_filter ) );
-    config->max_payload_bytes = transport.max_payload_bytes;
     config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
@@ -553,6 +550,39 @@ enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketn
     return ROCKETNET_STATUS_OK;
 }
 
+// the light-client profile (sdk/rocketnet.h): the defaults, then the light
+// geometry; config_bytes is set first, as the inline default_config does
+enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    config->config_bytes = sizeof( *config );
+    const enum rocketnet_status_t status = rocketnet_client_default_config_internal( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1500-byte MTU each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
+    config->send_kbps = 256;                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
+    return ROCKETNET_STATUS_OK;
+}
+
 // the caller's config over the defaults, as far as both know; NULL is the
 // defaults (read stays NULL)
 static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t * current,
@@ -587,14 +617,14 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder, false ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
@@ -623,6 +653,8 @@ size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t 
     return rn_client_required_memory_current( read );
 }
 
+// tla/ClientSession.tla Create: a fresh object, DISCONNECTED, with no token
+// and no connection, its resolved config and one memory block.
 static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
@@ -780,6 +812,9 @@ static bool rn_connect_token_decode( const char * connect_token, uint8_t token[R
     return true;
 }
 
+// tla/ClientSession.tla RetryPending: from a terminal state whose worker is
+// still running, connect asks that worker to stop and returns
+// CLIENT_NOT_DISCONNECTED, keeping the public state and starting nothing.
 enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
@@ -842,6 +877,9 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
 }
 
+// tla/ClientSession.tla Destroy: the object goes only once its worker has
+// stopped; an early destroy drives the stop first and keeps a client whose
+// worker has not exited.
 void rocketnet_client_destroy( struct rocketnet_client_t * client )
 {
     if ( !client )
@@ -877,6 +915,13 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
         rocketnet_free( client->context, client );
 }
 
+// tla/ClientSession.tla HandshakeStep: the connection's update moves the
+// handshake on as the server's replies arrive; Deny, TokenExpires, Timer and
+// ServerDisconnect: the same update ends the connection on a denial, the
+// token's expiry, a stage or connected timeout, or the server's disconnect;
+// Deliver: what arrives opens only under the connection's own keys;
+// WorkerComplete: a retiring connection's transport is stepped through its
+// stop until its worker completes.
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -902,6 +947,10 @@ void rocketnet_client_send_packets( struct rocketnet_client_t * client )
     rocketnet_message_client_send_packets( client->connection );
 }
 
+// tla/ClientSession.tla ClientDisconnect: from a live state the connection
+// is kicked (its disconnect burst) and its worker asked to stop;
+// DisconnectFromError: from an error state only the stop is asked; both
+// leave the client DISCONNECTED.
 void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -1025,6 +1074,8 @@ const char * rocketnet_client_transport_name( const struct rocketnet_client_t * 
 // NOT_CONNECTED_DROPS. With no connection object the count goes straight to
 // the lifetime counters; with one, the message layer drops it and counts
 // MESSAGE_SEND_NOT_CONNECTED, which the public counter reads.
+// tla/ClientSession.tla Send: while CONNECTED the start goes down to the
+// connection's message layer.
 uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -1317,7 +1368,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
     config->num_xdp_queues = transport->num_xdp_queues;
     config->num_os_cpus = transport->num_os_cpus;
-    config->max_payload_bytes = transport->max_payload_bytes;
     config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
@@ -1354,6 +1404,39 @@ enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketn
     return ROCKETNET_STATUS_OK;
 }
 
+// the light-client profile (sdk/rocketnet.h): the defaults, then the light
+// geometry; config_bytes is set first, as the inline default_config does
+enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    config->config_bytes = sizeof( *config );
+    const enum rocketnet_status_t status = rocketnet_server_default_config_internal( config );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    // Workload: one 1500-byte MTU each way every 100 ms.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
+    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
+    // window numbers, so 200 numbers. Validation refuses values below its
+    // minimums; it never clamps. These assignments stay inside those ranges.
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
+    config->per_client_send_kbps = 256;                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
+    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
+    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
+    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
+    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
+    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
+    return ROCKETNET_STATUS_OK;
+}
+
 static enum rocketnet_status_t rn_server_config_read( rocketnet_server_config_t * current,
                                                       const rocketnet_server_config_t * config,
                                                       const rocketnet_server_config_t ** read )
@@ -1387,7 +1470,7 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
@@ -1497,6 +1580,8 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
     return ROCKETNET_STATUS_OK;
 }
 
+// tla/ServerSession.tla Create: STOPPED, no transport bound, the one memory
+// block made.
 static struct rocketnet_server_t * rn_server_create_current( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
@@ -1631,6 +1716,9 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 
 static void rn_server_finish_stop( struct rocketnet_server_t * server );
 
+// tla/ServerSession.tla Start: from STOPPED only, a new message server and
+// server transport in the block (a fresh used-token history, every slot's
+// reason NONE); a running server is refused.
 enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1682,6 +1770,9 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
     }
 }
 
+// tla/ServerSession.tla Stop: one call, every connected slot disconnected at
+// the transport and kicked, the bursts flushed, the transport stopped, and
+// the server no longer running on return.
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || !server->running )
@@ -1710,6 +1801,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         rocketnet_server_transport_stop( transport );
 }
 
+// tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
+// once its retiring transport's workers have exited and it stores STOPPED.
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || server->running )
@@ -1753,6 +1846,8 @@ int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, in
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/ServerSession.tla Destroy: from any state; a running server is
+// stopped first, then the object goes.
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !server )
@@ -1790,6 +1885,11 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         rocketnet_free( server->context, server );
 }
 
+// tla/ServerSession.tla Read, ClientConnects, Establish, Deny, SlotTimeout,
+// ClientLeaves and Deliver: only a running server's update reads datagrams;
+// it takes each client's request into a free slot, establishes it when its
+// response opens, ends a slot on a denial, a timeout or the client's own
+// disconnect, and opens a client's traffic only under its slot's session keys.
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1914,6 +2014,8 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
 // returns at once for a slot it does not hold
 // (rocketnet_server_transport_disconnect_client; tla/RNSlots.tla
 // PublicDisconnect).
+// tla/ServerSession.tla DisconnectClient: a CONNECTED slot is kicked and
+// disconnected at the transport, which sends its burst and resets the slot.
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -1941,6 +2043,8 @@ enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const str
 // counted once in NOT_CONNECTED_DROPS (the message layer's
 // MESSAGE_SEND_NOT_CONNECTED while running, the lifetime counters while
 // stopped). An index at or past max_clients is misuse.
+// tla/ServerSession.tla ServerSend: to a CONNECTED slot of a running server
+// the start goes down to the message layer.
 uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )

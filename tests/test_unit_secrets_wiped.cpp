@@ -51,6 +51,9 @@
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_test_vectors.h"
+#include "../sdk/rocketnet_memory.h"
+#include "../sdk/rocketnet_driver_loopback.h"
+#include "suite_runner.h"
 
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #include <sodium.h>
@@ -746,6 +749,41 @@ static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
     free( raw );
     check( unwritten );
 }
+
+// test_secrets_wiped_destroy_writes_only_keys's peak resident bound. The case
+// copies every live block of its connected pair before destroy, so its peak
+// is twice the pair's memory. The server transport's fixed tables grow with
+// the build's ROCKETNET_MAX_CLIENTS whatever the case's max_clients
+// (BUILDING.md, "Maximum clients"), so a 10000-client build puts the doubled
+// pair over the suite-wide bound. The bound is twice the pair's plan:
+// rocketnet_server_transport_memory_plan's total for one client, planned
+// with the portable transport because the plan has no row for the loopback
+// transport, the client's rocketnet_client_required_memory and its portable
+// transport's rocketnet_client_transport_required_memory, and the two
+// loopback endpoints' create-time queues; plus a stated 64 MiB margin for
+// the process and the two block maps.
+static long secrets_wiped_destroy_rss_bound_mb()
+{
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config( &server_config );
+    server_config.protocol_id = SECRETS_WIPED_PROTOCOL;
+    server_config.max_clients = 1;
+    rocketnet_server_memory_plan_t plan;
+    if ( !rocketnet_server_transport_memory_plan( &server_config, "portable", plan ) )
+        return 0;
+    rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    const uint64_t client_bytes = (uint64_t) rocketnet_client_required_memory( &client_config );
+    rocketnet_client_transport_config_t client_transport_config;
+    rocketnet_client_transport_default_config( &client_transport_config );
+    const uint64_t client_transport_bytes = rocketnet_client_transport_required_memory( &client_transport_config, "portable" );
+    if ( client_bytes == 0 || client_transport_bytes == 0 )
+        return 0;
+    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + 2 * endpoint ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_secrets_wiped_destroy_writes_only_keys, secrets_wiped_destroy_rss_bound_mb );
 
 REGISTER_UNIT_TEST( test_secrets_wiped_destroy_writes_only_keys );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );

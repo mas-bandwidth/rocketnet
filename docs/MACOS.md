@@ -138,6 +138,30 @@ owned RX banks and publishes them to the caller, which copies their packets and
 performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
+**The msgx client** is the portable client table under the `msgx` name: the
+`MSGX` registry row's client operations are `portable_client_operations`
+(`rocketnet_msgx_transport` in `sdk/rocketnet_driver_builtin.cpp`), so the two
+client pins differ only in the name the client create hands the socket create
+(`portable_io_client_create` -> `portable_socket_create` ->
+`rocketnet_platform_socket_create_with_pump`). A `msgx` pin requires the
+`sendmsg_x`/`recvmsg_x` pump and refuses the create without it; a `portable`
+pin forces the per-packet loop. The client I/O thread (docs/CLIENT-IO.md)
+sends and receives through the table's `send_batch` and `receive_batch`, which
+on macOS call `rocketnet_platform_socket_send_packets` and
+`rocketnet_platform_socket_receive_packets`, the pump seam above, so a `msgx`
+client batches on its I/O thread and never on the game thread. Client `auto`
+on macOS is `msgx` (client rank 10, above portable's 30). A runtime refusal
+pauses that client's pump exactly as on a server socket: the batch in flight
+finishes per packet and nothing is lost. The unit cases in
+`tests/test_unit_client_msgx.cpp` pin the shared table, its I/O callbacks and
+the client ranking without a socket; the functional cases
+`test_msgx_client_pin_selects_batch_pump`,
+`test_portable_client_pin_selects_portable_pump`,
+`test_msgx_client_degrades_without_loss` and
+`test_msgx_client_transport_wire_ipv4`, `_ipv6` and `_dual_stack` (against the
+`msgx` and the `portable` server) read the pump off the client's live socket
+and carry payloads both ways.
+
 ### Pinning a transport
 
 The client and server configs each carry a `transport` string, with an
@@ -217,9 +241,7 @@ that waits in frame sync, put back to the standard policy afterwards
 
 Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
-do not receive the client thread's `SCHED_RR` priority request. Every server
-also has the separate background stats worker described in [BUILDING.md,
-"Pre-allocation server resource plans"](../BUILDING.md#pre-allocation-server-resource-plans).
+do not receive the client thread's `SCHED_RR` priority request.
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging
@@ -277,7 +299,7 @@ refused destination in the middle delivers every other packet
 ./bin/functional --run test_platform_batch_pump_refused_destination
 ```
 
-What a receive does after a peer is hard-killed and the kernel answers with
+What a receive does after a client is hard-killed and the kernel answers with
 ICMP: **pending.**
 
 ## The file-descriptor limit
@@ -315,12 +337,12 @@ application to accept incoming network connections?" the first time an app it
 has no rule for opens a socket that can receive from other machines; a
 wildcard bind is such a socket. So a dev build of a game server, the examples
 and the functional suite can each raise the prompt on a Mac with the firewall
-on, even when every peer is on loopback. The trigger is the bind, not the
+on, even when every client is on loopback. The trigger is the bind, not the
 transport: `msgx` and `portable` bind the same way.
 
 - **Loopback-only tests need no exception.** The firewall filters traffic
   arriving from other machines; traffic to `127.0.0.1` and `::1` does not
-  arrive that way. A run whose peers are all on loopback needs no rule, so the
+  arrive that way. A run whose clients and server are all on loopback needs no rule, so the
   prompt can be denied. Do not add a rule for a test binary.
 - **A server for players on other machines needs the exception**, for the
   game binary that hosts it.
@@ -379,7 +401,101 @@ whole-suite run is not hit. Inside `lldb`, `settings set target.env-vars ROCKETN
 
 ## Sanitizers and leaks
 
-**pending.**
+`.github/workflows/nightly-macos-sanitizers.yml` runs nightly and on dispatch
+on the `rocketnet-macos` runner with Apple clang (`/usr/bin/clang`, the system
+toolchain), in three legs, each in its own job and its own build directory:
+
+- **asan+ubsan**: Debug with `-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer`, the flags of ci.yml's
+  Linux sanitizers job. Apple silicon AddressSanitizer has no `detect_leaks`,
+  so `ASAN_OPTIONS=detect_leaks=0` and the leaks leg is the leak check.
+- **tsan**: Debug with `-fsanitize=thread`,
+  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`.
+- **leaks**: an unsanitized Debug build. The suites run each case in a child
+  process (`tests/suite_runner.h`), and `leaks --atExit` inspects only the
+  process it launched and does not pass its exit status through. So the suite
+  first runs plainly with `MallocStackLogging=1` (its exit status is the suite
+  verdict), then every case it named runs alone, in process, under
+  `leaks --atExit --`, and each exec binary of the functional suite runs under
+  it too. A case past 180 s is killed and named red. Red on any leak.
+
+Each leg runs `./bin/test` and `./bin/functional` with
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` both `msgx`, then
+both `portable`: twelve runs a night. No suppression file, no skipped case and
+no changed bound; a finding is a defect with its own card.
+
+One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
+`leaks` none):
+
+```sh
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
+TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
+  ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
+```
+
+One case under `leaks`, in process:
+
+```sh
+MallocStackLogging=1 leaks --atExit -- ./bin/test test_endian
+MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/functional --run test_loopback_transport_udp
+```
+
+The twelve runs by hand on mini-m5-1 at 010c816, Apple clang 21.0.0, macOS
+27.2, two runs at a time (a unit run beside a functional run) next to the
+member's CI runner. The step timeouts are about twice these times.
+
+| leg | suite | pin | exit | wall |
+|---|---|---|---|---|
+| asan+ubsan | unit | msgx | 1 (finding 1) | 6 s |
+| asan+ubsan | unit | portable | 1 (finding 1) | 5 s |
+| asan+ubsan | functional | msgx | 0 | 661 s |
+| asan+ubsan | functional | portable | 0 | 657 s |
+| tsan | unit | msgx | 0 | 109 s |
+| tsan | unit | portable | 0 | 114 s |
+| tsan | functional | msgx | 1 (finding 2) | 33 s |
+| tsan | functional | portable | 0 | 793 s |
+| leaks | unit | msgx | 1 (finding 3), 954 of 955 cases 0 leaks | 1972 s (the hung case held one of four slots about ten minutes) |
+| leaks | unit | portable | 1 (finding 3), 954 of 955 cases 0 leaks | 1472 s |
+| leaks | functional | msgx | 0, 163 cases and the three exec binaries 0 leaks | 2103 s |
+| leaks | functional | portable | 1 (findings 4 and 2, in the plain suite run, before the per-case pass) | 556 s; rerun alone 25 s |
+
+Findings at 010c816:
+
+1. **asan+ubsan, unit suite, both pins** (the unit suite clears the pins, so
+   the transport does not matter). UndefinedBehaviorSanitizer, `load of value -2147483648, which is not a valid value for type 'enum rocketnet_status_t'`;
+   stack top `rocketnet_status_name` at `sdk/rocketnet.cpp:210`, called from
+   `test_status_name_out_of_range_is_unknown` at `tests/test_unit_status.cpp:94`
+   (the `INT_MIN` probe). Apple clang's `-fsanitize=undefined` includes
+   `enum`; gcc's, which the Linux jobs use, does not. The suite stops at its
+   first red case, so every unit case was also run alone under this leg: the
+   other 954 are clean.
+2. **tsan, functional suite, msgx**. No ThreadSanitizer report:
+   `check failed: ( rocketnet_counters_refusals_moved == 0 )` with
+   `SEND_RING_FULL = 1556`, in
+   `rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch` at
+   `functional/rocketnet_functional_tests.cpp:6503`. The case paces its sends
+   with a 0.5 ms sleep and expects the msgx send ring never to fill; under
+   TSan's slowdown it fills. The suite stops there, so the msgx cases after it
+   have not run under TSan yet. The same leg on portable is green, but the
+   leaks leg's plain run (unsanitized Debug, `MallocStackLogging=1`) on
+   portable, rerun alone on the member, fails the same check in the same case:
+   the case is load-sensitive on macOS, not a data race.
+3. **leaks, unit suite, both pins**. `test_channels_allocator_trap_witness`
+   (`tests/test_channels.cpp:1613`) hangs under `leaks --atExit`: its forked
+   child's allocator trap ends in `_Exit` (`tests/test_channels.cpp:807`),
+   which `libLeaksAtExit.dylib` interposes (`my__exit` then `__kill`), stopping
+   a child that `leaks` is not watching, so the parent's `waitpid` never
+   returns. This lies in the system tool, outside the product; the case keeps
+   running and the leg's 180 s case limit names it red. Every other unit case
+   reports 0 leaks.
+4. **leaks, functional suite, portable**, the plain run, once:
+   `check failed: ( unplanned disconnect )` in `live_matrix_window` at
+   `functional/live_matrix.cpp:971` (`client_reason=-3`, the server still
+   connected), in the case after `test_loopback_transport_live_message_matrix`.
+   Two Release builds and a unit run were going on the member beside it; the
+   rerun alone stopped earlier, at finding 2, so it is not yet reproduced.
 
 ## Fuzzing
 

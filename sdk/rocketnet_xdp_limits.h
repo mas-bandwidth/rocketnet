@@ -17,12 +17,12 @@
 
 // The replay map's entry budget, one per live source address and port: every
 // client the server holds, rounded up to a multiple of 1024 (1024 at 1000
-// clients). This header is also compiled into the BPF program, which cannot
-// include rocketnet.h, so the BPF compile is handed ROCKETNET_MAX_CLIENTS on
-// its command line (cmake/EmbedXdp.cmake, server_xdp/Makefile).
-#ifndef ROCKETNET_MAX_CLIENTS
-#error ROCKETNET_MAX_CLIENTS is not defined: include rocketnet.h first, or pass -DROCKETNET_MAX_CLIENTS as the library build does
-#endif
+// clients). ROCKETNET_MAX_CLIENTS lives in rocketnet.h, its one home, which
+// compiles for the BPF target too, so the BPF program and the library read the
+// same default. A build at another value passes it to both (cmake/EmbedXdp.cmake
+// MAX_CLIENTS), and the generated rocketnet_server_xdp.h refuses a library
+// whose value differs from the one the embedded program was compiled with.
+#include "rocketnet.h"
 #define ROCKETNET_XDP_REPLAY_MAX_ENTRIES ( ( ROCKETNET_MAX_CLIENTS + 1023 ) / 1024 * 1024 )
 #if ROCKETNET_XDP_REPLAY_MAX_ENTRIES < ROCKETNET_MAX_CLIENTS
 #error the XDP replay map must hold an entry for every client

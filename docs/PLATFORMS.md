@@ -134,6 +134,61 @@ new support claim:
 - `fuzz-nightly.yml` runs on the `self-hosted, Linux, X64, fleet` label, and
   its fuzz-macos job on `self-hosted, macOS, ARM64, rocketnet-macos`.
 
+## The Windows verification runs
+
+The table above is the support claim. The table below is not: it records the
+Windows Debug, AddressSanitizer and Application Verifier runs, which are made
+on the native Windows member (`self-hosted, Windows, X64, rocketnet-windows`),
+one run at a time, and are owed to the current API whenever the source moves
+under them. A row that says "not made" is a row that was not run, not a row
+that passed. `BUILDING.md` names the commands.
+
+Each run below was made once on the member (captain, Windows 11 build
+26200, cl 19.51.36260), under its exclusive lock, at rocketnet commit
+`79834cfa`, on 2026-10-23. "No pin" clears `ROCKETNET_SERVER_TRANSPORT`; a pin
+is set with cmd.exe `set`, and each pinned `functional.exe` run printed
+`test_transport_env_pin_is_honoured`. The Debug runs, with or without
+AddressSanitizer, set `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048`, the Debug figure
+`nightly.yml`'s `windows / Debug` job uses; the Release AddressSanitizer runs
+keep the 698 MiB bound in code.
+
+| Group | Configuration | Run | Result | Time | Date |
+| --- | --- | --- | --- | --- | --- |
+| Debug | Debug | `test.exe` | pass | 32 s | 2026-10-23 |
+| Debug | Debug | `test_lifecycle.exe` | pass | 1 s | 2026-10-23 |
+| Debug | Debug | `test_iocp.exe` | pass | 24 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, no pin | pass | 53 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, `iocp` | pass | 54 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, `rio` | pass | 58 s | 2026-10-23 |
+| AddressSanitizer | Release | `test.exe` | pass, 0 reports | 66 s | 2026-10-23 |
+| AddressSanitizer | Release | `test_lifecycle.exe` | pass, 0 reports | 1 s | 2026-10-23 |
+| AddressSanitizer | Release | `test_iocp.exe` | pass, 0 reports | 30 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, no pin | pass, 0 reports | 55 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, `iocp` | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, `rio` | pass, 0 reports | 58 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test.exe` | pass, 0 reports | 107 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test_lifecycle.exe` | pass, 0 reports | 1 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test_iocp.exe` | pass, 0 reports | 31 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, no pin | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, `iocp` | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, `rio` | pass, 0 reports | 57 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, no pin | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, `iocp` | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, `rio` | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, no pin | pass, 0 stops | 1 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, `iocp` | pass, 0 stops | 1 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, `rio` | pass, 0 stops | 2 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, no pin | pass, 0 stops | 121 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, `iocp` | pass, 0 stops | 117 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, `rio` | pass, 0 stops | 119 s | 2026-10-23 |
+
+The Application Verifier runs are `py -3 tools\windows\appverif_run.py --xml <file> -- bin\Debug\<exe>` from an elevated prompt (the Basics layers, every
+stop logged); the times are the verified process's own, as the script prints
+them. No run found an AddressSanitizer report, a verifier stop or a suite
+failure, so no source change came of them. The nightly Windows
+AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) repeats the
+Release group every night and build-checks the Debug configuration.
+
 ## Checking the table
 
 From the repository root:
