@@ -319,9 +319,7 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
         return false;
     }
 
-    // xx.xx.xx.xx.xx.xx
-
-    char mac_address_string[18];
+    char mac_address_string[64];
 
     if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
     {
@@ -329,21 +327,22 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
         return false;
     }
 
-    mac_address_string[2] = 0;
-    mac_address_string[5] = 0;
-    mac_address_string[8] = 0;
-    mac_address_string[11] = 0;
-    mac_address_string[14] = 0;
-    mac_address_string[17] = 0;
-
-    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
-
     fclose( file );
+
+    // the same strict parse the override uses, so a short or empty line refuses
+
+    if ( !rocketnet_xdp_parse_mac_address( mac_address_string, mac_address ) )
+    {
+        rocketnet_error( "could not parse mac address of network interface %s from %s (xx:xx:xx:xx:xx:xx)", interface_name, path );
+        return false;
+    }
+
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    if ( memcmp( mac_address, zero_mac, 6 ) == 0 )
+    {
+        rocketnet_error( "mac address of network interface %s is all-zero in %s", interface_name, path );
+        return false;
+    }
 
     return true;
 }
@@ -418,39 +417,15 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     const int gateway_ethernet_address_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
     if ( gateway_ethernet_address_found < 0 || ( gateway_ethernet_address_found > 0 && gateway_ethernet_address_env[0] != '\0' ) )
     {
-        bool valid = gateway_ethernet_address_found > 0 && strlen( gateway_ethernet_address_env ) == 17;
-        for ( int i = 0; valid && i < 17; i++ )
-        {
-            const char c = gateway_ethernet_address_env[i];
-            if ( ( i % 3 ) == 2 )
-                valid = c == ':' || c == '.';
-            else
-                valid = ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) || ( c >= 'A' && c <= 'F' );
-        }
+        // the same strict parse the sysfs read uses
 
-        if ( !valid )
+        if ( gateway_ethernet_address_found <= 0 || !rocketnet_xdp_parse_mac_address( gateway_ethernet_address_env, mac_address ) )
         {
             rocketnet_error( "could not parse ROCKETNET_GATEWAY_ETHERNET_ADDRESS=\"%s\" as a mac address (xx:xx:xx:xx:xx:xx)", gateway_ethernet_address_env );
             return false;
         }
 
         rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
-
-        char mac_address_string[18];
-        memcpy( mac_address_string, gateway_ethernet_address_env, 17 );
-        mac_address_string[2] = 0;
-        mac_address_string[5] = 0;
-        mac_address_string[8] = 0;
-        mac_address_string[11] = 0;
-        mac_address_string[14] = 0;
-        mac_address_string[17] = 0;
-
-        mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-        mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-        mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-        mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-        mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-        mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
     }
     else
     {
