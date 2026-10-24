@@ -95,7 +95,7 @@ struct rocketnet_dst_check_stream_t
 
     // whole_message (RNChannel::WholeMessagesOnly, FragmentsAndAcks::
     // DeliveredExact): the size recorded when the sequence was sent.
-    uint16_t sent_size[ROCKETNET_DST_CHECK_SEQ_BITS];
+    uint32_t sent_size[ROCKETNET_DST_CHECK_SEQ_BITS];
     uint8_t sent_size_set[ROCKETNET_DST_CHECK_SEQ_BITS];
     uint32_t last_sent_seq;
     uint64_t last_sent_step;
@@ -293,7 +293,8 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     }
     if ( !lap )
     {
-        s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = (uint16_t) ( bytes > 65535 ? 65535 : bytes );
+        // Exact at every legal size: a non-negative int fits uint32_t, no clamp.
+        s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = bytes > 0 ? (uint32_t) bytes : 0;
         s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
     }
     s->last_sent_seq = sequence;
@@ -522,7 +523,7 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
     if ( rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, seq ) )
         return 1;
     const uint32_t at = seq % ROCKETNET_DST_CHECK_SEQ_BITS;
-    if ( s->sent_size_set[at] && s->sent_size[at] != (uint16_t) bytes )
+    if ( s->sent_size_set[at] && ( bytes < 0 || s->sent_size[at] != (uint32_t) bytes ) )  // a negative delivery is itself a mismatch
     {
         char what[160];
         snprintf( what, sizeof(what), "stream=%d seq=%u sent=%u got=%d bytes",
