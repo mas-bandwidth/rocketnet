@@ -351,7 +351,7 @@ static bool counters_is_received( int counter )
 
 static void test_counters_every_counter_has_a_class()
 {
-    check( COUNTERS_NUM_BASE == 215 );
+    check( COUNTERS_NUM_BASE == 216 );
     check( ROCKETNET_NUM_COUNTERS == COUNTERS_NUM_BASE + COUNTERS_NUM_APPENDED );
     check( rocketnet_num_counters() == ROCKETNET_NUM_COUNTERS );
 

@@ -473,7 +473,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
                                                       padding, (int) sizeof(padding),
                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                       mapping->client_ephemeral_public_key,
-                                                      mapping->keys.session_client_to_server );
+                                                      mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
