@@ -66,6 +66,62 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
     return time;
 }
 
+// The update clock the three owners share: the caller's raw time beside the
+// clamped time they hand out. tla/RNUpdateClock.tla models it: ForwardStep, a
+// forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
+// non-finite sample. A forward step of d advances the clamped time by exactly
+// d, so a clock whose caller stepped backwards resumes with the caller
+// instead of standing still until the caller's clock passes the last good
+// time again (BASE's rule, which tla/MCRNUpdateClockBrokenStall.cfg
+// reverses). While no backwards step has happened the offset is exactly 0.0
+// and the returned time is the caller's time, bit for bit: the common path
+// never adds to the last good time, so every caller that reads an exact time
+// still reads it.
+
+double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+{
+    if ( clamped )
+        *clamped = false;
+
+    if ( !isfinite( time ) )
+    {
+        // a non-finite sample changes neither the raw time nor the offset
+
+        if ( clamped )
+            *clamped = true;
+        rocketnet_api_misuse_record();
+        rocketnet_assert( isfinite( time ) );
+        return last_good;
+    }
+
+    const double raw = *raw_time;
+
+    if ( time < raw )
+    {
+        // a backwards step: the clamped time stands, the raw time and the
+        // offset record how far the caller's clock fell behind
+
+        *time_offset += raw - time;
+        *raw_time = time;
+        if ( clamped )
+            *clamped = true;
+        rocketnet_api_misuse_record();
+        rocketnet_assert( time >= raw );
+        return last_good;
+    }
+
+    // a forward step, or the same time again: the clamped time advances by
+    // the caller's step
+
+    const double step = time - raw;
+    *raw_time = time;
+
+    if ( *time_offset == 0.0 )
+        return time;
+
+    return last_good + step;
+}
+
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
@@ -190,6 +246,8 @@ struct rocketnet_client_legacy_receive_state_t
     X( received_packets, rocketnet_client_received_packets_t received_packets )                                      \
     X( receive_buffer, rocketnet_client_receive_buffer_t receive_buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )           \
     X( time, double time ) /* the game's clock, last seen */                                                         \
+    X( raw_time, double raw_time ) /* the caller's clock, last seen, beside the clamped one */                     \
+    X( time_offset, double time_offset ) /* the backwards offset, exactly 0.0 until the first step */                \
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
     X( config, struct rocketnet_client_transport_config_t config )                                                   \
@@ -1289,7 +1347,14 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // is clamped to the initial last good time before anything reads it.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( 0.0, time, &time_clamped );
+    time = rocketnet_update_clock_advance( 0.0, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+
+    // the seed is the clock's origin and not a step: the raw time starts
+    // there, so the first update compares against the seed and not against
+    // zero
+
+    client_transport->raw_time = time;
+    client_transport->time_offset = 0.0;
 
     client_transport->config = *config;
     client_transport->time = time;
@@ -2371,7 +2436,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     // loud in a debug build.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( client_transport->time, time, &time_clamped );
+    time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
 
     client_transport->packet_leases.reset();
 

@@ -3726,7 +3726,61 @@ REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts );
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
+
+// ---------------------------------------------------------------------------
+// the object's clock resumes after a backwards step: the caller's clock
+// stepped back, the clamped time stands for that step, and the next forward
+// raw step of d advances the clamped time by exactly d, so the object and
+// the transport it drives move together again instead of standing still
+// until the caller's clock passes the last good time once more
+// ---------------------------------------------------------------------------
+
+static void test_message_object_clock_resumes_after_backwards_step()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
+
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );                       // objects seeded at MO_T0
+
+    const uint64_t base = rocketnet_api_misuse_count();
+
+    rocketnet_message_server_t * server = pair.server;
+
+    // the first two updates are the caller's clock moving forward: the
+    // object's time is the caller's time, bit for bit
+
+    check( rocketnet_message_server_update( server, MO_T0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base );
+    check( server->object.time == MO_T0 );
+
+    check( rocketnet_message_server_update( server, MO_T0 + 1.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base );
+    check( server->object.time == MO_T0 + 1.0 );
+
+    // the caller's clock steps back: the clamped time stands, one misuse is
+    // counted, and the raw time is the new one
+
+    check( rocketnet_message_server_update( server, MO_T0 - 10.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( server->object.time == MO_T0 + 1.0 );
+
+    // the next forward step of half a second advances the clamped time by
+    // exactly half a second: the clock resumes with the caller, and the
+    // misuse count moved by exactly one
+
+    check( rocketnet_message_server_update( server, MO_T0 - 9.5 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( server->object.time == MO_T0 + 1.5 );
+
+    mo_pair_teardown( &pair );
+
+    rocketnet_assert_function( saved_assert );
+}
+
 REGISTER_UNIT_TEST( test_update_time_first_update_not_finite_refused );
+REGISTER_UNIT_TEST( test_message_object_clock_resumes_after_backwards_step );
 REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );

@@ -203,6 +203,8 @@ struct rn_message_object_t
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
+    double raw_time;                            // the caller's clock, last seen, beside the clamped one
+    double time_offset;                         // the backwards offset, exactly 0.0 until the first step
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1

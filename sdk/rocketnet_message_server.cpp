@@ -277,6 +277,8 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->default_kbps = default_kbps;
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
+    object->raw_time = time;                    // the seed is the clock's origin, not a step
+    object->time_offset = 0.0;
     object->pending_connection = -1;
     object->send_next_connection = 0;
     object->block = block;
@@ -590,7 +592,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_flush_unreliable( object, i, false );
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    time = rocketnet_update_clock_advance( object->time, &object->raw_time, &object->time_offset, time, &time_clamped );
     if ( time_clamped && !object->clock_started )
         return result;
     object->time = time;

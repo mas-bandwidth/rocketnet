@@ -271,6 +271,8 @@ struct rocketnet_server_transport_t
     int send_capacity;
 
     double time;                                        // the game's clock, last seen
+    double raw_time;                                    // the caller's clock, last seen, beside the clamped one
+    double time_offset;                                 // the backwards offset, exactly 0.0 until the first step
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
     uint64_t game_clock_epoch;                          // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
@@ -1403,6 +1405,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     server_transport->context = context;
     server_transport->time = time;
+    server_transport->raw_time = time;                  // the seed is the clock's origin, not a step
+    server_transport->time_offset = 0.0;
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
@@ -2069,7 +2073,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // value-initialized transport carries.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( server_transport->time, time, &time_clamped );
+    time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
 
     server_transport->packet_leases.reset();
 

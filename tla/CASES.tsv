@@ -373,3 +373,5 @@ MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	
 MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
+MCRNUpdateClock.cfg	RNUpdateClock.tla	pass	-	check	rnupdateclock	required	-
+MCRNUpdateClockBrokenStall.cfg	RNUpdateClock.tla	invariant	ResumeAdvances	check	rnupdateclock	required	-

@@ -127,6 +127,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `clientconnection` | 21 | All historical connection configurations, including nine debt cases |
 | `replaywindow` | 4 | Control, mid-scale bench control, the long-skip `WindowIsTruth` witness and the open-before-gate `NoOpenBeforeConnect` witness |
 | `rnsendstore` | 1 | Existing committed control |
+| `rnupdateclock` | 2 | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md): the passing control and the reversed stall witness |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
