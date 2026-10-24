@@ -311,6 +311,22 @@ static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::
     return now;
 }
 
+// after an update given tick_clock: when the slot's wire receive count grew,
+// that update received a packet from the slot, and its time is the slot's
+// last receive in the library's clock
+
+static void posix_hk_track_slot_receive( struct rocketnet_server_transport_t * server, int slot, double tick_clock, uint64_t * received, double * receive_clock )
+{
+    struct rocketnet_server_transport_client_stats_t stats;
+    memset( &stats, 0, sizeof(stats) );
+    rocketnet_server_transport_client_stats( server, slot, &stats );
+    if ( stats.packets_received > *received )
+    {
+        *received = stats.packets_received;
+        *receive_clock = tick_clock;
+    }
+}
+
 static void posix_hk_sleep_rest_of_tick( double tick_start )
 {
     const double spent = rocketnet_platform_time() - tick_start;
@@ -483,13 +499,22 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     // a second of steady traffic, then the hard kill: no disconnect packet
 
+    // the library measures the slot's timeout from the time of the last
+    // update that received a packet from the slot (last_receive_time), so
+    // the case watches the slot's wire receive count after every update and
+    // keeps the time that update was given
+
+    uint64_t dead_received = 0;
+    double dead_receive_clock = 0.0;
+
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 1.0 )
     {
-        const double tick_start = rocketnet_platform_time();
-        posix_hk_tick( server, live, true, NULL );
-        posix_hk_sleep_rest_of_tick( tick_start );
+        const double tick_clock = posix_hk_tick( server, live, true, NULL );
+        posix_hk_track_slot_receive( server, dead_slot, tick_clock, &dead_received, &dead_receive_clock );
+        posix_hk_sleep_rest_of_tick( tick_clock );
     }
+    posix_hard_killed_require( dead_receive_clock > 0.0 );
 
     posix_hard_killed_require( kill( child, SIGKILL ) == 0 );
     int status = 0;
@@ -512,10 +537,11 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     memset( sent_to_slot, 0, sizeof(sent_to_slot) );
     // the slot's timeout is the library's own, so it is checked in the clock
     // the library was given: the slot is freed by the update whose time
-    // first passes the timeout, and it is not freed before the update whose
-    // time is below it. the wall clock only bounds the loop against a hang.
-    const double timeout_clock = killed_at + POSIX_HK_CLIENT_TIMEOUT;
-    double last_connected_clock = killed_at;
+    // first passes the last receive plus the timeout, and it is not freed
+    // before. packets the child sent before the kill may still be received
+    // by updates after it, so the last receive is tracked until the slot is
+    // freed. the wall clock only bounds the loop against a hang.
+    double last_connected_clock = 0.0;
     double freed_clock = 0.0;
     double freed_at = 0.0;
     rocketnet_bounded_wait_t wait;
@@ -529,7 +555,10 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
             freed_at = rocketnet_platform_time();
         }
         else
+        {
             last_connected_clock = tick_clock;
+            posix_hk_track_slot_receive( server, dead_slot, tick_clock, &dead_received, &dead_receive_clock );
+        }
         posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
         posix_hk_sleep_rest_of_tick( tick_clock );
     }
@@ -553,7 +582,11 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
     // the timeout the library owns is checked in the library's clock: the
     // slot was still connected at the last update whose time was below the
-    // timeout, and it was freed by the update whose time first passed it
+    // last receive plus the timeout, and it was freed by the update whose
+    // time first reached it
+    const double timeout_clock = dead_receive_clock + POSIX_HK_CLIENT_TIMEOUT;
+    printf( "  dead slot: last receive at update %.3f, timeout at %.3f, last connected update %.3f, freed by update %.3f\n",
+            dead_receive_clock, timeout_clock, last_connected_clock, freed_clock );
     posix_hard_killed_require( last_connected_clock < timeout_clock );
     posix_hard_killed_require( freed_clock >= timeout_clock );
     for ( size_t i = 0; i < 3; i++ )
@@ -755,7 +788,11 @@ static struct rocketnet_platform_socket_t * posix_seam_socket_with_queue( const 
     // datagrams (SO_NUMRCVPKT), since a byte count can reach the total while
     // the last datagram is still in flight
 
-    const double start = rocketnet_platform_time();
+    // the wait is on arrival, so it is bounded by polls of the queue, not by
+    // wall time; the wall cap is a hang guard that names the case
+
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_receive_seam", 60.0, 20000 );
     for ( ;; )
     {
         int queued = 0;
@@ -763,7 +800,7 @@ static struct rocketnet_platform_socket_t * posix_seam_socket_with_queue( const 
         posix_hard_killed_require( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
         if ( queued >= POSIX_SEAM_PACKETS )
             break;
-        posix_hard_killed_require( rocketnet_platform_time() - start < 2.0 );
+        posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
         rocketnet_platform_sleep( 0.001 );
     }
     return socket;
@@ -855,9 +892,16 @@ static void posix_seam_unknown_errno_pauses_msgx()
     self.port = from[0].port;
     rocketnet_platform_socket_send_packet( socket, &self, one, (int) sizeof(one) );
     int got = 0;
-    const double start = rocketnet_platform_time();
-    while ( got == 0 && rocketnet_platform_time() - start < 2.0 )
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_receive_seam_unknown_errno", 60.0, 20000 );
+    for ( ;; )
+    {
         got = rocketnet_platform_socket_receive_packets( socket, from, data, POSIX_SEAM_STRIDE, bytes, 32 );
+        if ( got != 0 )
+            break;
+        posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
+        rocketnet_platform_sleep( 0.001 );
+    }
     posix_hard_killed_require( got == 1 );
     posix_hard_killed_require( posix_seam_warnings == 1 );
 
@@ -925,8 +969,7 @@ const char * rocketnet_posix_hard_killed_peer_test_name( int index )
 }
 
 // the suite group (tests/suite_runner.h, group_of) of a case name: the cell
-// cases measure receive gaps and handshake times against the wall clock, so
-// they run as group 1, after every other case and the sibling executables
+// cases pace real traffic and report receive gaps, so they run as group 1, after every other case and the sibling executables
 // (group 0) have finished, never beside the loopback load those make; they
 // run in parallel with each other. the seam cases measure no time.
 //
