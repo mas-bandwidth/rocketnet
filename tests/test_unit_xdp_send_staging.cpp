@@ -75,4 +75,33 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
 
+// Test for finding 4: publish() without acquire() queues -1 in release
+static void test_send_handoff_publish_without_acquire_refuses()
+{
+    rocketnet_send_handoff_t<2> handoff;
+    rocketnet_unit_check(!handoff.publish());
+    rocketnet_unit_check(handoff.count == 0);
+    rocketnet_unit_check(handoff.head == 0);
+    rocketnet_unit_check(handoff.filling == -1);
+    rocketnet_unit_check(handoff.front() == -1);
+    rocketnet_unit_check(handoff.free[0] && handoff.free[1]);
+}
+REGISTER_UNIT_TEST(test_send_handoff_publish_without_acquire_refuses);
+
+// Test for finding 5: retire() on empty queue leaves count at -1 in release
+static void test_send_handoff_retire_empty_changes_nothing()
+{
+    rocketnet_send_handoff_t<2> handoff;
+    const int before_count = handoff.count;
+    const int before_head = handoff.head;
+    const bool before_free_0 = handoff.free[0];
+    const bool before_free_1 = handoff.free[1];
+    handoff.retire();
+    rocketnet_unit_check(handoff.count == before_count);
+    rocketnet_unit_check(handoff.head == before_head);
+    rocketnet_unit_check(handoff.free[0] == before_free_0);
+    rocketnet_unit_check(handoff.free[1] == before_free_1);
+}
+REGISTER_UNIT_TEST(test_send_handoff_retire_empty_changes_nothing);
+
 #endif // #if defined(__linux__)
