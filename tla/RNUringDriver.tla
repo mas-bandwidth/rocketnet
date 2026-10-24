@@ -26,9 +26,12 @@
 (*  call.  ReapWithinBudget is the property every Reap step keeps.        *)
 (*                                                                         *)
 (*  RECEIVE.  One multishot RECVMSG over a ring of Buffers provided       *)
-(*  buffers.  The kernel fills a ring buffer and posts a receive CQE      *)
-(*  (KernelFill); the main thread copies the datagram into the FILL bank  *)
-(*  (Reap) and returns the buffer to the ring (ReturnBuffer).  Receive    *)
+(*  buffers.  The kernel fills a ring buffer with one to Segments         *)
+(*  datagrams (several with UDP_GRO: one coalesced receive) and posts a   *)
+(*  receive CQE (KernelFill); the main thread reaps it and copies every   *)
+(*  segment into the FILL bank (Reap: the copy takes them all, inside the *)
+(*  one reap on the one main thread) and returns the buffer to the ring   *)
+(*  after the last copy (ReturnBuffer).  Receive                          *)
 (*  CQEs may be reaped inside send_packets and always go to the fill      *)
 (*  bank.  receive_packets swaps the banks (Swap): the old fill bank      *)
 (*  becomes the EXPOSED bank the transport reads (TransportReads) until   *)
@@ -49,6 +52,12 @@
 (* RearmOnReceive = FALSE leaves a multishot that ends disarmed for good; *)
 (* RunRetiredByCqe = FALSE hands a run's slots after its head back to the *)
 (* staging at Submit, while the kernel still reads their frames.          *)
+(*                                                                         *)
+(* Two definitions a configuration may replace with <- (so a cfg that     *)
+(* does not name them checks the rule): Segments, the most datagrams one  *)
+(* KernelFill puts in a buffer, and the sixth rule switch                 *)
+(* ReturnAfterLastCopy; FALSE marks the buffer copied, so ReturnBuffer    *)
+(* may run, once its first segment is copied, the rest still to copy.     *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -68,6 +77,12 @@ ASSUME ResetWaitsForReap \in BOOLEAN /\ ReapIntoFill \in BOOLEAN
 ASSUME BoundedReap \in BOOLEAN
 ASSUME RearmOnReceive \in BOOLEAN
 ASSUME RunRetiredByCqe \in BOOLEAN
+
+\* the most datagrams one receive buffer carries (UDP_GRO coalescing) and
+\* the rule switch on the buffer's return: definitions, so a cfg replaces
+\* them with <- (MCRNUringDriver.tla gives the replacement values)
+Segments == 2
+ReturnAfterLastCopy == TRUE
 
 SlotIds == 1..Slots
 BufIds  == 1..Buffers
@@ -91,7 +106,7 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           pending,  \* heads of sends submitted, CQE not reaped
           sending,  \* the main thread is inside send_packets
           bstate,   \* per ring buffer: Ring, Filled or Copied
-          bufdg,    \* per ring buffer: the datagram last filled into it
+          bufdg,    \* per ring buffer: the datagrams filled into it not yet in a bank
           copied,   \* datagrams copied out into a bank
           fill,     \* the fill bank
           exposed,  \* the exposed bank the transport reads
@@ -116,7 +131,7 @@ Init ==
     /\ pending = {}
     /\ sending = FALSE
     /\ bstate = [b \in BufIds |-> "Ring"]
-    /\ bufdg = [b \in BufIds |-> 0]
+    /\ bufdg = [b \in BufIds |-> {}]
     /\ copied = {}
     /\ fill = {}
     /\ exposed = {}
@@ -130,6 +145,12 @@ Init ==
     /\ work = 0
 
 RecvVars == <<bstate, bufdg, copied, fill, exposed, snap, gen, armed, nextdg>>
+
+\* the segments one reap copies out of a buffer's datagrams D: all of them,
+\* or under ReturnAfterLastCopy = FALSE only the first before the buffer
+\* counts as copied
+FirstSegment(D) == {d \in D : \A e \in D : d <= e}
+CopiedSegments(D) == IF ReturnAfterLastCopy THEN D ELSE FirstSegment(D)
 SendVars == <<sstate, bytes, idx, kown, head, pending, sending>>
 CallVars == <<call, work>>
 
@@ -207,14 +228,18 @@ KernelComplete(s) ==
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
-\* the kernel fills a ring buffer from the armed multishot receive
+\* the kernel fills a ring buffer from the armed multishot receive: one
+\* datagram, or with UDP_GRO a coalesced run of up to Segments of them in
+\* the one buffer and the one CQE
 KernelFill(b) ==
     /\ armed
     /\ bstate[b] = "Ring"
     /\ nextdg <= MaxSteps
+    /\ \E n \in 1..Segments :
+          /\ nextdg + n - 1 <= MaxSteps
+          /\ bufdg' = [bufdg EXCEPT ![b] = nextdg..(nextdg + n - 1)]
+          /\ nextdg' = nextdg + n
     /\ bstate' = [bstate EXCEPT ![b] = "Filled"]
-    /\ bufdg' = [bufdg EXCEPT ![b] = nextdg]
-    /\ nextdg' = nextdg + 1
     /\ cq' = cq \cup {RecvCqe(b)}
     /\ UNCHANGED <<copied, fill, exposed, snap, gen, armed, phase>>
     /\ UNCHANGED SendVars
@@ -250,14 +275,21 @@ Reap(c) ==
               /\ UNCHANGED <<sstate, bytes, idx, kown, head, sending>>
               /\ UNCHANGED RecvVars
          [] c.k = "recv" ->
+              \* rocketnet_server_uring_receive_cqe's loop over the
+              \* rocketnet_coalesce_split segments: every segment into the
+              \* bank (a segment dropped by size or a full bank is counted in
+              \* place of its copy), then the buffer is copied
               /\ bstate' = [bstate EXCEPT ![c.x] = "Copied"]
-              /\ copied' = copied \cup {bufdg[c.x]}
+              /\ copied' = copied \cup CopiedSegments(bufdg[c.x])
               /\ IF ReapIntoFill
-                 THEN /\ fill' = fill \cup {bufdg[c.x]}
+                 THEN /\ fill' = fill \cup CopiedSegments(bufdg[c.x])
                       /\ UNCHANGED exposed
-                 ELSE /\ exposed' = exposed \cup {bufdg[c.x]}
+                 ELSE /\ exposed' = exposed \cup CopiedSegments(bufdg[c.x])
                       /\ UNCHANGED fill
-              /\ UNCHANGED <<bufdg, snap, gen, armed, nextdg>>
+              \* the copied segments leave the buffer: what remains is the
+              \* datagrams still to copy, none once every segment is in
+              /\ bufdg' = [bufdg EXCEPT ![c.x] = @ \ CopiedSegments(@)]
+              /\ UNCHANGED <<snap, gen, armed, nextdg>>
               /\ UNCHANGED SendVars
          [] c.k = "term" ->
               \* the multishot ended. while running, the CQE handler's one-shot
@@ -273,7 +305,8 @@ Reap(c) ==
               /\ UNCHANGED SendVars
     /\ UNCHANGED phase
 
-\* the copied buffer goes back to the provided buffer ring
+\* the copied buffer goes back to the provided buffer ring, after the copy
+\* of its last segment (under ReturnAfterLastCopy = FALSE, after the first)
 ReturnBuffer(b) ==
     /\ bstate[b] = "Copied"
     /\ phase # "Freed"
@@ -426,7 +459,7 @@ TypeOK ==
     /\ pending \subseteq SlotIds
     /\ sending \in BOOLEAN
     /\ bstate \in [BufIds -> {"Ring", "Filled", "Copied"}]
-    /\ bufdg \in [BufIds -> 0..MaxSteps]
+    /\ bufdg \in [BufIds -> SUBSET Dgs]
     /\ copied \subseteq Dgs
     /\ fill \subseteq Dgs
     /\ exposed \subseteq Dgs
@@ -450,9 +483,12 @@ NoReuseWhileKernelOwned ==
 ExposedStable ==
     exposed = snap
 
-\* a buffer is back in the ring only after its datagram is in a bank
+\* a buffer is back in the ring only after every datagram it carried is in
+\* a bank: with UDP_GRO, after the copy of its last segment.  bufdg holds
+\* only the datagrams still to copy, so a returned buffer holds none (and a
+\* returned buffer keeps no history, which keeps the state space small)
 BufferReturnedAfterCopy ==
-    \A b \in BufIds : (bstate[b] = "Ring" /\ bufdg[b] # 0) => bufdg[b] \in copied
+    \A b \in BufIds : bstate[b] = "Ring" => bufdg[b] = {}
 
 \* Freed only with no kernel owned slot, no filled buffer and an empty cq
 FreedOnlyWhenDrained ==
