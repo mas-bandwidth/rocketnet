@@ -143,25 +143,52 @@ one run at a time, and are owed to the current API whenever the source moves
 under them. A row that says "not made" is a row that was not run, not a row
 that passed. `BUILDING.md` names the commands.
 
-| Group | Configuration | Runs | Result | Date |
-| --- | --- | --- | --- | --- |
-| Debug | Debug | `test.exe`, `test_lifecycle.exe`, `test_iocp.exe`, `functional.exe` (no pin, `ROCKETNET_SERVER_TRANSPORT=iocp`, `ROCKETNET_SERVER_TRANSPORT=rio`) | not made | 2026-10-23 |
-| AddressSanitizer | Release | the same six runs | not made | 2026-10-23 |
-| AddressSanitizer | Debug | the same six runs | not made | 2026-10-23 |
-| Application Verifier | Debug | `test_iocp.exe`, `test_lifecycle.exe`, `functional.exe` (no pin, `iocp`, `rio`) | not made | 2026-10-23 |
+Each run below was made once on the member (captain, Windows 11 build
+26200, cl 19.51.36260), under its exclusive lock, at rocketnet commit
+`79834cfa`, on 2026-10-23. "No pin" clears `ROCKETNET_SERVER_TRANSPORT`; a pin
+is set with cmd.exe `set`, and each pinned `functional.exe` run printed
+`test_transport_env_pin_is_honoured`. The Debug runs, with or without
+AddressSanitizer, set `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048`, the Debug figure
+`nightly.yml`'s `windows / Debug` job uses; the Release AddressSanitizer runs
+keep the 698 MiB bound in code.
 
-The 2026-10-23 rows were recorded on Linux, where no native Windows member is
-reachable: the runs themselves were not made there. The Linux Release gate
-(`make -j16`, then `./bin/test` and `./bin/functional`) was re-verified at this
-head on this attempt and was green: both suites ended in `*** ALL TESTS PASSED
-***`. A Linux Release AddressSanitizer build (`-DROCKETNET_SANITIZE_ADDRESS=ON`)
-of the same tree ran `test` and `functional` and both ended in `*** ALL TESTS
-PASSED ***` with zero AddressSanitizer reports (no `AddressSanitizer` or
-`ERROR: AddressSanitizer` line in either run's output). That is evidence about
-the shared sources only; it is not a Windows row. The nightly Windows
-AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) runs the Release
-group every night; the Debug AddressSanitizer configuration is build-checked
-there and its suites are owed to the member.
+| Group | Configuration | Run | Result | Time | Date |
+| --- | --- | --- | --- | --- | --- |
+| Debug | Debug | `test.exe` | pass | 32 s | 2026-10-23 |
+| Debug | Debug | `test_lifecycle.exe` | pass | 1 s | 2026-10-23 |
+| Debug | Debug | `test_iocp.exe` | pass | 24 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, no pin | pass | 53 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, `iocp` | pass | 54 s | 2026-10-23 |
+| Debug | Debug | `functional.exe`, `rio` | pass | 58 s | 2026-10-23 |
+| AddressSanitizer | Release | `test.exe` | pass, 0 reports | 66 s | 2026-10-23 |
+| AddressSanitizer | Release | `test_lifecycle.exe` | pass, 0 reports | 1 s | 2026-10-23 |
+| AddressSanitizer | Release | `test_iocp.exe` | pass, 0 reports | 30 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, no pin | pass, 0 reports | 55 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, `iocp` | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Release | `functional.exe`, `rio` | pass, 0 reports | 58 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test.exe` | pass, 0 reports | 107 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test_lifecycle.exe` | pass, 0 reports | 1 s | 2026-10-23 |
+| AddressSanitizer | Debug | `test_iocp.exe` | pass, 0 reports | 31 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, no pin | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, `iocp` | pass, 0 reports | 57 s | 2026-10-23 |
+| AddressSanitizer | Debug | `functional.exe`, `rio` | pass, 0 reports | 57 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, no pin | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, `iocp` | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_iocp.exe`, `rio` | pass, 0 stops | 28 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, no pin | pass, 0 stops | 1 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, `iocp` | pass, 0 stops | 1 s | 2026-10-23 |
+| Application Verifier | Debug | `test_lifecycle.exe`, `rio` | pass, 0 stops | 2 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, no pin | pass, 0 stops | 121 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, `iocp` | pass, 0 stops | 117 s | 2026-10-23 |
+| Application Verifier | Debug | `functional.exe`, `rio` | pass, 0 stops | 119 s | 2026-10-23 |
+
+The Application Verifier runs are `py -3 tools\windows\appverif_run.py --xml
+<file> -- bin\Debug\<exe>` from an elevated prompt (the Basics layers, every
+stop logged); the times are the verified process's own, as the script prints
+them. No run found an AddressSanitizer report, a verifier stop or a suite
+failure, so no source change came of them. The nightly Windows
+AddressSanitizer job (`nightly.yml`, `windows / Release ASan`) repeats the
+Release group every night and build-checks the Debug configuration.
 
 ## Checking the table
 

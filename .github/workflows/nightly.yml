@@ -351,13 +351,11 @@ jobs:
 
       - name: Build Debug
         # The Debug configuration of the same AddressSanitizer build is
-        # build-checked here. It links the debug CRT's runtime
-        # (clang_rt.asan_dynmd-x86_64.dll), which the build stages beside the
-        # executables, so the configuration stays buildable and its runtime
-        # stays beside it. The suites under it run on the Windows member:
-        # the per-case peak-RSS bound is a Release figure, and the Debug
-        # configuration's own figures under the sanitizer are not measured,
-        # so running them here would fail the bound instead of the code.
+        # build-checked here (debug CRT, /MDd, against the one
+        # clang_rt.asan_dynamic-x86_64.dll the build stages beside the
+        # executables). Its suites run on the Windows member with
+        # ROCKETNET_TEST_MAX_CASE_RSS_MB=2048, the Debug figure the windows /
+        # Debug job above uses; docs/PLATFORMS.md records those runs.
         run: cmake --build build --config Debug --parallel 4
 
       - name: Run unit suite under ASan

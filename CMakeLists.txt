@@ -99,29 +99,12 @@ if(ROCKETNET_SANITIZE_ADDRESS AND MSVC AND DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTOR
     else()
         set(ROCKETNET_ASAN_RUNTIME_DEST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     endif()
-    # MSVC ships one AddressSanitizer runtime per CRT: the release CRT's
-    # clang_rt.asan_dynamic-x86_64.dll and the debug CRT's
-    # clang_rt.asan_dynmd-x86_64.dll, both beside cl.exe. The linker takes
-    # the one the configuration's CRT asks for, so a Release configuration
-    # loads the dynamic runtime and a Debug configuration the dynmd one.
-    # Staging only the release CRT's runtime leaves every Debug executable
-    # unable to start ("clang_rt.asan_dynmd-x86_64.dll was not found"), so
-    # stage every runtime the toolchain ships and let the configuration that
-    # links one find it beside its own executables.
-    foreach(rocketnet_asan_runtime
-            clang_rt.asan_dynamic-x86_64.dll
-            clang_rt.asan_dynmd-x86_64.dll)
-        if(EXISTS "${ROCKETNET_ASAN_RUNTIME_DIR}/${rocketnet_asan_runtime}")
-            list(APPEND ROCKETNET_ASAN_RUNTIME_COPIES
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    "${ROCKETNET_ASAN_RUNTIME_DIR}/${rocketnet_asan_runtime}"
-                    "${ROCKETNET_ASAN_RUNTIME_DEST}/${rocketnet_asan_runtime}")
-        endif()
-    endforeach()
-    if(ROCKETNET_ASAN_RUNTIME_COPIES)
+    if(EXISTS "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll")
         add_custom_target(rocketnet_asan_runtime ALL
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${ROCKETNET_ASAN_RUNTIME_DEST}"
-            ${ROCKETNET_ASAN_RUNTIME_COPIES}
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${ROCKETNET_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll"
+                "${ROCKETNET_ASAN_RUNTIME_DEST}/clang_rt.asan_dynamic-x86_64.dll"
             VERBATIM)
     endif()
 endif()
