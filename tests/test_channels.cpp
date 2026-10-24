@@ -231,14 +231,14 @@ static void channels_test_vectors()
 
     {
         static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
-                                            0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+                                            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
         struct rocketnet_message_config_body_t body;
         body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
         body.enabled = 0xff;
         body.num_channels = 32;
         body.reliable_messages_in_flight = 1024;
-        body.receive_message_buffer_bytes = 262144;
-        body.max_message_bytes = 262144;
+        body.receive_message_buffer_bytes = 1048576;
+        body.max_message_bytes = 1048576;
         body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         uint8_t config[ROCKETNET_MESSAGE_CONFIG_BYTES];
         rocketnet_message_write_config_body( config, &body );
@@ -628,7 +628,8 @@ static void channels_test_round_trip_and_never_overreads()
             struct rocketnet_message_writer_t writer;
             rocketnet_message_writer_begin( &writer, payload, sizeof( payload ) );
             struct rocketnet_message_record_t record;
-            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, ROCKETNET_MESSAGE_MAX_RECORD_BYTES ) );
+            // at most the receiver's max_message_bytes (check 9)
+            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, limits.max_message_bytes ) );
             for ( size_t i = 0; i < big.size(); i++ )
                 big[i] = pool[( i * 13 + (size_t) iteration ) & 4095];
             record = channels_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, big.data(), (int) big.size() );
@@ -1010,24 +1011,24 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 1,588,480 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 6,574,080 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // test explicit headroom without a finite send budget
     check( config.num_channels == 32 );
     check( config.reliable_messages_in_flight == 1024 );
-    check( config.receive_message_buffer_bytes == 262144 );
-    check( config.max_message_bytes == 262144 );
+    check( config.receive_message_buffer_bytes == 1048576 );
+    check( config.max_message_bytes == 1048576 );
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 1606912 );
-    check( layout.region_bytes == 1606912 );
-    check( rocketnet_message_connection_bytes( &config ) == 1606912 );
-    check( rocketnet_message_connection_bytes( NULL ) > 1606912 );
+    check( layout.formula_bytes == 6574080 );
+    check( layout.region_bytes == 6574080 );
+    check( rocketnet_message_connection_bytes( &config ) == 6574080 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6574080 );
 
-    const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 1024, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 256, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1059,10 +1060,10 @@ static void test_channels_allocator_layout()
     // the store's classes at the defaults, as section 4 records them: 64-aligned
     // thirds of S, each chunk with its u32 link inside its third
 
-    check( layout.store_chunks[RN_STORE_SMALL] == 2019 );
-    check( layout.store_chunks[RN_STORE_MEDIUM] == 516 );
-    check( layout.store_chunks[RN_STORE_LARGE] == 230 );
-    check( layout.store_chunks[RN_STORE_LARGE] >= ( 262144 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    check( layout.store_chunks[RN_STORE_SMALL] == 10591 );
+    check( layout.store_chunks[RN_STORE_MEDIUM] == 2709 );
+    check( layout.store_chunks[RN_STORE_LARGE] == 1209 );
+    check( layout.store_chunks[RN_STORE_LARGE] >= ( 1048576 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
 
     // odd shapes pad, and the padding is all the region adds to the formula
 
@@ -1107,7 +1108,7 @@ static void test_channels_allocator_validation()
         { "window not a power of two",              (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 1000 },
         { "window below its minimum",               (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 32 },
         { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_message_buffer_bytes ), 262144 + 8 },
-        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
+        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), ROCKETNET_MAX_MESSAGE_BYTES + 16 },
         { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_message_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "resend_delay_initial above resend_delay_max",              (int) offsetof( rocketnet_message_config_t, message_resend_delay_initial_ms ), 3000 },
@@ -1243,11 +1244,11 @@ static void test_channels_allocator_send_store()
     // fill every class to refusal, with nothing else taken; the chunks are
     // distinct, inside the store and 16-aligned
 
-    static uint32_t handles[RN_STORE_NUM_CLASSES][4096];
+    std::vector<uint32_t> handles[RN_STORE_NUM_CLASSES];
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const uint32_t total = rn_send_store_total_chunks( &store, c );
-        check( total <= 4096 );
+        handles[c].resize( total );
         for ( uint32_t i = 0; i < total; i++ )
         {
             handles[c][i] = rn_send_store_alloc( &store, class_bytes[c] );
@@ -1348,8 +1349,8 @@ static void test_channels_allocator_send_store()
 
 // The store's accessors answer the checked free's rule
 // (rocketnet_allocator.cpp, rn_send_store_free_checked): a handle the store did
-// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index at or past
-// the class's chunk count -- reads nothing. A handle the store did issue still
+// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index the store
+// has not issued -- reads nothing. A handle the store did issue still
 // answers its data and its next exactly as before.
 
 static void test_channels_send_store_refuses_bad_handle()
@@ -1374,6 +1375,12 @@ static void test_channels_send_store_refuses_bad_handle()
     memset( valid_data, 0xA5, 100 );
     check( valid_data[0] == 0xA5 && valid_data[99] == 0xA5 );
     check( rn_send_store_chunk_next( &store, valid ) == RN_CHUNK_NONE );
+
+    // an in-range chunk the lazy store has not issued reads nothing
+
+    const uint32_t never_issued = ( (uint32_t) RN_STORE_SMALL << 30 ) | ( rn_send_store_total_chunks( &store, RN_STORE_SMALL ) - 1 );
+    check( rn_send_store_chunk_data( &store, never_issued ) == NULL );
+    check( rn_send_store_chunk_next( &store, never_issued ) == RN_CHUNK_NONE );
 
     // a real chain still walks whole
 
@@ -1463,10 +1470,13 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
     const uint32_t large = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
-    const uint32_t blocks = large / 29;
+    const int block_bytes = 131072; // exhaust the store before the 16 descriptors
+    const uint32_t chunks = ( (uint32_t) block_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t blocks = large / chunks;
+    check( blocks < 16 );
     for ( uint32_t i = 0; i < blocks; i++ )
-        check( rn_region_send_alloc( region, 32768 ) != RN_DESCRIPTOR_NONE );
-    check( rn_region_send_alloc( region, 32768 ) == RN_DESCRIPTOR_NONE );
+        check( rn_region_send_alloc( region, block_bytes ) != RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc( region, block_bytes ) == RN_DESCRIPTOR_NONE );
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
     check( region->descriptors_free == 16 - blocks );
 
@@ -1536,9 +1546,9 @@ static void test_channels_allocator_arena()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
     check( rn_region_ring_span_valid( region, 0, 16 ) );
-    check( rn_region_ring_span_valid( region, 262144 - 1152, 1152 ) );
-    check( !rn_region_ring_span_valid( region, 262144 - 1152, 1153 ) );
-    check( !rn_region_ring_span_valid( region, 262144, 1 ) );
+    check( rn_region_ring_span_valid( region, region->ring_bytes - 1152, 1152 ) );
+    check( !rn_region_ring_span_valid( region, region->ring_bytes - 1152, 1153 ) );
+    check( !rn_region_ring_span_valid( region, region->ring_bytes, 1 ) );
     check( !rn_region_ring_span_valid( region, 8, 16 ) );                  // placements are multiples of 16
     check( !rn_region_ring_span_valid( region, 0xFFFFFFFFFFFFFFF0ULL, 32 ) ); // no wrap past 2^64
 
@@ -1572,9 +1582,9 @@ static void test_channels_allocator_sizing()
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
     check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 1606912" ) != NULL );
-    check( strstr( text, "formula bytes 1606912" ) != NULL );
-    check( strstr( text, "1000 connections 1606912000" ) != NULL );
+    check( strstr( text, "region bytes 6574080" ) != NULL );
+    check( strstr( text, "formula bytes 6574080" ) != NULL );
+    check( strstr( text, "1000 connections 6574080000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1678,7 +1688,9 @@ static void rn_soak_check_accounting( const rn_region_t * region )
 
     uint32_t used[RN_STORE_NUM_CLASSES] = { 0, 0, 0 };
     uint32_t descriptors_used = 0;
-    for ( uint32_t d = 0; d < region->queue; d++ )
+    // a descriptor at or past the lazy pool's watermark was never taken
+    // (tla/RNLazyPool.tla): not in use, and its bytes are not state
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !descriptor->in_use )

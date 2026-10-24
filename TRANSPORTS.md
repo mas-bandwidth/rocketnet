@@ -470,10 +470,12 @@ per-CPU totals each time the transport counter surface is read. Only a
 transport with a kernel prefilter fills them; a transport with none leaves them
 zero.
 
-The replay map is read-only to the kernel: it drops a session packet 16 or
-more behind the high-water the userspace window sets, and never writes the
-map. The transport marks each connected client after every update, and the
-userspace window stays 4096.
+The replay map is read-only to the kernel: it drops a session packet a whole
+replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
+the high-water the userspace window sets, and never writes the map. The
+kernel window is the userspace window, so a reordered packet that every other
+transport accepts is accepted on XDP too. The transport marks each connected
+client after every update.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

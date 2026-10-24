@@ -14,12 +14,16 @@ and, on Debian or Ubuntu, the packages CI installs: `cmake`, `build-essential`,
 `clang`, `libbpf-dev`, `libxdp-dev`, `liburing-dev` and `xxd` (`BUILDING.md`, Dependencies).
 `dpkg-query` in section 10 checks they are present.
 
-libbpf and libxdp are required: configure stops without them
-(`cmake/RocketNetDependencies.cmake:19-31`). liburing is optional: without it
-the `io_uring` transport is built to refuse and configure prints
-`liburing not found: the io_uring server transport is built to refuse`
-(`cmake/RocketNetDependencies.cmake:32-50`, `CMakeLists.txt:22`). The libbpf
-floor is 1.0 (`BUILDING.md:479-482`).
+XDP needs libbpf and an AF_XDP provider: libxdp on newer distributions,
+or the AF_XDP APIs in stock libbpf 0.5 on Ubuntu 22.04. On 22.04 omit
+`libxdp-dev` from the package command; configure reports
+`XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`.
+The installed package retains the provider used for its build.
+liburing is optional; without it the io_uring transport is built to refuse.
+Jammy's liburing 2.1 also lacks the multishot receive headers needed by that
+transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
+22.04 build compatibility", for build checks and the separate kernel/NIC
+runtime qualification boundary.
 
 The XDP program is compiled at build time, never on the server host.
 `cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
@@ -29,8 +33,8 @@ with a clang that has the BPF target, against the kernel UAPI headers
 `rocketnet_server_socket_create` opens them with `bpf_object__open_mem`. The
 build is tolerant, for a deployment that never runs XDP (a host without root,
 such as AWS GameLift): a configure that finds no such clang, or no libbpf or
-libxdp, prints `XDP off: no clang with the BPF target was found, so XDP is
-compiled out of this build` (or `XDP off: libbpf or libxdp was not found, so
+AF_XDP provider, prints `XDP off: no clang with the BPF target was found, so XDP is
+compiled out of this build` (or `XDP off: libbpf or AF_XDP headers/library were not found, so
 XDP is compiled out of this build`) and compiles the whole XDP
 transport out, with no embedded object, no XDP or netlink gateway code in the
 library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on
@@ -264,7 +268,115 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 `scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
 `scripts/rocketnet-provision sweep` after a crash.
 
-**What the server needs.**
+### Space / RocketWerkz machine layout
+
+Use the setup from Space's `game/Apps/Server/Server.cpp`: disable
+hyperthreading, reserve CPU 0 for OS housekeeping, dedicate two physical
+cores to XDP, and pin the game threads to the remaining cores. On Space's
+16-core machine the layout is:
+
+| CPU | Work |
+| --- | --- |
+| 0 | OS housekeeping and non-game interrupts |
+| 1 | XDP queue 0 worker and NIC queue 0 interrupt |
+| 2 | XDP queue 1 worker and NIC queue 1 interrupt |
+| 3–15 | Game main thread and worker pool |
+
+**Disable hyperthreading and isolate the cores at boot.** Space uses this
+exact kernel command line addition:
+
+```text
+nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
+```
+
+Add it to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, preserving
+other required boot arguments, then run `sudo update-grub` and reboot.
+Verify after reboot:
+
+```sh
+cat /proc/cmdline
+cat /sys/devices/system/cpu/smt/control
+cat /sys/devices/system/cpu/online
+cat /sys/devices/system/cpu/isolated
+lscpu -e=CPU,CORE,SOCKET,ONLINE
+```
+
+SMT must be off (or unsupported). The example assumes online CPU IDs 0–15
+represent distinct physical cores; inspect the topology after `nosmt` and
+adapt the ranges for a different machine. At least four physical cores are
+needed for this one-OS/two-XDP layout with a game core remaining. The code's
+CPU arithmetic assumes contiguous CPU IDs; sparse IDs need an explicit map.
+OS housekeeping on CPU 0 does not mean all kernel work can be eliminated
+from the application cores.
+
+**Choose an i40e driver with AF_XDP zero-copy support.** Space's Intel X710
+uses `i40e`, but the separately installed Intel driver and the driver shipped
+with Linux have different feature support. Intel's standalone 2.30.18 driver
+[explicitly disables AF_XDP zero-copy on Ubuntu and kernels 5.2 or newer](https://github.com/intel/ethernet-linux-i40e/blob/v2.30.18/src/i40e.h#L48-L55).
+[Space's driver fork](https://github.com/mas-bandwidth/ethernet-linux-i40e/blob/d6c70a9bc8bb537424661b680acfba52f188fae0/src/i40e.h#L50-L57)
+contains the same restriction. Rebuilding that source unchanged does not
+provide zero-copy on Ubuntu 22.04.
+
+Start qualification with Ubuntu's supplied `i40e` module on the GA
+`linux-generic` 5.15 track. The
+[Linux 5.15 implementation includes AF_XDP zero-copy](https://github.com/torvalds/linux/blob/v5.15/drivers/net/ethernet/intel/i40e/i40e_xsk.c).
+Verify `uname -r`, `ethtool -i <interface>`, and `modinfo -n i40e`; a separately
+installed module under `updates/` may override the distribution module.
+On kernels/tools exposing XDP feature queries, `sudo xdp-loader features
+<interface>` must report `NETDEV_XDP_ACT_XSK_ZEROCOPY: yes`. This query is not
+available on every older kernel, so its absence is not a capability verdict.
+In all cases, require a successful forced zero-copy bind and the kernel's
+`XDP_OPTIONS_ZEROCOPY` result on every queue. Native XDP attachment alone is
+not zero-copy proof. Physical-NIC qualification on 5.15 remains necessary.
+
+**Provision two NIC queues.** Before starting the server, run the existing
+provisioner with the actual interface name (Space currently uses `eno1`):
+
+```sh
+sudo scripts/rocketnet-provision eno1 2
+sudo scripts/rocketnet-provision eno1 2 verify
+```
+
+This performs the runtime steps in the condition table above, including
+channel count, busy-poll settings and IRQ affinity. Prevent irqbalance from
+moving the queue IRQs afterwards; on a dedicated host with irqbalance
+installed, disable it with `sudo systemctl disable --now irqbalance` before
+provisioning. Verify the queue mapping is **queue 0 → CPU 1, queue 1 → CPU 2**.
+For i40e the queue IRQ names are `i40e-eno1-TxRx-0` and `i40e-eno1-TxRx-1` in
+`/proc/interrupts`. After finding their IRQ numbers, the corresponding
+`/proc/irq/<irq>/smp_affinity_list` and `effective_affinity_list` must read
+`1` and `2`. If using `smp_affinity` instead, the hexadecimal masks are `2`
+and `4`: mask `1` means CPU 0. Re-discover IRQ numbers after reboot, driver
+reload or channel changes. Keep other configurable IRQs on CPU 0.
+
+**Use Space's thread placement in the application.** Its constants are
+`NumOsCpus=1`, `NumXdpQueues=2` and `NumXdpCpus=NumXdpQueues`. In RocketNet's
+current server config set:
+
+```c
+server_config.num_os_cpus = 1;
+server_config.num_xdp_queues = 2;
+server_config.transport = "xdp";
+```
+
+RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2.
+Space pins each game worker from within that thread with
+`pthread_setaffinity_np`, using `NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`,
+and requests `SCHED_FIFO` priority. On this host its pool has 13 threads,
+including the main thread, with indices 0–12 mapping to CPUs 3–15. The game
+owns its thread placement; RocketNet does not pin the game's worker pool.
+
+An integration must run its pinning callback on every actual worker and
+check affinity/priority return values. Space's existing `PinThreadToCPUTask`
+uses ordinary scheduler tasks with a short sleep, and its own source notes
+that this does not guarantee every worker receives a callback. Carry over
+the CPU layout and per-thread affinity operation; do not treat a completed
+batch of ordinary tasks as proof of placement. Inspect every thread's
+`Cpus_allowed_list` under `/proc/<pid>/task/<tid>/status` and queue IRQ
+counters during traffic. Confirm AF_XDP zero-copy on both NIC queues;
+startup and an `xdp` transport label alone do not establish zero-copy.
+
+### XDP requirements and checks
 
 - No compiler: the XDP program is compiled and embedded at build time
   (section 1), and the server loads it from memory.
@@ -316,6 +428,14 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
 `PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
+
+The nightly 1,000-client xdp load cell needs a far larger guest: the server
+and its 1,000 default-profile clients share one process, and the plan alone is
+16.96 GiB and the measured peak RSS is 26.1 GiB. The step sizes the guest from
+`LOAD_PLAN_ONLY=1 ./bin/load 1000 60` plus a measured per-client run reserve,
+as `(plan + 1000 * 9848630) * 5 / 4 + 1 GiB` (34G today), so the runner needs
+that much `MemAvailable`; a 16G guest is OOM-killed and a 24G guest is killed at the
+shutdown wipe (`docs/LOAD.md`, "The nightly AF_XDP cell's guest memory").
 
 ## 7. Socket errors and ICMP
 

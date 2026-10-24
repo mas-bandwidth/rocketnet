@@ -347,10 +347,12 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->mutex.ok ) rocketnet_platform_mutex_destroy( &server->mutex );
     if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
     void * context = server->context;
+    // the receive banks hold datagrams, never a secret: freed as they are,
+    // so destroy touches no bank page the run did not (tla/RNDestroyWipe.tla)
     if ( server->rx_storage )
-        rocketnet_clear_and_free( context, server->rx_storage, (size_t) portable_rx_storage_bytes( server->rx_capacity ) );
+        rocketnet_free( context, server->rx_storage );
     server->~portable_server_t();
-    rocketnet_clear_and_free( context, server, sizeof( portable_server_t ) );
+    rocketnet_free( context, server );
 }
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -1088,13 +1090,13 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
 // Keep a refusing rung: removing this known row would make an all-skipped
 // pin expand to auto under the fleet-wide list policy. No socket is opened.
 // XDP is compiled out (CMakeLists.txt: ROCKETNET_XDP=OFF, or no clang with the
-// BPF target, libbpf or libxdp at configure), so a list naming xdp refuses it
+// BPF target, libbpf or an AF_XDP provider at configure), so a list naming xdp refuses it
 // with TRANSPORT_NOT_BUILT and auto falls past it to the next transport.
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
     if ( config->status )
         *config->status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
-    rocketnet_error( "xdp create refused: XDP is compiled out of this build (ROCKETNET_XDP=OFF, or no clang with the BPF target, libbpf or libxdp at configure)" );
+    rocketnet_error( "xdp create refused: XDP is compiled out of this build (ROCKETNET_XDP=OFF, or no clang with the BPF target, libbpf or an AF_XDP provider at configure)" );
     return NULL;
 }
 static void xdp_disabled_destroy( void * ) {}

@@ -16,6 +16,15 @@
 #include <stdio.h>
 #include <string.h>
 
+void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( &client->token, sizeof(client->token) );
+    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
+}
+
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
 {
     rocketnet_assert( client );
@@ -24,6 +33,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
     memcpy( packet_filter, client->packet_filter, sizeof(packet_filter) );
     const double send_rate = client->send_rate;
+    const int defer_payload_acks = client->defer_payload_acks;
     struct rocketnet_counters_t * counters = client->counters;
     struct rocketnet_reassembly_set_t * reassembly = client->reassembly;
     const rocketnet_client_publish_keys_t publish_keys = client->publish_keys;
@@ -35,14 +45,12 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
     // Key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( &client->token, sizeof(client->token) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
-    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
-    memset( client, 0, sizeof(*client) );
+    rocketnet_client_protocol_wipe_secrets( client );
+    rocketnet_client_protocol_zero_state( client );
 
     memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
     client->send_rate = send_rate;
+    client->defer_payload_acks = defer_payload_acks;
     client->counters = counters;
     client->state = terminal_state;
     client->client_index = -1;
@@ -71,9 +79,9 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
 
     /*
-        Remove first: rocketnet_encryption_map_remove wipes the session keys,
-        nonce, challenge and token record while the slot still identifies the
-        mapping. The slot identity and user data are cleared only afterwards.
+        Remove first: rocketnet_encryption_map_remove wipes the session keys
+        and nonce, and takes the entry out of live, while the slot still
+        identifies the mapping. The slot identity and user data are cleared only afterwards.
     */
     if ( mapping_index >= 0 && server->encryption_map )
         rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
@@ -109,6 +117,7 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
+    memset( &connection->unreliable_build, 0, sizeof(connection->unreliable_build) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
     memset( connection->hot->cursors, 0,
             sizeof(uint32_t) * (size_t) connection->region->num_channels );

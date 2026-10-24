@@ -99,7 +99,7 @@ redundant disconnects (glance table)	transport.tsv: server/client redundant disc
 replay buffer at least	transport.tsv: replay window depth minimum
 replay window bits	transport.tsv: replay window depth minimum
 replay buffer maximum	transport.tsv: replay window depth maximum
-kernel replay prefilter window	t14.tsv: kernel replay window
+kernel replay prefilter window	no pin; RN-1 t14 prose: the prefilter distance is the replay window depth (transport.tsv: replay window depth minimum)
 used-token history ratio	transport.tsv: used-token history per slot
 mapping-table sizing rule (prose)	no pin; prose sizing rule in RN-1 t3 (see report)
 #

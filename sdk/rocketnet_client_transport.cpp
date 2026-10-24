@@ -115,6 +115,7 @@ struct rocketnet_client_received_packets_t
     int receive_index;
     uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
     int packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
+    uint64_t sequence[ROCKETNET_NUM_CLIENT_PACKETS];
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
@@ -141,8 +142,9 @@ struct alignas(64) rocketnet_client_stats_frame_t
 // The BASE receive worker owns fill, update owns the buffers it exposes, and
 // only indices cross the mutex. READY buffers are immutable; FREE buffers may
 // be claimed by the worker. Update exposes the oldest READY buffers that fit
-// its packet budget, processes them in order and returns them FREE within the
-// same update. Buffers beyond that budget stay READY for a later update.
+// its packet budget and processes them in order. Contended returns remain
+// caller-owned until a later update can publish them FREE without waiting.
+// Buffers beyond the packet budget stay READY for a later update.
 // Packet data is never copied or cleared while holding the mutex.
 struct rocketnet_client_legacy_receive_state_t
 {
@@ -153,6 +155,12 @@ struct rocketnet_client_legacy_receive_state_t
     int free[3] = { 0, 1, 2 };
     int free_head = 0;
     int free_count = 3;
+    // Only the caller touches these until it publishes the indices FREE.
+    int returned[3] = {};
+    int returned_count = 0;
+#if ROCKETNET_TEST_SEAMS
+    unsigned test_busy_mask = 0;
+#endif
 };
 
 /*
@@ -226,6 +234,47 @@ struct rocketnet_client_transport_t
 #undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
 };
 
+// The members construction does not zero. Three are buffers: their bytes
+// are written before they are read, at the count or ring index that names
+// them, so only their counts are state, and construction and the connection
+// reset set the counts and never touch the bytes (6.5 MB of receive buffers,
+// 2.1 MB of received packets and 1.6 MB of payload rings at the defaults).
+// Two initialize themselves: the lease table by its constructor, and the
+// protocol by rocketnet_client_protocol_init.
+static bool rocketnet_client_transport_buffer_member( const char * name )
+{
+    return strcmp( name, "payload_ring" ) == 0 || strcmp( name, "received_packets" ) == 0 || strcmp( name, "receive_buffer" ) == 0 ||
+           strcmp( name, "packet_leases" ) == 0 || strcmp( name, "protocol" ) == 0;
+}
+
+static void rocketnet_client_transport_reset_buffer_counts( rocketnet_client_transport_t * client, int ring )
+{
+    client->payload_ring[ring].num_packets = 0;
+}
+
+// Every member that is state zeroed in the raw storage, then default
+// initialization (members with initializers get them, nothing else is
+// written), then the buffers' counts: the buffers' bytes are never written
+// here, so their pages are touched only when a packet uses them. Zero only
+// what is state (Glenn 2026-10-22): pointers, handles, state that must start
+// valid, and keys; never whole structures.
+static void rocketnet_client_transport_construct( rocketnet_client_transport_t * client )
+{
+    uint8_t * storage = (uint8_t *) client;
+#define ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE( name, declaration ) \
+    if ( !rocketnet_client_transport_buffer_member( #name ) ) \
+        memset( storage + offsetof( rocketnet_client_transport_t, name ), 0, sizeof( ( (rocketnet_client_transport_t *) 0 )->name ) );
+    ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE )
+#undef ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE
+    new ( client ) rocketnet_client_transport_t;
+    for ( int ring = 0; ring < 2; ring++ )
+        rocketnet_client_transport_reset_buffer_counts( client, ring );
+    client->received_packets.num_packets = 0;
+    client->received_packets.receive_index = 0;
+    for ( int i = 0; i < 3; i++ )
+        client->receive_buffer[i].num_packets = 0;
+}
+
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
@@ -239,17 +288,6 @@ bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size
                                               decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
                                               sizeof(rocketnet_client_transport_t), alignof(rocketnet_client_transport_t),
                                               failure, failure_bytes );
-}
-#endif // #if ROCKETNET_TEST_SEAMS
-
-#if ROCKETNET_TEST_SEAMS
-static bool rocketnet_all_zero( const void * data, size_t bytes )
-{
-    const uint8_t * p = (const uint8_t *) data;
-    for ( size_t i = 0; i < bytes; i++ )
-        if ( p[i] != 0 )
-            return false;
-    return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
@@ -281,18 +319,18 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
     memset( &fresh_jitter, 0, sizeof(fresh_jitter) );
     rocketnet_packet_loss_tracker_reset( &fresh_loss );
     rocketnet_jitter_tracker_reset( &fresh_jitter );
+    // the buffers are reset by their counts: their bytes keep the poison and
+    // are unreachable, because nothing reads a slot at or past its count
     for ( int ring = 0; ring < 2; ring++ )
     {
-        if ( client->payload_ring[ring].num_packets != 0 ||
-             !rocketnet_all_zero( client->payload_ring[ring].info, sizeof(client->payload_ring[ring].info) ) ||
-             !rocketnet_all_zero( client->payload_ring[ring].data, sizeof(client->payload_ring[ring].data) ) )
+        if ( client->payload_ring[ring].num_packets != 0 )
             return false;
     }
     const bool arena_clean = client->send_arena->num_used == 0 &&
         rocketnet_send_arena_acquire( client->send_arena ) == arena_first;
     rocketnet_send_arena_reset( client->send_arena );
     return arena_clean &&
-           rocketnet_all_zero( &client->received_packets, sizeof(client->received_packets) ) &&
+           client->received_packets.num_packets == 0 && client->received_packets.receive_index == 0 &&
            client->stats_counted == 0 &&
            memcmp( &client->packet_loss_tracker, &fresh_loss, sizeof(fresh_loss) ) == 0 &&
            memcmp( &client->jitter_tracker, &fresh_jitter, sizeof(fresh_jitter) ) == 0;
@@ -325,14 +363,12 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
     {
         if ( client->io_thread && ring != client->client_io.rings.fill )
             continue;
-        if ( client->payload_ring[ring].num_packets != 0 ||
-             !rocketnet_all_zero( client->payload_ring[ring].info, sizeof(client->payload_ring[ring].info) ) ||
-             !rocketnet_all_zero( client->payload_ring[ring].data, sizeof(client->payload_ring[ring].data) ) )
+        if ( client->payload_ring[ring].num_packets != 0 )
             member = "payload_ring";
     }
     if ( !member && client->send_arena->num_used != 0 )
         member = "send_arena";
-    if ( !member && !rocketnet_all_zero( &client->received_packets, sizeof(client->received_packets) ) )
+    if ( !member && ( client->received_packets.num_packets != 0 || client->received_packets.receive_index != 0 ) )
         member = "received_packets";
     if ( !member && client->stats_counted != 0 )
         member = "stats_counted";
@@ -368,19 +404,15 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 {
     rocketnet_assert( client );
     client->packet_leases.reset();
-    struct rocketnet_client_payload_ring_t * fill = &client->payload_ring[client->client_io.rings.fill];
-    fill->num_packets = 0;
-    memset( fill->info, 0, sizeof(fill->info) );
-    memset( fill->data, 0, sizeof(fill->data) );
+    // the buffers' counts, never their bytes: a slot is written when it is
+    // claimed and read only below the count, so nothing of the ended
+    // connection is reachable
+    rocketnet_client_transport_reset_buffer_counts( client, client->client_io.rings.fill );
     if ( !client->io_thread )
-    {
-        const int other = 1 - client->client_io.rings.fill;
-        client->payload_ring[other].num_packets = 0;
-        memset( client->payload_ring[other].info, 0, sizeof(client->payload_ring[other].info) );
-        memset( client->payload_ring[other].data, 0, sizeof(client->payload_ring[other].data) );
-    }
+        rocketnet_client_transport_reset_buffer_counts( client, 1 - client->client_io.rings.fill );
     rocketnet_send_arena_reset( client->send_arena );
-    memset( &client->received_packets, 0, sizeof(client->received_packets) );
+    client->received_packets.num_packets = 0;
+    client->received_packets.receive_index = 0;
     rocketnet_packet_loss_tracker_reset( &client->packet_loss_tracker );
     rocketnet_jitter_tracker_reset( &client->jitter_tracker );
     client->stats_counted = 0;
@@ -437,12 +469,13 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
         transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
 }
 
-// Stop sends everything the link simulator still holds, the disconnect burst
-// included. The caller's thread owns the simulator and only a running update
-// drains it; once stop is requested no update drains it again, and shutdown
-// updates hold the clock fixed, so a held packet would never come due. The
+// Shutdown completion sends everything the link simulator still holds, the
+// disconnect burst included. Stop publishes quit with release, transferring
+// the simulator from the caller to the worker; no running update can touch it
+// afterward. Step-driven transports do this in their explicit shutdown step.
+// Shutdown holds the clock fixed, so a held packet would never come due. The
 // loss and duplicate policy already ran at send; what remains leaves now,
-// ahead of its latency (tla/RNClientLinkStop.tla StopDrains).
+// ahead of its latency (tla/RNClientLinkStop.tla WorkerComplete).
 static void rocketnet_client_link_drain_at_stop( rocketnet_client_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -643,7 +676,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp );
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+    const uint64_t * resolved_memory_budget = NULL );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
@@ -658,6 +692,13 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current( void *
 rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0 );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
+                                                                           uint64_t memory_budget_bytes, int * status )
+{
+    rocketnet_assert( config );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0, &memory_budget_bytes );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
@@ -704,7 +745,8 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp )
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+    const uint64_t * resolved_memory_budget )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -733,7 +775,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the development posture (the default shape); the caller's struct is
     // the middle layer; the environment overlays both through the config
     // table, every override logged loudly with the value it displaced.
-    // validation refuses loudly and never clamps.
+    // validation refuses loudly and never clamps. A config the public create
+    // already resolved (resolved_memory_budget set,
+    // rocketnet_client_transport_create_resolved) takes no second environment
+    // pass: connect uses the config create validated and sized, whatever the
+    // environment says now.
 
     struct rocketnet_client_transport_config_t effective_config;
     rocketnet_client_transport_default_config_current( &effective_config );
@@ -743,7 +789,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );
 
-    if ( !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -816,8 +862,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    uint64_t memory_budget = 0;
-    if ( !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
+    uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -869,7 +915,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
-    new ( client_transport ) rocketnet_client_transport_t();
+    rocketnet_client_transport_construct( client_transport );
 
     client_transport->context = context;
 
@@ -1367,9 +1413,9 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
     else
     {
-        rocketnet_client_link_drain_at_stop( client_transport );
         client_transport->quit.store( true, std::memory_order_release );
-        if ( ( !client_transport->thread && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
+        if ( ( !client_transport->thread && !client_transport->link_simulator &&
+               !client_transport->stop_burst_pending.load( std::memory_order_acquire ) ) || rocketnet_client_memory_plan_seam_enabled )
             client_transport->stopped.store( true, std::memory_order_release );
     }
 }
@@ -1398,8 +1444,32 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_transport_flush_disconnect( client_transport );
+    rocketnet_client_link_drain_at_stop( client_transport );
     client_transport->stopped.store( true, std::memory_order_release );
 }
+
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
+    const size_t open = offsetof( rocketnet_client_transport_t, client_io ) + offsetof( rocketnet_client_io_t, open );
+    const size_t spans[5][2] =
+    {
+        { protocol + offsetof( rocketnet_client_protocol_t, keys ), sizeof( rocketnet_connection_keys_t ) },
+        { protocol + offsetof( rocketnet_client_protocol_t, token ), sizeof( rocketnet_connect_token_t ) },
+        { protocol + offsetof( rocketnet_client_protocol_t, client_ephemeral_secret_key ), ROCKETNET_KEY_BYTES },
+        { protocol + offsetof( rocketnet_client_protocol_t, session_nonce ), ROCKETNET_SESSION_NONCE_BYTES },
+        { open + offsetof( rocketnet_client_io_open_t, session_server_to_client ), ROCKETNET_KEY_BYTES },
+    };
+    int count = 0;
+    for ( ; count < 5 && count < max; count++ )
+    {
+        offsets[count] = spans[count][0];
+        bytes[count] = spans[count][1];
+    }
+    return count;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
 
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
@@ -1431,9 +1501,15 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     if ( client_transport->reassembly )
         rocketnet_reassembly_set_destroy( client_transport->reassembly );
 
+    // the keys, and only the keys: the protocol's and the I/O thread's open
+    // copy (joined above). Every other byte goes back as it is; the OS
+    // zero-fills a page before another process gets it.
+    rocketnet_client_protocol_wipe_secrets( &client_transport->protocol );
+    sodium_memzero( client_transport->client_io.open.session_server_to_client, sizeof(client_transport->client_io.open.session_server_to_client) );
+
     void * allocation_context = client_transport->context;
     client_transport->~rocketnet_client_transport_t();
-    rocketnet_clear_and_free( allocation_context, client_transport, sizeof(rocketnet_client_transport_t) );
+    rocketnet_free( allocation_context, client_transport );
 }
 
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,
@@ -1496,6 +1572,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         const int index = received->num_packets;
         received->packet_data[index] = payload;
         received->packet_bytes[index] = payload_bytes;
+        received->sequence[index] = session_sequence;
         received->num_packets++;
     }
 
@@ -1511,6 +1588,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
             const int index = received->num_packets;
             received->packet_data[index] = reassembly->completed_payload;
             received->packet_bytes[index] = reassembly->completed_bytes;
+            received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
             received->num_packets++;
         }
         else
@@ -1619,19 +1697,39 @@ static void rocketnet_client_legacy_push( int * queue, int head, int * count, in
     ++*count;
 }
 
-// Take the oldest READY buffers that fit the packet budget in one short mutex
-// hold. Only indices move; a READY buffer is immutable, so reading its count
-// here is a load of a published int. The first is always taken; a later one
-// only while the update's receive batch (ROCKETNET_NUM_CLIENT_PACKETS) can
-// still hold its datagrams, the rest staying READY, in order, for the next
-// update. Returns the number of buffers exposed into exposed[].
+// Try once at each caller handoff. Unit tests can refuse either phase without
+// starting a competing thread or depending on scheduler timing.
+static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
+{
+#if ROCKETNET_TEST_SEAMS
+    if ( client_transport->receive_buffer_index.test_busy_mask & phase )
+        return false;
+#else
+    (void) phase;
+#endif
+    return rocketnet_platform_mutex_try_acquire( &client_transport->mutex );
+}
 
+// Called with the mutex held. The counts were cleared while the caller still
+// owned the buffers; publishing their indices is the only ownership transfer.
+static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_receive_state_t * state )
+{
+    for ( int i = 0; i < state->returned_count; ++i )
+        rocketnet_client_legacy_push( state->free, state->free_head, &state->free_count, state->returned[i] );
+    state->returned_count = 0;
+}
+
+// Take the oldest READY buffers that fit the packet budget. If the worker
+// owns the mutex, leave everything in place and continue this update without
+// receiving. Returning previously processed buffers precedes taking new ones.
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
 {
+    if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
+        return 0;
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
+    rocketnet_client_legacy_publish_returns( state );
     int num_exposed = 0;
     int num_packets = 0;
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
     while ( state->ready_count > 0 )
     {
         const int packets = client_transport->receive_buffer[state->ready[state->ready_head]].num_packets;
@@ -1644,20 +1742,22 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
     return num_exposed;
 }
 
-// The exposed buffers are processed and still
-// main-owned, so they are cleared without the mutex, then go back FREE in one
-// short hold, ready for the worker before the next update.
-
+// Keep processed buffers caller-owned if the worker has the mutex. They are
+// neither READY nor FREE, so neither side can process or overwrite them again.
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
 {
     if ( num_exposed == 0 )
         return;
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
+    rocketnet_assert( state->returned_count == 0 );
     for ( int i = 0; i < num_exposed; i++ )
+    {
         client_transport->receive_buffer[exposed[i]].num_packets = 0;
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
-    for ( int i = 0; i < num_exposed; i++ )
-        rocketnet_client_legacy_push( state->free, state->free_head, &state->free_count, exposed[i] );
+        state->returned[state->returned_count++] = exposed[i];
+    }
+    if ( !rocketnet_client_legacy_try_acquire( client_transport, 2 ) )
+        return;
+    rocketnet_client_legacy_publish_returns( state );
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
@@ -2553,7 +2653,8 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 {
     auto * client = (rocketnet_client_transport_t *) rocketnet_malloc( NULL, sizeof(rocketnet_client_transport_t) );
     rocketnet_assert( client );
-    new ( client ) rocketnet_client_transport_t();
+    rocketnet_client_transport_construct( client );
+    rocketnet_client_protocol_init( &client->protocol, &client->counters );
     client->protocol.ack = *endpoint;
     client->jitter_tracker.jitter = 0.250;
     client->client_stats.packet_loss = 75.0f;
@@ -2580,7 +2681,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         rocketnet_platform_mutex_release( &client_transport->mutex );
 
         // All three buffers can be FILL or READY between updates (update
-        // returns what it exposes within the same update). Leave unread
+        // may defer returning processed buffers). Leave unread
         // datagrams in the transport until update frees one; never
         // overwrite a buffer that another phase still owns.
         if ( fill < 0 )
@@ -2654,6 +2755,12 @@ void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport
     rocketnet_client_receive_packets( client_transport, &time );
 }
 
+void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t * client_transport, unsigned mask )
+{
+    rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread && mask <= 3 );
+    client_transport->receive_buffer_index.test_busy_mask = mask;
+}
+
 // The step-driven fixture has no concurrent worker. Expose ownership so its
 // regression can check backpressure and buffer reuse without depending on
 // scheduler timing or private layout offsets.
@@ -2686,9 +2793,8 @@ static void rocketnet_client_thread_function( void * data )
 }
 
 // The development network simulator call on a live transport: reconfigures
-// the link simulator when one is running (a client with a link simulator has
-// no network thread, so the caller's thread owns it); false when none runs,
-// and the settings then take effect at the next connect.
+// the link simulator while the caller still owns it. Stop transfers ownership
+// to the worker; a stopped transport cannot be reconfigured.
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2697,9 +2803,21 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     client_transport->config.simulated_jitter_ms = jitter_ms;
     client_transport->config.simulated_loss_percent = packet_loss_percent;
     client_transport->config.simulated_duplicate_percent = duplicate_percent;
-    if ( !client_transport->link_simulator )
+    if ( !client_transport->link_simulator || client_transport->stop_requested )
         return false;
     rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
+
+void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport )
+{
+    transport->protocol.defer_payload_acks = 1;
+}
+
+void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k )
+{
+    const rocketnet_client_received_packets_t * batch = &transport->received_packets;
+    if ( k >= 0 && k < batch->num_packets )
+        rocketnet_client_protocol_accept_payload( &transport->protocol, batch->sequence[k] );
+}

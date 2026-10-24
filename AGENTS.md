@@ -56,8 +56,16 @@ Full build instructions live in [BUILDING.md](BUILDING.md).
 - **Linux (Ubuntu 24.04):**
   ```sh
   sudo apt update
-  sudo apt install -y cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
+  sudo apt install -y cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd
   ```
+- **Linux (Ubuntu 22.04, stock libraries, XDP enabled):**
+  ```sh
+  sudo apt update
+  sudo apt install -y cmake build-essential clang libbpf-dev liburing-dev xxd
+  ```
+  AF_XDP is supplied by libbpf 0.5 on this distribution; there is no
+  `libxdp-dev` package. Build/link compatibility does not establish runtime
+  qualification on the original 5.15 kernel or a particular NIC.
 - **macOS:**
   ```sh
   brew install cmake
@@ -295,8 +303,8 @@ configured families refuses start with
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`.
 
 Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
-`receive_message_buffer_bytes = 262144`, `max_message_bytes = 262144`,
-`send_message_buffer_bytes = 800000`, `send_queue_messages = 1024`,
+`receive_message_buffer_bytes = 1048576`, `max_message_bytes = 1048576`,
+`send_message_buffer_bytes = 4194304`, `send_queue_messages = 1024`,
 `packets_in_flight = 256`, `unreliable_messages_per_update = 1024`,
 `sequenced_messages_held = 16`, `max_message_receipts = 256`,
 `reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server
@@ -385,7 +393,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
-  - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or libxdp.
+  - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or an AF_XDP provider.
   - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`), `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`): a production build (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and server create, and a connect token sealed to the published development server key at client connect.
 - **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receipts`, `rocketnet_server_receipts`) return `0` when refused. `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages` return `NULL` when no batch is left. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a negative status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a server index outside `0 .. max_clients - 1`); a rate of `0` sets the default rate. On a connection that is not CONNECTED the call returns `ROCKETNET_STATUS_OK` and changes nothing. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, an init with only one allocator function, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
@@ -446,6 +454,7 @@ RocketNet has no copying send call: the caller never hands it a finished buffer 
 - The caller serializes or writes the message into that pointer in place.
 - `rocketnet_client_finish_message(client, bytes_written)` and `rocketnet_server_finish_message( server, bytes_written )` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused).
 - `rocketnet_client_abort_message(client)` and `rocketnet_server_abort_message( server )` cancel an open reservation without sending and give its room back.
+- `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )` and `rocketnet_server_can_send_message( server, client_index, channel, reliability, max_bytes )` answer whether that start would be given room now. They change nothing and run in constant time. A start after a `false` still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`.
 - There is no public broadcast call: to send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
 
 Where the returned pointer lies depends on the message:
@@ -470,10 +479,10 @@ In practice: no per-message copy or allocation for unreliable traffic that takes
 - **One `start` pending per object at a time:** finish or abort the current reservation before calling `start` again on the same client or server, and never keep the `uint8_t *` after `finish` or `abort`.
 - **Finish before `update` and `send_packets`:** an in-place start still pending when `rocketnet_client_update` / `rocketnet_server_update` or `rocketnet_client_send_packets` / `rocketnet_server_send_packets` runs is aborted there and counted as API misuse (the stats' `api_misuses`); its later `finish` returns `0`. A start on the region path is not aborted there, but the caller cannot tell the paths apart, so finish or abort every start before either call.
 - **The in-place rules for a fitting unreliable message:**
-  - Each fitting message gets its own packet, sealed and staged at `finish` and flushed by the next `send_packets` with everything else. Acks ride in it as in every packet; other messages do not. A game that wants several small unreliable messages in one packet writes them as one message.
+  - Small fitting messages share a packet. `start` reserves their final payload location after previously committed records; `finish` commits the actual length without copying. A full packet is sealed before opening the next, and `send_packets` seals and flushes the remaining records. Acks ride in each sealed packet. `abort` releases only the pending reservation; earlier records remain intact.
   - Those packets count against `packets_per_update` (one allowance per update, shared with the packets `send_packets` writes). While reliable work is due, an in-place message never takes the last slot of the allowance: one is kept for the reliable work.
   - The message falls back to the queue (written to the region and sent by the next `send_packets`, one copy) when the transport has no packet buffer to give, or one smaller than the request, when unreliable messages are already queued on that connection (so it cannot overtake them; for `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` also when its channel's queue or a reliable block is still waiting), when the update's packet allowance is spent, or when the send budget cannot pay the declared maximum now (or a reliable message from the last pass is still waiting for budget). Each fallback is counted inside the library (the message layer's `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK` counter, which is not one of the public stats fields). `start` then returns a pointer into the region, or `NULL` if the region has no room (below).
-  - If the send budget can no longer pay at `finish`, the message is dropped there, counted in the `messages_dropped_over_budget` stat, and `finish` still returns its serial; a `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` message reports `ROCKETNET_RECEIPT_STATUS_LOSS` for it.
+  - If the send budget can no longer pay when the packet is sealed, its messages are dropped there, counted in the `messages_dropped_over_budget` stat, and each successful `finish` has returned its serial; a `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` message reports `ROCKETNET_RECEIPT_STATUS_LOSS` for it.
 - **A reliable message:** `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT` and `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT` are always written into the region (a store chunk up to `1152` bytes, a contiguous span above that) and copied into their packet, or into `1152`-byte fragments, at `send_packets`. A reliable message waits for send budget and is never dropped for it.
 - **An oversize unreliable message:** when the declared `bytes` exceeds one packet (up to `max_message_bytes`), `start` accepts it and the message is promoted on the wire to its reliable twin (`ROCKETNET_RELIABILITY_UNRELIABLE` to `ROCKETNET_RELIABILITY_RELIABLE`, `ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED` to `ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED`, `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to reliable-with-receipt delivery, keeping its ACKED-only receipt). If `finish` then commits a `bytes_written` that fits one packet, the message is not promoted: the same region record moves to the queued unreliable route without a copy and goes out with the next `send_packets`. Above `max_message_bytes`, `start` refuses in every mode.
 - **What a `NULL` return from `start` means:**
