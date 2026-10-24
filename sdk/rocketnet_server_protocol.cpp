@@ -740,7 +740,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof(keys) );
-            rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
@@ -813,20 +812,20 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 
-    (void) current_time;
-
     // the binding: this address has proven it holds the token's keys, which a
     // request never proves, so a replayed request from another address binds
     // nothing. it replaces the request claim with an entry that lives until
     // the token expires; a no-op when the token is already bound, and an
     // expired token is not recorded (tla/RNSecurityTables.tla,
-    // BoundOnlyToOpener)
+    // BoundOnlyToOpener; tla/MCReceiveOrder.tla, ResponseBind)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
     {
         rocketnet_used_token_history_record( server->used_token_history, mapping->token_identifier,
                                              rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
                                              mapping->token_expire_timestamp, current_timestamp );
+        rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
+                                                    rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
     }
 
     if ( mapping->control->client_index != -1 )
