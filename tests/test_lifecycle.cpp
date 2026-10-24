@@ -701,9 +701,10 @@ int main()
     check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
     check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
 
-    // The client transport's plan: defaults, unknown/NULL/auto transports and an
-    // overflowing geometry all refuse to 0, a larger max payload plans larger,
-    // and planning allocates nothing. A create-time counting-allocator match
+    // The client transport's plan: defaults plan a nonzero size, the same config
+    // plans the same size again, unknown/NULL/auto transports and an overflowing
+    // geometry all refuse to 0, and planning allocates nothing. The payload is
+    // fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (no config field). A create-time counting-allocator match
     // needs a live socket, so it is left to bench/transport_memory.cpp.
     rocketnet_client_transport_config_t client_memory_config;
     rocketnet_client_transport_default_config(&client_memory_config);
@@ -713,7 +714,7 @@ int main()
     check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == client_default_memory);
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = 0;
