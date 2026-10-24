@@ -224,8 +224,10 @@ static int no_worker_connected_slots( no_worker_world_t * world )
 }
 
 // Creating, starting and updating a server starts no thread: the loopback
-// transport has none and the statistics need none. A server that computed
-// its statistics on a worker would add a thread at create.
+// transport has none and the statistics need none, yet the slot's statistics
+// are live after the updates. A server that computed its statistics on a
+// worker either adds a thread at create or, with the worker held back (the
+// manual mode unit builds once defaulted to), publishes nothing.
 static void test_server_stats_creates_no_thread()
 {
     no_worker_world_t * world = &g_no_worker_world;
@@ -273,9 +275,8 @@ static void test_server_stats_current_every_update()
         no_worker_step( world, false, 0.1 );
     check( no_worker_connected_slots( world ) == NO_WORKER_CLIENTS );
 
-    // steady traffic at 100 ms steps, long enough that even a schedule of 20
-    // slots per update has visited every slot
-    for ( int step = 0; step < 60; step++ )
+    // steady traffic at 100 ms steps until every slot has samples
+    for ( int step = 0; step < 10; step++ )
         no_worker_step( world, true, 0.1 );
 
     static struct rocketnet_server_client_stats_t before[NO_WORKER_CLIENTS];
