@@ -18,6 +18,7 @@
 #include "rocketnet_internal.h"
 #include "token_string.h"
 
+#include <cstddef>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,7 +35,7 @@
 // restored after.
 // ---------------------------------------------------------------------------
 
-struct alignas( max_align_t ) memory_plan_allocation_t
+struct alignas( std::max_align_t ) memory_plan_allocation_t
 {
     size_t bytes;
 };
