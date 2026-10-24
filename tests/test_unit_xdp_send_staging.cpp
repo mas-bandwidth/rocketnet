@@ -78,10 +78,28 @@ REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
 // A publish without a filling generation is refused: the release build must
 // not queue -1, and the refused call leaves the queue as it was. The
 // refusal does not wedge the handoff: the next acquire and publish work.
+// The misuse also fires rocketnet_assert in a build with asserts on, so the
+// assert goes to a counting hook for the one call and the default is
+// restored after it; the refusal is checked in every build and the assert
+// count only where the assert is compiled in.
+static int send_handoff_assert_count;
+
+static void send_handoff_assert_hook( const char *, const char *, const char *, int )
+{
+    send_handoff_assert_count++;
+}
+
 static void test_send_handoff_publish_without_acquire_refuses()
 {
     rocketnet_send_handoff_t<2> handoff;
-    rocketnet_unit_check(!handoff.publish());
+    send_handoff_assert_count = 0;
+    rocketnet_assert_function(send_handoff_assert_hook);
+    const bool refused = handoff.publish();
+    rocketnet_assert_function(NULL);
+#if ROCKETNET_ASSERTS
+    rocketnet_unit_check(send_handoff_assert_count == 1);
+#endif
+    rocketnet_unit_check(!refused);
     rocketnet_unit_check(handoff.count == 0);
     rocketnet_unit_check(handoff.head == 0);
     rocketnet_unit_check(handoff.filling == -1);
@@ -99,7 +117,10 @@ REGISTER_UNIT_TEST(test_send_handoff_publish_without_acquire_refuses);
 // A retire on an empty queue changes nothing: the release build must not
 // free a stale generation, advance the head or leave the count at -1. The
 // refusal does not wedge the handoff: the next acquire, publish and retire
-// work.
+// work. The retire on the empty queue also fires rocketnet_assert in a build
+// with asserts on, so the assert goes to the counting hook for that one call
+// and the default is restored after it: the assert is captured where it is
+// compiled in and the no-op is checked in every build.
 static void test_send_handoff_retire_empty_changes_nothing()
 {
     rocketnet_send_handoff_t<2> handoff;
@@ -107,7 +128,13 @@ static void test_send_handoff_retire_empty_changes_nothing()
     const int before_head = handoff.head;
     const bool before_free_0 = handoff.free[0];
     const bool before_free_1 = handoff.free[1];
+    send_handoff_assert_count = 0;
+    rocketnet_assert_function(send_handoff_assert_hook);
     handoff.retire();
+    rocketnet_assert_function(NULL);
+#if ROCKETNET_ASSERTS
+    rocketnet_unit_check(send_handoff_assert_count == 1);
+#endif
     rocketnet_unit_check(handoff.count == before_count);
     rocketnet_unit_check(handoff.head == before_head);
     rocketnet_unit_check(handoff.free[0] == before_free_0);
