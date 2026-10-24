@@ -3123,7 +3123,7 @@ static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
 // per-packet path: the caller owns the overflow buffer, so a batch receive
 // keeps one 64 KiB discard area on its stack instead of two.
 
-static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, uint8_t * overflow, size_t overflow_bytes )
+static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, uint8_t * overflow, size_t overflow_bytes, int * weather_remaining )
 {
     rocketnet_assert( socket );
     rocketnet_assert( from );
@@ -3143,8 +3143,8 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
 
     const bool dual_stack = socket->ipv6;
 
-    // weather skips this call, bounded so a repeating errno cannot spin
-    int weather_skips = 0;
+    // The caller shares this budget across every packet and pump fallback.
+    rocketnet_assert( weather_remaining && *weather_remaining > 0 );
 
     int result;
 receive_again:
@@ -3180,7 +3180,7 @@ receive_again:
 
             if ( rocketnet_platform_receive_weather( error ) )
             {
-                if ( weather_skips++ < ROCKETNET_PLATFORM_RECEIVE_WEATHER_SKIPS )
+                if ( --*weather_remaining > 0 )
                     continue;
                 return 0;
             }
@@ -3241,7 +3241,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 {
     // the public call owns its discard area; the batch pump passes its own
     uint8_t overflow[65535];
-    return rocketnet_platform_socket_receive_packet_into( socket, from, packet_data, max_packet_size, overflow, sizeof(overflow) );
+    int weather_remaining = ROCKETNET_PLATFORM_RECEIVE_WEATHER_SKIPS;
+    return rocketnet_platform_socket_receive_packet_into( socket, from, packet_data, max_packet_size, overflow, sizeof(overflow), &weather_remaining );
 }
 
 // ---------------------------------------------------
@@ -3583,8 +3584,8 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     uint8_t overflow[65535];
     int total = 0;
 
-    // weather skips this call on the batch arm: at most max_packets
-    int weather_skips = 0;
+    // One weather budget covers both pumps and every delivered packet.
+    int weather_remaining = max_packets;
 
     if ( !rocketnet_msgx_active( socket ) )
         goto per_packet;
@@ -3633,12 +3634,12 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
             // ICMP-class and buffer weather (and EINTR): skip it and keep
             // draining on the batch pump until EAGAIN -- never a pause, and
-            // the end of a drain only past max_packets skips, so a repeating
+            // the end of a drain upon max_packets weather reports, so a repeating
             // errno cannot spin this call (TRANSPORTS.md, ICMP errors).
 
             if ( rocketnet_platform_receive_weather( error ) )
             {
-                if ( weather_skips++ < max_packets )
+                if ( --weather_remaining > 0 )
                     continue;
                 return total;
             }
@@ -3693,7 +3694,7 @@ per_packet:
     while ( total < max_packets )
     {
         // the same overflow buffer as the batch arm: one discard area per call
-        int bytes = rocketnet_platform_socket_receive_packet_into( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride, overflow, sizeof(overflow) );
+        int bytes = rocketnet_platform_socket_receive_packet_into( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride, overflow, sizeof(overflow), &weather_remaining );
         if ( bytes == 0 )
             break;
         packet_bytes[total] = bytes;
