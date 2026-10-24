@@ -82,7 +82,7 @@ static_assert( sizeof(struct rocketnet_encryption_mapping_control_t) == 32, "tim
     X( send_sequence_handshake, uint64_t send_sequence_handshake ) /* next handshake-phase sequence to send */                                                     \
     X( send_sequence_session, uint64_t send_sequence_session ) /* next session-phase sequence to send */                                                           \
     X( send_fragment_payload_id, uint64_t send_fragment_payload_id ) /* next fragmented payload id to send, per _Fragmentation_ */                                 \
-    X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake )                                                                                   \
+    X( handshake_highest_opened, uint64_t handshake_highest_opened )                                                                                              \
     X( replay_session, struct rocketnet_replay_protection_t replay_session )                                                                                       \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
     X( integrity_failures, uint64_t integrity_failures ) /* sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down */

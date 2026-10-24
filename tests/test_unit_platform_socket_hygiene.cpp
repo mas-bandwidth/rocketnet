@@ -31,6 +31,29 @@
 #include <arpa/inet.h>
 #endif
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
+static void test_platform_id_is_the_build_platform()
+{
+    rocketnet_unit_check( rocketnet_platform_id() == ROCKETNET_PLATFORM );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+static void test_platform_mac_primary_interface_refuses_null()
+{
+    const int number_value = 1;
+    CFNumberRef number = CFNumberCreate( kCFAllocatorDefault, kCFNumberIntType, &number_value );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( NULL, CFSTR( "en0" ) ) );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), NULL ) );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( number, CFSTR( "en0" ) ) );
+    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), number ) );
+    rocketnet_unit_check( rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), CFSTR( "en0" ) ) );
+    CFRelease( number );
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 static void test_platform_socket_hygiene_mapped_source_decision()
 {
     struct rocketnet_address_t mapped;
@@ -302,3 +325,7 @@ REGISTER_UNIT_TEST( test_platform_receive_weather_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_msgx_receive_weather_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_single_receive_weather_drain_is_bounded );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_platform_id_is_the_build_platform );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+REGISTER_UNIT_TEST( test_platform_mac_primary_interface_refuses_null );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

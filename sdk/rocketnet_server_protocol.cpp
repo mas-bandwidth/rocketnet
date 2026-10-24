@@ -1112,10 +1112,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     int session_phase = packet_type != ROCKETNET_CONNECTION_RESPONSE_PACKET;
     const uint8_t * key = session_phase ? mapping->keys.session_client_to_server : mapping->keys.handshake_client_to_server;
-    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : &mapping->replay_handshake;
+    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : NULL;
+    const uint64_t highest_opened = session_phase ? mapping->replay_session.highest_opened : mapping->handshake_highest_opened;
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), replay->highest_opened );
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), highest_opened );
 
     if ( sequence == 0 )
     {
@@ -1199,8 +1200,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             }
         }
 
-        if ( sequence > replay->highest_opened )
-            replay->highest_opened = sequence;
+        if ( sequence > mapping->handshake_highest_opened )
+            mapping->handshake_highest_opened = sequence;
 
         // A response retransmission is not fresh session activity. Only a
         // half-open mapping may refresh its idle clock from a response.
@@ -1256,9 +1257,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // surfaced, rtt sampled from the first ack of each sequence -- and
     // eliciting types add to the ack debt that obliges a block back. type 8
     // never elicits: that exemption is what makes the ack conversation
-    // terminate.
+    // terminate. a payload (type 5) and a fragment (type 9) become eligible
+    // later: the payload when it is accepted, the fragment when reassembly
+    // accepts it (below).
 
-    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
+         packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
         rocketnet_replay_advance( &mapping->accepted_session, sequence );
 
     mapping->control->last_receive_time = current_time;
@@ -1288,7 +1292,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         }
 
         if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET &&
-             ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET ) )
+             packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
+             packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
             endpoint->ack_debt++;
     }
 
@@ -1343,6 +1348,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             // count keeps the arrival invariant honest in release
             rocketnet_assert( 0 );
             counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]++;
+            rocketnet_replay_advance( &mapping->accepted_session, sequence );
+            if ( server->acks )
+                server->acks->endpoints[client_index].ack_debt++;
             return ROCKETNET_SERVER_PROCESS_ACCEPTED;
         }
 
@@ -1363,6 +1371,24 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         int accepted = rocketnet_reassembly_process_fragment( server->reassembly, client_index,
                                                               type_data, type_data_bytes,
                                                               counters, &fragment_counters );
+
+        // standard/TRANSPORT.md t15.3: a packet is ack-eligible only once
+        // its type data passes validation, and a fragment's validation is
+        // reassembly's. so the fragment's sequence is marked in
+        // accepted_session, and adds to the ack debt, only when reassembly
+        // accepts it: a refused fragment (stale, count or size mismatch,
+        // payload too large, duplicate index) is never named in a block, so
+        // the sender's aggregate never completes on it
+        // (tla/FragmentsAndAcks.tla RecvData, NamedOnlyIfAccepted). an
+        // accepted fragment that completes a payload later dropped as batch
+        // full still acknowledges: reassembly accepted it.
+
+        if ( accepted )
+        {
+            rocketnet_replay_advance( &mapping->accepted_session, sequence );
+            if ( server->acks )
+                server->acks->endpoints[client_index].ack_debt++;
+        }
 
         if ( server->reassembly->completed_bytes > 0 )
         {
@@ -2268,6 +2294,9 @@ void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_
          rocketnet_server_protocol_connection_id( server, client_index ) != connection_id )
         return;
     const int index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+    if ( index < 0 )
+        return;
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );
     if ( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) )
         return;
