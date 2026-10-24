@@ -177,7 +177,7 @@ static void soak_free( void * ctx, void * p ) {
     soak_alloc_unlock();
 }
 
-struct soak_peer_t {
+struct soak_stream_t {
     uint32_t tx_seq[2], rx_ordered_seq, rx_sequenced_max, acked_events;
     bool rx_has_sequenced;
 };
@@ -202,7 +202,7 @@ static void soak_write_msg( uint8_t * out, int len, uint64_t seed, uint64_t clie
 }
 
 static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64_t want_client,
-                            int ch, struct soak_peer_t * rx, uint64_t * corrupt, uint64_t * gaps ) {
+                            int ch, struct soak_stream_t * rx, uint64_t * corrupt, uint64_t * gaps ) {
     if ( len < 16 ) { (*corrupt)++; printf( "FAIL: short message client=%" PRIu64 " seq=0\n", want_client ); return false; }
     const uint32_t hdr[4] = { read_u32( data ), read_u32( data + 4 ), read_u32( data + 8 ), read_u32( data + 12 ) };
     uint32_t client_id = hdr[0], kind = hdr[1] & 0xffu, seq = hdr[2], want_hash = hdr[3];
@@ -319,8 +319,8 @@ int main( int argc, char ** argv ) {
         fflush( stdout );
         while ( ( ch = getchar() ) != 10 && ch != EOF ) {}
     }
-    struct soak_peer_t * c2s = (struct soak_peer_t *) calloc( (size_t) num_clients, sizeof( *c2s ) );
-    struct soak_peer_t * s2c = (struct soak_peer_t *) calloc( (size_t) num_clients, sizeof( *s2c ) );
+    struct soak_stream_t * c2s = (struct soak_stream_t *) calloc( (size_t) num_clients, sizeof( *c2s ) );
+    struct soak_stream_t * s2c = (struct soak_stream_t *) calloc( (size_t) num_clients, sizeof( *s2c ) );
     struct rocketnet_client_t ** clients = (struct rocketnet_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
     double * srv_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     double * cli_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
@@ -585,7 +585,7 @@ int main( int argc, char ** argv ) {
     CHECK( fp != NULL );
     const char * m_names[] = { "sent_reliable", "recv_reliable", "acked_reliable", "sent_sequenced", "recv_sequenced", "corrupt", "seq_gaps", "peak_bytes",
                                "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",
-                               "client_per_peer_us_p50", "client_per_peer_us_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
+                               "client_us_per_client_p50", "client_us_per_client_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
                                "server_create_ms", "server_start_ms", "clients_create_ms", "clients_destroy_ms", "server_stop_ms", "server_destroy_ms", "running_peak_rss", "shutdown_peak_rss" };
     double m_vals[] = { (double) sent_rel, (double) recv_rel, (double) acked_total, (double) sent_seq, (double) recv_seq, (double) corrupt, (double) gaps, (double) allocation_stats.peak_bytes,
                         srv_p50, srv_p99, srv_max, cli_p50, cli_p99, cli_max, cli_p50 / num_clients, cli_p99 / num_clients,
@@ -597,7 +597,7 @@ int main( int argc, char ** argv ) {
     for ( int m = 0; m < num_metrics; m++ )
         fprintf( fp, m < 8 || m >= num_metrics - 2 ? "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, m_names[m], m_vals[m] );
     fclose( fp );
-    printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_peer_p50=%.2fus cli_peer_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\n",
+    printf( "soak: clients=%d seconds=%d seed=%" PRIu64 " transport=%s rel=%" PRIu64 "/%" PRIu64 " seq=%" PRIu64 "/%" PRIu64 " srv_p50=%.1fus srv_p99=%.1fus cli_per_client_p50=%.2fus cli_per_client_p99=%.2fus (budget 100us) allocs/tick=%.2f peak_bytes=%" PRIu64 "\n",
             num_clients, seconds, seed, transport_name, recv_rel, sent_rel, recv_seq, sent_seq,
             srv_p50, srv_p99, cli_p50 / num_clients, cli_p99 / num_clients,
             (double) allocation_stats.steady_allocs / soak_ticks, allocation_stats.peak_bytes );

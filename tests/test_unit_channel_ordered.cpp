@@ -532,7 +532,7 @@ static void test_small_packed_and_resent_until_packet_acked()
     }
     check( n == 4 );
 
-    // the resend arrives; the peer delivers each channel in order, and its transport acks the packet id
+    // the resend arrives; the receiver delivers each channel in order, and its transport acks the packet id
     check( open_packet( b, &second[0] ) );
     check( b->got[0].size() == 3 && b->got[1].size() == 1 );
     check( b->got[0][0] == a->sent[0][0] && b->got[0][1] == a->sent[0][1] && b->got[0][2] == a->sent[0][2] );
@@ -1205,7 +1205,7 @@ static void test_hostile_reliable_chunks_are_refused()
         node_free( b );
     }
 
-    // (d) a number no peer ever accepted
+    // (d) a number no receiver ever accepted
     {
         node_t * b = node_new( &config, 4 );
         const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );

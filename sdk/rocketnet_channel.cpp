@@ -372,7 +372,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
         rn_channels_count( channels->region->counters, counter );
 
     // 17.3 item 11: a wire violation ends the connection. The owner reads
-    // rn_ordered_decide and disconnects the peer; counted once per connection.
+    // rn_ordered_decide and disconnects the other side of the connection; counted once per connection.
     if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
     {
         channels->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
@@ -1091,9 +1091,9 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
 
     rn_channels_t * channels = &ordered->channels;
 
-    struct rocketnet_message_config_body_t peer;
-    memset( &peer, 0, sizeof( peer ) );
-    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &peer );
+    struct rocketnet_message_config_body_t remote;
+    memset( &remote, 0, sizeof( remote ) );
+    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &remote );
     if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         rn_channels_count_violation( channels, rn_violation_counter( body_violation ) );
@@ -1101,24 +1101,24 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
     }
 
     const struct rocketnet_message_config_body_t * own = &ordered->config;
-    struct field_t { const char * name; uint32_t own, peer; };
+    struct field_t { const char * name; uint32_t own, remote; };
     const field_t fields[] =
     {
-        { "version",            own->version,            peer.version },
-        { "enabled",            own->enabled,            peer.enabled },
-        { "num_channels",       own->num_channels,       peer.num_channels },
-        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    peer.reliable_messages_in_flight },
-        { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, peer.receive_message_buffer_bytes },
-        { "max_message_bytes",  own->max_message_bytes,  peer.max_message_bytes },
-        { "fragment_bytes",     own->fragment_bytes,     peer.fragment_bytes },
+        { "version",            own->version,            remote.version },
+        { "enabled",            own->enabled,            remote.enabled },
+        { "num_channels",       own->num_channels,       remote.num_channels },
+        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    remote.reliable_messages_in_flight },
+        { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, remote.receive_message_buffer_bytes },
+        { "max_message_bytes",  own->max_message_bytes,  remote.max_message_bytes },
+        { "fragment_bytes",     own->fragment_bytes,     remote.fragment_bytes },
     };
     for ( size_t i = 0; i < sizeof( fields ) / sizeof( fields[0] ); i++ )
     {
-        if ( fields[i].own == fields[i].peer )
+        if ( fields[i].own == fields[i].remote )
             continue;
         if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
         {
-            rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the peer", fields[i].name, fields[i].own, fields[i].peer );
+            rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the remote endpoint", fields[i].name, fields[i].own, fields[i].remote );
             channels->error = ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH;
         }
         return channels->error;
@@ -1533,7 +1533,7 @@ int rn_ordered_decide( const struct rn_ordered_t * ordered )
     if ( !ordered || !ordered->channels.region )
         return ROCKETNET_DISCONNECT_REASON_NONE;
 
-    // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the peer broke
+    // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the other side of the connection broke
     // the wire (17.3 item 11); then a reliable message went unacked too long
     const int memory = rn_connection_memory_decide( ordered->channels.region );
     if ( memory != ROCKETNET_DISCONNECT_REASON_NONE )

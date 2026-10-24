@@ -5,7 +5,7 @@
 
 // The message record fuzz harness (docs/CHANNELS.md layer 2). It drives the
 // decoder of sdk/rocketnet_message.cpp -- the first code above the transport
-// that reads bytes a peer wrote -- and checks the layer's promises as an
+// that reads bytes the remote endpoint wrote -- and checks the layer's promises as an
 // oracle, not just its survival:
 //
 //   - begin and check_payload agree, and name exactly one violation or none;

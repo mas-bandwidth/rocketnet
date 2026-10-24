@@ -319,7 +319,8 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     return ( (uint32_t) c << 30 ) | first;
 }
 
-    // tla/RNSendStore.tla Free
+    // tla/RNSendStore.tla Free and FreeAgain: a chain's head frees the whole
+    // chain, and a second free of it is refused with nothing changed
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
@@ -344,6 +345,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
         const uint32_t next = cls->link[i] & RN_LINK_INDEX;
         // the in-use flag clears in the same store that pushes the chunk:
         // no state where a chunk is both free-listed and in use
+        // (tla/RNLazyPool.tla Release: the chunk pushed on the free list head)
         cls->link[i] = cls->free_head;
         cls->free_head = i;
         cls->free_count++;
@@ -840,7 +842,11 @@ uint32_t rn_region_send_take( rn_region_t * region, int bytes )
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
-    // is tla/RNRing.tla's PlaceSingle on the sender's side
+    // is tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
+    // for a send of more than one fragment: one contiguous span, both bounds
+    // checked once, fragment i at start + i * F (rn_region_send_data).
+    // tla/RNSendSpans.tla Exhaust: no descriptor or no place for the span,
+    // so rn_region_send_refuse exhausts the region.
     rocketnet_assert( region );
 
     uint32_t start = 0;
@@ -918,7 +924,8 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
     // tla/RNConnectionMemory.tla, Release: allowed on an exhausted region (an
     // ack or an abort between Exhaust and Kick), it only returns room, and
-    // both allocators refuse to take it again until rn_region_reset
+    // both allocators refuse to take it again until rn_region_reset.
+    // tla/RNLazyPool.tla Release: the descriptor pushed on the free list head.
     rocketnet_assert( region );
     rocketnet_assert( d < region->descriptors_fresh );
     if ( d >= region->descriptors_fresh )

@@ -257,6 +257,19 @@ AppConnect ==
     /\ cFam' = "none" /\ cReqFams' = {}  \* every family in flight again
     /\ UNCHANGED <<cDiscPending, cDiscKeys, cLostKinds, serverVars, c2sVars, s2cVars>>
 
+\* the pre-fix retry, only in SpecRetryKeepsAttempt: a connect from a failure
+\* state (cstate < 0) that starts the new attempt but keeps the earlier
+\* attempt's cookie and replay window. Not a disjunct of Next.
+AppConnectKeepsAttempt ==
+    /\ cstate < 0 /\ cAttempt < MaxAttempts
+    /\ cstate' = 1 /\ cAttempt' = cAttempt + 1
+    /\ cKeys' = NoKeys /\ cEph' = TRUE /\ cIndex' = FALSE /\ cReasm' = FALSE
+    /\ cSinceSend' = SendInterval
+    /\ cSinceRecv' = 0 /\ cAge' = 0
+    /\ cFam' = "none" /\ cReqFams' = {}
+    /\ UNCHANGED <<cHasCookie, cSeen, cDiscPending, cDiscKeys, cLostKinds,
+                   serverVars, c2sVars, s2cVars>>
+
 \* rocketnet_client_protocol_disconnect: in 3 or 4 a burst of sealed
 \* disconnects, then state 0 and the keys and ephemeral zeroed; from any
 \* other non-zero state (including a terminal one, F8) state 0 and the
@@ -675,7 +688,7 @@ Next ==
 (* link (Reordering = FALSE, MaxDelay = 0, Duplication = FALSE; with       *)
 (* reordering or latency on, Link's Reorder or Delay can hold a copy from  *)
 (* the head forever, and with duplication on the path can keep a wire at   *)
-(* Capacity exactly when the peer must send, where Link blocks the send    *)
+(* Capacity exactly when the sender must send, where Link blocks the send  *)
 (* rather than losing it; TLC produced both, README-ClientConnection.md):  *)
 (*                                                                         *)
 (*   DeliveryFairHead: the head of each wire is delivered (strong          *)
@@ -753,6 +766,10 @@ SpecDeniedKeepsKeys ==
 SpecCookieRefreshes ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvCookieRefreshes(p))]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix retry that keeps the
+\* earlier attempt's cookie and replay window
+SpecRetryKeepsAttempt == Init /\ [][Next \/ AppConnectKeepsAttempt]_vars /\ Fairness
+
 (***************************************************************************)
 (* Safety.                                                                 *)
 (***************************************************************************)
@@ -803,6 +820,19 @@ DisconnectIsTerminal ==
 \* that is not already DISCONNECTED (sdk/rocketnet.h).
 TerminalAbsorbing ==
     [][(cstate < 0 /\ cstate' # cstate) => cstate' \in {0, 1}]_vars
+
+\* a connect from a failure state (-7..-1) is a fresh attempt: a new
+\* attempt index, which is what gives it a fresh salt, a fresh ephemeral and
+\* fresh keys, and nothing of the earlier attempt carried: no keys, no
+\* cookie, no client index, no reassembly, an empty replay window and fresh
+\* timers (rocketnet_client_protocol_connect runs
+\* rocketnet_client_connection_reset first; rocketnet_client_connect accepts
+\* every state at or below DISCONNECTED)
+FreshAttemptFromFailure ==
+    [][(cstate < 0 /\ cstate' = 1) =>
+         /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ ~cHasCookie' /\ cEph'
+         /\ ~cIndex' /\ ~cReasm' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0
+         /\ cFam' = "none" /\ cReqFams' = {}]_vars
 
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
@@ -886,7 +916,7 @@ SilentServerTimesOut == (cstate = 1) ~> (cstate = -2)
 CrashedServerTimesOut ==
     (cstate = 4 /\ ~sMap.live /\ sDiscPending = 0) ~> (cstate \in {-5, 0})
 
-\* neither peer is left waiting for a packet nobody will send again: the
+\* neither side is left waiting for a packet nobody will send again: the
 \* server's half-open mapping is answered or dies, and an unacknowledged
 \* slot is acknowledged or released
 ServerNotStranded ==

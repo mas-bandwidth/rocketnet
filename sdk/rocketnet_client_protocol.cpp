@@ -167,7 +167,8 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// tla/ClientConnection.tla AppConnect
+// tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
+// from any failure state carries nothing of the earlier attempt
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
@@ -534,7 +535,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     // the full derivation, refusing a degenerate server ephemeral outright.
-    // the attempt then ends at its deadline, the correct outcome for a peer
+    // the attempt then ends at its deadline, the correct outcome for a server
     // offering a small order point.
 
     if ( !rocketnet_derive_connection_keys( &client->keys,

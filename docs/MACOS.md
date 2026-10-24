@@ -241,9 +241,7 @@ that waits in frame sync, put back to the standard policy afterwards
 
 Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
-do not receive the client thread's `SCHED_RR` priority request. Every server
-also has the separate background stats worker described in [BUILDING.md,
-"Pre-allocation server resource plans"](../BUILDING.md#pre-allocation-server-resource-plans).
+do not receive the client thread's `SCHED_RR` priority request.
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging
@@ -301,7 +299,7 @@ refused destination in the middle delivers every other packet
 ./bin/functional --run test_platform_batch_pump_refused_destination
 ```
 
-What a receive does after a peer is hard-killed and the kernel answers with
+What a receive does after a client is hard-killed and the kernel answers with
 ICMP: **pending.**
 
 ## The file-descriptor limit
@@ -339,12 +337,12 @@ application to accept incoming network connections?" the first time an app it
 has no rule for opens a socket that can receive from other machines; a
 wildcard bind is such a socket. So a dev build of a game server, the examples
 and the functional suite can each raise the prompt on a Mac with the firewall
-on, even when every peer is on loopback. The trigger is the bind, not the
+on, even when every client is on loopback. The trigger is the bind, not the
 transport: `msgx` and `portable` bind the same way.
 
 - **Loopback-only tests need no exception.** The firewall filters traffic
   arriving from other machines; traffic to `127.0.0.1` and `::1` does not
-  arrive that way. A run whose peers are all on loopback needs no rule, so the
+  arrive that way. A run whose clients and server are all on loopback needs no rule, so the
   prompt can be denied. Do not add a rule for a test binary.
 - **A server for players on other machines needs the exception**, for the
   game binary that hosts it.

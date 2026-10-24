@@ -111,7 +111,7 @@ struct rocketnet_server_transport_io_operations_t
     // transport accepted the view's packet view_index for a connection (it
     // opened under the connection's keys); a transport that addresses frames
     // itself learns the packet's link-layer source for its address.
-    void (*peer_accepted)( void * transport, int view_index );
+    void (*client_accepted)( void * transport, int view_index );
     // optional; any thread. The datagrams the transport's sends dropped on a
     // failed send call, cumulative for the transport's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.

@@ -675,14 +675,19 @@ void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
-    // RNReceipts SweepLoss: sent order makes the first unexpired entry the
-    // stopping point. Reliable references remain in the map for late ACKs.
+    // tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: a type-5 receipt is
+    // LOSS only once its packet's receipt deadline has passed. The deadline is
+    // the fixed maximum resend delay (message_resend_delay_max_ms), never the
+    // adaptive resend delay, so an ACK that arrives after the RTO estimate but
+    // inside the deadline still reports ACKED. Sent order and a fixed deadline
+    // make the first unexpired entry the stopping point. Reliable references
+    // remain in the map for late ACKs.
     if ( ack->receipt_sweep < ack->pkt_head )
         ack->receipt_sweep = ack->pkt_head;
     while ( ack->receipt_sweep < ack->pkt_tail )
     {
         rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
-        if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay )
+        if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay_max )
             break;
         if ( entry->packet_id != 0 )
             rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );

@@ -102,7 +102,9 @@ on:
 # a superseded commit's run is not a gate on anything -- the gate is the head
 # of the branch -- so it yields its runners to the run that replaced it
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # main never cancels a run in progress: every merge gets a verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -452,6 +454,17 @@ jobs:
       - name: Check the platform policy and functional/ wildcard binds
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: python3 tools/check_platform_policy.py
+
+      # tools/check_client_server_words.py exits 1 when a tracked file's path
+      # or text names a client-to-client party outside its listed exceptions
+      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
+      # hold the red controls. It reads files only, so one leg per Linux row
+      # runs it.
+      - name: Check client/server words
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/test_check_client_server_words.py
+          python3 tools/check_client_server_words.py
 
       - name: Check export source gate
         if: runner.os == 'Linux'
@@ -2010,3 +2023,5 @@ jobs:
           persist-credentials: false
       - name: Every runs-on selects the fleet
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
+      - name: Every main commit gets its own concurrency group
+        run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh

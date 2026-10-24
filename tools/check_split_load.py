@@ -166,7 +166,7 @@ def validate_receipt(fields, role, run_id, total, duration, limit, load="rate_1h
     if finite(fields, "wire_rate_denominator_s", 0.000001) != duration:
         raise ValueError("wire rate denominator must be target duration")
     expected(fields, timing_budget_basis="server_update_send_p99_upper")
-    for name in ("max_peer_up_kbps", "max_peer_down_kbps"):
+    for name in ("max_client_up_kbps", "max_client_down_kbps"):
         if finite(fields, name) >= 100.0:
             raise ValueError(f"{name}: exceeds per-client cap")
     for name in ("aggregate_up_kbps", "aggregate_down_kbps"):
@@ -197,8 +197,8 @@ def wire_map(text, role, run_id, first, count, receipt):
             raise ValueError(f"{label}: raw wire bytes exceed strict bandwidth cap")
         if not math.isclose(aggregate, finite(receipt, f"aggregate_{label}_kbps"), abs_tol=0.000002):
             raise ValueError(f"{label}: reported aggregate rate mismatch")
-        if not math.isclose(maximum, finite(receipt, f"max_peer_{label}_kbps"), abs_tol=0.000002):
-            raise ValueError(f"{label}: reported max peer rate mismatch")
+        if not math.isclose(maximum, finite(receipt, f"max_client_{label}_kbps"), abs_tol=0.000002):
+            raise ValueError(f"{label}: reported max client rate mismatch")
     return found
 
 

@@ -1073,9 +1073,9 @@ static void xdp_replay_commit( void * transport )
 {
     rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) transport );
 }
-static void xdp_peer_accepted( void * transport, int view_index )
+static void xdp_client_accepted( void * transport, int view_index )
 {
-    rocketnet_server_socket_peer_accepted( (rocketnet_server_socket_t*) transport, view_index );
+    rocketnet_server_socket_client_accepted( (rocketnet_server_socket_t*) transport, view_index );
 }
 static uint64_t xdp_send_failures( void * transport )
 {
@@ -1086,7 +1086,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL
 };
 #else
 // Keep a refusing rung: removing this known row would make an all-skipped
