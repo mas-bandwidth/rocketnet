@@ -163,17 +163,6 @@ static void stats_check_six( const rocketnet_server_client_stats_t & actual,
     check(fabs(actual.bandwidth_acked_kbps - (double) expected.bandwidth_acked_kbps) < 0.001);
 }
 
-static void stats_check_unchanged( const rocketnet_server_client_stats_t & actual,
-                                   const rocketnet_server_client_stats_t & prior )
-{
-    check(actual.rtt_ms == prior.rtt_ms);
-    check(actual.jitter_ms == prior.jitter_ms);
-    check(actual.packet_loss_percent == prior.packet_loss_percent);
-    check(actual.bandwidth_sent_kbps == prior.bandwidth_sent_kbps);
-    check(actual.bandwidth_received_kbps == prior.bandwidth_received_kbps);
-    check(actual.bandwidth_acked_kbps == prior.bandwidth_acked_kbps);
-}
-
 // Exercise the same producer calls used by accepted protocol sends, receives
 // and ACKs. Direct writes to live history would bypass the worker's deltas.
 static int stats_ack_one( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
