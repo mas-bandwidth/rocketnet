@@ -144,7 +144,7 @@ one run at a time, and are owed to the current API whenever the source moves
 under them. A row that says "not made" is a row that was not run, not a row
 that passed. `BUILDING.md` names the commands.
 
-Each run below was made once on the member (captain, Windows 11 build
+Each run below was made once on the member (Windows 11 build
 26200, cl 19.51.36260), under its exclusive lock, at rocketnet commit
 `79834cfa`, on 2026-10-23. "No pin" clears `ROCKETNET_SERVER_TRANSPORT`; a pin
 is set with cmd.exe `set`, and each pinned `functional.exe` run printed

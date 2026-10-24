@@ -442,9 +442,9 @@ MallocStackLogging=1 leaks --atExit -- ./bin/test test_endian
 MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/functional --run test_loopback_transport_udp
 ```
 
-The twelve runs by hand on mini-m5-1 at 010c816, Apple clang 21.0.0, macOS
+The twelve runs by hand, Apple clang 21.0.0, macOS
 27.2, two runs at a time (a unit run beside a functional run) next to the
-member's CI runner. The step timeouts are about twice these times.
+CI runner. The step timeouts are about twice these times.
 
 | leg | suite | pin | exit | wall |
 |---|---|---|---|---|
@@ -537,8 +537,8 @@ from 73.7 s to 23.7 s), and the 8-slot server of
 `test_posix_connect_disconnect_1000` kept 64 used tokens, so every 64th
 connect waited about 4.5 s for one to expire; its server has 128 slots.
 
-Measured on mini-m5-1 (Apple M5 Pro, Darwin 27.2, Release, host load 3 to 7
-as found, the rocketnet-macos runner sharing the host), one run each:
+Measured on a Mac (Apple M5 Pro, Darwin 27.2, Release, host load 3 to 7
+as found), one run each:
 
 | run | main 830c5437 | this tree |
 |---|---|---|
@@ -549,10 +549,9 @@ as found, the rocketnet-macos runner sharing the host), one run each:
 | `test_posix_destroy_under_traffic_100` | 35.7 s | 6.3 s (msgx/msgx), 24.7 s (nightly, four pairs) |
 
 At d7095705 (this tree merged with main 7a025861, which since #538 runs every
-functional case serially), five `./bin/functional` runs on mini-m5-1, one
-after another, each started once the host's 1-minute load was under 4 (the
-rocketnet-macos runner and other bench jobs still share the host, so load
-rose during runs):
+functional case serially), five `./bin/functional` runs, one
+after another, each started once the host's 1-minute load was under 4 (other
+jobs still share the host, so load rose during runs):
 
 | run | exit | wall time | load before (1, 5, 15 min) |
 |---|---|---|---|
@@ -568,10 +567,10 @@ parallel suite, before main made it serial. An earlier run started at load 9
 `functional/posix_lifecycle_stress.cpp:1108`, the 5 s
 `posix_wait_server_empty` after a disconnect.
 
-Linux at d7095705 on amd-1 (x86_64, gcc, Release, load 3.8 as found):
+Linux at d7095705 (x86_64, gcc, Release, load 3.8 as found):
 `./bin/test` exit 0 (16 s), `./bin/functional` exit 0 (193 s). gcc and
 clang, `ROCKETNET_DEV=ON` and `OFF`, build with 0 warnings on Linux; Apple
-clang `ON` and `OFF` with 0 warnings on mini-m5-1.
+clang `ON` and `OFF` with 0 warnings on macOS.
 
 Each case process is held to its own memory plan (`tests/plan_rss.h`): the
 functional worker gives `rocketnet_init` a counting allocator, and a case
@@ -640,8 +639,7 @@ How to read them:
 
 ## Nightly jobs on the macOS member
 
-Every macOS nightly runs on the fleet's one darwin runner, `mini-m5-1`
-(runner `mini-m5-1-rocketnet-1`, labels `self-hosted, macOS, ARM64, rocketnet-macos`), one job at a time. Run a job by hand from a checkout on that
+Every macOS nightly runs on the fleet's one darwin runner, one job at a time. Run a job by hand from a checkout on that
 machine, one command at a time, and record the wall time of each step.
 
 | Job | Workflow and line | By hand | Last green, or the card that owns its red |
@@ -650,12 +648,12 @@ machine, one command at a time, and record the wall time of each step.
 | `macos-frame-budget` | `.github/workflows/nightly-frame-budget.yml:56` | `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target client_main_thread_cost --parallel 4 && python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only` | run 40066869774 (84c3c50b, 2026-10-24) |
 | `fuzz-macos` | `.github/workflows/fuzz-nightly.yml:185` | the job's steps: LLVM clang with libFuzzer, `cmake -B build-fuzz` instrumented, one target per leg | run 40074127124 (221e3bee, 2026-10-24), every target |
 | `coverage-macos` | `.github/workflows/fuzz-nightly.yml:544` | `CC=clang CXX=clang++ tools/fuzz_coverage.sh` | run 40074127124 (221e3bee, 2026-10-24) |
-| `examples-macos` | `.github/workflows/nightly-examples.yml:71` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 | no green run recorded; red in run 40070921798 at "Check the examples against the house rules", owned by rn-examples-macos-windows |
+| `examples-macos` | `.github/workflows/nightly-examples.yml:71` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 | no green run recorded; red in run 40070921798 at "Check the examples against the house rules" |
 | `macos-transport-cells-repeat` | `.github/workflows/nightly.yml:237` | `make -j4 && scripts/transport-cells-repeat --runs 50` | run 40079431071 (221e3bee, 2026-10-24) |
-| `macos-functional-nightly` | `.github/workflows/nightly.yml`, added by rn-macos-functional-reliable (not on main yet) | `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | not landed; owned by rn-macos-functional-reliable |
-| `sanitizers-macos` | `.github/workflows/nightly-macos-sanitizers.yml`, added by rn-macos-sanitizers-nightly (not on main yet) | that workflow's ASan+UBSan, TSan and leaks legs | not landed; owned by rn-macos-sanitizers-nightly |
+| `macos-functional-nightly` | `.github/workflows/nightly.yml` | `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | not landed |
+| `sanitizers-macos` | `.github/workflows/nightly-macos-sanitizers.yml` | that workflow's ASan+UBSan, TSan and leaks legs | not landed |
 
-By hand on `mini-m5-1` at 5c2aa60f (main 1a2f2c43 plus this section), Release, 2026-10-24:
+By hand at 5c2aa60f (main 1a2f2c43 plus this section), Release, 2026-10-24:
 
 - frame budget: configure 1 s, build 2 s, report 4 s:
   `frame_budget transport=msgx P=32 total_us_p99_median=8.79 runs=8.67,9.58,8.79 gate=100 verdict=PASS`.
@@ -671,7 +669,7 @@ By hand on `mini-m5-1` at 5c2aa60f (main 1a2f2c43 plus this section), Release, 2
 The `./bin/test` red is macOS only: the same head passes `./bin/test` on Linux. The bound is
 the suite-wide one, and the case passes when run alone, so the measured peak is the suite's
 (how `wait4` reports `ru_maxrss` for a case run inside the full suite on macOS), not the case's
-plan. It needs its own card; the bound is not loosened here.
+plan. The bound is not loosened here.
 
 ### The runner's resolver
 

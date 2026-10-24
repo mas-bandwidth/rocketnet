@@ -98,7 +98,7 @@ one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other: the `gso` client is pin-only
 (`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
-server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
+server order. The client order is set by the client transport ranking. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
