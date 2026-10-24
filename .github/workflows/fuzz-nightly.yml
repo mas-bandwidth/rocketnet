@@ -137,7 +137,7 @@ jobs:
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itest $EXTRA "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -Isodium -Isdk $EXTRA "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 
@@ -264,7 +264,7 @@ jobs:
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -Isodium -Isdk "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
             -lpthread \
             -framework CoreFoundation -framework SystemConfiguration \
             -o "bin/${{ fromJSON(matrix.leg).target }}"

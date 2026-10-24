@@ -55,17 +55,18 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C fuzz -j 4                 # rocketnet_fuzz, _connect_token, _receive_structured, _message
-make -C fuzz compile              # syntax check of those sources on any host
+make -C fuzz -j 4                 # the ten targets (not the differential)
+make -C fuzz compile              # syntax check of all ten sources on any host
 ```
 
-`fuzz/Makefile` builds the four original targets with
-`-fsanitize=fuzzer,address,undefined`. The others are built the same way, by
-hand or as the nightly job (`.github/workflows/fuzz-nightly.yml`) does:
+`fuzz/Makefile` builds the ten targets other than `rocketnet_fuzz_differential` with
+`-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
+nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
+nightly builds it:
 
 ```sh
 cd fuzz
-clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk -I../test \
+clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk \
     -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
     rocketnet_fuzz_session.cpp ../build/librocketnet_dev.a -lbpf -lxdp -luring -lpthread \
     -o rocketnet_fuzz_session
