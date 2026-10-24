@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* The committed run of ReceiveOrder in the ruled order.  Every invariant  *)
 (* passes while requests repeat; claims end at binding or mapping removal. *)
-(* and the mapping table fills and empties.  A half-open mapping can also  *)
+(* The mapping table fills and empties.  A half-open mapping can also      *)
 (* leave alone on its idle deadline, as idle timeout and integrity limit   *)
 (* do in the code, and that removal releases its token's claim.  The       *)
 (* witnesses are the same module under the Broken cfgs, each moving one    *)
