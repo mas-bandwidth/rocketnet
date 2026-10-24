@@ -9,6 +9,42 @@
 #include "tools/load_split_barrier.h"
 #include "tools/load_split_capture.h"
 
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#endif
+
+/* Measurement only (never merged): the server runs on one preallocated,
+ * pre-faulted arena so no timed call pays for malloc, free or a first-touch
+ * page fault. LOAD_SPLIT_ARENA_MIB selects it; free returns nothing and the
+ * arena is released at exit, outside the timed window. */
+static uint8_t * split_arena_base;
+static size_t split_arena_bytes, split_arena_used;
+static uint64_t split_arena_allocs, split_arena_frees, split_arena_peak;
+static uint64_t split_arena_allocs_at_run, split_arena_frees_at_run;
+static void * split_arena_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    const size_t need = ( bytes + 63 ) & ~(size_t) 63;
+    if ( need > split_arena_bytes - split_arena_used ) return NULL;
+    void * p = split_arena_base + split_arena_used;
+    split_arena_used += need;
+    if ( split_arena_used > split_arena_peak ) split_arena_peak = split_arena_used;
+    split_arena_allocs++;
+    return p;
+}
+static void split_arena_free( void * context, void * p ) { (void) context; (void) p; split_arena_frees++; }
+static int split_arena_init( void )
+{
+    const char * mib = getenv("LOAD_SPLIT_ARENA_MIB");
+    if ( !mib || !*mib ) return rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK;
+    split_arena_bytes = (size_t) strtoull(mib, NULL, 10) << 20;
+    void * block = mmap(NULL, split_arena_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+    if ( block == MAP_FAILED ) return 0;
+    split_arena_base = (uint8_t *) block;
+    split_arena_used = 0;
+    return rocketnet_init(NULL, split_arena_malloc, split_arena_free) == ROCKETNET_STATUS_OK;
+}
+
 #define SPLIT_ARM_MAGIC 0x524E414Du
 #define SPLIT_ACK_MAGIC 0x524E414Bu
 #define SPLIT_GO_MAGIC 0x524E474Fu
@@ -868,7 +904,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         const uint64_t start_ns = load_clock_ns();
         load_timing_record(&timing, LOAD_TIMING_CLOCK_PAIR, start_ns);
     }
-    if ( rocketnet_init(NULL, NULL, NULL) != ROCKETNET_STATUS_OK ) goto cleanup;
+    if ( !split_arena_init() ) goto cleanup;
     api_started = 1;
     fds_post_init = count_open_fds();
     threads_post_init = count_threads();
@@ -998,6 +1034,7 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         clients[i].next_due = traffic_start;
     result.expected_offers = (uint64_t) total * (uint64_t) duration * (uint64_t) split_rate_hz();
     timing.enabled = 1;
+    split_arena_allocs_at_run = split_arena_allocs; split_arena_frees_at_run = split_arena_frees;
     double next_tick = traffic_start;
     int traffic_sampled = 0;
     const double end_time = traffic_start + (double) duration;
@@ -1202,6 +1239,9 @@ cleanup:
                load_timing_quantile_upper_us(&timing, LOAD_TIMING_SERVER_SEND_PACKETS, 99),
                timing.count[LOAD_TIMING_CLOCK_PAIR]);
         split_print_server_calls(&timing, run_id, total, transport);
+        printf("split_arena: bytes=%zu peak=%" PRIu64 " allocs=%" PRIu64 " frees=%" PRIu64 " allocs_after_run=%" PRIu64 " frees_after_run=%" PRIu64 "\n",
+               split_arena_bytes, split_arena_peak, split_arena_allocs, split_arena_frees,
+               split_arena_allocs - split_arena_allocs_at_run, split_arena_frees - split_arena_frees_at_run);
         free(timing.buckets);
     }
     pass = split_print_receipt("server", run_id, total, 0, total, duration, aggregate_limit_kbps,
