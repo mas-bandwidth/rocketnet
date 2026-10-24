@@ -1247,36 +1247,6 @@ int rn_message_object_receive( struct rn_message_object_t * object, int * index,
     return 1;
 }
 
-int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
-{
-    // the per-channel cursor the unit suite's pre-batch cases still use; the
-    // public one queue passes through rn_message_object_receive instead
-    *data = NULL;
-    *bytes = 0;
-    if ( index < 0 || index >= object->num_connections || channel < 0 || channel >= object->config.num_channels )
-        return 0;
-
-    rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
-        return 0;
-
-    const uint32_t deliveries = connection->ordered.channels.deliveries;
-    const rn_delivery_t * table = connection->region->deliveries;
-    for ( uint32_t k = connection->hot->cursors[channel]; k < deliveries; k++ )
-    {
-        if ( table[k].channel != (uint16_t) channel || connection->hot->views[k] != RN_MESSAGE_VIEW_WAITING )
-            continue;
-        connection->hot->views[k] = RN_MESSAGE_VIEW_HELD;
-        connection->hot->held++;
-        connection->hot->cursors[channel] = k + 1;
-        *data = table[k].data;
-        *bytes = table[k].bytes;
-        return 1;
-    }
-    connection->hot->cursors[channel] = deliveries;
-    return 0;
-}
-
 static bool rn_message_connection_release_view( rn_message_connection_t * connection, const uint8_t * data )
 {
     if ( connection->hot->held == 0 )
@@ -1726,17 +1696,6 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     if ( !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
-}
-
-int rocketnet_message_server_receive_channel( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( data ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    return rn_message_object_receive_channel( &server->object, client_index, channel, data, bytes );
 }
 
 int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages )

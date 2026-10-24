@@ -277,7 +277,6 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 // *channel (either NULL: not reported), 0 when the queue is empty. Release
 // finds the held view in whichever connection holds it.
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes );
-int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data );
 
 // The batch form over the same queue: releases the last batch, then fills

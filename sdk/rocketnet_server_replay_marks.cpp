@@ -19,7 +19,9 @@
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
     X( has_mark, int has_mark )                                    \
     X( marked_value, uint32_t marked_value )                       \
-    X( marked_address, struct rocketnet_address_t marked_address )
+    X( marked_address, struct rocketnet_address_t marked_address ) \
+    X( seen, int seen )                                            \
+    X( seen_address, struct rocketnet_address_t seen_address )
 
 struct rocketnet_server_replay_slot_mark_t
 {
@@ -79,13 +81,15 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     rocketnet_assert( sink->forget );
     rocketnet_assert( sink->mark );
 
-    // tla/RNXdpReplay.tla Walk: first the forgets -- every slot that held a
-    // mark and is no longer connected, or whose mapping changed address.
+    // tla/RNXdpReplay.tla Walk: first the forgets -- every slot that was seen
+    // connected and is no longer connected, or whose mapping changed address,
+    // whether or not it held a mark: the transport's forget drops the reply
+    // MAC of that address too, and a delete of a missing key is harmless.
 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
-        if ( !slot->has_mark )
+        if ( !slot->seen )
             continue;
 
         int forget = 0;
@@ -104,20 +108,22 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             else
             {
                 const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
-                if ( !rocketnet_address_equal( address, &slot->marked_address ) )
+                if ( !rocketnet_address_equal( address, &slot->seen_address ) )
                     forget = 1;
             }
         }
 
         if ( forget )
         {
-            sink->forget( sink->context, &slot->marked_address );
+            sink->forget( sink->context, &slot->seen_address );
             memset( slot, 0, sizeof(*slot) );
         }
     }
 
     // then the marks -- every connected slot whose highest_opened is nonzero
-    // and differs from what it last marked.
+    // and differs from what it last marked. Every connected slot with a
+    // mapping is seen at its address, marked or not, so that the forget pass
+    // can drop the reply MAC of a slot that left before it ever marked.
 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
@@ -129,16 +135,21 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             continue;
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, mapping_index );
         const uint64_t highest_opened = mapping->replay_session.highest_opened;
+
+        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
+
+        struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
+        slot->seen = 1;
+        slot->seen_address = *address;
+
         if ( highest_opened == 0 )
             continue;
 
         const uint32_t high_water = (uint32_t) highest_opened;
 
-        struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
         if ( slot->has_mark && slot->marked_value == high_water )
             continue;
 
-        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
         sink->mark( sink->context, address, high_water );
         slot->has_mark = 1;
         slot->marked_value = high_water;
@@ -160,7 +171,13 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
     static const rocketnet_reset_member_t members[] = { ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( MARK_MEMBER ) };
 #undef MARK_MEMBER
 #define MARK_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, #decision[0] == 'R' ),
-    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION ) };
+    // The shared inventory in rocketnet_connection_reset.h lists the three
+    // fields it knew; the walk's seen record adds two members, and their
+    // RESET decisions are listed here so that every member of the struct has
+    // one and the inventory covers the whole struct.
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
+                                                           MARK_DECISION( RESET, seen )
+                                                           MARK_DECISION( RESET, seen_address ) };
 #undef MARK_DECISION
     return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof(members) / sizeof(members[0]),
                                               decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
