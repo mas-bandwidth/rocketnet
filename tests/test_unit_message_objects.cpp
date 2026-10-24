@@ -109,6 +109,7 @@ struct mo_net_t
     int drop_next_to_server;                        // drop this many packets to the server, then deliver
     int fail_finish;                                // the next this many finish_packet calls fail (return 0, nothing sent)
     bool refuse_start;                              // start_packet gives no frame while set (a full send ring)
+    int start_limit_bytes;                          // above 0: start_packet gives no frame for a request above this many bytes
     bool hold_acks;                                 // opened ids are not reported back while set
     bool keep_log;
 };
@@ -130,6 +131,7 @@ static mo_net_t * mo_net_new()
     net->drop_next_to_server = 0;
     net->fail_finish = 0;
     net->refuse_start = false;
+    net->start_limit_bytes = 0;
     net->hold_acks = false;
     net->keep_log = true;
     return net;
@@ -245,6 +247,8 @@ static uint8_t * mo_start_packet( void * transport, int client_index, int reques
     mo_endpoint_t * e = (mo_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
     if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || e->net->refuse_start )
+        return NULL;
+    if ( e->net->start_limit_bytes > 0 && request_bytes > e->net->start_limit_bytes )
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
@@ -3513,6 +3517,189 @@ static void test_message_full_drain_delivers_every_message_once_in_order()
     mo_full_drain_case( false );
 }
 
+// ---------------------------------------------------------------------------
+// RNSendBudget SendFailed (R6): a packet the transport refuses at finish is
+// charged its maximum wire bytes when written and refunded whole when the
+// finish fails, so the bucket and bytes_spent are as they were before it. The
+// server's slot is capped at a low rate, where one maximum packet is a visible
+// share of the bucket, and every check runs at one update time T, where a
+// second refill adds nothing.
+// ---------------------------------------------------------------------------
+
+#define MO_REFUND_KBPS 400                          // 50000 bytes a second, a 5000-byte bucket
+
+struct mo_refund_mark_t
+{
+    double tokens;
+    uint64_t bytes_spent;
+    uint64_t refusals;
+};
+
+static void mo_refund_setup( mo_pair_t * pair )
+{
+    mo_pair_setup( pair, 1, NULL, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_REFUND_KBPS );
+    for ( int i = 0; i < 3; i++ )
+        mo_step( pair );
+    check( mo_server_slot( pair, 0 )->send_budget_enabled == 1 );
+}
+
+// one update at the next time T, with nothing to send: the bucket refilled at
+// T, then read
+static mo_refund_mark_t mo_refund_mark( mo_pair_t * pair )
+{
+    pair->time += 0.01;
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_message_server_send_packets( pair->server );
+    const rn_message_connection_t * slot = mo_server_slot( pair, 0 );
+    mo_refund_mark_t mark;
+    mark.tokens = slot->budget.tokens;
+    mark.bytes_spent = slot->budget.bytes_spent;
+    mark.refusals = slot->budget.refusals;
+    return mark;
+}
+
+// the update again at the same T: the failed packet's charge is back
+static void mo_refund_update_at_mark( mo_pair_t * pair )
+{
+    check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
+    rocketnet_message_server_send_packets( pair->server );
+}
+
+static void mo_refund_check( mo_pair_t * pair, const mo_refund_mark_t & mark )
+{
+    const rn_message_connection_t * slot = mo_server_slot( pair, 0 );
+    check( pair->net->fail_finish == 0 );                                  // the one failure was taken
+    check( fabs( slot->budget.tokens - mark.tokens ) < 1e-6 );             // the bucket is not left short
+    check( slot->budget.bytes_spent == mark.bytes_spent );
+    check( slot->budget.refusals == mark.refusals );                       // the settle was accepted
+}
+
+static void test_message_budget_refunded_on_failed_large_sequenced_finish()
+{
+    mo_pair_t pair;
+    mo_refund_setup( &pair );
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+    const mo_refund_mark_t mark = mo_refund_mark( &pair );
+
+    // sequenced state that fills a whole packet, queued (no frame at start):
+    // the write pass takes it as the large sequenced packet, charged its
+    // maximum wire bytes at write, and the transport refuses the finish.
+    // State larger than one packet is promoted to the reliable twin at start,
+    // so this is the one size that reaches the large sequenced packet.
+    uint8_t message[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 - 10];          // the record's 10-byte header on channel 1, and the form byte
+    mo_fill( message, 41, sizeof( message ) );
+    pair.net->refuse_start = true;
+    check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, message, (int) sizeof( message ) ) != 0 );
+    pair.net->refuse_start = false;
+    check( mo_server_slot( &pair, 0 )->large_admitted == 0 );
+    pair.net->fail_finish = 1;
+    mo_refund_update_at_mark( &pair );
+
+    check( mo_server_slot( &pair, 0 )->large_admitted > 0 );               // planned as the large sequenced packet
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed + 1 );
+    mo_refund_check( &pair, mark );
+    mo_pair_teardown( &pair );
+}
+
+static void test_message_budget_refunded_on_failed_in_place_finish()
+{
+    mo_pair_t pair;
+    mo_refund_setup( &pair );
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+    const mo_refund_mark_t mark = mo_refund_mark( &pair );
+
+    // no frame for a whole packet, so the message cannot be packed: it takes
+    // a frame of its own, written in place, admitted at finish, and the
+    // transport refuses the finish
+    pair.net->start_limit_bytes = 1000;
+    uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 900 );
+    check( p != NULL );
+    check( pair.server->object.in_place == 1 );
+    if ( p )
+        mo_fill( p, 42, 900 );
+    pair.net->fail_finish = 1;
+    check( rocketnet_message_server_finish( pair.server, 0, 900 ) != 0 );
+    pair.net->start_limit_bytes = 0;
+    mo_refund_update_at_mark( &pair );
+
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed + 1 );
+    check( mo_server_slot( &pair, 0 )->in_place_admitted == 0 );
+    mo_refund_check( &pair, mark );
+    mo_pair_teardown( &pair );
+}
+
+static void test_message_budget_refunded_on_failed_write_pass_finish()
+{
+    mo_pair_t pair;
+    mo_refund_setup( &pair );
+    const mo_refund_mark_t mark = mo_refund_mark( &pair );
+
+    // a reliable message on the write pass: the ordered packet is charged,
+    // the finish is refused, and the charge comes back
+    uint8_t message[1000];
+    mo_fill( message, 43, sizeof( message ) );
+    check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+    pair.net->fail_finish = 1;
+    const size_t logged = pair.net->server->sent_log.size();
+    mo_refund_update_at_mark( &pair );
+    check( pair.net->server->sent_log.size() == logged );                  // nothing left
+    mo_refund_check( &pair, mark );
+
+    // its records are due again and resent at the next update: the resend
+    // is charged once, at the wire bytes it took
+    std::vector<mo_received_t> client_got;
+    mo_step( &pair, NULL, &client_got );
+    const rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    check( pair.net->server->sent_log.size() == logged + 1 );
+    uint64_t wire = 0;
+    for ( size_t i = logged; i < pair.net->server->sent_log.size(); i++ )
+        wire += (uint64_t) rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, pair.net->server->sent_log[i].bytes );
+    check( slot->budget.bytes_spent == mark.bytes_spent + wire );
+    for ( int i = 0; i < 3; i++ )
+        mo_step( &pair, NULL, &client_got );
+    check( client_got.size() == 1 );
+    uint32_t id = 0;
+    check( client_got.size() == 1 && mo_verify( client_got[0].bytes, &id ) && id == 43 );
+
+    // an unreliable message queued for the write pass (no frame at start):
+    // its packed packet's charge comes back the same way
+    const mo_refund_mark_t unreliable_mark = mo_refund_mark( &pair );
+    pair.net->refuse_start = true;
+    check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    pair.net->refuse_start = false;
+    pair.net->fail_finish = 1;
+    mo_refund_update_at_mark( &pair );
+    mo_refund_check( &pair, unreliable_mark );
+    mo_pair_teardown( &pair );
+}
+
+static void test_message_budget_refunded_on_failed_unreliable_flush()
+{
+    mo_pair_t pair;
+    mo_refund_setup( &pair );
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+    const mo_refund_mark_t mark = mo_refund_mark( &pair );
+
+    // a small unreliable message packed into the open build, admitted when the
+    // build is sealed at the flush, and the transport refuses the finish
+    uint8_t message[100];
+    mo_fill( message, 44, sizeof( message ) );
+    check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    pair.net->fail_finish = 1;
+    mo_refund_update_at_mark( &pair );
+
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed + 1 );
+    mo_refund_check( &pair, mark );
+    mo_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_large_sequenced_finish );
+REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_in_place_finish );
+REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_write_pass_finish );
+REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_unreliable_flush );
 REGISTER_UNIT_TEST( test_message_not_received_ends_the_connection );
 REGISTER_UNIT_TEST( test_message_full_drain_delivers_every_message_once_in_order );
 

@@ -373,6 +373,8 @@ static void rn_message_flush_unreliable( rn_message_object_t * object, int index
     }
     else if ( records > 0 )
     {
+        if ( admitted )
+            rocketnet_send_budget_settle( &connection->budget, admitted, 0 );    // tla/RNSendBudget.tla SendFailed: refund the whole charge
         for ( int i = 0; i < records; ++i ) rn_message_count( object, failed_counter );
         for ( uint32_t i = 0; i < build->receipt_count; ++i )
             rn_window_ack_receipt_emit_loss( &connection->ordered.ack, build->receipt_serials[i] );
