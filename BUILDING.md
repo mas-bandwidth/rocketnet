@@ -48,7 +48,12 @@ Run the unit suite with:
     ./bin/test
 
 `./bin/test` does not open a socket and does not start a transport. It drives the
-state machines and the in-memory network simulator. Tests run in parallel
+state machines and the in-memory network simulator, and reads and writes no
+file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
+and `tests/wycheproof/*_test.json`) are compiled into it at build time by
+`cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
+regenerated only by the tool `./bin/connect_token_vectors <path>`
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
@@ -181,6 +186,14 @@ named functional, never as a unit step.
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
+
+The corpus-consistency cases in `./bin/functional`
+(functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
+`test_pcapng_corpus_witness_unread_packet_goes_red`,
+`test_pcapng_corpus_covers_control_packet_types` and
+`test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
+`tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
+as findings land, so they are functional cases, never unit ones.
 
 Dependencies, per platform, as CI installs them:
 

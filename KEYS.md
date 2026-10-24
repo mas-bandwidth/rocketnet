@@ -134,8 +134,13 @@ same token byte for byte: Go ([go/main.go](examples/backend/go/main.go),
 `generateConnectToken`) and C#
 ([csharp/Backend/ConnectToken.cs](examples/backend/csharp/Backend/ConnectToken.cs),
 `ConnectToken.Generate`). Both are checked against the known answers in
-[tests/connect_token_vectors.json](tests/connect_token_vectors.json). A real
-backend authenticates the player before it writes them a token.
+[tests/connect_token_vectors.json](tests/connect_token_vectors.json). That file
+is written only by `./bin/connect_token_vectors tests/connect_token_vectors.json`
+([tools/connect_token_vectors/main.cpp](tools/connect_token_vectors/main.cpp)),
+from the fixed test keys and inputs; the unit suite compiles the committed copy
+into `./bin/test` and checks it byte for byte against the same generator
+(`test_vectors_regenerate_byte_identical`). A real backend authenticates the
+player before it writes them a token.
 
 ## Rotation
 

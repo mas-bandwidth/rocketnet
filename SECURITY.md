@@ -51,8 +51,9 @@ advisory reference in its release notes.
 
 A fuzz finding is minimized first (`-minimize_crash=1`), then converted with
 `tools/fuzz_finding_to_pcapng.py <harness> <input> --name <name>`, and lands
-with its fix in the same pull request. The unit-tier replay
-(`test_pcapng_corpus_replay`) reads `tests/pcapng/regress/` and holds the finding
+with its fix in the same pull request. The functional-tier replay
+(`test_pcapng_corpus_replay` in `functional/corpus_consistency.cpp`, run by
+`./bin/functional`) reads `tests/pcapng/regress/` and holds the finding
 thereafter. `tools/check_fuzz_regressions.py` refuses a regression seed without
 its capture, a capture without its seed, and a capture that does not carry the
 seed's bytes. A finding with no pcapng form keeps its `regress_` seed in the
