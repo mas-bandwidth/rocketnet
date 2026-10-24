@@ -1130,7 +1130,7 @@ struct posix_sender_t
 // them queued 0.1 to 1.6 million packets in the 20 ms traffic window, so the
 // window's first server update alone ran 0.4 to 1.2 s draining them, and
 // under the nightly's tsan build the io_uring case took 70 to 230 s against
-// its 120 s limit (amd-2 and amd-3 at load 16 to 75). Paced, the eight still
+// its 120 s limit (16-core Linux at load 16 to 75). Paced, the eight still
 // send about 40k packets a second under tsan, before and all through the
 // server's destroy, and the window is 20 ms again.
 #define POSIX_SENDER_INTERVAL 0.0001
