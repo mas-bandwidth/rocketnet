@@ -131,6 +131,21 @@ sdk/rocketnet_xdp_free_list.h                                 0        10       
 sdk/rocketnet_xdp_limits.h                                    2         1       0          0/0/0           1
 sdk/rocketnet_xdp_replay_marks.h                             30        26       0          0/0/0           0
 sdk/rocketnet_xdp_socket_config.h                             0        15       0          0/0/0           0
+sdk/rocketnet_server_iocp_windows.cpp                         0         0       0          0/0/0           0
+sdk/rocketnet_server_rio_windows.cpp                          0         0       0          0/0/0           0
+sdk/rocketnet_base64.h                                        0         0       0          0/0/0           0
+sdk/rocketnet_client_slots.h                                  0         0       0          0/0/0           0
+sdk/rocketnet_hash.h                                          0         0       0          0/0/0           0
+sdk/rocketnet_keys.h                                          0         0       0          0/0/0           0
+sdk/rocketnet_memory_checks.h                                 0         0       0          0/0/0           0
+sdk/rocketnet_network_simulator.h                             0         0       0          0/0/0           0
+sdk/rocketnet_packet_batch.h                                  0         0       0          0/0/0           0
+sdk/rocketnet_server_iocp.h                                   0         0       0          0/0/0           0
+sdk/rocketnet_server_replay_marks.h                           0         0       0          0/0/0           0
+sdk/rocketnet_tests.h                                         0         0       0          0/0/0           0
+sdk/rocketnet_token_tables.h                                  0         0       0          0/0/0           0
+sdk/rocketnet_window_receive.h                                0         0       0          0/0/0           0
+sdk/rocketnet_window_send.h                                   0         0       0          0/0/0           0
 ------------------------------------------------------------------------------------------------------------
 TOTAL (sdk/ less sdk/rocketnet_tests.cpp)                 19200      5077    4093    619/808/238         686
 ```
@@ -138,7 +153,12 @@ TOTAL (sdk/ less sdk/rocketnet_tests.cpp)                 19200      5077    409
 The suite's own source, `sdk/rocketnet_tests.cpp`, is reported apart: 0 production,
 9679 unit-only, 108 never. It is not in the findings.
 
-Lines left out of the findings, with counts. Seam lines, compiled only under the
+Lines left out of the findings, with counts. The fifteen `sdk/` rows added with
+0/0/0 carry no executable lines in the Linux production objects: the two
+Windows-only sources `sdk/rocketnet_server_iocp_windows.cpp` and
+`sdk/rocketnet_server_rio_windows.cpp` are not compiled on this Linux bench, and
+the twelve headers named in the table are not emitted by the splitter (declarations
+and inline bodies no production object instantiates). Seam lines, compiled only under the
 test-seam macros: 619 production, 808 unit-only, 238 never. `sdk/rocketnet_rio_layout.h`
 is 89 unit-only lines with no mapping in the Linux production objects (another OS).
 `sdk/rocketnet_testing.h` is 8 unit-only lines, also absent from those objects.
@@ -205,3 +225,36 @@ bulk of the never column in `sdk/rocketnet_server_socket_linux.cpp` (1447),
 - `sdk/rocketnet_out_of_order_tracker.h:49`, the tracker has no production caller. `docs/audits/2026-10-24-code-quality-aurora.md` finding 13. This run agrees: 28 unit-only lines, 5 never, 0 production.
 - `rocketnet_message_client_receive_channel` and `rocketnet_message_server_receive_channel` are in the never set (each 9 lines). `docs/audits/2026-10-24-area-protocol-channels-messages.md` finding 2.
 - The multipath match at `sdk/rocketnet_gateway_netlink_linux.cpp:225` is `docs/audits/2026-10-24-area-transports-linux-af-xdp.md` finding 5. The parsers that finding describes are unit-only here. Finding 3 above is the socket entry, which that finding does not cover.
+
+## Cites
+
+Each finding's `file:line` was read at the audited sha `aa193eb3`. `git show
+aa193eb3:<file> | sed -n '<line>p'` answered, all matching the code the finding names:
+
+- `sdk/rocketnet.cpp:490` — ``    if ( bytes > SIZE_MAX - overhead )``
+- `sdk/rocketnet.cpp:492` — ``        ++rocketnet_allocation_refusals_on_this_thread;``
+- `sdk/rocketnet_client_transport.cpp:598` — ``static void rocketnet_client_race_send_batch( void * instance, const rocketnet_platform_send_t * sends, int num_packets )``
+- `sdk/rocketnet_client_transport.cpp:619` — ``    race->family[0].operations->send_batch( race->family[0].instance, sends, num_packets );``
+- `sdk/rocketnet_client_transport.cpp:620` — ``    for ( int i = 0; i < num_packets; i++ )``
+- `sdk/rocketnet_client_transport.cpp:621` — ``        if ( rocketnet_address_equal( sends[i].to, &race->server_address[0] ) )``
+- `sdk/rocketnet_client_transport.cpp:622` — ``            race->family[1].operations->send( race->family[1].instance, &race->server_address[1],``
+- `sdk/rocketnet_client_transport.cpp:623` — ``                                              sends[i].packet_data, sends[i].packet_bytes );``
+- `sdk/rocketnet_client_transport.cpp:1619` — ``            race->operations.send_batch = inner->send_batch ? rocketnet_client_race_send_batch : NULL;``
+- `sdk/rocketnet_client_transport.cpp:1620` — ``            race->operations.receive_batch = inner->receive_batch ? rocketnet_client_race_receive_batch : NULL;``
+- `sdk/rocketnet_client_transport.cpp:1621` — ``            race->operations.wait = inner->wait ? rocketnet_client_race_wait : NULL;``
+- `sdk/rocketnet_client_transport.cpp:1623` — ``            race->operations.send_failures = inner->send_failures ? rocketnet_client_race_send_failures : NULL;``
+- `sdk/rocketnet_gateway_netlink_linux.cpp:466` — ``int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )``
+- `sdk/rocketnet_gateway_netlink_linux.cpp:470` — ``    return rocketnet_gateway_netlink_dump( RTM_GETROUTE, family, rocketnet_gateway_netlink_route_parse, &query, error );``
+- `sdk/rocketnet_ack.cpp:251` — ``static bool rocketnet_sent_record_state_equal( const rocketnet_sent_packet_record_t * a, const rocketnet_sent_packet_record_t * b )``
+- `sdk/rocketnet_ack.cpp:285` — ``        if ( rocketnet_ack_bit( a->sent_written, i ) && !rocketnet_sent_record_state_equal( &a->sent[i], &b->sent[i] ) )``
+- `sdk/rocketnet_ack.cpp:288` — ``        if ( rocketnet_ack_bit( a->received_written, i ) && !rocketnet_received_record_state_equal( &a->received[i], &b->received[i] ) )``
+- `sdk/rocketnet_ack.cpp:291` — ``        if ( rocketnet_ack_bit( a->aggregates_written, i ) && !rocketnet_aggregate_state_equal( &a->aggregates[i], &b->aggregates[i] ) )``
+- `sdk/rocketnet_server_transport.cpp:411` — ``        if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )``
+- `sdk/rocketnet.cpp:104` — ``bool rocketnet_config_parse_int_value( const char * value, int * out )``
+- `sdk/rocketnet_config.cpp:426` — ``bool rocketnet_config_parse_int_value( const char * value, int * out )``
+- `sdk/rocketnet_read_write.h:117` — ``inline int rocketnet_read_uint8_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * value )``
+- `sdk/rocketnet_read_write.h:126` — ``inline int rocketnet_read_uint16_bounded( const uint8_t ** p, const uint8_t * end, uint16_t * value )``
+- `sdk/rocketnet_read_write.h:135` — ``inline int rocketnet_read_uint32_bounded( const uint8_t ** p, const uint8_t * end, uint32_t * value )``
+- `sdk/rocketnet_crypto_tally.h:31` — ``static inline void rocketnet_crypto_tally_set( const struct rocketnet_crypto_tally_t t )``
+- `sdk/rocketnet_out_of_order_tracker.h:49` — ``inline void rocketnet_out_of_order_tracker_packet_received( rocketnet_out_of_order_tracker_t * tracker, uint64_t sequence )``
+- `sdk/rocketnet_gateway_netlink_linux.cpp:225` — ``    else if ( attributes->value[RTA_MULTIPATH] && route->family == AF_INET )``
