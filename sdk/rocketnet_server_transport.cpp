@@ -2220,6 +2220,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     }
 
+    // tla/RNChannel.tla FixBatch and tla/RNWindow.tla FixBatch: the received
+    // batch is fixed here, before this update builds any reply or ack, so no
+    // packet opened later can join it.
+
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
     // standalone ack, into send frames. The per-slot ACK statistics need no

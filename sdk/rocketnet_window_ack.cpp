@@ -240,6 +240,8 @@ static void rn_sent_index_remove( rn_region_t * region, uint64_t packet_id )
 //      Sent-packet ring reclamation & oldest-unacked tracking
 // ----------------------------------------------------------------
 
+// tla/RNReceipts.tla RetireLostPacket: reclaims the retired head of the
+// sent-packet ring, dropping a lost packet's references from the map.
 static void rn_window_ack_reclaim_head( rn_window_ack_t * ack )
 {
     rn_region_t * region = ack->region;

@@ -620,6 +620,8 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 // never a rescan of its descriptors. The chunk is copied to its own offset,
 // ring + index * F (THE COPIES (b): a chunk must outlive the batch).
 // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
+// tla/RNChannelTypes.tla ArriveFragment: one block fragment arrives at its
+// index and is placed, and the block is complete only when all have arrived.
 
 rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, const struct rocketnet_message_record_t * record,
                                                      uint32_t key_channel, uint32_t key_index, uint32_t slot,

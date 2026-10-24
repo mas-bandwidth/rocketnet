@@ -1639,6 +1639,8 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
 // a block, and sending a block resets the ack debt. The sent packet is
 // recorded in the delivery bookkeeping -- these sequences carry no packet
 // id and surface nothing when acknowledged.
+// tla/RNChannel.tla SendAck and tla/RNWindow.tla SendAck: the block carries
+// the packet ids opened in the fixed batch and the debt clears once it leaves.
 
 static int rocketnet_server_write_session_packet( struct rocketnet_server_protocol_t * server,
                                                   struct rocketnet_encryption_mapping_t * mapping,
