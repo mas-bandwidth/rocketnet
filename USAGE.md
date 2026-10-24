@@ -224,9 +224,9 @@ structs, except `config_bytes`.
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | reliable_messages_in_flight | ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_message_buffer_bytes | ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
-| send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `800000` | refuses the create unless `12288..268435456` |
+| receive_message_buffer_bytes | ROCKETNET_CLIENT_RECEIVE_MESSAGE_BUFFER_BYTES | int | `1048576` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_CLIENT_MAX_MESSAGE_BYTES | int | `1048576` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES | int | `4194304` | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES | int | `1024` | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_CLIENT_PACKETS_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and at least `reliable_messages_in_flight` |
 | packets_per_update | ROCKETNET_CLIENT_PACKETS_PER_UPDATE | int | `256` | refuses the create unless `1..1024` |
@@ -250,9 +250,9 @@ structs, except `config_bytes`.
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` | refuses the create unless `1..32` |
 | reliable_messages_in_flight | ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576` and a power of two |
-| receive_message_buffer_bytes | ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES | int | `262144` | refuses the create unless `4096..1048576` and a multiple of 16 |
-| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `262144` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
-| send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `800000` (per client) | refuses the create unless `12288..268435456` |
+| receive_message_buffer_bytes | ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES | int | `1048576` | refuses the create unless `4096..1048576` and a multiple of 16 |
+| max_message_bytes | ROCKETNET_SERVER_MAX_MESSAGE_BYTES | int | `1048576` | refuses the create unless `1415..1048576` and no larger than `receive_message_buffer_bytes` |
+| send_message_buffer_bytes | ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES | int | `4194304` (per client) | refuses the create unless `12288..268435456` |
 | send_queue_messages | ROCKETNET_SERVER_SEND_QUEUE_MESSAGES | int | `1024` (per client) | refuses the create unless `16..1048576` |
 | packets_in_flight | ROCKETNET_SERVER_PACKETS_IN_FLIGHT | int | `1024` (per client) | refuses the create unless `64..1048576` and at least `reliable_messages_in_flight` |
 | packets_per_update | ROCKETNET_SERVER_PACKETS_PER_UPDATE | int | `256` (per client) | refuses the create unless `1..1024` |
@@ -340,8 +340,8 @@ the worker has not exited.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 13.4 GB (13,417,470,272 bytes)
-of memory, which scales to approximately 13.4 MB (13,415,360 bytes) per client slot.
+A default 1,000-client server requires approximately 18.4 GB (18,393,982,336 bytes)
+of memory, which scales to approximately 18.4 MB (18,391,808 bytes) per client slot.
 This memory figure can be measured directly using `rocketnet_server_required_memory`:
 
 ```c
@@ -373,8 +373,8 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ./measure_server_memory
 ```
 
-It prints `1000 clients: 13417470272`, `1 client: 15525696`, `2 clients: 28941056`
-and `delta: 13415360` on this SDK revision.
+It prints `1000 clients: 18393982336`, `1 client: 20502336`, `2 clients: 38894144`
+and `delta: 18391808` on this SDK revision.
 
 A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
@@ -456,6 +456,50 @@ wipes/frees resources synchronously; if the worker has not exited it logs a
 second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise receipt by the other side of the connection.
+
+### Receive buffer sizing
+
+Between two updates the server's socket holds every packet that arrives.
+The portable transport's receive worker reads the socket into one of three
+banks and publishes a bank after every read. While main holds the other
+banks the worker has no free bank, stops reading the socket and waits
+(`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
+the kernel's receive buffer, and a buffer too small for it drops datagrams
+before the server sees them. Each server socket therefore asks for:
+
+```
+receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
+                       at least 1,000,000, at most INT_MAX
+```
+
+that is, `max_clients` at the default client send budget
+(`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, 125,000 bytes/s per client), over
+the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
+kernel's per-packet accounting, which charges more than the packet bytes. At
+1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
+updating faster than 10 Hz need proportionally less; the request stays sized
+for 10 Hz. The io_uring and iocp transports size for `ROCKETNET_MAX_CLIENTS`.
+The request is an upper bound: the kernel charges only for what it holds.
+
+The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
+(about 208 KB by default) without an error; macOS and the BSDs refuse a
+request above `kern.ipc.maxsockbuf` and the server walks down by halves. The
+server reads the grant back after create and logs one line with what it
+granted and what it asked for; when the grant is below the request that line
+is a warning naming the limit to raise. On Linux, for 1000 clients:
+
+```
+sudo sysctl -w net.core.rmem_max=25000000
+```
+
+A grant below one update's inbound traffic drops packets in the kernel
+before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
+update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
+1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp:
+3.46 MB, 1.83 MB and 1.30 MB of wire bytes per update, with 0 kernel
+receive drops). The portable server is a portable implementation with no
+performance guarantee: that case reports the kernel's receive drop count and
+never fails on it, and runs when `ROCKETNET_LOW_TICK_MEASURE=1` names it.
 
 ## Frame loop
 

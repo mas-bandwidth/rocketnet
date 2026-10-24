@@ -1285,6 +1285,15 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MAX_CLIENTS sets the client limit. Range is 1 ..
     /// ROCKETNET_MAX_CLIENTS. Default is 1000.
+    ///
+    /// It also sizes the server socket's receive buffer request to hold one
+    /// update's inbound traffic: ceil( max_clients x 1000 kbps x 125 x 2 /
+    /// 10 Hz ) bytes, at least 1,000,000 and at most INT_MAX (25,000,000 at
+    /// 1000 clients). Linux silently clamps it to net.core.rmem_max (about
+    /// 208 KB by default) and macOS to kern.ipc.maxsockbuf; the server reads
+    /// the grant back and logs one line with it, a warning naming the limit
+    /// to raise when the grant is below the request (USAGE.md, "Receive
+    /// buffer sizing").
 
     int max_clients;
 
@@ -1520,6 +1529,12 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
     return rocketnet_client_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_client_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
 /// send budget. Use it in place of rocketnet_client_default_config. It changes
@@ -1532,7 +1547,12 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 /// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
 /// NULL config.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config );
+static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_client_light_config_internal( config );
+}
 
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
@@ -2050,6 +2070,12 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
     return rocketnet_server_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_server_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
 /// send budget per client. Use it in place of rocketnet_server_default_config.
@@ -2063,7 +2089,12 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
 /// NULL config.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config );
+static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_server_light_config_internal( config );
+}
 
 /// As rocketnet_client_required_memory, for this config and max_clients.
 /// The defaults' test filter in a production build is an invalid config. A

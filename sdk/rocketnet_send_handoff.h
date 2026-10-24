@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 #include "rocketnet_internal.h"
+#include <atomic>
 
 // Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
@@ -73,3 +74,18 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         --count;
     }
 };
+
+// Claim one staging slot for a packet: the producer counter names the index,
+// and a claim past the limit (or a counter that wrapped negative) is refused
+// and counted, so the flush names the queue and the count once per flush
+// instead of every refused start logging a line of its own.
+inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, std::atomic<uint64_t> & refused )
+{
+    const int index = num_packets.fetch_add( 1 );
+    if ( index < 0 || index >= limit )
+    {
+        refused.fetch_add( 1, std::memory_order_relaxed );
+        return -1;
+    }
+    return index;
+}
