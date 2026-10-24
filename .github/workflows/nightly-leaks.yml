@@ -28,6 +28,7 @@ jobs:
     name: asan + ubsan + lsan (full suite)
     runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
