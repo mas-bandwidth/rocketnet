@@ -2287,8 +2287,8 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 
 // The replay high-water writer. Main thread only, like the rest of the server
 // update path. Forget and mark append to the socket's pending buffer; commit
-// applies them to the pinned map and resets the buffer, failures counted and
-// named by call, never by key.
+// applies them to the pinned map and resets the buffer keeping every forget
+// the kernel refused, failures counted and named by call, never by key.
 
 void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
 {
@@ -2329,7 +2329,10 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
 
     // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
-    // in one commit; this is the only writer of the kernel map.
+    // in one commit; this is the only writer of the kernel map. A forget the
+    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied).
+
+    bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
 
     if ( marks->forget_count > 0 )
     {
@@ -2337,22 +2340,18 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         memset( &opts, 0, sizeof(opts) );
         opts.sz = sizeof(opts);
         __u32 count = marks->forget_count;
-        if ( bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) != 0 )
+        const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
+        for ( uint32_t i = 0; i < marks->forget_count; i++ )
         {
-            // a missing key is not a failure; an older kernel refuses the
-            // batch call, so walk the forgets one syscall at a time
+            // a missing key is not a failure; a refused batch (an older kernel,
+            // a missing key, or any other error) is walked one syscall at a
+            // time so each forget's outcome is known
 
-            if ( errno == ENOENT || errno == EINVAL || errno == ENOTSUPP )
+            forget_failed[i] = false;
+            if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
             {
-                for ( uint32_t i = 0; i < marks->forget_count; i++ )
-                {
-                    if ( bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-                }
-            }
-            else
-            {
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_batch" );
+                forget_failed[i] = true;
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
             }
         }
     }
@@ -2381,7 +2380,8 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         }
     }
 
-    rocketnet_xdp_replay_marks_reset( marks );
+    // a full buffer's refusals land in the commit failure count
+    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed );
 }
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
@@ -2649,9 +2649,27 @@ bool rocketnet_server_socket_test_replay_marks()
 
     rocketnet_server_socket_replay_commit(server);
 
-    valid &= server->replay_marks->forget_count == 0;
+    // the refused forget stays pending for the next commit; the marks clear
+    valid &= server->replay_marks->forget_count == 1;
     valid &= server->replay_marks->mark_count == 0;
     valid &= rocketnet_server_socket_replay_commit_failures(server) > failures_before;
+
+    // fill the forgets past the buffer: the refusal reaches the commit
+    // failure count beside one failure per refused forget
+    for (uint32_t i = 1; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++)
+    {
+        rocketnet_address_t c = a;
+        c.port = (uint16_t) (2000 + i);
+        rocketnet_server_socket_replay_forget(server, &c);
+    }
+    rocketnet_server_socket_replay_forget(server, &b);
+    valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+    valid &= server->replay_marks->refused == 1;
+    const uint64_t failures_full = rocketnet_server_socket_replay_commit_failures(server);
+    rocketnet_server_socket_replay_commit(server);
+    valid &= rocketnet_server_socket_replay_commit_failures(server) == failures_full + ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 1;
+    valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+    valid &= server->replay_marks->refused == 0;
 
     rocketnet_server_socket_destroy(server);
     return valid;
