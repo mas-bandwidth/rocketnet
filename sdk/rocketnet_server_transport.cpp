@@ -44,22 +44,15 @@ static void rocketnet_server_transport_abort_create( struct rocketnet_server_tra
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
                                            void * transport, uint64_t * too_short, uint64_t * too_large );
 
-// The capacity-aware receive entry's declaration lives beside its definition
-// in sdk/rocketnet_server_protocol.cpp; the transport passes the size of the
-// payload buffer it hands over.
+// One payload slot of the receive batch's storage holds a whole opened
+// packet: the protocol opens each packet into the next free slot and an
+// accepted payload is delivered where it opened, its bytes behind the ack
+// block, so the plaintext is written once (rocketnet_server_protocol_process_received).
 
-int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
-                                     const struct rocketnet_address_t * from,
-                                     const uint8_t * packet_data,
-                                     int packet_bytes,
-                                     uint64_t current_timestamp,
-                                     double current_time,
-                                     uint8_t * response_packet,
-                                     int * response_bytes,
-                                     uint8_t * out_payload,
-                                     int out_payload_capacity,
-                                     int * out_payload_bytes,
-                                     int * out_payload_client_index );
+#define ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES ROCKETNET_RECEIVE_CEILING
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIVE_PAYLOAD_BYTES,
+                         "a payload slot holds the largest payload" );
 
 #include <sodium.h>
 #include <memory.h>
@@ -301,7 +294,7 @@ struct rocketnet_server_transport_t
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
-    uint8_t payload_storage[ROCKETNET_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
+    uint8_t payload_storage[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
 // The server transport's state zeroed in its raw storage, then default
@@ -445,13 +438,44 @@ static void rocketnet_server_wire_totals_add_received( struct rocketnet_server_t
     }
 }
 
-static int rocketnet_server_wire_client_index( struct rocketnet_server_transport_t * server_transport,
-                                               const rocketnet_address_t * address )
+// The one encryption-map lookup a received packet pays: the transport looks
+// the source up once, attributes the wire totals from it, and hands the same
+// answer to the protocol, which looks nothing up again. A packet that fails
+// the shape check is not looked up.
+
+static int rocketnet_server_receive_mapping_index( struct rocketnet_server_transport_t * server_transport,
+                                                   bool shape_valid, const rocketnet_address_t * address )
 {
-    const int mapping_index = rocketnet_encryption_map_find( server_transport->protocol.encryption_map, address );
+    if ( !shape_valid )
+        return ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP;
+    return rocketnet_encryption_map_find( server_transport->protocol.encryption_map, address );
+}
+
+static int rocketnet_server_mapping_client_index( struct rocketnet_server_transport_t * server_transport, int mapping_index )
+{
     if ( mapping_index < 0 )
         return -1;
     return rocketnet_encryption_map_control( server_transport->protocol.encryption_map, mapping_index )->client_index;
+}
+
+// A packet from an address with no slot before it can leave its mapping with
+// one only by the response that connects it (ACCEPTED or SEND_KEEP_ALIVE on
+// a mapping that existed before the packet); the mapping index is unchanged,
+// so the slot is read from it rather than looked up again.
+
+static void rocketnet_server_wire_totals_assign( struct rocketnet_server_transport_t * server_transport, int client_index );
+
+static int rocketnet_server_wire_client_after( struct rocketnet_server_transport_t * server_transport,
+                                               int wire_client_before, int mapping_index, int outcome )
+{
+    if ( wire_client_before >= 0 || mapping_index < 0 )
+        return wire_client_before;
+    if ( outcome != ROCKETNET_SERVER_PROCESS_ACCEPTED && outcome != ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE )
+        return wire_client_before;
+    const int wire_client_after = rocketnet_server_mapping_client_index( server_transport, mapping_index );
+    if ( wire_client_after >= 0 )
+        rocketnet_server_wire_totals_assign( server_transport, wire_client_after );
+    return wire_client_after;
 }
 
 // The shape check, stateless and first for every datagram: the prefilter
@@ -1877,6 +1901,16 @@ void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_tran
     rocketnet_assert( timestamp != 0 );
     server_transport->test_timestamp = timestamp;
 }
+
+void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
+                                                   uint64_t * map_hashes, uint64_t * payload_writes )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( map_hashes );
+    rocketnet_assert( payload_writes );
+    *map_hashes = rocketnet_encryption_map_test_hashes( server_transport->protocol.encryption_map );
+    *payload_writes = server_transport->protocol.test_payload_writes;
+}
 #endif // #if ROCKETNET_TEST_SEAMS
 
 // tla/RNDriverSendStaging.tla Update
@@ -1944,13 +1978,17 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + rocketnet_wire_header_bytes( received->from[i].type ) );
 
         const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, received->packet_data[i], received->packet_bytes[i] );
-        const int wire_client_before = shape_valid ? rocketnet_server_wire_client_index( server_transport, &received->from[i] ) : -1;
+        const int mapping_index = rocketnet_server_receive_mapping_index( server_transport, shape_valid, &received->from[i] );
+        const int wire_client_before = rocketnet_server_mapping_client_index( server_transport, mapping_index );
         rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &received->from[i], received->packet_bytes[i] );
 
-        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
-
-        uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
+        // the packet opens into the next free payload slot; with the batch
+        // full it opens on the stack and its payload is not delivered
+        const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE;
+        uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
+        uint8_t * opened = payload_slot_free ?
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
+        const uint8_t * payload = NULL;
         int payload_bytes = 0;
         int payload_client_index = -1;
 
@@ -1963,13 +2001,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( response )
             response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-        const int outcome = rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &received->from[i],
+        const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, &received->from[i], mapping_index,
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
-                                         payload ? payload : payload_overflow,
-                                         payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
-                                         &payload_bytes, &payload_client_index );
+                                         opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
+                                         &payload, &payload_bytes, &payload_client_index );
 
         // a packet that opened under a connection's keys teaches the transport
         // its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md); a
@@ -1980,14 +2017,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
 
-        int wire_client_after = wire_client_before;
-        if ( wire_client_before < 0 && shape_valid )
-        {
-            wire_client_after = rocketnet_server_wire_client_index( server_transport, &received->from[i] );
-            if ( wire_client_after >= 0 )
-                rocketnet_server_wire_totals_assign( server_transport, wire_client_after );
-        }
-        frame.client_index = wire_client_after;
+        frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
 
         if ( response )
         {
@@ -1997,12 +2027,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 rocketnet_server_abort_send_frame( server_transport, &frame );
         }
 
-        if ( payload && payload_bytes > 0 )
+        if ( payload_slot_free && payload && payload_bytes > 0 )
         {
+            // the payload's bytes inside the slot it opened into, which the
+            // transport owns: delivered in place, never copied
             const int index = server_transport->payloads.num_payloads;
             server_transport->payloads.client_index[index] = payload_client_index;
             server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-            server_transport->payloads.payload_data[index] = payload;
+            server_transport->payloads.payload_data[index] = opened + ( payload - opened );
             server_transport->payloads.payload_bytes[index] = payload_bytes;
             server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
             server_transport->payloads.num_payloads++;
@@ -2103,13 +2135,17 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             }
 
             const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, receive_frame, packet_bytes );
-            const int wire_client_before = shape_valid ? rocketnet_server_wire_client_index( server_transport, &from ) : -1;
+            const int mapping_index = rocketnet_server_receive_mapping_index( server_transport, shape_valid, &from );
+            const int wire_client_before = rocketnet_server_mapping_client_index( server_transport, mapping_index );
             rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
 
-            uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_RECEIVE_PAYLOAD_BYTES : NULL;
-
-            uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
+            // the packet opens into the next free payload slot; with the batch
+            // full it opens on the stack and its payload is not delivered
+            const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE;
+            uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
+            uint8_t * opened = payload_slot_free ?
+                server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
+            const uint8_t * payload = NULL;
             int payload_bytes = 0;
             int payload_client_index = -1;
 
@@ -2122,23 +2158,16 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             if ( response )
                 response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-            rocketnet_server_protocol_process_packet_capacity( &server_transport->protocol, &from, receive_frame, packet_bytes,
+            const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, &from, mapping_index,
+                                             receive_frame, packet_bytes,
                                              current_timestamp, current_time,
                                              response ? response : response_overflow, &response_bytes,
-                                             payload ? payload : payload_overflow,
-                                             payload ? ROCKETNET_RECEIVE_PAYLOAD_BYTES : (int) sizeof(payload_overflow),
-                                             &payload_bytes, &payload_client_index );
+                                             opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
+                                             &payload, &payload_bytes, &payload_client_index );
 
             rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
 
-            int wire_client_after = wire_client_before;
-            if ( wire_client_before < 0 && shape_valid )
-            {
-                wire_client_after = rocketnet_server_wire_client_index( server_transport, &from );
-                if ( wire_client_after >= 0 )
-                    rocketnet_server_wire_totals_assign( server_transport, wire_client_after );
-            }
-            frame.client_index = wire_client_after;
+            frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
 
             if ( response )
             {
@@ -2148,12 +2177,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                     rocketnet_server_abort_send_frame( server_transport, &frame );
             }
 
-            if ( payload && payload_bytes > 0 )
+            if ( payload_slot_free && payload && payload_bytes > 0 )
             {
+                // the payload's bytes inside the slot it opened into, which
+                // the transport owns: delivered in place, never copied
                 const int index = server_transport->payloads.num_payloads;
                 server_transport->payloads.client_index[index] = payload_client_index;
                 server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-                server_transport->payloads.payload_data[index] = payload;
+                server_transport->payloads.payload_data[index] = opened + ( payload - opened );
                 server_transport->payloads.payload_bytes[index] = payload_bytes;
                 server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
                 server_transport->payloads.num_payloads++;
