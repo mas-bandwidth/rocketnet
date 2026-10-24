@@ -43,11 +43,11 @@
 #endif
 #else
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3233438146ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745621 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3233438194ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745685 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3227041782ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959817 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3227041830ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959881 )
 #endif
 #endif
 
