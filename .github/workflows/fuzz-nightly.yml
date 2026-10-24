@@ -402,10 +402,14 @@ jobs:
             fuzz-corpus-windows-${{ fromJSON(matrix.leg).target }}-
 
       # clang-cl's dash spellings, not /DWIN32 and /fsanitize: Git Bash
-      # rewrites a leading-slash argument into a Windows path.
+      # rewrites a leading-slash argument into a Windows path. The compiler
+      # check builds a static library: linked as a program, its object carries
+      # the fuzzer-no-link and ASan references the Visual Studio link has no
+      # runtime for, and CMake calls the compiler broken.
       - name: Configure the instrumented library
         run: >
           cmake -B build-fuzz -T ClangCL -A x64
+          -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
           "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -fsanitize=address -fsanitize=fuzzer-no-link"
           "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
