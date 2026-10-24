@@ -73,7 +73,7 @@ struct replay_window_ref_t
         connected = 0;
     }
 
-    // Floor (tla/ReplayWindow.tla:91)
+    // Floor (tla/ReplayWindow.tla:108)
     uint64_t floor() const
     {
         return highest >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS ? highest - ROCKETNET_REPLAY_WINDOW_BITS + 1 : 1;
