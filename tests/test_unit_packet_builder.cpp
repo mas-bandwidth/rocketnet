@@ -697,11 +697,15 @@ static void test_packet_builder_matches_reference_order()
     static const uint32_t moduli[] = { 1, 2, 3, 8, 32 };
     static const int packet_counts[] = { 1, 4, 16 };
 
+    const int num_sizes = (int) ( sizeof( sizes ) / sizeof( sizes[0] ) );
+    const int num_moduli = (int) ( sizeof( moduli ) / sizeof( moduli[0] ) );
+    const int num_packet_counts = (int) ( sizeof( packet_counts ) / sizeof( packet_counts[0] ) );
+
     for ( int round = 0; round < 60; round++ )
     {
-        const int num_items = sizes[round % ( sizeof( sizes ) / sizeof( sizes[0] ) )];
-        const uint32_t modulus = moduli[( round / 3 ) % ( sizeof( moduli ) / sizeof( moduli[0] ) )];
-        const int packets_per_update = packet_counts[round % ( sizeof( packet_counts ) / sizeof( packet_counts[0] ) )];
+        const int num_items = sizes[round % num_sizes];
+        const uint32_t modulus = moduli[( round / 3 ) % num_moduli];
+        const int packets_per_update = packet_counts[round % num_packet_counts];
 
         rn_packet_builder_t builder;
         rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, packets_per_update, PLAN_PAYLOAD_BYTES ) );
