@@ -55,9 +55,9 @@ so a seed that fails on one OS replays on the others. The reference is
 measured equal, Release, at f80a15cb (main 1a2f2c43 plus the nightly) on all
 three OSes:
 
-    Linux   amd-2 (x64, gcc)            PASS seeds=1-50 runs=50 trace=510908e5051b7f68
-    macOS   mini-m5-1 (arm64, clang)    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
-    Windows captain (x64, MSVC)         PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    Linux   x64 gcc                     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    macOS   arm64 clang                 PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    Windows x64 MSVC                    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
 
 The trace was f5b51aa640524001 at main 010c8167 (also equal on the three OSes);
 the library changes landed between the two moved it. A change that moves this
@@ -76,7 +76,7 @@ then sweeps a longer range sized to about twenty minutes on that OS (Linux
 51-11000, macOS 51-14000, Windows 51-6000). A FAIL line or a trace
 mismatch fails the leg; the log holds the replay line.
 
-The ranges come from Release measurements on each OS's fleet member, each run
-once at f80a15cb: Linux (hetzner2) 51-11000 PASS in 1384 s; macOS (mini-m5-1)
-51-14000 PASS in 1218 s; Windows (captain) 51-6000 PASS in 1348 s. Each leg's
+The ranges come from Release measurements on each OS, each run
+once at f80a15cb: Linux x64 51-11000 PASS in 1384 s; macOS arm64
+51-14000 PASS in 1218 s; Windows x64 51-6000 PASS in 1348 s. Each leg's
 `timeout-minutes: 50` is about twice the sweep plus the build.
