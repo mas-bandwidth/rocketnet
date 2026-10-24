@@ -412,6 +412,7 @@ jobs:
     name: soak_sim (asan + ubsan + lsan, bounded)
     runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
