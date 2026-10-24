@@ -317,7 +317,11 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    // ROCKETNET_LOG_LEVEL, when set, keeps the level the library read from it
+    // (an xdp cell's pre-flight names each unmet condition at warn)
+    char log_level_env[256];
+    if ( !rocketnet_test_getenv( "ROCKETNET_LOG_LEVEL", log_level_env, sizeof( log_level_env ) ) || log_level_env[0] == '\0' )
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );

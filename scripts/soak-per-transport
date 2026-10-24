@@ -187,11 +187,13 @@ run_xdp_cell()
         echo 'ip addr add 10.77.4.1/24 dev rnxdpsoak0'
         echo 'ip -n rnxdpsoak addr add 10.77.4.2/24 dev rnxdpsoak1'
         echo 'ip link set rnxdpsoak0 up'
+        echo 'echo 2 > /sys/class/net/rnxdpsoak0/napi_defer_hard_irqs'
+        echo 'echo 200000 > /sys/class/net/rnxdpsoak0/gro_flush_timeout'
         echo 'ip -n rnxdpsoak link set lo up'
         echo 'ip -n rnxdpsoak link set rnxdpsoak1 up'
         printf 'env'
         printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
-            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 \
+            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=warn \
             SOAK_SERVER_ADDRESS=10.77.4.1:40412 SOAK_CLIENT_NETNS=/var/run/netns/rnxdpsoak \
             "${IMPAIRMENT[@]}" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat
         printf ' > %q 2>&1\n' "$log"
@@ -200,7 +202,7 @@ run_xdp_cell()
     # vng from a short directory: its virtiofs socket path must stay under 108 bytes
     local short
     short=$(mktemp -d /tmp/rnsoak.XXXXXX)
-    ( cd "$short" && timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 4 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
+    ( cd "$short" && timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
         sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
     rmdir "$short" 2>/dev/null
     local status
