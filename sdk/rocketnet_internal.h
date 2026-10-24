@@ -625,6 +625,28 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
 
+// Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
+// buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
+// ceil( max_clients x receive_kbps_per_client x 125 x
+// ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN / update_hz ) bytes, at least
+// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE and at most INT_MAX; arguments below 1
+// count as 1. rocketnet_server_receive_buffer_request is the request every
+// server socket makes: max_clients at the default client send budget
+// (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS) and the slowest supported update
+// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ).
+int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
+int rocketnet_server_receive_buffer_request( int max_clients );
+
+// Logs one warning when the kernel granted a server socket less receive
+// buffer than requested, naming the limit to raise (net.core.rmem_max on
+// Linux, kern.ipc.maxsockbuf on macOS and BSD); silent otherwise.
+void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
+
+// The receive buffer the kernel granted a socket, in the bytes requested
+// (Linux reports double its grant; this halves it); 0 when unreadable.
+struct rocketnet_platform_socket_t;
+int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_socket_t * socket );
+
 // Internal final-burst operations for public server_stop. They preserve the
 // normal transport API while selecting a nonwaiting backend send on shutdown.
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );

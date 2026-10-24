@@ -8974,6 +8974,13 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+// the low-tick receive case (functional/server_receive_low_tick.cpp): 1000
+// clients at 256 kbps against a server updating at 10 Hz. The kernel drop
+// count comes from procfs, so it is a Linux case.
+extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
+#endif
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
 extern void windows_server_drops_oversize_datagram_portable_ipv4();
@@ -9639,6 +9646,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, NULL },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
