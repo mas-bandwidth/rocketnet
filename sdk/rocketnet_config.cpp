@@ -499,14 +499,25 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
         rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof(value) - 1 );
         return false;
     }
-    if ( found == 0 || value[0] == '\0' )
+    if ( found == 0 )
         return true;
 
-    if ( !rocketnet_config_parse_uint64( value, out ) )
+    if ( value[0] == '\0' )
+    {
+        rocketnet_info( "%s config ignores empty %s (set a value, or unset the variable)", transport_name, env_name );
+        return true;
+    }
+
+    const uint64_t displaced = *out;
+    uint64_t parsed = 0;
+    if ( !rocketnet_config_parse_uint64( value, &parsed ) )
     {
         rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
         return false;
     }
+    *out = parsed;
+
+    rocketnet_info( "%s config override %s=%s (displaces %" PRIu64 ")", transport_name, env_name, value, displaced );
 
     return true;
 }

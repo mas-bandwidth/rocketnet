@@ -755,3 +755,80 @@ static void test_config_env_transport_passes_exercise_all_rows()
 
 }
 REGISTER_UNIT_TEST( test_config_env_transport_passes_exercise_all_rows );
+
+// ---------------------------------------------------------------------------
+// the memory budget reader (rocketnet_config_apply_env_uint64) logs like the
+// table pass: a set value logs one override line naming the variable and the
+// displaced value, a set-but-empty value logs one ignores-empty line, and an
+// unset variable logs nothing
+// ---------------------------------------------------------------------------
+
+static int env_names_count_named( const env_names_log_t & log, const char * name, const char * phrase )
+{
+    int count = 0;
+    for ( size_t i = 0; i < log.lines.size(); i++ )
+        if ( strstr( log.lines[i].c_str(), name ) && strstr( log.lines[i].c_str(), phrase ) )
+            count++;
+    return count;
+}
+
+static void test_config_env_memory_budget_logs_its_override()
+{
+    // client: a set value assigns and logs exactly one override line
+    env_names_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "104857600" );
+    uint64_t client_budget = 111;
+    env_names_capture_t client_value_capture;
+    env_names_capture_begin( &client_value_capture );
+    const bool client_value_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &client_budget );
+    env_names_capture_end( &client_value_capture );
+
+    // client: a set-but-empty value leaves the value and logs ignores empty
+    env_names_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "" );
+    uint64_t client_empty_budget = 222;
+    env_names_capture_t client_empty_capture;
+    env_names_capture_begin( &client_empty_capture );
+    const bool client_empty_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &client_empty_budget );
+    env_names_capture_end( &client_empty_capture );
+
+    // server: a set value assigns and logs exactly one override line
+    env_names_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "209715200" );
+    uint64_t server_budget = 333;
+    env_names_capture_t server_value_capture;
+    env_names_capture_begin( &server_value_capture );
+    const bool server_value_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &server_budget );
+    env_names_capture_end( &server_value_capture );
+
+    // server: a set-but-empty value leaves the value and logs ignores empty
+    env_names_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "" );
+    uint64_t server_empty_budget = 444;
+    env_names_capture_t server_empty_capture;
+    env_names_capture_begin( &server_empty_capture );
+    const bool server_empty_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &server_empty_budget );
+    env_names_capture_end( &server_empty_capture );
+
+    // unset: nothing is logged and the value is left alone
+    env_names_unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+    env_names_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+    uint64_t unset_budget = 555;
+    env_names_capture_t unset_capture;
+    env_names_capture_begin( &unset_capture );
+    const bool unset_client_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &unset_budget );
+    const bool unset_server_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &unset_budget );
+    env_names_capture_end( &unset_capture );
+
+    check( client_value_ok && client_budget == 104857600 );
+    check( env_names_count_named( client_value_capture.log, "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "config override" ) == 1 );
+    check( env_names_count_named( client_value_capture.log, "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "(displaces 111)" ) == 1 );
+    check( client_empty_ok && client_empty_budget == 222 );
+    check( env_names_count_named( client_empty_capture.log, "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "ignores empty" ) == 1 );
+
+    check( server_value_ok && server_budget == 209715200 );
+    check( env_names_count_named( server_value_capture.log, "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "config override" ) == 1 );
+    check( env_names_count_named( server_value_capture.log, "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "(displaces 333)" ) == 1 );
+    check( server_empty_ok && server_empty_budget == 444 );
+    check( env_names_count_named( server_empty_capture.log, "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "ignores empty" ) == 1 );
+
+    check( unset_client_ok && unset_server_ok && unset_budget == 555 );
+    check( unset_capture.log.lines.empty() );
+}
+REGISTER_UNIT_TEST( test_config_env_memory_budget_logs_its_override );
