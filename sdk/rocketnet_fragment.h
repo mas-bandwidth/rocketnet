@@ -61,8 +61,9 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
-// Reassembly is one set per connection slot, created at create and reached
-// only from a connected slot (STANDARD.md _Fragmentation_), keyed by payload
+// Reassembly is one set per transport, with num_slots reassembly slots per
+// connection, created at create and reached only from a connected slot
+// (standard/TRANSPORT.md t16), keyed by payload
 // id in a fixed-size sequence buffer of slots -- the modulo-indexed structure
 // this protocol already uses for replay state. Each slot owns capacity for the configured maximum
 // payload plus one staging buffer at the maximum receive fragment size, for
@@ -71,7 +72,7 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // stride when the first non-final fragment fixes it, and placed then.
 // Storage is allocated once, at create, and never grown.
 
-// The stale rule's two bounds, per STANDARD.md _Fragmentation_ and
+// The stale rule's two bounds, per standard/TRANSPORT.md t16 and
 // tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
 // slot's occupant an id refuses as superseded -- the window of the stale
 // test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one

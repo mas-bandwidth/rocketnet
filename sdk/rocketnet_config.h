@@ -47,6 +47,7 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 
 // the mechanical environment-name derivation used by source utilities and
 // tests. Returns false when the buffer cannot hold the derived name.
+// only a unit case calls it.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
 
@@ -106,19 +107,13 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 // field's kind, log the override loudly with the displaced value (secret
 // fields redacted), and assign. each field is read under its PER-ENDPOINT
 // name, ROCKETNET_<TRANSPORT>_<FIELD> (ruling 11); an old process-wide
-// ROCKETNET_<FIELD> that is set is never applied and logs one error naming
-// its replacement, once per create, so an operator is never silently
-// ignored. an env var set to the empty string is ignored as unset, with a
+// ROCKETNET_<FIELD> is not read and nothing is logged for it. an env var set
+// to the empty string is ignored as unset, with a
 // log line. returns false -- loudly -- on any value that does not parse.
 // transport_name flavors the log lines and the derived names ("client",
 // "server").
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
-
-// validate a config struct against the descriptors: numeric ranges (zero
-// admitted where the field declares ZERO_MEANS_DEFAULT), string
-// termination. refuses loudly, never clamps. transport list content is
-// validated by the ladder parse below, at create.
 
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
@@ -144,6 +139,11 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( vo
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
                                                                               uint64_t memory_budget_bytes );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
+
+// validate a config struct against the descriptors: numeric ranges (zero
+// admitted where the field declares ZERO_MEANS_DEFAULT), string
+// termination. refuses loudly, never clamps. transport list content is
+// validated by the ladder parse below, at create.
 
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
