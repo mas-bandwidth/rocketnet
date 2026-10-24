@@ -30,6 +30,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_hash.h"
+#include "rocketnet_send_handoff.h"
 
 #include <ifaddrs.h>
 #include <bpf/bpf.h>
@@ -211,6 +212,10 @@ struct rocketnet_server_xdp_socket_t
     // past ROCKETNET_RECEIVE_CEILING (rocketnet_xdp_send_copy); written by
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{0};
+
+    // refusals when start exceeds the send queue size (rocketnet_xdp_send_claim);
+    // incremented by the start path and read by the xdp thread at flush time
+    std::atomic<uint64_t> send_refused_overflow{0};
 
     uint8_t padding_5[4096];
 
@@ -2116,11 +2121,8 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     // flushing wraps this counter negative after ~2^31 packets, and a
     // negative index here is an out-of-bounds write, not a dropped packet
 
-    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
-    {
-        rocketnet_warn( "sent too many packets!" );
+    if ( rocketnet_xdp_send_claim( packet_index, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow ) < 0 )
         return NULL;
-    }
 
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
@@ -3183,7 +3185,10 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     send_buffer->packet_start_index = 0;
                     rocketnet_platform_mutex_acquire( &socket->send_mutex );
                     socket->send_handoff.recycle( on_index );
+                    const uint64_t overflow = socket->send_refused_overflow.exchange( 0, std::memory_order_relaxed );
                     rocketnet_platform_mutex_release( &socket->send_mutex );
+                    if ( overflow > 0 )
+                        rocketnet_warn( "xdp queue %d overflow: %llu packet start refused", socket->queue, (unsigned long long)overflow );
                     send_worker_index = -1;
                 }
             }

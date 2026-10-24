@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 #include "rocketnet_internal.h"
+#include <atomic>
 
 // Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
@@ -65,3 +66,17 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         --count;
     }
 };
+
+// Claim a staging index from a producer buffer. The index has already been
+// reserved via fetch_add. Returns the index if within limits, or -1 if at/
+// over the limit. On refusal, increments the refused counter with relaxed
+// ordering to avoid cross-thread synchronization overhead on the hot path.
+inline int rocketnet_xdp_send_claim( int index, int limit, std::atomic<uint64_t> & refused )
+{
+    if ( index >= limit || index < 0 )
+    {
+        refused.fetch_add( 1, std::memory_order_relaxed );
+        return -1;
+    }
+    return index;
+}

@@ -75,4 +75,43 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
 
+static void test_xdp_transport_send_overflow_counted_once_per_flush()
+{
+    std::atomic<int> num_packets( 0 );
+    std::atomic<uint64_t> refused( 0 );
+
+    // call limit + 5 times, incrementing num_packets after each successful claim
+    for ( int i = 0; i < 1029; ++i )
+    {
+        const int index = rocketnet_xdp_send_claim( num_packets.load( std::memory_order_relaxed ),
+            1024, refused );
+        if ( i < 1024 )
+        {
+            rocketnet_unit_check( index == i );
+            num_packets.fetch_add( 1, std::memory_order_relaxed );
+        }
+        else
+            rocketnet_unit_check( index == -1 );
+    }
+    rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
+
+    // after reset, call again
+    num_packets.store( 0, std::memory_order_relaxed );
+    refused.store( 0, std::memory_order_relaxed );
+    for ( int i = 0; i < 1029; ++i )
+    {
+        const int index = rocketnet_xdp_send_claim( num_packets.load( std::memory_order_relaxed ),
+            1024, refused );
+        if ( i < 1024 )
+        {
+            rocketnet_unit_check( index == i );
+            num_packets.fetch_add( 1, std::memory_order_relaxed );
+        }
+        else
+            rocketnet_unit_check( index == -1 );
+    }
+    rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
+}
+REGISTER_UNIT_TEST(test_xdp_transport_send_overflow_counted_once_per_flush);
+
 #endif // #if defined(__linux__)
