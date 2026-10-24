@@ -552,8 +552,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // to present a request whose signature verifies owns the token until the
     // handshake deadline or until its response binds the token; a request
     // from a second address is refused here, so one token buys one half-open
-    // mapping and no asymmetric work (STANDARD.md, Processing Connection
-    // Requests; tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
+    // mapping and no asymmetric work (TRANSPORT.md t12 rule 9;
+    // tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
     {
@@ -666,7 +666,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
     // for its address until the handshake deadline, but a request proves
     // nothing about who holds the token's keys, so the binding that outlives
     // the deadline waits for a response that opens under the handshake key
-    // (STANDARD.md, Processing Connection Response Packets;
+    // (TRANSPORT.md t12 rule 13;
     // tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
@@ -676,8 +676,11 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        // Cheap refusals come before cryptography (STANDARD.md, Reading
-        // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // Cheap refusals come before cryptography (TRANSPORT.md t12 rule 9 and
+        // t17 rule 13: the capacity and budget refusals run before any
+        // signature, seal or keypair work; t12 rule 11: a request that finds
+        // no free slot is denied, sealed under the handshake server-to-client
+        // key; ReceiveOrder CheapRefusalsFirst). The handshake keys need
         // no ephemeral pair, so derive them alone and check the slots before
         // any keypair or scalar multiplication. A full server seals the same
         // denial as before (same packet, sequence one, nonce in the clear).
@@ -737,7 +740,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof(keys) );
-            rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
@@ -810,20 +812,20 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 
-    (void) current_time;
-
     // the binding: this address has proven it holds the token's keys, which a
     // request never proves, so a replayed request from another address binds
     // nothing. it replaces the request claim with an entry that lives until
     // the token expires; a no-op when the token is already bound, and an
     // expired token is not recorded (tla/RNSecurityTables.tla,
-    // BoundOnlyToOpener)
+    // BoundOnlyToOpener; tla/MCReceiveOrder.tla, ResponseBind)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
     {
         rocketnet_used_token_history_record( server->used_token_history, mapping->token_identifier,
                                              rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
                                              mapping->token_expire_timestamp, current_timestamp );
+        rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
+                                                    rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
     }
 
     if ( mapping->control->client_index != -1 )
@@ -834,7 +836,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     }
 
     // one token, one live connection (tla/RNSecurityTables.tla,
-    // OneTokenOneLiveConnection; docs/SESSION.md 1.6). a token carries one
+    // OneTokenOneLiveConnection; TRANSPORT.md t12 rule 13). a token carries one
     // client id, so with the binding at the response, when two addresses each
     // hold a mapping for one token, the first to be admitted connects and the
     // second is refused here while that connection lives. no admitted-token
@@ -1112,10 +1114,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     int session_phase = packet_type != ROCKETNET_CONNECTION_RESPONSE_PACKET;
     const uint8_t * key = session_phase ? mapping->keys.session_client_to_server : mapping->keys.handshake_client_to_server;
-    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : &mapping->replay_handshake;
+    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : NULL;
+    const uint64_t highest_opened = session_phase ? mapping->replay_session.highest_opened : mapping->handshake_highest_opened;
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), replay->highest_opened );
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), highest_opened );
 
     if ( sequence == 0 )
     {
@@ -1199,8 +1202,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             }
         }
 
-        if ( sequence > replay->highest_opened )
-            replay->highest_opened = sequence;
+        if ( sequence > mapping->handshake_highest_opened )
+            mapping->handshake_highest_opened = sequence;
 
         // A response retransmission is not fresh session activity. Only a
         // half-open mapping may refresh its idle clock from a response.
@@ -1605,7 +1608,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( !control->established )
         {
-            // STANDARD.md _Half-open state_: the earlier of the idle and handshake deadlines removes the mapping.
+            // TRANSPORT.md t12 rule 14: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= control->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
