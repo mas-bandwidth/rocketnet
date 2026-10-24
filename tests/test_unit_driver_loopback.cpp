@@ -296,7 +296,8 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_server_transport_io_t server = {};
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
     const size_t server_create_bytes = g_loopback_live_bytes - live_before;
-    rocketnet_unit_check( server_create_bytes == rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead );
+    // the server endpoint's queue is sized from the plan (rocketnet_loopback_server_queue_packets)
+    rocketnet_unit_check( server_create_bytes == rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( server_config.max_clients ) ) + overhead );
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -305,7 +306,8 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
-    rocketnet_unit_check( g_loopback_live_bytes - live_before == 2 * server_create_bytes );
+    const size_t created_bytes = server_create_bytes + rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead;
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
 
     const size_t allocation_calls_after_create = g_loopback_allocation_calls;
     uint8_t data[ROCKETNET_RECEIVE_CEILING];
@@ -350,7 +352,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 0 );
     rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 0 );
     rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
-    rocketnet_unit_check( g_loopback_live_bytes - live_before == 2 * server_create_bytes );
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );

@@ -540,9 +540,16 @@ void rn_region_carve( rn_region_t * region )
 
 void rn_region_reset( rn_region_t * region )
 {
-    // tla/RNConnectionMemory.tla, Reuse: the slot's region is carved again
-    // before its next client, so ReusedSlotStartsClean holds -- used room,
-    // the exhausted state and every record of the previous client are gone
+    // tla/RNConnectionMemory.tla, Connect after Reuse: the slot's region is
+    // carved again before its next client, so ReusedSlotStartsClean holds --
+    // used room, the exhausted state and every record of the previous client
+    // are gone. The server resets lazily: a slot whose connection ended is
+    // freed in O(1) and its region is carved here only when the slot is bound
+    // to its next connection (rn_message_connection_release,
+    // sdk/rocketnet_message_server.cpp; tla/RNSlots.tla ResetFree, Observe),
+    // never for the whole population in the update after a mass disconnect.
+    // The region holds message bytes only; session keys are wiped by the
+    // transport when the slot ends.
     rn_region_carve( region );
 }
 
