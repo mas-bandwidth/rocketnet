@@ -3256,6 +3256,18 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // rocketnet_platform_socket_pump above reads the pause on its caller's
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
+//
+// tla/RNMsgxPause.tla models this pause and re-probe with the server's TX
+// and RX workers racing on one socket: Load is the first load below,
+// StayPaused the return false for a pause not yet expired, ObserveExpired
+// the expiry test (where the test hook runs), ClearIfUnchanged the
+// compare-and-swap that clears only the value this worker observed (a
+// failed swap reloads and tests again), and Probe the batch call that
+// follows a true return. Its invariant FreshPauseSurvives says a pause the
+// other worker publishes after this worker observed an older expiry is
+// never cleared by this worker; the reversed witness
+// MCRNMsgxPauseBrokenExpiryClearsFresh.cfg stores 0 unconditionally and
+// fails it.
 
 #if defined(ROCKETNET_MSGX_TEST_HOOKS)
 static thread_local void (*rocketnet_msgx_before_expiry_clear)( rocketnet_platform_socket_t * ) = NULL;
@@ -3302,6 +3314,11 @@ bool rocketnet_msgx_test_pause_expiry_race()
     return !active && rocketnet_msgx_down_until( &socket ) > rocketnet_platform_time();
 }
 #endif
+
+// a refused batch call stores now + retry unconditionally: Pause in
+// tla/RNMsgxPause.tla. a fresh pause always wins over the other worker's
+// clear of an older, expired one, because that clear is a compare-and-swap
+// on the value it observed (FreshPauseSurvives).
 
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
@@ -3779,7 +3796,8 @@ void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * th
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
-    // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the server thread here.
+    // No macOS or iOS server transport calls this: the portable and msgx server workers never run it, so a change
+    // here changes nothing on these platforms. Only the gso, iocp and rio server transports call it.
     // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1638-1644)
     rocketnet_platform_network_thread_priority( thread );
 }
