@@ -12,31 +12,35 @@
 (* and advance (the mark after the open).  A third reads it: the ack block *)
 (* builder, sdk/rocketnet_ack.cpp:48-52 and 54-137, enumerates the same    *)
 (* bits between the floor and the high-water mark, so what the window says *)
-(* is what the sender is told was received (STANDARD.md, Replay Protection *)
-(* and Acks).                                                              *)
+(* is what the sender is told was received (standard/TRANSPORT.md t14      *)
+(* Replay protection and t15 Acknowledgement).                             *)
 (*                                                                         *)
 (* The window has one job: inside the retained range (highest - W,         *)
 (* highest], a bit is set exactly for the sequences that have opened.  The *)
 (* ghost `received` is that truth, trimmed to the range, and every rule    *)
 (* below is the window agreeing with it.                                   *)
 (*                                                                         *)
-(* Two rules from the fix cards are the point of this model, each with a   *)
-(* reversed witness in README-ReplayWindow.md that shows today's code      *)
-(* violates it:                                                            *)
+(* Two rules are the point of this model, each with a reversed witness in  *)
+(* README-ReplayWindow.md that shows the broken order TLC must reject:     *)
 (*                                                                         *)
 (*   F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189).  On a    *)
-(*   skip of a full window or more, advance clears the whole ring.  The    *)
-(*   code (sdk/rocketnet_replay.cpp:54-60) clears window[0] to window[3]:  *)
-(*   ClearedWords < Words leaves stale bits that read as received.         *)
+(*   skip of a full window or more, advance clears the whole ring:         *)
+(*   standard/TRANSPORT.md t14 Replay protection says the receiver MUST    *)
+(*   clear the whole ring when the forward jump is at least one window     *)
+(*   depth.  The code clears the whole ring, ClearedWords = Words; the     *)
+(*   witness sets ClearedWords < Words and TLC rejects it.                 *)
 (*                                                                         *)
 (*   OV-34 (rnfix-replay-advanced-after-connect-check-r2).  The server     *)
-(*   advances the session window only for a mapping that holds a slot.    *)
-(*   The code (sdk/rocketnet_server_protocol.cpp:962-972) advances, then   *)
-(*   checks client_index == -1: GateBeforeAdvance = FALSE is that order.   *)
+(*   advances the session window only for a mapping that holds a slot:     *)
+(*   standard/TRANSPORT.md t10 step 12 and t14 Replay protection say the   *)
+(*   server MUST NOT move the window of a session packet whose source      *)
+(*   address has no assigned client slot.  The code checks the slot        *)
+(*   before it advances, GateBeforeAdvance = TRUE; the witness sets        *)
+(*   GateBeforeAdvance = FALSE and TLC rejects it.                         *)
 (*                                                                         *)
-(* This is replay_session only.  The handshake window (replay_handshake)  *)
+(* This is replay_session only.  The handshake window (replay_handshake)   *)
 (* is the same struct, but handshake packets are exempt from replay        *)
-(* marking and only raise its highest_opened                              *)
+(* marking and only raise its highest_opened                               *)
 (* (sdk/rocketnet_server_protocol.cpp:883-889 and 949-950;                 *)
 (* sdk/rocketnet_client_protocol.cpp:511-512); advance never runs on it,   *)
 (* and nothing here speaks for it.                                         *)
@@ -45,7 +49,7 @@
 (* harm the gate guards against is the ack block naming a packet nothing   *)
 (* processed, and AckReportsOnlyProcessed says it never does.              *)
 (*                                                                         *)
-(* A third rule places the gate before the open (asr pass 1 F4, 2026-10-21; *)
+(* A third rule places the gate before the open (asr pass 1 F4, 2026-10-21;*)
 (* TRANSPORT.md t10 step 12).  The server acts on no session packet for a  *)
 (* mapping without a slot, so it must not spend an AEAD open on one: the   *)
 (* ghost openedPending records an open attempted on a pending mapping, by  *)
@@ -59,13 +63,13 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     Words,             \* words in the ring: ROCKETNET_HISTORY_PACKETS / 64
     WordBits,          \* bits per word: 64 in the code
-    ClearedWords,      \* words the long-skip branch clears; the rule: Words.
-                       \* today's code: 4 (sdk/rocketnet_replay.cpp:56-59)
+    ClearedWords,      \* words the long-skip branch clears; the rule, and
+                       \* what the code does: Words (the whole ring)
     MaxSeq,            \* the highest sequence this instance explores
     GateBeforeAdvance, \* BOOLEAN: the server checks the slot before it
-                       \* advances (the rule) or after (today's code)
+                       \* advances (the rule, and what the code does) or after
     GateBeforeOpen     \* BOOLEAN: the server checks the slot before the
-                       \* AEAD open (the rule) or after it (before the fix)
+                       \* AEAD open (the rule, and what the code does) or after
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h:26)
 
@@ -106,7 +110,7 @@ Floor == IF highest >= W THEN highest - W + 1 ELSE 1
 InRange(s) == s >= Floor /\ s <= highest
 
 (***************************************************************************)
-(* rocketnet_replay_already_received (sdk/rocketnet_replay.cpp:27-40).    *)
+(* rocketnet_replay_already_received (sdk/rocketnet_replay.cpp:27-40).     *)
 (* Above the high-water mark: not received.  Below the range: refused as   *)
 (* too old, indistinguishable from received.  Inside: the ring bit.        *)
 (***************************************************************************)
@@ -125,12 +129,12 @@ AlreadyReceived(s) ==
 AckReports(s) == InRange(s) /\ window[Bit(s)]
 
 (***************************************************************************)
-(* rocketnet_replay_advance (sdk/rocketnet_replay.cpp:42-70), as the code  *)
-(* is shaped.  Above the high-water mark the entries the advance skips     *)
-(* past are cleared first, so a sequence far ahead does not inherit bits   *)
-(* from the previous lap: a skip shorter than W clears each skipped        *)
-(* sequence's bit (the loop at :63-64); a skip of W or more clears words   *)
-(* 0..ClearedWords-1 (:56-59).  Then the bit for s is set (:69).           *)
+(* rocketnet_replay_advance (sdk/rocketnet_replay.cpp).  Above the         *)
+(* high-water mark the entries the advance skips past are cleared first,   *)
+(* so a sequence far ahead does not inherit bits from the previous lap:    *)
+(* a skip shorter than W clears each skipped sequence's bit; a skip of W   *)
+(* or more clears the whole ring (ClearedWords = Words).  Then the bit for *)
+(* s is set.                                                               *)
 (*                                                                         *)
 (* The ghost follows the truth: s joins received, and whatever has left    *)
 (* the retained range is forgotten -- the window can no longer speak for   *)
@@ -164,15 +168,13 @@ Init ==
 (* The operations and the outside events.                                  *)
 (***************************************************************************)
 
-\* A session packet with sequence s arrives at the server and opens under
-\* the session keys (sdk/rocketnet_server_protocol.cpp:901-972).  The
-\* already-received check at :901 refuses a duplicate or a too-old sequence
-\* before the open, so an opened packet is never one the window refuses.
-\* After the open the code advances at :962 and only then, at :967, ignores
-\* the packet when the mapping has no slot.  Under the rule the slot is
-\* checked first and a packet on a pending mapping leaves the window alone.
-\* The client (sdk/rocketnet_client_protocol.cpp:689, :713) is the same pair
-\* on a window that is always connected.
+\* A session packet with sequence s arrives at the server.  The
+\* already-received check refuses a duplicate or a too-old sequence before
+\* the open, so an opened packet is never one the window refuses.  The code
+\* checks the slot before the open and before the advance, so a packet on a
+\* pending mapping leaves the window alone (GateBeforeAdvance = TRUE,
+\* GateBeforeOpen = TRUE).  The client is the same pair on a window that is
+\* always connected.
 \* The packet is opened only when the slot gate lets it through: always on
 \* a mapping with a slot, and on a pending one only when the gate follows
 \* the open (GateBeforeOpen = FALSE).  A packet that is never opened never
@@ -245,14 +247,15 @@ GenuineIsAccepted ==
 AckReportsOnlyReceived ==
     \A s \in Seqs : AckReports(s) => s \in received
 
-\* Within the window a sequence is accepted exactly once (STANDARD.md,
-\* Replay Protection): everything that opened is refused thereafter.
+\* Within the window a sequence is accepted exactly once (standard/TRANSPORT.md,
+\* t14 Replay protection): everything that opened is refused thereafter.
 ReceivedIsRefused ==
     \A s \in received : AlreadyReceived(s)
 
 \* Below the window everything is refused as too old; an undersized window
-\* discards old legitimate packets, it never accepts a replay (STANDARD.md,
-\* Replay window sizing).
+\* discards old legitimate packets, it never accepts a replay
+\* (standard/TRANSPORT.md t14 Replay protection, and the replay window depth
+\* rows of t3).
 BelowFloorIsRefused ==
     \A s \in Seqs : s < Floor => AlreadyReceived(s)
 

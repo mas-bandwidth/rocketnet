@@ -57,7 +57,7 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     // zeroed. TRANSPORT.md t7 rule 10: both sides MUST erase their own
     // ephemeral secret when no handshake that needs it remains, and MUST
     // erase the four keys and the token keys when the attempt that owns them
-    // ends; t13.4 says the same for a client reset;
+    // ends; t13.4 says the same for a client reset.
     // tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
     // state <= 0. Every automatic terminal transition passes through here,
     // after the state is stored, so the reason, the state-change report and
@@ -452,7 +452,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // anyone who sees the request can echo it. a cookie therefore never
     // refreshes the receive time and never gives a round-trip sample; both
     // come only from the challenge and later packets that open under the
-    // attempt's keys (STANDARD t11.1).
+    // attempt's keys (standard/TRANSPORT.md t11.1 Cookie processing).
 
     memcpy( client->return_cookie, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
     client->has_cookie = 1;
@@ -483,7 +483,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED]++;
 
-    // TRANSPORT.md t10 rule 6: the per-type size check runs before the state gate.
+    // TRANSPORT.md t10 step 6: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored challenge. wrong size" );
@@ -610,7 +610,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
-    // TRANSPORT.md t10 rule 6: the per-type size check runs before the state gate.
+    // TRANSPORT.md t10 step 6: the per-type size check runs before the state gate.
     if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored denied. wrong size" );

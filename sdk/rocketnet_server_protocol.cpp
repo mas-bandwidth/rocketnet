@@ -671,8 +671,11 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        // Cheap refusals come before cryptography (TRANSPORT.md t10 rules 6-7;
-        // ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // Cheap refusals come before cryptography (TRANSPORT.md t12 rule 9 and
+        // t17 rule 13: the capacity and budget refusals run before any
+        // signature, seal or keypair work; t12 rule 11: a request that finds
+        // no free slot is denied, sealed under the handshake server-to-client
+        // key; ReceiveOrder CheapRefusalsFirst). The handshake keys need
         // no ephemeral pair, so derive them alone and check the slots before
         // any keypair or scalar multiplication. A full server seals the same
         // denial as before (same packet, sequence one, nonce in the clear).
