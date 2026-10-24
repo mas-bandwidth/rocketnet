@@ -102,7 +102,9 @@ on:
 # a superseded commit's run is not a gate on anything -- the gate is the head
 # of the branch -- so it yields its runners to the run that replaced it
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # main never cancels a run in progress: every merge gets a verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -333,6 +335,8 @@ jobs:
           TRANSPORT_MATRIX_LINUX: |
             portable portable
             gso portable
+            gso gso
+            portable gso
             io_uring portable
             loopback loopback
             xdp portable
@@ -2008,3 +2012,5 @@ jobs:
           persist-credentials: false
       - name: Every runs-on selects the fleet
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
+      - name: Every main commit gets its own concurrency group
+        run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
