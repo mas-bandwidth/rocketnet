@@ -803,7 +803,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 rn_message_flush_unreliable( object, index, false );
             if ( !build->writer.payload )
             {
-                // Keep a fair rotating send round available to other peers.
+                // Keep a fair rotating send round available to the other clients.
                 const int reserve = object->link.send_connected_count ? object->link.send_connected_count( object->link.transport ) : object->num_connections;
                 const bool frame_available = !object->link.send_capacity_available || object->link.send_capacity_available( object->link.transport ) > reserve;
                 if ( frame_available && rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time ) >= 0 &&

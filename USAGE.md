@@ -525,7 +525,7 @@ memory is full, or the start would be dropped or refused (not CONNECTED, a
 message already open, a bad argument). The query does not soften the rule
 above: a start after a `false` still ends the connection with
 `MESSAGE_MEMORY_EXHAUSTED`. Ask, and hold the message back until room returns
-as the peer acknowledges messages.
+as the remote endpoint acknowledges messages.
 
 The query changes no state, counts nothing, allocates nothing and runs in
 constant time. Only start message and update take room, so a `true` answer

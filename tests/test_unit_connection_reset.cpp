@@ -1388,7 +1388,7 @@ static int reset_loopback_no_send_capacity( void * transport )
 
 // The reliable timeout (6.4 "Giving up") is checked by every update for every
 // connected slot, not only by a write pass that reaches its reliable phase.
-// The message is sent once; then every send pass is starved and the peer
+// The message is sent once; then every send pass is starved and the receiver
 // never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
 // or past first send + reliable_message_timeout_ms, and not before.
 static void test_reliable_timeout_fires_while_send_pass_starved()
