@@ -695,6 +695,10 @@ int main()
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") == 0);
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
     memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
+    // Planning a geometry larger than the default (every reassembly slot the
+    // wire allows, each holding the fixed transport payload) plans larger and
+    // never allocates it.
+    check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
     // The whole-host estimate is a plan too: it allocates nothing before init.
     rocketnet_host_memory_estimate_t host_estimate;
     check(rocketnet_server_transport_host_memory_estimate(NULL, "portable", &host_estimate));
@@ -702,7 +706,7 @@ int main()
     check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
 
     // The client transport's plan: defaults, unknown/NULL/auto transports and an
-    // overflowing geometry all refuse to 0, a larger max payload plans larger,
+    // overflowing geometry all refuse to 0, more reassembly slots plan larger,
     // and planning allocates nothing. A create-time counting-allocator match
     // needs a live socket, so it is left to bench/transport_memory.cpp.
     rocketnet_client_transport_config_t client_memory_config;
@@ -713,10 +717,12 @@ int main()
     check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") > client_default_memory);
     client_memory_config.max_fragmented_messages = 0;
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == client_default_memory);
     check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {
