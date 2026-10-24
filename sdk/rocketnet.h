@@ -1102,8 +1102,9 @@ struct rocketnet_client_config_t
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
     /// Default is 262144. It is the one size limit for every reliability
-    /// type: an unreliable message larger than one packet is sent as its
-    /// reliable twin, so it is held to max_message_bytes too.
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1267,8 +1268,9 @@ struct rocketnet_server_config_t
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
     /// Default is 262144. It is the one size limit for every reliability
-    /// type: an unreliable message larger than one packet is sent as its
-    /// reliable twin, so it is held to max_message_bytes too.
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 

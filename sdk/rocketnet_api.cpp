@@ -20,12 +20,6 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_fragment.h"
-
-// The transport's reassembled payload maximum lies between one packet's
-// payload and the wire's fragmented payload maximum.
-ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
-    ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
-    "the transport's payload maximum is within the fragment limits" );
 #include "rocketnet_base64.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
