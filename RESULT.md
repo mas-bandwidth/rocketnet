@@ -1,31 +1,21 @@
-RESULT: rn-linux-soak-30min-per-transport-a sha=d1df52eab254b4d814de8f6a42a0b6d80f5cc847 tier: heavy
+RESULT: rn-light-client-profile sha=2dc17c3207ab9a5054b3ebf679624ca9d55237aa tier: heavy
 
-Head: d1df52eab254b4d814de8f6a42a0b6d80f5cc847
-Branch: sprint/rn-linux-soak-30min-per-transport-a.w3.g1.e1
-Verdict: not-done
+Head: 2dc17c3207ab9a5054b3ebf679624ca9d55237aa
+Branch: sprint/rn-light-client-profile.w8.g1.e1
+Verdict: done
 
-The commit on this head returns free glibc arenas with malloc_trim(0) before the VmRSS read in tests/process_resources.h. That is the only change since a0aa005d.
+Public rocketnet_server_light_config and rocketnet_client_light_config fill the defaults, then the 10 Hz one-MTU geometry. No new config field. The default config functions are unchanged. load.c calls those two functions when LOAD_PROFILE=light.
 
-120 s cells on hulk, cores 0,16-31, head d1df52ea, impaired, 2026-10-24T06:40:27Z to 06:48:27Z:
+Create-block bytes, pinned by the unit tests and by the plan line: a server at max_clients 1000 is 955710336 bytes, and a client is 3063168 bytes.
 
-- portable FAIL. fds 7/7/9, threads 3/3/4, resident_bytes 18890752/18898944/19443712. --assert-flat FAILED: allowed growth 4096 bytes over 90 s. The end is 8192 bytes over the start.
-- gso PASS. verified=215385, fds 9/9/11, threads 6/6/7, resident_bytes 198131712/198131712/198664192.
-- gso-plain PASS. verified=215881, fds 9/9/11, threads 6/6/7, resident_bytes 198090752/198090752/198623232.
-- io_uring PASS. verified=214597, fds 9/9/11, threads 1/1/2, resident_bytes 100515840/100515840/101052416.
+Gate on amd-1 at 2dc17c32. make -j8, python3 tools/check_exports.py --sources-only, make roadmap-check, ./bin/test, and ./bin/functional all exited 0. Functional ended ALL TESTS PASSED.
 
-Portable only, same head, no extra environment:
+LOAD_PROFILE=light LOAD_PLAN_ONLY=1 ./bin/load 1000 60 exited 0 and printed:
 
-- 45 s PASS. resident_bytes 19001344/19001344/19542016. 2 connects.
-- 240 s FAIL. resident_bytes 18980864/18993152/19546112. The end is 12288 bytes over the start, allowed 4096 over 210 s. fds 7/7/9, threads 3/3/4. 8 connects, 7 reconnects.
+load_plan: clients=1000 profile=light client_public_required_bytes=3063168 server_public_required_bytes=955710336 total_public_required_bytes=4018878336 public_memory_scope=create_only transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
 
-A later 120 s portable run with a tracer (not the record; the tracer adds its own mappings) split RSS at the idle samples. The brk heap returns to 60 KB, stacks stay 60 KB, file mappings stay 4876 KB, and anonymous RSS moves from 13468 KB to 13480 KB and then holds. The pages over the allowance are anonymous, not the heap malloc_trim gives back. An earlier mallinfo trace showed live allocated bytes at those idle samples moving by about 1.5 KB, not by the resident delta.
+That same process log also recorded one gso server grant and a client handshake before the plan line. The plan line is the figure this card quotes.
 
-Not done:
+The names rocketnet_client_light_config and rocketnet_server_light_config are absent at 221e3bee, so the three new cases do not exist there.
 
-- portable 120 s does not pass --assert-flat. The allowance was not loosened.
-- the xdp cell inside virtme-ng was not run.
-- soak.exe --assert-flat --seconds 60 on captain was not run.
-- make ROCKETNET_DEV=OFF was not run on this commit.
-- ./bin/test and ./bin/functional were green at a0aa005d and were not re-run after d1df52ea. Only soak.c includes the header.
-- the 1800 s nightly step is in .github/workflows/nightly-soak.yml and was not run. The 30-minute record is the later card.
-- docs/roadmap.sexp was not edited.
+The packet-word scan stays green. The geometry lines use phrases the existing allowlist already covers. tests/test_unit_client_server_say_messages.cpp was not edited.
