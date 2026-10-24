@@ -1,0 +1,93 @@
+# The nightly 10000-client build proof. A -DROCKETNET_MAX_CLIENTS=10000
+# build (BUILDING.md, "Maximum clients") must build every default target with
+# zero warnings at the strict flags, run the unit suite, and connect, exchange
+# traffic with and drain a bounded loopback load of all 10000 clients, with
+# the census exact. The default 1000-client build is unaffected. Both DEV ON
+# and DEV OFF legs run; the load under the DEV OFF (production) library is the
+# served shape. docs/QUALIFICATION-max-clients-10000.md records a run. The
+# multi-hour soak is a separate card; this is the bounded daily proof.
+#
+# The 10000 load's plan needs large host memory (reassembly budget 5120 MiB
+# plus the per-client server tables), so this runs on the fleet's long runner,
+# which is sized for it.
+
+name: nightly-max-clients
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  max-clients:
+    name: max-clients (10000)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing libcurl; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build 10000 (DEV ON)
+        shell: bash
+        run: |
+          cmake -S . -B build-maxclients -DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CLIENTS=10000
+          cmake --build build-maxclients --parallel
+
+      - name: Check host memory against the 10000 load plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan=$(env LOAD_PLAN_ONLY=1 ./bin/load 10000 30 | grep '^load_plan:' | tail -n 1) || true
+          echo "LOAD_PLAN $plan"
+          case "$plan" in *verdict=PASS*) ;; *) echo "LOAD plan FAIL"; exit 1 ;; esac
+          need_bytes=$(echo "$plan" | sed -E "s/.*total_public_required_bytes=([0-9]+).*/\1/")
+          avail_kib=$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)
+          avail_bytes=$((avail_kib * 1024))
+          if [ "$need_bytes" -gt "$avail_bytes" ]; then
+            echo "LOAD host lacks room: need $need_bytes bytes, available $avail_bytes"
+            exit 1
+          fi
+          echo "LOAD host_room=OK need_bytes=$need_bytes available_bytes=$avail_bytes"
+
+      - name: Unit suite (DEV ON)
+        shell: bash
+        run: ./bin/test
+
+      - name: Bounded load 10000 30 (loopback, DEV ON)
+        shell: bash
+        run: ./bin/load 10000 30
+
+      - name: Build 10000 (DEV OFF)
+        shell: bash
+        run: |
+          cmake -S . -B build-maxclients-prod -DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CLIENTS=10000 -DROCKETNET_DEV=OFF
+          cmake --build build-maxclients-prod --parallel
+
+      - name: Unit suite (DEV OFF)
+        shell: bash
+        run: ./bin/test
+
+      - name: Bounded load 10000 30 (loopback, DEV OFF)
+        shell: bash
+        run: ./bin/load 10000 30

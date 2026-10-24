@@ -514,6 +514,15 @@ into your own build. CMake hands the value to the libraries, their consumers
 the tests, the tools and the embedded XDP program; build `server_xdp.o` by hand
 with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together.
 
+A 10000-client build is qualified by
+[docs/QUALIFICATION-max-clients-10000.md](docs/QUALIFICATION-max-clients-10000.md)
+and re-proven nightly on the Linux fleet runner by
+[`.github/workflows/nightly-max-clients.yml`](.github/workflows/nightly-max-clients.yml):
+zero-warning builds at DEV ON and OFF, the unit suite, and a bounded loopback
+load of all 10000 clients. The 10000 load's plan needs large host memory
+(reassembly budget 5120 MiB plus the per-client server tables), so the nightly
+runner checks host room against the plan before running.
+
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
 more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. Every limit that

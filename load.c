@@ -4,8 +4,9 @@
 
     Load: single-process many-client load harness driving the public API.
     Stands up one public server (rocketnet_server_t) and N public clients
-    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
-    on loopback, connects every client within 10 seconds, drives the selected
+    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS, 1000 by default) in
+    one process on loopback, connects every client within 10 seconds, drives
+    the selected
     profile (the existing one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
