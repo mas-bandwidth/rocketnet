@@ -6335,7 +6335,7 @@ void rocketnet_test_server_uring_wire_ipv4()
 
 // the send runs as segmented SENDMSGs (UDP_SEGMENT): the 400-byte half of the
 // exchange is consecutive equal-size slots to one destination, so the
-// transport must send it in segmented sends, and the peer must still receive
+// transport must send it in segmented sends, and the receiving client must still receive
 // every packet byte-exact, one datagram each
 
 void rocketnet_test_server_uring_wire_gso_ipv4()
