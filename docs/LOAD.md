@@ -83,16 +83,26 @@ whole run, not just the create-only plan. At `830c5437` the plan reports
 per client), and the xdp server's start adds about 1.87 GB of allocator memory
 and 1.88 GB of UMEM on top. A fixed 16G guest is OOM-killed (exit 137,
 anon-rss 15.9 GB) and a 24G guest is killed at the shutdown wipe. The step now
-runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first,
-sizes the guest as `plan * 3 / 2 + 2 GiB` rounded up to whole GiB (28G for the
-default profile), and prints `LOAD cell=xdp FAIL runner has ... MiB available`
-when the runner's `MemAvailable` is below that. The guest's load exit status,
-peak RSS, `/proc/meminfo` totals and `dmesg | tail -n 50` go into `vm.log` on
-every run, so an early end names its cause. Measured on a 121 GB runner at
-`e2753486`: the 16G guest's dmesg shows `Out of memory: Killed process ...
-(load) ... anon-rss:15978008kB`; the 28G guest (27.4 GiB `MemTotal`) passed
-three runs in a row at 2:09-2:17 wall with peak RSS 26.1 GiB each, so the
-sizing leaves about 1.3 GiB of headroom and a profile change must be re-measured.
+runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first
+and sizes the guest from the plan plus a measured run reserve: `need = plan +
+1000 * reserve_per_client_bytes`, and the guest is `need * 5 / 4 + 1 GiB` (the
+1 GiB is the guest kernel's own), rounded up to whole GiB. It prints `LOAD
+cell=xdp FAIL runner has ... MiB available` when the runner's `MemAvailable` is
+below that. The guest's load exit status, peak RSS, `/proc/meminfo` totals and
+`dmesg | tail -n 50` go into `vm.log` on every run, so an early end names its
+cause, and the step prints `guest_peak_rss_kib` beside `need_bytes`, with a
+WARN line when the peak passes the need.
+
+The reserve was measured at `a40897f3` in an unconstrained 48G guest on a
+121 GB runner: peak RSS 27397952 kB at 1,000 clients and 13703716 kB at 500,
+against plans of 18214470336 and 9108290368 bytes. That is 9841033 and 9848630
+bytes of reserve per client; the step uses the larger. The peak is 1.54 times
+the plan at both counts, so an earlier `plan * 3 / 2 + 2 GiB` sizing sat below
+the peak in its ratio term and passed only on its 2 GiB constant (28G guest,
+27.4 GiB `MemTotal`, 1.3 GiB over the 26.1 GiB peak). For the default profile
+the need is 28063100336 bytes (26.1 GiB) and the guest is 34G, about 7.9 GiB
+above the measured peak. A profile change, or a WARN line, means the reserve
+must be re-measured.
 
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
