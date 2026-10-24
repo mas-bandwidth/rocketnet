@@ -260,7 +260,15 @@ prove those sends never stall or degrade the other clients, the dead slot
 times out and frees, and a fifth client connects. The client socket is
 connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
 `test_posix_client_server_gone_*` proves the portable client's receive takes
-each ECONNREFUSED as weather. The xdp cell is a separate case.
+each ECONNREFUSED as weather. The three hard-killed kinds also have an xdp
+server cell with the portable client, IPv4 and IPv6
+(`test_posix_hard_killed_client_xdp_ipv4_client_portable`,
+`test_posix_hard_killed_client_xdp_ipv6_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv4_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv6_client_portable`,
+`test_posix_client_server_gone_xdp_ipv4_client_portable`,
+`test_posix_client_server_gone_xdp_ipv6_client_portable`). That cell runs only
+as root inside a virtme-ng guest.
 
 ## Server network threads and their priority
 

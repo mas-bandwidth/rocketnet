@@ -6,7 +6,8 @@
     (TRANSPORTS.md, ICMP errors). A UDP send to a vanished client comes back as
     ICMP port unreachable; a BSD stack reports it to the next receive on a
     connected socket as ECONNREFUSED. These cases run per server transport
-    cell (macOS: portable and msgx; Linux: portable, gso and io_uring),
+    cell (macOS: portable and msgx; Linux: portable, gso, io_uring and the
+    xdp veth guest cell),
     per address family, per client transport (macOS: portable and msgx;
     Linux: portable, the one client transport there):
 
@@ -41,7 +42,7 @@
     posix_client_server_gone proves the portable client's receive takes each
     ECONNREFUSED as weather and connects once the server comes up. The io_uring
     cells register only where rocketnet_server_uring_available() is true. The
-    xdp cell is not here.
+    xdp cell is the veth guest cell.
 
     The macOS and Linux cells live here; the file builds on every POSIX
     platform, and other platforms register no cells of their own here.
@@ -76,6 +77,11 @@
 #include <sys/random.h>
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_uring.h"
+#include <fcntl.h>
+#include <sched.h>
+#if ROCKETNET_XDP
+#include "rocketnet_server_socket.h"
+#endif
 #endif
 
 #include <string>
@@ -110,10 +116,64 @@ static const double POSIX_HK_HANDSHAKE_SECONDS = 5.0;
 
 struct posix_hk_cell_t
 {
-    const char * server;        // the server transport: portable | msgx (macOS), portable | gso | io_uring (Linux)
+    const char * server;        // the server transport: portable | msgx (macOS), portable | gso | io_uring | xdp (Linux)
     bool ipv6;
     const char * client;        // the client transport: portable | msgx (macOS), portable (Linux)
 };
+
+static bool posix_hk_is_xdp( const posix_hk_cell_t & cell )
+{
+#if defined(__linux__) && ROCKETNET_XDP
+    return cell.server && strcmp( cell.server, "xdp" ) == 0;
+#else
+    (void) cell;
+    return false;
+#endif
+}
+
+#if defined(__linux__) && ROCKETNET_XDP
+static char posix_hk_xdp_address[128];
+static uint8_t posix_hk_xdp_far_mac[6];
+
+void rocketnet_xdp_veth_pair_up( bool ipv6, char * server_address, size_t server_address_bytes );
+void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server );
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
+void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac );
+const char * rocketnet_xdp_veth_netns_path();
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
+
+static void posix_hk_xdp_up( const posix_hk_cell_t & cell )
+{
+    rocketnet_xdp_veth_pair_up( cell.ipv6, posix_hk_xdp_address, sizeof( posix_hk_xdp_address ) );
+}
+
+static void posix_hk_xdp_down( struct rocketnet_server_transport_t * destroyed )
+{
+    rocketnet_xdp_veth_pair_down( destroyed );
+}
+
+static void posix_hk_enter_far( int * self_ns, int * far_ns )
+{
+    *self_ns = open( "/proc/self/ns/net", O_RDONLY );
+    *far_ns = open( rocketnet_xdp_veth_netns_path(), O_RDONLY );
+    if ( *self_ns < 0 || *far_ns < 0 || setns( *far_ns, CLONE_NEWNET ) != 0 )
+    {
+        if ( *self_ns >= 0 )
+            close( *self_ns );
+        if ( *far_ns >= 0 )
+            close( *far_ns );
+        posix_hard_killed_require( false );
+    }
+}
+
+static void posix_hk_leave_far( int self_ns, int far_ns )
+{
+    const int back = setns( self_ns, CLONE_NEWNET );
+    close( self_ns );
+    close( far_ns );
+    posix_hard_killed_require( back == 0 );
+}
+#endif
 
 // the transports whose server owns one platform socket the case reads its
 // live pump from; gso and io_uring own a socket group and no single socket
@@ -177,7 +237,28 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
 
-    char address[64];
+    char address[128];
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+    {
+        if ( config.max_clients < 4 )
+            config.max_clients = 4;
+        config.num_xdp_queues = 1;
+        config.num_os_cpus = 1;
+        snprintf( config.transport, sizeof( config.transport ), "xdp" );
+        posix_hard_killed_require( posix_hk_xdp_address[0] != '\0' );
+        snprintf( address, sizeof( address ), "%s", posix_hk_xdp_address );
+        rocketnet_server_socket_allow_commit();
+        const enum rocketnet_log_level_t log_level = rocketnet_log_level_current();
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        struct rocketnet_server_transport_t * xdp_server = rocketnet_server_transport_create( NULL, address, &config );
+        rocketnet_log_level( log_level );
+        posix_hard_killed_require( xdp_server );
+        rocketnet_xdp_veth_note_server( xdp_server );
+        posix_hk_require_server_io( xdp_server, cell );
+        return xdp_server;
+    }
+#endif
     if ( port == 0 )
         snprintf( address, sizeof(address), "%s", cell.ipv6 ? "[::1]" : "127.0.0.1" );
     else
@@ -196,6 +277,30 @@ static struct rocketnet_client_transport_t * posix_hk_client_create( const char 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
     posix_hard_killed_require( client );
     return client;
+}
+
+// an xdp cell opens the client socket in the far namespace, then returns
+// this thread to its own namespace. The child's threads stay where create
+// started them.
+static struct rocketnet_client_transport_t * posix_hk_client_open( const posix_hk_cell_t & cell, const char * server_address, uint64_t client_id )
+{
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+    {
+        int self_ns = -1;
+        int far_ns = -1;
+        posix_hk_enter_far( &self_ns, &far_ns );
+        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        const bool token_ok = rocketnet_write_test_connect_token( server_address, client_id, (uint64_t) time( NULL ), token, sizeof(token) ) == ROCKETNET_STATUS_OK;
+        struct rocketnet_client_transport_t * client = token_ok ? rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() ) : NULL;
+        posix_hk_leave_far( self_ns, far_ns );
+        posix_hard_killed_require( client );
+        return client;
+    }
+#else
+    (void) cell;
+#endif
+    return posix_hk_client_create( server_address, client_id );
 }
 
 static void posix_hk_server_stop_and_destroy( struct rocketnet_server_transport_t * server )
@@ -445,7 +550,35 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     const pid_t parent = getppid();
+#if defined(__linux__) && ROCKETNET_XDP
+    int self_ns = -1;
+    if ( argc >= 5 && strcmp( argv[4], "--xdp-far-netns" ) == 0 )
+    {
+        self_ns = open( "/proc/self/ns/net", O_RDONLY );
+        const int far_ns = open( rocketnet_xdp_veth_netns_path(), O_RDONLY );
+        if ( self_ns < 0 || far_ns < 0 || setns( far_ns, CLONE_NEWNET ) != 0 )
+        {
+            if ( self_ns >= 0 )
+                close( self_ns );
+            if ( far_ns >= 0 )
+                close( far_ns );
+            return 1;
+        }
+        close( far_ns );
+    }
+#endif
     struct rocketnet_client_transport_t * client = posix_hk_client_create( argv[2], strtoull( argv[3], NULL, 10 ) );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( self_ns >= 0 )
+    {
+        if ( setns( self_ns, CLONE_NEWNET ) != 0 )
+        {
+            close( self_ns );
+            return 1;
+        }
+        close( self_ns );
+    }
+#endif
     const double start = rocketnet_platform_time();
     uint8_t payload[32];
     while ( rocketnet_platform_time() - start < 60.0 && getppid() == parent )
@@ -474,9 +607,18 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 {
     posix_hk_setenv( "ROCKETNET_CLIENT_TRANSPORT", cell.client );
 
-    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, 0, 8 );
-    char server_address[64];
-    posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof(server_address) );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        posix_hk_xdp_up( cell );
+#endif
+    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, 0, posix_hk_is_xdp( cell ) ? 4 : 8 );
+    char server_address[128];
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        snprintf( server_address, sizeof(server_address), "%s", posix_hk_xdp_address );
+    else
+#endif
+        posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof(server_address) );
 
     // the child first, so its slot is the only one connected when it lands
 
@@ -486,7 +628,10 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     snprintf( client_id_text, sizeof(client_id_text), "%llu", (unsigned long long) ( 0x6B000ULL + (uint64_t) getpid() * 16 ) );
     std::vector<char> arg0( self.begin(), self.end() ); arg0.push_back( '\0' );
     char flag[] = POSIX_HK_CHILD_FLAG;
-    char * child_argv[] = { arg0.data(), flag, server_address, client_id_text, NULL };
+    char far_flag[] = "--xdp-far-netns";
+    char * child_argv[] = { arg0.data(), flag, server_address, client_id_text, NULL, NULL };
+    if ( posix_hk_is_xdp( cell ) )
+        child_argv[4] = far_flag;
     pid_t child = 0;
     posix_hard_killed_require( posix_spawn( &child, self.c_str(), NULL, NULL, child_argv, environ ) == 0 );
 
@@ -511,7 +656,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     std::vector<posix_hk_live_t> live( 3 );
     for ( size_t i = 0; i < 3; i++ )
-        posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6C000ULL + (uint64_t) i ) );
+        posix_hk_live_init( live[i], posix_hk_client_open( cell, server_address, 0x6C000ULL + (uint64_t) i ) );
     posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 4 );
 
@@ -585,7 +730,7 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     // a fifth client connects into the freed slot within its handshake time
 
     std::vector<posix_hk_live_t> fifth( 1 );
-    posix_hk_live_init( fifth[0], posix_hk_client_create( server_address, 0x6D000ULL ) );
+    posix_hk_live_init( fifth[0], posix_hk_client_open( cell, server_address, 0x6D000ULL ) );
     const double fifth_start = rocketnet_platform_time();
     posix_hk_connect_all( server, fifth, POSIX_HK_HANDSHAKE_SECONDS );
     printf( "  fifth client connected in %.2fs into slot %d\n", rocketnet_platform_time() - fifth_start, fifth[0].slot );
@@ -594,7 +739,15 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     posix_hk_client_disconnect_and_destroy( fifth[0].client );
     for ( size_t i = 0; i < 3; i++ )
         posix_hk_client_disconnect_and_destroy( live[i].client );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        rocketnet_xdp_veth_note_server( NULL );
+#endif
     posix_hk_server_stop_and_destroy( server );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        posix_hk_xdp_down( NULL );
+#endif
 }
 
 // a port no socket holds: bind one, close it. it is drawn below the
@@ -604,12 +757,17 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 // the bind posix_client_server_gone makes on it; an ephemeral port released
 // here was, and the server's create then failed on a port in use.
 
-static int posix_hk_closed_port( bool ipv6 )
+static int posix_hk_closed_port( const posix_hk_cell_t & cell )
 {
+    const char * host = cell.ipv6 ? "[::1]" : "127.0.0.1";
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        host = cell.ipv6 ? "[2001:db8:77::2]" : "10.77.2.2";
+#endif
     for ( int attempt = 0; attempt < 1000; attempt++ )
     {
         rocketnet_address_t address;
-        rocketnet_address_parse( &address, ipv6 ? "[::1]" : "127.0.0.1" );
+        rocketnet_address_parse( &address, host );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         address.port = (uint16_t) ( 20000 + arc4random_uniform( 20000 ) );
 #else
@@ -617,7 +775,17 @@ static int posix_hk_closed_port( bool ipv6 )
         posix_hard_killed_require( getrandom( &draw, sizeof(draw), 0 ) == (ssize_t) sizeof(draw) );
         address.port = (uint16_t) ( 20000 + draw % 12000 );
 #endif
+#if defined(__linux__) && ROCKETNET_XDP
+        int self_ns = -1;
+        int far_ns = -1;
+        if ( posix_hk_is_xdp( cell ) )
+            posix_hk_enter_far( &self_ns, &far_ns );
+#endif
         struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536, "portable" );
+#if defined(__linux__) && ROCKETNET_XDP
+        if ( posix_hk_is_xdp( cell ) )
+            posix_hk_leave_far( self_ns, far_ns );
+#endif
         if ( !socket )
             continue;
         const int port = address.port;
@@ -647,6 +815,23 @@ static void posix_hk_server_send_to( struct rocketnet_server_transport_t * serve
         return;
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+    {
+        struct rocketnet_server_socket_t * xdp = (struct rocketnet_server_socket_t *) rocketnet_server_transport_io_name_for_testing( server );
+        posix_hard_killed_require( xdp );
+        for ( int i = 0; i < count; i++ )
+        {
+            uint64_t packet_id = 0;
+            uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, to, posix_hk_xdp_far_mac );
+            posix_hard_killed_require( frame );
+            memcpy( frame + ROCKETNET_FRAME_WIRE_OFFSET, data, (size_t) bytes );
+            rocketnet_server_socket_finish_packet( xdp, packet_id, frame, bytes );
+        }
+        rocketnet_server_socket_send_packets( xdp );
+        return;
+    }
+#endif
     void * instance = rocketnet_server_transport_io_name_for_testing( server );
     posix_hard_killed_require( instance );
     const bool gso = strcmp( cell.server, "gso" ) == 0;
@@ -677,13 +862,22 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
 {
     posix_hk_setenv( "ROCKETNET_CLIENT_TRANSPORT", cell.client );
 
-    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, 0, 8 );
-    char server_address[64];
-    posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof(server_address) );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        posix_hk_xdp_up( cell );
+#endif
+    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, 0, posix_hk_is_xdp( cell ) ? 4 : 8 );
+    char server_address[128];
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        snprintf( server_address, sizeof(server_address), "%s", posix_hk_xdp_address );
+    else
+#endif
+        posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof(server_address) );
 
     std::vector<posix_hk_live_t> live( 3 );
     for ( size_t i = 0; i < 3; i++ )
-        posix_hk_live_init( live[i], posix_hk_client_create( server_address, 0x6E000ULL + (uint64_t) i ) );
+        posix_hk_live_init( live[i], posix_hk_client_open( cell, server_address, 0x6E000ULL + (uint64_t) i ) );
     posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
 
     // let the handshake's own traffic settle, then count from zero
@@ -696,8 +890,12 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     }
 
     rocketnet_address_t closed;
-    rocketnet_address_parse( &closed, cell.ipv6 ? "[::1]" : "127.0.0.1" );
-    closed.port = (uint16_t) posix_hk_closed_port( cell.ipv6 );
+    rocketnet_address_parse( &closed, posix_hk_is_xdp( cell ) ? ( cell.ipv6 ? "[2001:db8:77::2]" : "10.77.2.2" ) : ( cell.ipv6 ? "[::1]" : "127.0.0.1" ) );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        rocketnet_xdp_veth_copy_far_mac( posix_hk_xdp_far_mac );
+#endif
+    closed.port = (uint16_t) posix_hk_closed_port( cell );
 
     // 1000 datagrams to the closed port, 20 a tick, across 50 ticks of live
     // traffic, on the server's own sockets
@@ -746,22 +944,41 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
 
     for ( size_t i = 0; i < 3; i++ )
         posix_hk_client_disconnect_and_destroy( live[i].client );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        rocketnet_xdp_veth_note_server( NULL );
+#endif
     posix_hk_server_stop_and_destroy( server );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        posix_hk_xdp_down( NULL );
+#endif
 }
 
 static void posix_client_server_gone( const posix_hk_cell_t & cell )
 {
     posix_hk_setenv( "ROCKETNET_CLIENT_TRANSPORT", cell.client );
 
-    const int port = posix_hk_closed_port( cell.ipv6 );
-    char server_address[64];
-    posix_hk_server_address( cell, port, server_address, sizeof(server_address) );
+    int port = 0;
+    char server_address[128];
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+    {
+        posix_hk_xdp_up( cell );
+        snprintf( server_address, sizeof(server_address), "%s", posix_hk_xdp_address );
+    }
+    else
+#endif
+    {
+        port = posix_hk_closed_port( cell );
+        posix_hk_server_address( cell, port, server_address, sizeof(server_address) );
+    }
 
     // the client starts its handshake against a closed port: every request
     // it sends draws ICMP port unreachable
 
     std::vector<posix_hk_live_t> live( 1 );
-    posix_hk_live_init( live[0], posix_hk_client_create( server_address, 0x6F000ULL ) );
+    posix_hk_live_init( live[0], posix_hk_client_open( cell, server_address, 0x6F000ULL ) );
     const double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 1.0 )
     {
@@ -773,7 +990,9 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
     // the server comes up on that port; the client connects through the
     // same receive thread that took the errors
 
-    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, port, 8 );
+    struct rocketnet_server_transport_t * server = posix_hk_server_create( cell, port, posix_hk_is_xdp( cell ) ? 4 : 8 );
+    if ( posix_hk_is_xdp( cell ) )
+        port = rocketnet_server_transport_port( server );
     const double server_start = rocketnet_platform_time();
     posix_hk_connect_all( server, live, POSIX_HK_HANDSHAKE_SECONDS );
     const double connected_in = rocketnet_platform_time() - server_start;
@@ -792,8 +1011,32 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
     posix_hk_require_server_io( server, cell );
 
     posix_hk_client_disconnect_and_destroy( live[0].client );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        rocketnet_xdp_veth_note_server( NULL );
+#endif
     posix_hk_server_stop_and_destroy( server );
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( posix_hk_is_xdp( cell ) )
+        posix_hk_xdp_down( NULL );
+#endif
 }
+
+#if defined(__linux__) && ROCKETNET_XDP
+void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 )
+{
+    posix_hk_cell_t cell;
+    cell.server = "xdp";
+    cell.client = "portable";
+    cell.ipv6 = ipv6;
+    if ( kind == 0 )
+        posix_hard_killed_client( cell );
+    else if ( kind == 1 )
+        posix_send_to_closed_port( cell );
+    else
+        posix_client_server_gone( cell );
+}
+#endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
@@ -1040,7 +1283,10 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
 // cases measure receive gaps and handshake times against the wall clock, so
 // they run as group 1, after every other case and the sibling executables
 // (group 0) have finished, never beside the loopback load those make; they
-// run in parallel with each other. the seam cases measure no time.
+// run in parallel with each other. the seam cases measure no time. a kind
+// name that contains "_xdp_" returns 2: those cells share one veth pair, so
+// they run alone, one at a time. names outside the kind prefixes stay 0,
+// including the other xdp cases.
 //
 // the 1000-cycle connect/disconnect cases (functional/posix_lifecycle_stress.cpp)
 // hold 1024 IPv4 loopback ports while they cycle, and Darwin gives a
@@ -1052,8 +1298,14 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
 int rocketnet_posix_hard_killed_client_test_group( const char * name )
 {
     for ( size_t i = 0; i < 3; i++ )
+    {
         if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
+        {
+            if ( strstr( name, "_xdp_" ) != NULL )
+                return 2;
             return 1;
+        }
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( strncmp( name, "test_posix_connect_disconnect_1000", strlen( "test_posix_connect_disconnect_1000" ) ) == 0 )
         return 2;
