@@ -75,8 +75,11 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   `MaxClock + 1`, which changes no live-or-expired answer and keeps their
   order. The integrated control takes `ClaimTokens = {"th"}` so the full
   protocol state space remains within the runner's 110-second budget.
-  `MCRNSecurityTablesClaims.cfg` runs `ClaimsSpec` with both `th` and `tf`
-  and both slots, holding unrelated protocol variables fixed. It checks
+  `MCRNSecurityTablesClaims.cfg` runs `ClaimsSpec` with all three token
+  identifiers and both slots, holding unrelated protocol variables fixed.
+  A third identifier can request capacity while both slots are occupied,
+  then reuse the expired head; different-identifier replacement is therefore
+  reachable instead of hidden by a two-token/two-slot bound. It checks
   record, renewal, release, wrong-address/repeated release and expiry
   against all four claim invariants. The capacity invariant queries all
   three tokens, including an identifier absent from a full table. Both

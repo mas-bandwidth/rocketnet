@@ -134,8 +134,8 @@ BackwardsRollover == TRUE
 ClaimSlots == 1..2
 \* One token exercises claim integration without multiplying the full
 \* protocol state space by the two-slot table's permutations. ClaimsSpec
-\* and the release witnesses override this with two tokens; the capacity
-\* invariant also queries the third token, which is absent from the table.
+\* uses three tokens to exercise reuse by an identifier absent from a full
+\* table; the release witnesses retain their two-token instance.
 ClaimTokens == {"th"}
 ReleaseToFree == TRUE
 ReleaseChecksLive == TRUE
@@ -418,8 +418,9 @@ Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 SpecFair == Spec
 
-\* The focused claim control keeps both slots and both claim tokens while
-\* holding the unrelated protocol state fixed. It checks all table
+\* The focused claim control keeps both slots and all three identifiers,
+\* making an absent identifier available when both slots are occupied.
+\* Holding the unrelated protocol state fixed, it checks all table
 \* operations, including wrong-address and repeated release, and time
 \* advancing through the handshake deadline. The integrated Spec above
 \* still checks ClaimRecord after the request verify and release on refusal.
@@ -592,8 +593,8 @@ OrderIsDeadlineOrder ==
     \A i, j \in 1..Len(orderList) : i < j => claimSlot[orderList[i]].dl <= claimSlot[orderList[j]].dl
 \* a record never lands on another token's live claim
 LiveClaimNeverReplaced == ~claimReplaced
-\* the O(1) capacity answer equals the scan's, for every token ("te" takes
-\* no claim, so it asks the capacity question for a token not in the table)
+\* the O(1) capacity answer equals the scan's for every token, including
+\* an identifier absent when both slots are occupied
 CanRecordMatchesScan == \A tk \in Tokens : CanRecord(tk) = CanRecordScan(tk)
 ClaimSafetyInvariants == FreeAndOrderPartitionSlots /\ OrderIsDeadlineOrder
                          /\ LiveClaimNeverReplaced /\ CanRecordMatchesScan

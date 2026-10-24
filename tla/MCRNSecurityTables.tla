@@ -21,6 +21,7 @@ MCRefuseUnremembered == TRUE
 \* this: a release zeroes the claim's deadline and leaves its slot in place.
 MCReleaseToFree == FALSE
 MCClaimTokens == {"th", "tf"}
+MCClaimControlTokens == Tokens
 \* MCRNSecurityTablesBrokenReleaseTwice.cfg overrides ReleaseChecksLive with
 \* this: a release pushes the slot without unlinking it from its chain.
 MCReleaseChecksLive == FALSE
