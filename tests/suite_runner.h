@@ -196,6 +196,22 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
     return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
 }
 
+// The size of one page of this process's memory in bytes: 4 KiB on x86_64
+// Linux and Windows, 16 KiB on Apple silicon. A case whose library tables are
+// touched sparsely holds one page resident for each touch, so its resident
+// set grows with the page; a bound for such a case scales with this.
+inline uint64_t suite_page_bytes()
+{
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo( &info );
+    return info.dwPageSize > 0 ? (uint64_t) info.dwPageSize : 4096;
+#else
+    const long bytes = sysconf( _SC_PAGESIZE );
+    return bytes > 0 ? (uint64_t) bytes : 4096;
+#endif
+}
+
 // The bound for one case: none in a sanitizer build without the environment
 // override, else the bound the case declares, else the bound its process
 // reported from its plan (plan_mb, -1 for none), else the suite-wide one.

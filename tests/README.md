@@ -63,3 +63,13 @@ does not take a full-table case below its plan. Sanitizer builds continue to
 report without enforcing a bound unless the environment sets one. A declared
 plan of zero falls back to the suite-wide bound, so a refused memory plan
 cannot silently disable the check.
+
+A case whose plan is mostly never touched (a thousand connected clients
+reserve tens of GiB the case does not fill) declares its bound from the pages
+it touches instead: a byte allowance for what it builds plus a count of pages
+scaled by `suite_page_bytes()`, since a sparse touch holds a whole page
+resident and a page is 16 KiB on Apple silicon and 4 KiB on x86_64
+(`no_worker_rss_bound_mb` in `test_unit_server_stats_no_worker.cpp`).
+
+`./bin/test --run <case>` runs one case without the bound; only a suite run
+checks a case's peak against it.
