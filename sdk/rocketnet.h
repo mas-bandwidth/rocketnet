@@ -1130,8 +1130,11 @@ struct rocketnet_client_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1298,8 +1301,11 @@ struct rocketnet_server_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit per client. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 

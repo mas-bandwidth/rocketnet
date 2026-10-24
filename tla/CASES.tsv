@@ -367,3 +367,6 @@ MCRNLoopbackWireBrokenReleaseBeforeCopy.cfg	MCRNLoopbackWire.tla	invariant	NoOve
 MCRNLoopbackWireBrokenTakeUnfilled.cfg	MCRNLoopbackWire.tla	invariant	InOrder	check	rnloopbackwire	required	-
 MCRNLoopbackWireBrokenNoDestroyWait.cfg	MCRNLoopbackWire.tla	invariant	NoUseAfterFree	check	rnloopbackwire	required	-
 MCRNLoopbackWireBrokenDropWithSender.cfg	MCRNLoopbackWire.tla	invariant	NoLoss	check	rnloopbackwire	required	-
+MCRNSentMap.cfg	MCRNSentMap.tla	pass	-	check	rnsentmap	required	-
+MCRNSentMapBrokenSmallMap.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
+MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
