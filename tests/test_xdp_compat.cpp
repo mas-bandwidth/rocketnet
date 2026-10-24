@@ -30,9 +30,13 @@ extern "C" bpf_program * bpf_object__find_program_by_name( const bpf_object * ob
 extern "C" void bpf_program__set_type( bpf_program *, bpf_prog_type type ) { program_type = type; }
 extern "C" int bpf_object__load( bpf_object * ) { ++load_calls; return load_result; }
 extern "C" int bpf_program__fd( const bpf_program * ) { return 42; }
-extern "C" int bpf_get_link_xdp_id( int index, __u32 * id, __u32 flags )
+extern "C" int bpf_get_link_xdp_info( int index, xdp_link_info * info, size_t info_size, __u32 flags )
 {
-    called_index = index; called_flags = flags; *id = 73; return query_result;
+    called_index = index; called_flags = flags;
+    if ( info_size != sizeof(*info) ) return -EINVAL;
+    // the multi-mode shape: no single id, a native and a generic program
+    info->prog_id = 0; info->drv_prog_id = 73; info->skb_prog_id = 74; info->hw_prog_id = 0;
+    return query_result;
 }
 extern "C" int bpf_set_link_xdp_fd( int index, int fd, __u32 flags )
 {
@@ -59,12 +63,13 @@ int main()
     load_result = 0;
     CHECK(rocketnet_xdp_program_open(&object) == &program && load_calls == 2);
     CHECK(program_type == BPF_PROG_TYPE_XDP);
-    unsigned int id = 0;
+    rocketnet_xdp_attached_t attached = {};
     query_result = -ENODEV;
-    CHECK(rocketnet_xdp_query_id(7, &id) == -ENODEV);
+    CHECK(rocketnet_xdp_query_attached(7, &attached) == -ENODEV);
     CHECK(called_index == 7 && called_flags == 0);
     query_result = 0;
-    CHECK(rocketnet_xdp_query_id(7, &id) == 0 && id == 73);
+    CHECK(rocketnet_xdp_query_attached(7, &attached) == 0);
+    CHECK(attached.prog_id == 0 && attached.drv_prog_id == 73 && attached.skb_prog_id == 74 && attached.hw_prog_id == 0);
     for (int mode = 0; mode < 2; ++mode)
     {
         const bool skb = mode != 0;

@@ -1262,7 +1262,7 @@ struct rn_ordered_plan_t
 // (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
 // chunk's, a packet the transport refused); a sent one is due when its class's
 // delay has passed since its last send, the same delay every time
-// (RNResendTiming!Walk, no back-off). The walk stops at the first number not
+// (tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
 // yet due. Returns false when more is due than this update can write. On
 // return *last_unsent is the last never-sent number at the FIFO's head (where
 // new numbers of this class join), or RN_RESEND_NONE.

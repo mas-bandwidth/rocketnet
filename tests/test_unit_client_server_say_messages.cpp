@@ -105,7 +105,6 @@ static const allowlist_row_t allowlist[] =
     { F_API, "PACKET_LOSS_PERCENT", "NETWORK SIMULATOR" },
     { F_S, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
     { F_M, "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
-    { "sdk/rocketnet_message.h", "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES", "TRANSPORT SIZE" },
     { F_H, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
     { F_API, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "Packets per second", "TRANSPORT SIZE" },
