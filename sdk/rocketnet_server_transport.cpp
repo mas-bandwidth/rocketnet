@@ -303,6 +303,9 @@ struct rocketnet_server_transport_t
     struct rocketnet_network_simulator_t * link_simulator;
     rocketnet_address_t link_simulator_from;
     rocketnet_platform_mutex_t link_simulator_mutex;
+#if ROCKETNET_TEST_SEAMS
+    int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+#endif // #if ROCKETNET_TEST_SEAMS
 
     // The disconnect bursts waiting to leave (tla/ServerSession.tla
     // DrainDisconnectBurst). A disconnect ends the slot at once; when this
@@ -665,6 +668,14 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
         transport->io.operations->send_batch( transport->io.instance, &send, 1 );
         return;
     }
+#if ROCKETNET_TEST_SEAMS
+    if ( transport->link_busy_sends_for_test > 0 )
+    {
+        transport->link_busy_sends_for_test--;
+        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        return;
+    }
+#endif // #if ROCKETNET_TEST_SEAMS
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -694,6 +705,15 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
                                              latency_ms / 1000.0, jitter_ms / 1000.0,
                                              (float) packet_loss_percent, (float) duplicate_percent );
     return true;
+}
+
+// The unit seam for a lock miss without a second thread: the next `sends`
+// link sends through an active simulator take the lock-miss path, counting
+// SEND_RING_FULL as a real miss does, and never touch the mutex.
+void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends )
+{
+    rocketnet_assert( server_transport );
+    server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 

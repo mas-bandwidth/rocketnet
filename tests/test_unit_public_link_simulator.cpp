@@ -247,7 +247,46 @@ static void test_public_link_simulator_server_switch_off_delivers_held()
     live_link_pair_teardown( &pair );
 }
 
-static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
+// A datagram is counted sent only once the link took it: a send that meets the
+// simulator's lock busy is dropped, counted as SEND_RING_FULL, and never
+// reaches packets_sent or bytes_sent. The flush is called alone, without an
+// update, so the one busy send is the payload's and nothing else's.
+static void test_public_link_simulator_server_lock_miss_not_counted_sent()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    struct rocketnet_server_transport_stats_t before;
+    struct rocketnet_server_transport_stats_t after;
+    rocketnet_server_transport_stats( pair.server, &before );
+    const uint64_t ring_full_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    // a nonzero latency keeps the simulator active, so the send goes through
+    // the link and its lock
+    check( rocketnet_server_transport_network_simulator( pair.server, 1, 0, 0, 0 ) );
+    rocketnet_server_transport_link_busy_for_test( pair.server, 1 );
+    uint8_t payload[4] = { 13, 14, 15, 16 };
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &after );
+    check( after.packets_sent == before.packets_sent );
+    check( after.bytes_sent == before.bytes_sent );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+
+    // the next send meets a free lock: it is counted sent once and arrives
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &after );
+    check( after.packets_sent == before.packets_sent + 1 );
+    check( after.bytes_sent > before.bytes_sent );
+    check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
+    check( live_link_client_bytes_seen( &pair, 20 ) == (int) sizeof( payload ) );
+
+    live_link_pair_teardown( &pair );
+}
+
+static void public_link_simulator_check_fields(const struct rocketnet_config_field_t * fields, int num_fields )
 {
     int found_loss = 0;
     int found_latency = 0;
@@ -587,6 +626,7 @@ REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 REGISTER_UNIT_TEST( test_public_link_simulator_applies_to_live_connection );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held );
+REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {
