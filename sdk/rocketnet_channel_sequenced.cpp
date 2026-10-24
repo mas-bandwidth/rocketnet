@@ -40,7 +40,7 @@ static void rn_sequenced_release_number( rn_channels_t * channels, uint64_t numb
 }
 
 // A hold is a slot (held_sequenced or block_in_turn) and the first number of
-// its code-4 span (pad or block_in_turn_first).
+// its code-4 span (held_sequenced_first or block_in_turn_first).
 static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
 {
     const uint32_t hold = *slot;
@@ -61,7 +61,7 @@ static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot
 
 static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->pad );
+    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->held_sequenced_first );
 }
 
 static void rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_receive_t * rx )
@@ -109,7 +109,7 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
 // RNChannelTypes!DispatchFragment for a code-4 block. The first fragment to
 // arrive is the anchor; *hold names it and *first holds its first number. An
 // in-turn block collects in rx->block_in_turn, a future one in the one
-// future-state slot (rx->held_sequenced, rx->pad), so each channel has at most
+// future-state slot (rx->held_sequenced, rx->held_sequenced_first), so each channel has at most
 // one of each. Each fragment is copied once to its own offset because its
 // receive batch expires before the block can complete.
 static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message_record_t * record,
@@ -352,7 +352,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     if ( reliable )
     {
         if ( record->block )
-            return rn_sequenced_block( channels, record, &rx->held_sequenced, &rx->pad, delta, number_slot, out );
+            return rn_sequenced_block( channels, record, &rx->held_sequenced, &rx->held_sequenced_first, delta, number_slot, out );
         const uint64_t offset = (uint64_t) record->ring * 16;
         const uint64_t span = ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15;
         if ( !rn_region_ring_span_valid( region, offset, span ) )
@@ -363,7 +363,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         // THE COPIES (b): this future state outlives the receive batch.
         memcpy( region->receive_ring + offset, record->data, (size_t) record->bytes );
         rx->held_sequenced = number_slot | RN_SEQUENCED_RELIABLE_HOLD;
-        rx->pad = (uint32_t) region->receive_descriptors[number_slot].number;
+        rx->held_sequenced_first = (uint32_t) region->receive_descriptors[number_slot].number;
         return ROCKETNET_CHANNEL_DISPATCH_HELD;
     }
 
@@ -436,17 +436,26 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
         if ( rx->block_in_turn == RN_DESCRIPTOR_NONE )
         {
             rx->block_in_turn = slot;
-            rx->block_in_turn_first = rx->pad;
+            rx->block_in_turn_first = rx->held_sequenced_first;
             rx->held_sequenced = RN_DESCRIPTOR_NONE;
         }
         return false;
     }
 
     rx->held_sequenced = RN_DESCRIPTOR_NONE;
-    if ( !rn_sequenced_room( channels, reliable ) || !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
+    if ( !rn_sequenced_room( channels, reliable ) )
     {
         rx->held_sequenced = slot;
         rn_sequenced_release_hold( channels, rx );
+        return false;
+    }
+    if ( !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
+    {
+        // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is
+        // stale, so release it and count it (tla/RNChannelTypes.tla DrainStale).
+        rx->held_sequenced = slot;
+        rn_sequenced_release_hold( channels, rx );
+        rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         return false;
     }
     if ( reliable )

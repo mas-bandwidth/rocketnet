@@ -402,6 +402,32 @@ static void test_stale_numbers_released_across_ordered_epochs()
 
 REGISTER_UNIT_TEST( test_stale_numbers_released_across_ordered_epochs );
 
+static void test_reliable_sequenced_drain_refusal_counts_stale()
+{
+    // The ordered record opens the epoch; the drain refuses the held code-4
+    // record's sequencing, releases its number and counts it.
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t ahead = 1, ordered = 2;
+    rn_delivery_t out;
+    uint32_t slot = RN_DESCRIPTOR_NONE, ahead_slot = RN_DESCRIPTOR_NONE;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0x800000, &ahead );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &ahead_slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 0, 0, &ordered );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.ordered.channels.deliveries == 1 );
+    check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    check( receiver.region->receive_descriptors[ahead_slot].live == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_reliable_sequenced_drain_refusal_counts_stale );
+
 static void test_rnchannel_reliable_sequenced_witness_replays()
 {
     // BrokenSequencedBackwards and BrokenHoldAllSequenced are rejected for
