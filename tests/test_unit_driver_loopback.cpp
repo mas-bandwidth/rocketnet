@@ -205,7 +205,9 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
-    const int total = ROCKETNET_LOOPBACK_QUEUE_PACKETS + 5;
+    // the server endpoint's queue is sized from the plan (rocketnet_loopback_server_queue_packets)
+    const int server_queue = rocketnet_loopback_server_queue_packets( server_config.max_clients );
+    const int total = server_queue + 5;
     uint8_t data[4];
     rocketnet_address_t to = server_address;
     set_ipv4_loopback( to );
@@ -219,7 +221,7 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     }
     rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 5 );
 
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS; ++i )
+    for ( int i = 0; i < server_queue; ++i )
     {
         uint8_t buf[4];
         int bytes = 0;
