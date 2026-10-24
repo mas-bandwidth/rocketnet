@@ -20,7 +20,6 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
 #include "rocketnet_packet_loss_tracker.h"
-#include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
 #include "../tests/rocketnet_value_tracker.h"
 #include "rocketnet_test_vectors.h"
@@ -5779,9 +5778,8 @@ void rocketnet_test_integrity_limit()
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal": an exact-size check runs before the
         // lookup). two such: one too short to carry a tag, one that would
-        // open to the wrong size. the class
-        // still filed as DID_NOT_OPEN is a response that opens to non-zero
-        // padding.
+        // open to the wrong size. the response that opens to non-zero
+        // padding is filed as PADDING_NOT_ZERO, and it is not a forgery.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
         memset( short_response, 0x5A, sizeof(short_response) );
         uint8_t * sp = short_response;
@@ -5814,8 +5812,9 @@ void rocketnet_test_integrity_limit()
                                                         client_keys.handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
         rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
-        rocketnet_check( mapping->integrity_failures == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
         uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
@@ -5824,7 +5823,7 @@ void rocketnet_test_integrity_limit()
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-        rocketnet_check( mapping->integrity_failures == 2 );                    // a packet that opens does not count
+        rocketnet_check( mapping->integrity_failures == 1 );                    // a packet that opens does not count
 
         // seed to two below the limit. the sequences are fresh so the replay
         // window never refuses first: the open is what fails.
@@ -7153,50 +7152,6 @@ void rocketnet_test_packet_loss_tracker()
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
     rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-}
-
-void rocketnet_test_out_of_order_tracker()
-{
-    rocketnet_out_of_order_tracker_t tracker;
-    rocketnet_out_of_order_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    uint64_t sequence = 0;
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        rocketnet_out_of_order_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    sequence = 500;
-
-    for ( int i = 0; i < 500; ++i )
-    {
-        rocketnet_out_of_order_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 499 );
-
-    rocketnet_out_of_order_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.last_packet_processed == 0 );
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        uint64_t mod_sequence = ( sequence / 2 ) * 2;
-        if ( sequence % 2 )
-            mod_sequence -= 1;
-        rocketnet_out_of_order_tracker_packet_received( &tracker, mod_sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 500 );
 }
 
 void rocketnet_test_jitter_tracker()
@@ -14890,7 +14845,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
     { "test_packet_loss_tracker", rocketnet_test_packet_loss_tracker },
-    { "test_out_of_order_tracker", rocketnet_test_out_of_order_tracker },
     { "test_jitter_tracker", rocketnet_test_jitter_tracker },
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
