@@ -88,9 +88,24 @@
 #endif
 
 
-/// Maximum clients per server.
+/// Maximum clients per server. 1000 unless the build defines another value
+/// (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of the same name); the
+/// limits that serve every client derive from it (BUILDING.md, "Maximum
+/// clients"). The library and every file that includes this header must be
+/// built with the same value.
 
+#ifndef ROCKETNET_MAX_CLIENTS
 #define ROCKETNET_MAX_CLIENTS                                       1000
+#endif
+
+// The bounds are the transports' fixed geometry: below 512 a server's
+// per-update receive budget is smaller than its largest send ring allows,
+// and above 32768 the io_uring queues cannot serve every client (BUILDING.md,
+// "Maximum clients").
+
+#if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
+#error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
+#endif
 
 /// A destination ID is a uint64_t client index.
 /// Valid client indexes range from 0 through max_clients - 1.

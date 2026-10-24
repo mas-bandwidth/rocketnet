@@ -13,6 +13,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_memory.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif

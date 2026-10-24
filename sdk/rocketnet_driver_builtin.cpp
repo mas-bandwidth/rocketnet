@@ -28,7 +28,7 @@ static const int PORTABLE_RX_BANKS = 3;
 // server needs.
 static int portable_rx_capacity( const rocketnet_server_transport_config_t * config )
 {
-    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * max_clients;
 }
 static uint64_t portable_rx_storage_bytes( int capacity )
