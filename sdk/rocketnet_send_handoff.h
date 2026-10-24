@@ -22,6 +22,9 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         static_assert(NumBuffers >= 2, "producer and consumer storage");
         for (int i = 0; i < NumBuffers; ++i) free[i] = true;
     }
+    // tla/SendHandoff.tla Acquire: reserves a free generation as the filling one.
+    // tla/SendHandoff.tla Finish: fills the next packet slot of the filling
+    // generation, counted as the next packet for it.
     int acquire()
     {
         if (filling >= 0) return filling;
@@ -29,6 +32,7 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
             if (free[i]) { free[i] = false; return filling = i; }
         return -1;
     }
+    // tla/SendHandoff.tla Publish: appends the filling generation to the queue.
     bool publish()
     {
         rocketnet_assert(filling >= 0 && count < NumBuffers);
@@ -38,13 +42,15 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         filling = -1;
         return true;
     }
-    // tla/SendHandoff.tla: reopen takes the newest queued generation, never
+    // tla/SendHandoff.tla Reopen: reopen takes the newest queued generation, never
     // the front. The producer asks for storage while every generation is
     // queued (two flushes inside one worker latency). The newest queued
     // generation is not the front, so the worker has not started it: hand it
     // back to the producer, which stages after its packets until the next
     // publish. -1 when only the front is queued. The caller tries acquire
     // first.
+    // tla/SendHandoff.tla StaleFinish: a finish through a pointer from before
+    // the reopen, below finish_base, is refused.
     int reopen()
     {
         if (filling >= 0) return filling;
@@ -52,7 +58,9 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
         --count;
         return filling = queued[(head + count) % NumBuffers];
     }
+    // tla/SendHandoff.tla TakeFront: the worker reads the front generation.
     int front() const { return count ? queued[head] : -1; }
+    // tla/SendHandoff.tla Retire: frees the copied front and advances the queue.
     void retire()
     {
         rocketnet_assert(count > 0);
