@@ -2376,6 +2376,16 @@ void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_tran
     rocketnet_assert( timestamp != 0 );
     server_transport->test_timestamp = timestamp;
 }
+
+void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
+                                                   uint64_t * map_hashes, uint64_t * payload_writes )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( map_hashes );
+    rocketnet_assert( payload_writes );
+    *map_hashes = rocketnet_encryption_map_test_hashes( server_transport->protocol.encryption_map );
+    *payload_writes = server_transport->protocol.test_payload_writes;
+}
 #endif // #if ROCKETNET_TEST_SEAMS
 
 // tla/RNDriverSendStaging.tla Update

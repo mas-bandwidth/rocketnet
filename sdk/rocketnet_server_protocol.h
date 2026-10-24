@@ -80,7 +80,19 @@ struct rocketnet_server_protocol_t
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
     int defer_payload_acks;
+#if ROCKETNET_TEST_SEAMS
+    uint64_t test_payload_writes;                           // writes of a payload's plaintext bytes: the open, and any copy after it
+#endif // #if ROCKETNET_TEST_SEAMS
 };
+
+#if ROCKETNET_TEST_SEAMS
+// The receive path's work since create, for the unit suite: the keyed hashes
+// of the server's encryption map and the writes of payload plaintext.
+// Defined in sdk/rocketnet_server_transport.cpp.
+struct rocketnet_server_transport_t;
+void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
+                                                   uint64_t * map_hashes, uint64_t * payload_writes );
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // The connection id held by client_index now (P9a): 0 for a free slot, an
 // index out of range, or a protocol without the connection id arrays.
