@@ -63,7 +63,7 @@ struct rn_packet_item_t
     uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
     uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
-    uint8_t resend;                 // nonzero: a resend, counted and backed off by the caller
+    uint8_t resend;                 // nonzero: a resend; the count is taken when the packet carrying it is sent (rn_packet_builder_commit)
     uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
 
     // The builder's own links, written by rn_packet_builder_write at the start

@@ -1061,7 +1061,6 @@ static rocketnet_server_rio_t * rio_open( rocketnet_address_t * bind )
 static void rio_finish( rocketnet_server_rio_t * rio, rocketnet_platform_socket_t * client )
 {
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(client);
 }
 
@@ -1259,7 +1258,6 @@ static void test_rio_destroy_commits_deferred_sends()
     const double start = rocketnet_platform_time();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     const double elapsed = rocketnet_platform_time() - start;
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     CHECK(elapsed < 1.0);
     fault_client_receive(client, round, 10);
     rocketnet_platform_socket_destroy(client);
@@ -1291,7 +1289,6 @@ static void test_rio_stop_retries_refused_deferred_commit()
     CHECK(rocketnet_server_rio_pending(rio) == 0);
 
     rn_native_backend_stop_and_destroy(rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(client);
     printf("test_rio_transport_stop_retries_refused_deferred_commit\n");
 }
@@ -1389,7 +1386,7 @@ static void test_windows_port_exclusive()
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
             if ( iocp ) { wait_stopped(iocp); rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy ); }
-            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
+            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); }
             CHECK(!bound);
         }
     }

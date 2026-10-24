@@ -28,8 +28,8 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   `BindAtRequest = TRUE` is the code before 2026-10-17, which recorded at
   the request. Recording is a no-op for a live entry,
   then a free slot, then an expired slot, then — in the code — the
-  oldest entry, live or not (`rocketnet_token_table_select_slot` with
-  `evict_oldest = 1`, reached from `rocketnet_used_token_history_record`).
+  oldest entry, live or not (`rocketnet_token_table_select_slot`, reached from
+  `rocketnet_used_token_history_record`).
 - **One live connection.** The code has no admitted-token set (removed
   2026-10-18, `docs/SESSION.md` 1.6). A token is kept to one live
   connection by the history (another address is refused while the entry
@@ -54,6 +54,42 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   (`previous_cookie_key_expire_time`) to the rotation instant plus
   `RotatePeriod`; a stall past a whole window zeroes the previous key
   and clears `has_previous_cookie_key`.
+- **The request-claim table.** `ClaimSlots` (two) slots, each holding
+  the token, address and handshake deadline last written to it, a free
+  list and an order list of claims, head first
+  (`rocketnet_used_token_history_claim_can_record`, `_claim_record` and
+  `_claim_release` in `sdk/rocketnet_token_tables.cpp`). A request is
+  refused while another address holds a live claim on its token, and on
+  capacity by the O(1) rule: the token is in the table, or the free list
+  is not empty, or the order head's deadline has passed. Past the verify
+  the claim is recorded: the token's own entry (an expired one is
+  rewritten and moved to the tail), else the free list's head, else the
+  expired order head. `RequestRefused` records then releases (a refusal
+  past the verify; a same-address request after a disconnect finds its own
+  live claim, records nothing and releases it from wherever it sits in the
+  order list); a mapping swept by `Tick` at its handshake deadline
+  releases nothing, as its claim expires at the same instant. The table's
+  `ClaimRecord` then reclaims an expired order head directly, matching
+  `rocketnet_used_token_history_claim_record`; no intermediate free-list
+  push is needed and no slot leaks. Claim deadlines are held at
+  `MaxClock + 1`, which changes no live-or-expired answer and keeps their
+  order. The integrated control takes `ClaimTokens = {"th"}` so the full
+  protocol state space remains within the runner's 110-second budget.
+  `MCRNSecurityTablesClaims.cfg` runs `ClaimsSpec` with all three token
+  identifiers and both slots, holding unrelated protocol variables fixed.
+  A third identifier can request capacity while both slots are occupied,
+  then reuse the expired head; different-identifier replacement is therefore
+  reachable instead of hidden by a two-token/two-slot bound. It checks
+  record, renewal, release, wrong-address/repeated release and expiry
+  against all four claim invariants. The capacity invariant queries all
+  three tokens, including an identifier absent from a full table. Both
+  release witnesses retain the two-token integrated instance. The original
+  two-token full control timed out; no protocol constant or invariant was
+  weakened to obtain a passing run. A release unlinks the entry and
+  pushes its slot on the free list. `ReleaseToFree = FALSE` is the code
+  before the free list, without its scan: the release zeroed the deadline
+  and left the slot in place. `ReleaseChecksLive = FALSE` pushes the slot
+  without unlinking it, so a second release finds it again.
 - **The verify budget.** Requests past the gate spend from a per-update
   budget (`verifies`, reset by the tick): the handshake work budget
   (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE`, checked in the request
@@ -97,6 +133,16 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   budget, while the cap switch is in its code position.
 - **`TablesBounded`**: neither table passes its capacity, and slots
   plus other clients never pass `MaxClients`.
+- **`FreeAndOrderPartitionSlots`**: every claim slot is on exactly one of
+  the free list or the order list, and neither list holds a slot twice.
+- **`OrderIsDeadlineOrder`**: the order list's deadlines never decrease
+  from head to tail, so the head holds the earliest deadline. It rests on
+  the clock never going backwards (the transport clamps a step backwards
+  to the last good time) and one fixed handshake deadline.
+- **`LiveClaimNeverReplaced`**: a claim record never lands on a slot
+  holding another token's live claim (ghost `claimReplaced`).
+- **`CanRecordMatchesScan`**: for every token, the O(1) capacity answer
+  equals the answer of the scan over every slot that the code ran before.
 
 ## Switches: the code and the fixed code
 
@@ -112,6 +158,33 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 | `CapVerifyBudget` | `TRUE`: the per-update budget caps verifies | mutant `FALSE` guards the cap |
 | `AcceptPrevious` | `TRUE`: previous generation accepted while `clock < prevUntil` | reversed witness `FALSE` drops the previous-key window |
 | `PreviousOutlivesWindow` | `FALSE`: a stall past the window drops the previous generation | mutant `TRUE` keeps the previous generation across a stall |
+| `ReleaseToFree` (definition) | `TRUE`: a released claim's slot goes back on the free list | reversed witness `FALSE`: the slot stays in place with a zeroed deadline |
+| `ReleaseChecksLive` (definition) | `TRUE`: a release unlinks the entry, so a second release finds nothing | reversed witness `FALSE`: the slot is pushed without unlinking it |
+| `RefuseUnremembered` (FloodSpec, a definition) | `FALSE` since 2026-10-20: only a source with a recorded failure is refused | reversed witness `TRUE`: a full table refused every source it could not remember |
+| `BackwardsRollover` (FloodSpec, a definition) | `TRUE` since 2026-10-24: the window also rolls over when the clock steps back before its start | reversed witness `FALSE`: the one-sided rollover keeps a spent window open for the length of a backwards correction |
+
+## The failed-signature budget under a flood (FloodSpec)
+
+`FloodSpec` models `rocketnet_signature_verify_budget_allow`,
+`rocketnet_signature_verify_budget_record_failure` and the window decay
+they both run first (`sdk/rocketnet_server_protocol.cpp`): two forgers
+against one table slot and a budget of two spend the budget and fill
+the table while one honest client connects. The flood clock `fclock`
+moves forward (`FloodClockForward`) and is stepped back to any earlier
+time (`FloodClockBack`: an NTP step, a VM resume; the timestamp is the
+unix wall clock whenever no game clock epoch is configured). The window
+(`FailWindow = 2` ticks over `0..3`) rolls over, clearing the count and
+the table, when the clock has passed it or has stepped back before its
+start. `FloodWindowBounded`: whenever a source would be refused, the
+clock is at or after the window's start and less than one window past
+it, so a recorded failure refuses its source for at most the window
+length of clock movement in either direction. Under the one-sided
+rollover (`BackwardsRollover = FALSE`, the code before 2026-10-24) a
+forger spends the budget in a window begun at clock 2 (6 states), the clock steps
+back to 0, and the source is still refused: the window would stay open
+for the correction plus its length. `test_signature_budget_window_restarts_on_backwards_clock`
+pins the code: the budget spent at timestamp 1000 refuses the source,
+and the same source is allowed at 900.
 
 ## Findings
 
@@ -156,8 +229,15 @@ Each reversed witness has a committed configuration registered in
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+| `BrokenGlobalLockout.cfg` | `RefuseUnremembered <- MCRefuseUnremembered` (`TRUE`), FloodSpec | `HonestConnectsUnderFlood` |
+| `BrokenBackwardsWindow.cfg` | `BackwardsRollover <- MCNoBackwardsRollover` (`FALSE`), FloodSpec | `FloodWindowBounded` |
+| `BrokenReleaseKeepsSlot.cfg` | `ReleaseToFree <- MCReleaseToFree` (`FALSE`) | `CanRecordMatchesScan` |
+| `BrokenReleaseTwice.cfg` | `ReleaseChecksLive <- MCReleaseChecksLive` (`FALSE`) | `FreeAndOrderPartitionSlots` |
 
-Refresh all eleven cases through the pinned `tlacheck` runner and merge with
+`Flood.cfg` is FloodSpec's passing control: `FloodInvariants` (with
+`FloodWindowBounded`) and `HonestConnectsUnderFlood` hold.
+
+Refresh all sixteen cases through the pinned `tlacheck` runner and merge with
 `--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
@@ -199,6 +279,12 @@ as properties.
   cookies issued before a delayed sweep, both near a rotation deadline and
   after a full-window stall, plus refusal of the outgoing key after a stall.
 
+- A half-open mapping removed before its handshake deadline (the idle
+  timeout or the integrity limit, `rocketnet_server_release_mapping_claim`)
+  is not an action: it would release a live claim from anywhere in the
+  order list, which `RequestRefused` already does, and its mapping states
+  put the instance past the checking budget. `test_claim_released_with_half_open_idle_mapping`
+  and `test_claim_released_with_integrity_limit_mapping` pin it in the code.
 - Packets, the link, the replay window and the session keys stay in
   the held draft; a response here is a packet that has already opened
   under its mapping.

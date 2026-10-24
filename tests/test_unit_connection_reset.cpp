@@ -851,6 +851,52 @@ static void test_connection_reset_server_slot_reuse_is_clean()
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
 
+// The slot-clean check's scratch endpoint comes from the library allocator, so
+// a failed allocation must fail closed with the member named rather than write
+// through NULL. The hooks forward to malloc and free until the flag is armed.
+static bool reset_alloc_failure_armed = false;
+
+static void * reset_alloc_failure_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( reset_alloc_failure_armed )
+        return NULL;
+    return malloc( bytes );
+}
+
+static void reset_alloc_failure_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, reset_alloc_failure_malloc, reset_alloc_failure_free ) == ROCKETNET_STATUS_OK );
+
+    reset_loopback_t f;
+    memset( &f, 0, sizeof(f) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
+
+    char failure[256];
+    reset_alloc_failure_armed = false;
+    check( rocketnet_server_transport_slot_clean_for_test( transport, 0, failure, sizeof(failure) ) );
+    reset_alloc_failure_armed = true;
+    const bool clean = rocketnet_server_transport_slot_clean_for_test( transport, 0, failure, sizeof(failure) );
+    reset_alloc_failure_armed = false;
+    check( !clean );
+    check( strstr( failure, "rocketnet_server_acks_t.endpoints" ) != NULL );
+
+    reset_loopback_destroy( &f );
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_connection_reset_slot_clean_fails_closed_on_allocation_failure );
+
 static void test_connection_reset_server_reset_touches_only_its_slot()
 {
     reset_loopback_other_slot_scenario();
@@ -1014,7 +1060,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.send_sequence_handshake = 7;
         client.send_sequence_session = 9;
         client.next_fragment_payload_id = 12;
-        memset( &client.replay_handshake, 0xA5, sizeof(client.replay_handshake) );
+        client.handshake_highest_opened = 0xA5A5A5A5A5A5A5A5ULL;
         memset( &client.replay_session, 0xA5, sizeof(client.replay_session) );
         memset( &client.accepted_session, 0xA5, sizeof(client.accepted_session) );
         client.received_session_sequence = 99;
@@ -1046,7 +1092,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.client_index == -1 );
         rocketnet_replay_protection_t no_replay;
         memset( &no_replay, 0, sizeof(no_replay) );
-        check( memcmp( &client.replay_handshake, &no_replay, sizeof(no_replay) ) == 0 );
+        check( client.handshake_highest_opened == 0 );
         check( memcmp( &client.replay_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( memcmp( &client.accepted_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( client.received_session_sequence == 0 );

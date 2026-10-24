@@ -41,6 +41,14 @@
 (* module RNReplayWindow's business; here every block is truthful by       *)
 (* construction unless Witness = "overclaim".                              *)
 (*                                                                         *)
+(* The block is built from a second window of the same shape, the ack-     *)
+(* eligible sequences (accepted_session in the code), not from the replay  *)
+(* window: standard/TRANSPORT.md t15.3 makes a packet eligible only once   *)
+(* its type data passes validation.  A payload is eligible when opened; a  *)
+(* fragment only when reassembly accepts it, so a fragment reassembly      *)
+(* refuses is opened (its sequence is spent in the replay window) and      *)
+(* never named (NamedOnlyIfAccepted).                                      *)
+(*                                                                         *)
 (* Time.  Tick is one update on both ends: A's acked batch drains, B's     *)
 (* delivered arena and receive drain reset, both links Age.                *)
 (*                                                                         *)
@@ -60,6 +68,9 @@
 (*                 unacknowledged bit is set                               *)
 (*   "staleheld"   the reconcile leaves a slot's held bit set after its    *)
 (*                 sequence falls below the retained window                *)
+(*   "ackrefused"  a fragment is ack-eligible as soon as it opens, before  *)
+(*                 reassembly judges it (the order before t15.3 was        *)
+(*                 applied to type 9): a refused fragment is still named   *)
 (* StaleRule selects the stale test. "code" is the shipped pair: an id    *)
 (* farther than a quarter of IdSpace from the newest completed id in both   *)
 (* directions, or an id at most StaleAhead behind the occupant. "retired"   *)
@@ -97,7 +108,7 @@ CONSTANTS
     BurstStart, BurstLen
 
 Witnesses == {"none", "firstfrag", "dropfull", "overclaim", "noclear", "nosizecheck", "nopin",
-              "walkskip", "staleheld"}
+              "walkskip", "staleheld", "ackrefused"}
 
 ASSUME /\ MaxSeq \in Nat \ {0} /\ SentRing \in Nat \ {0} /\ AggRing \in Nat \ {0}
        /\ BatchCap \in Nat \ {0} /\ Window \in Nat \ {0} /\ MaxRanges \in Nat
@@ -168,6 +179,8 @@ VARIABLES
     \* the receiver: the replay window, the drain, reassembly
     highestOpened,  \* replay highest_opened
     opened,         \* opened sequences in (highestOpened - Window, highestOpened]
+    highestAccepted,\* accepted_session highest: the ack-eligible window
+    accepted,       \* ack-eligible sequences in (highestAccepted - Window, highestAccepted]
     drained,        \* packets drained this update
     slots,          \* reassembly slots, [0..Slots-1 -> slot]
     numDelivered,   \* completions delivered this update
@@ -182,6 +195,7 @@ VARIABLES
     openedEver,     \* every sequence B ever opened
     namedEver,      \* every sequence a block ever named
     badStale,       \* an honest fragment newer than the occupant was refused as stale
+    refusedEver,    \* every opened fragment sequence reassembly refused
     \* the links
     d2rWire, d2rSent, d2rPulse,
     r2dWire, r2dSent, r2dPulse
@@ -192,8 +206,8 @@ R2D == INSTANCE Link WITH wire <- r2dWire, sent <- r2dSent, pulse <- r2dPulse,
                           Packets <- AckPackets, Pattern <- R2DPattern
 
 senderVars   == <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, batch, outbox>>
-receiverVars == <<highestOpened, opened, drained, slots, numDelivered, batchFull, lastDelivery, newestCompleted>>
-ghostVars    == <<burned, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale>>
+receiverVars == <<highestOpened, opened, highestAccepted, accepted, drained, slots, numDelivered, batchFull, lastDelivery, newestCompleted>>
+ghostVars    == <<burned, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale, refusedEver>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
 bitVars      == <<held, unacked, bitsChecked, lastExpect, lastVisited>>
@@ -226,6 +240,7 @@ Init ==
     /\ batch = <<>>
     /\ outbox = <<>>
     /\ highestOpened = 0 /\ opened = {} /\ drained = 0
+    /\ highestAccepted = 0 /\ accepted = {}
     /\ slots = [k \in 0..Slots-1 |-> EmptySlot]
     /\ numDelivered = 0 /\ batchFull = FALSE
     /\ lastDelivery = EmptySlot
@@ -234,7 +249,7 @@ Init ==
     /\ fragsOf = [p \in Pids |-> {}]
     /\ surfacedCount = [p \in Pids |-> 0]
     /\ deliveredCount = [g \in Gens |-> 0]
-    /\ openedEver = {} /\ namedEver = {} /\ badStale = FALSE
+    /\ openedEver = {} /\ namedEver = {} /\ badStale = FALSE /\ refusedEver = {}
     /\ held = {} /\ unacked = {} /\ bitsChecked = 0
     /\ lastExpect = {} /\ lastVisited = {}
     /\ D2R!Init /\ R2D!Init
@@ -269,7 +284,7 @@ StartPayload ==
     /\ outbox' = <<[type |-> "payload", seq |-> nextSeq]>>
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED <<nextGen, aggs, numAggs, batch>>
-    /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, refusedEver, d2rVars, r2dVars>>
     /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
 \* finish_packet on the arena route (rocketnet_client_transport_finish_arena_packet
@@ -299,7 +314,7 @@ StartFragmented(cnt) ==
           /\ nextSeq' = nextSeq + cnt
           /\ nextGen' = nextGen + 1
     /\ UNCHANGED batch
-    /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, refusedEver, d2rVars, r2dVars>>
     /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
 \* A sequence spent and never sent: a client start_packet takes it and then
@@ -314,7 +329,7 @@ BurnOne ==
     /\ burned' = burned \cup {nextSeq}
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED <<nextGen, sent, highestSent, aggs, numAggs, batch, outbox>>
-    /\ UNCHANGED <<receiverVars, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale, refusedEver, d2rVars, r2dVars>>
     /\ UNCHANGED bitVars
 
 \* A seal refusal inside the fragment loop: the whole reservation withdraws,
@@ -338,7 +353,7 @@ BurnFragmented(cnt) ==
           /\ nextSeq' = nextSeq + cnt
           /\ nextGen' = nextGen + 1
     /\ UNCHANGED <<sent, highestSent, batch, outbox>>
-    /\ UNCHANGED <<receiverVars, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, surfacedCount, deliveredCount, openedEver, namedEver, badStale, refusedEver, d2rVars, r2dVars>>
     /\ UNCHANGED bitVars
 
 \* A defective sender: a sealed fragment whose header says anything.  It is
@@ -461,7 +476,7 @@ RecvAck ==
         /\ bitsChecked' = highestSent
         /\ lastExpect' = expect
     /\ UNCHANGED <<nextSeq, nextGen, highestSent, numAggs, outbox>>
-    /\ UNCHANGED <<receiverVars, burned, fragsOf, deliveredCount, openedEver, namedEver, badStale, d2rVars>>
+    /\ UNCHANGED <<receiverVars, burned, fragsOf, deliveredCount, openedEver, namedEver, badStale, refusedEver, d2rVars>>
 
 (***************************************************************************)
 (* The receiver's replay window (sdk/rocketnet_replay.cpp) as a set.       *)
@@ -475,23 +490,29 @@ Fresh(s) == s > highestOpened \/ (s >= Floor /\ s \notin opened)
 AdvanceHighest(s) == IF s > highestOpened THEN s ELSE highestOpened
 AdvanceOpened(s)  == {x \in opened \cup {s} : x > AdvanceHighest(s) - Window}
 
+\* the ack-eligible window, rocketnet_replay_advance on accepted_session
+AcceptedFloor == IF highestAccepted >= Window THEN highestAccepted - Window + 1 ELSE 1
+AdvanceAcceptedHighest(s) == IF s > highestAccepted THEN s ELSE highestAccepted
+AdvanceAccepted(s) == {x \in accepted \cup {s} : x > AdvanceAcceptedHighest(s) - Window}
+
 (***************************************************************************)
-(* rocketnet_ack_block_build: the run ending at largest, then (gap, run)   *)
-(* pairs downward to the floor, at most MaxRanges of them; a trailing gap  *)
-(* names nothing.  The block is the set of sequences named.                *)
+(* rocketnet_ack_block_build over accepted_session: the run ending at      *)
+(* largest, then (gap, run) pairs downward to the floor, at most MaxRanges *)
+(* of them; a trailing gap names nothing.  The block is the set of         *)
+(* sequences named.                                                        *)
 (***************************************************************************)
-RunDownFrom(s) == {x \in Floor..s : \A y \in x..s : y \in opened}
+RunDownFrom(s) == {x \in AcceptedFloor..s : \A y \in x..s : y \in accepted}
 
 RECURSIVE NamedFrom(_, _)
 NamedFrom(top, runs) ==
-    IF top < Floor \/ runs = 0 THEN {}
-    ELSE IF top \notin opened THEN NamedFrom(top - 1, runs)
+    IF top < AcceptedFloor \/ runs = 0 THEN {}
+    ELSE IF top \notin accepted THEN NamedFrom(top - 1, runs)
     ELSE LET run == RunDownFrom(top) IN run \cup NamedFrom(Min(run) - 1, runs - 1)
 
 Block ==
-    IF highestOpened = 0 THEN {}
-    ELSE IF Witness = "overclaim" THEN Floor..highestOpened
-    ELSE NamedFrom(highestOpened, 1 + MaxRanges)
+    IF highestAccepted = 0 THEN {}
+    ELSE IF Witness = "overclaim" THEN AcceptedFloor..highestAccepted
+    ELSE NamedFrom(highestAccepted, 1 + MaxRanges)
 
 \* A session packet carrying the current block.  Every session type carries
 \* one; the standalone ack (type 8) is the one sent for the block alone, and
@@ -499,7 +520,7 @@ Block ==
 SendAck ==
     /\ R2D!Send(Block)
     /\ namedEver' = namedEver \cup Block
-    /\ UNCHANGED <<senderVars, receiverVars, burned, fragsOf, surfacedCount, deliveredCount, openedEver, badStale, d2rVars, bitVars>>
+    /\ UNCHANGED <<senderVars, receiverVars, burned, fragsOf, surfacedCount, deliveredCount, openedEver, badStale, refusedEver, d2rVars, bitVars>>
 
 (***************************************************************************)
 (* rocketnet_reassembly_process_fragment, the standard's checks in order.  *)
@@ -564,16 +585,19 @@ PlaceFragment(S, p, stride) ==
 
 Complete(S) == Cardinality(S.recv) = S.cnt
 
-\* The outcome of one fragment: a record [slot, delivered, dropped, stale]
-\* where slot is the slot afterwards, delivered the slot at completion (or
-\* EmptySlot), dropped whether a completion hit the delivery bound, stale
-\* whether the fragment was refused as stale.
+\* The outcome of one fragment: a record [slot, delivered, dropped, stale,
+\* accepted] where slot is the slot afterwards, delivered the slot at
+\* completion (or EmptySlot), dropped whether a completion hit the delivery
+\* bound, stale whether the fragment was refused as stale, accepted whether
+\* reassembly accepted it (rocketnet_reassembly_process_fragment returns 1:
+\* placed, whether or not it completed, and whether or not a completion was
+\* then dropped as batch full).
 Outcome(S, p) ==
     LET same   == S.id = p.id
         final  == p.idx = p.cnt - 1
         stride == IF same /\ S.stride # 0 THEN S.stride ELSE IF ~final THEN p.bytes ELSE 0
         finalContribution == IF final THEN p.bytes ELSE IF same /\ S.finalBytes >= 0 THEN S.finalBytes ELSE 1
-        none   == [slot |-> S, delivered |-> EmptySlot, dropped |-> FALSE, stale |-> FALSE]
+        none   == [slot |-> S, delivered |-> EmptySlot, dropped |-> FALSE, stale |-> FALSE, accepted |-> FALSE]
     IN IF p.id = 0 THEN none                                                        \* FRAGMENT_ZERO_PAYLOAD_ID
        ELSE IF StaleRule = "code" /\ Far(p.id, newestCompleted)
             THEN [none EXCEPT !.stale = TRUE]                                          \* reach, empty slot or not
@@ -592,14 +616,23 @@ Outcome(S, p) ==
        ELSE LET S1 == PlaceFragment(Occupy(S, p), p, stride)
             IN IF Complete(S1)
                THEN IF numDelivered < DeliveredCap
-                    THEN [slot |-> EmptySlot, delivered |-> S1, dropped |-> FALSE, stale |-> FALSE]
-                    ELSE [slot |-> EmptySlot, delivered |-> EmptySlot, dropped |-> TRUE, stale |-> FALSE]
-               ELSE [none EXCEPT !.slot = S1]
+                    THEN [slot |-> EmptySlot, delivered |-> S1, dropped |-> FALSE, stale |-> FALSE, accepted |-> TRUE]
+                    ELSE [slot |-> EmptySlot, delivered |-> EmptySlot, dropped |-> TRUE, stale |-> FALSE, accepted |-> TRUE]
+               ELSE [none EXCEPT !.slot = S1, !.accepted = TRUE]
 
+\* The fragment's sequence becomes ack-eligible only when reassembly accepts
+\* it (standard/TRANSPORT.md t15.3; sdk/rocketnet_client_protocol.cpp
+\* rocketnet_client_process_fragment and the type 9 branch of
+\* rocketnet_server_protocol_process_sealed_packet).  Witness "ackrefused"
+\* is the order before: eligible as soon as it opened.
 RecvFragment(p) ==
     LET k == p.id % Slots
         o == Outcome(slots[k], p)
+        eligible == o.accepted \/ Witness = "ackrefused"
     IN /\ slots' = [slots EXCEPT ![k] = o.slot]
+       /\ highestAccepted' = IF eligible THEN AdvanceAcceptedHighest(p.seq) ELSE highestAccepted
+       /\ accepted' = IF eligible THEN AdvanceAccepted(p.seq) ELSE accepted
+       /\ refusedEver' = IF o.accepted THEN refusedEver ELSE refusedEver \cup {p.seq}
        /\ numDelivered' = IF o.delivered # EmptySlot THEN numDelivered + 1 ELSE numDelivered
        /\ batchFull' = (batchFull \/ o.dropped)
        /\ lastDelivery' = IF o.delivered # EmptySlot THEN o.delivered ELSE lastDelivery
@@ -619,12 +652,15 @@ RecvData ==
         /\ D2R!Deliver(p)
         /\ drained' = drained + 1
         /\ IF ~Fresh(p.seq)
-           THEN UNCHANGED <<highestOpened, opened, slots, numDelivered, batchFull, lastDelivery, newestCompleted, deliveredCount, badStale, openedEver>>
+           THEN UNCHANGED <<highestOpened, opened, highestAccepted, accepted, slots, numDelivered, batchFull, lastDelivery,
+                            newestCompleted, deliveredCount, badStale, openedEver, refusedEver>>
            ELSE /\ highestOpened' = AdvanceHighest(p.seq)
                 /\ opened' = AdvanceOpened(p.seq)
                 /\ openedEver' = openedEver \cup {p.seq}
                 /\ IF p.type = "payload"
-                   THEN UNCHANGED <<slots, numDelivered, batchFull, lastDelivery, newestCompleted, deliveredCount, badStale>>
+                   THEN /\ highestAccepted' = AdvanceAcceptedHighest(p.seq)
+                        /\ accepted' = AdvanceAccepted(p.seq)
+                        /\ UNCHANGED <<slots, numDelivered, batchFull, lastDelivery, newestCompleted, deliveredCount, badStale, refusedEver>>
                    ELSE RecvFragment(p)
     /\ UNCHANGED <<senderVars, burned, fragsOf, surfacedCount, namedEver, r2dVars, bitVars>>
 
@@ -637,7 +673,7 @@ Tick ==
     /\ numDelivered' = 0
     /\ D2R!Age /\ R2D!Age
     /\ UNCHANGED <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, outbox>>
-    /\ UNCHANGED <<highestOpened, opened, slots, batchFull, lastDelivery, newestCompleted, ghostVars, bitVars>>
+    /\ UNCHANGED <<highestOpened, opened, highestAccepted, accepted, slots, batchFull, lastDelivery, newestCompleted, ghostVars, bitVars>>
 
 D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars, bitVars>>
 R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
@@ -712,6 +748,8 @@ TypeOK ==
     /\ outbox \in Seq(DataPackets) /\ Len(outbox) <= MaxCount
     /\ highestOpened \in 0..MaxSeq
     /\ opened \subseteq Seqs /\ opened \subseteq Floor..highestOpened
+    /\ highestAccepted \in 0..MaxSeq
+    /\ accepted \subseteq Seqs /\ accepted \subseteq AcceptedFloor..highestAccepted
     /\ drained \in 0..DrainCap
     /\ slots \in [0..Slots-1 -> Slot]
     /\ numDelivered \in 0..DeliveredCap
@@ -724,6 +762,7 @@ TypeOK ==
     /\ deliveredCount \in [Gens -> 0..2]
     /\ openedEver \subseteq Seqs /\ namedEver \subseteq Seqs
     /\ badStale \in BOOLEAN
+    /\ refusedEver \subseteq Seqs
     /\ held \subseteq 0..SentRing-1 /\ unacked \subseteq 0..SentRing-1
     /\ bitsChecked \in 0..MaxSeq
     /\ lastExpect \subseteq Seqs /\ lastVisited \subseteq Seqs
@@ -741,6 +780,12 @@ SurfacedOnlyIfOpened ==
 \* A burned sequence is never opened and never named by a block, so it is
 \* never acknowledged as received.
 BurnedNeverNamed == burned \cap (openedEver \cup namedEver) = {}
+
+\* A fragment reassembly refused is never named by a block, so the sender's
+\* aggregate never counts it toward its packet id (standard/TRANSPORT.md
+\* t15.3: eligible only once the type data passes validation).  The
+\* reversed witness "ackrefused" names it.
+NamedOnlyIfAccepted == namedEver \cap refusedEver = {}
 
 \* A record with a packet id is marked acknowledged only once its id has
 \* surfaced, and an aggregate reaches zero only once its id has: the batch

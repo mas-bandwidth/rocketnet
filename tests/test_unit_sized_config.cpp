@@ -601,6 +601,60 @@ struct sized_config_newer_server_t
     int tail_field[4];
 };
 
+static void test_public_config_bytes_inside_a_field_is_refused()
+{
+    // client: config_bytes ends four bytes into the transport pointer
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback";
+    client_config.config_bytes = offsetof( struct rocketnet_client_config_t, transport ) + 4;
+    struct rocketnet_client_config_t client_before = client_config;
+    check( rocketnet_client_required_memory( &client_config ) == 0 );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    check( memcmp( &client_config, &client_before, sizeof( client_config ) ) == 0 );
+
+    // server: config_bytes ends four bytes into protocol_id
+    struct rocketnet_server_config_t server_config;
+    sized_config_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+    server_config.config_bytes = offsetof( struct rocketnet_server_config_t, protocol_id ) + 4;
+    struct rocketnet_server_config_t server_before = server_config;
+    check( rocketnet_server_required_memory( &server_config ) == 0 );
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    check( rocketnet_server_default_config_internal( &server_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+    check( memcmp( &server_config, &server_before, sizeof( server_config ) ) == 0 );
+}
+
+static void test_public_light_config_honours_caller_size()
+{
+    // client: a caller whose struct ends before num_channels
+    const size_t client_bytes = offsetof( struct rocketnet_client_config_t, num_channels );
+    struct rocketnet_client_config_t client_config;
+    memset( &client_config, 0xCD, sizeof( client_config ) );
+    client_config.config_bytes = client_bytes;
+    check( rocketnet_client_light_config_internal( &client_config ) == ROCKETNET_STATUS_OK );
+    check( client_config.config_bytes == client_bytes );
+    const uint8_t * client_raw = (const uint8_t *) &client_config;
+    for ( size_t i = client_bytes; i < sizeof( client_config ); i++ )
+        check( client_raw[i] == 0xCD );
+
+    // server: a caller whose struct ends before num_channels
+    const size_t server_bytes = offsetof( struct rocketnet_server_config_t, num_channels );
+    struct rocketnet_server_config_t server_config;
+    memset( &server_config, 0xCD, sizeof( server_config ) );
+    server_config.config_bytes = server_bytes;
+    check( rocketnet_server_light_config_internal( &server_config ) == ROCKETNET_STATUS_OK );
+    check( server_config.config_bytes == server_bytes );
+    const uint8_t * server_raw = (const uint8_t *) &server_config;
+    for ( size_t i = server_bytes; i < sizeof( server_config ); i++ )
+        check( server_raw[i] == 0xCD );
+}
+
 static void test_public_config_bytes_newer_larger_ignores_the_tail()
 {
     struct sized_config_newer_client_t newer_client;
@@ -853,3 +907,5 @@ REGISTER_UNIT_TEST( test_sized_config_server_create_checks_the_config );
 REGISTER_UNIT_TEST( test_public_config_bytes_zeroed_is_refused );
 REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
+REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
+REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
