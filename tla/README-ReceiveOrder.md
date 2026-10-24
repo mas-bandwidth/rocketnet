@@ -1,8 +1,9 @@
 # ReceiveOrder: cheap refusals first
 
 `ReceiveOrder.tla` models a receive path as ordered rungs, each cheap or
-crypto. The invariant is `CheapRefusalsFirst`: no packet refused at a cheap
-rung has passed a crypto rung. Keyed hashes (the cookie MAC, the token
+crypto. `RequestRungOrder` pins the request rungs to the code's order, and
+`CheapRefusalsFirst` says no packet refused at a cheap rung has passed a crypto
+rung. Keyed hashes (the cookie MAC, the token
 identifier, key derivation) are the cheap tier; keypair generation, scalar
 multiplication, AEAD seal or open, signature verification and sealed-box open
 are crypto.
@@ -45,7 +46,7 @@ them with `CheapRefusalsFirst` or `OneLiveMappingPerToken`:
 | ClaimBeforeSignature | claim written at its check rung (ClaimWriteRung "claim") | BASE before the split: rocketnet_used_token_history_claim_record ran at the claim rung, ahead of rocketnet_verify_signed_connect_data, and a failed signature released it after; every unauthenticated request past the cookie wrote (and then released) a claim-table entry. ClaimOnlyAfterSignature fails |
 
 Replayed by hand: in ClaimBeforeSignature a request with fault `signature`
-advances past the claim rung (position 65) with no other claim on its token,
+advances past the claim rung (position 62) with no other claim on its token,
 so `claimWritten` holds while `verified` does not, and the signature rung
 then refuses it; this is the BASE code writing the claim at the rung and
 releasing it on the failed verify. With the split the write happens on

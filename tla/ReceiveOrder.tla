@@ -76,6 +76,12 @@ MaxPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p >= q
 RungAt(p) == CHOOSE r \in Rungs : Pos(r) = p
 NextPos(p) == CHOOSE q \in RungPositions : q > p /\ \A s \in RungPositions : s > p => q <= s
 
+RequestRungOrder ==
+    /\ Pos("used") < Pos("verifybudget")
+    /\ Pos("verifybudget") < Pos("claim")
+    /\ Pos("claim") < Pos("capacity")
+    /\ Pos("capacity") < Pos("claimfull")
+
 \* The token claim and the mapping table are the same small instance as the
 \* code: two addresses, two tokens, room for two half-open mappings.
 
