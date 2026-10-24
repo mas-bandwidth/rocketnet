@@ -18,8 +18,15 @@
 // figures, measured with rocketnet_server_required_memory at max_clients
 // 1000 and rocketnet_client_required_memory under the profile. The bound
 // is that figure; the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 955710336 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 3063168 )
+//
+// The light client's create block is 3063936 bytes in a development build
+// (100 sequenced holds at 1440 bytes each) and 3063808 bytes in a
+// production build, whose connection state carries no development-only
+// fields; the 1000-slot server's is 956510336 and 956390336 bytes. One
+// constant serves both builds, so each bound is the development build's
+// exact figure.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 956510336 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 3063936 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
