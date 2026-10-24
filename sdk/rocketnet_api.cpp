@@ -1735,6 +1735,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         rocketnet_server_transport_stop( transport );
 }
 
+// tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
+// once its retiring transport's workers have exited and it stores STOPPED.
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) || server->running )
@@ -1817,11 +1819,11 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
         rocketnet_free( server->context, server );
 }
 
-// tla/ServerSession.tla ClientConnects, Establish, Deny, SlotTimeout,
-// ClientLeaves and Deliver: the running server's update takes each client's
-// request into a free slot, establishes it when its response opens, ends a
-// slot on a denial, a timeout or the client's own disconnect, and opens a
-// client's traffic only under its slot's session keys.
+// tla/ServerSession.tla Read, ClientConnects, Establish, Deny, SlotTimeout,
+// ClientLeaves and Deliver: only a running server's update reads datagrams;
+// it takes each client's request into a free slot, establishes it when its
+// response opens, ends a slot on a denial, a timeout or the client's own
+// disconnect, and opens a client's traffic only under its slot's session keys.
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
