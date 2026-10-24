@@ -847,7 +847,13 @@ extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_s
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
 extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
 #else
+static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
+{
+    (void) simulator;
+    return false;
+}
 static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
 {
     (void) simulator; (void) mutex;
@@ -959,9 +965,10 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // a switch from latency or jitter to all-zero leaves the packets the
 // simulator already holds, and they still leave when they come due (as the
 // client drain does). Gating it on the setting would strand and lose them.
+// A simulator holding nothing is read without the lock and drains nothing.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
-    if ( !transport->link_simulator )
+    if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
         return;
     for (;;)
     {

@@ -523,6 +523,62 @@ static void test_public_link_simulator_same_seed_same_schedule()
     public_link_wire_end( &b );
 }
 
+#include "rocketnet_platform.h"
+
+extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
+extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
+extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
+
+// An inactive simulator (every setting zero, nothing handed over) costs the
+// send path no lock: the test holds the simulator's mutex while it asks, so
+// a take that locked would block here instead of answering. A handed-over
+// setting is still taken under the lock, on and off.
+static void test_public_link_simulator_inactive_takes_no_lock()
+{
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 1 );
+    check( simulator != NULL );
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+    struct rocketnet_platform_mutex_t mutex;
+    check( rocketnet_platform_mutex_create( &mutex ) );
+
+    rocketnet_platform_mutex_acquire( &mutex );
+    check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+    check( !rocketnet_network_simulator_holds_any( simulator ) );
+    rocketnet_platform_mutex_release( &mutex );
+
+    rocketnet_network_simulator_reconfigure( simulator, &mutex, 0.1, 0.0, 0.0f, 0.0f );
+    check( rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+    check( rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+
+    rocketnet_network_simulator_reconfigure( simulator, &mutex, 0.0, 0.0, 0.0f, 0.0f );
+    check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+    rocketnet_platform_mutex_acquire( &mutex );
+    check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+    rocketnet_platform_mutex_release( &mutex );
+
+    rocketnet_platform_mutex_destroy( &mutex );
+    rocketnet_network_simulator_destroy( simulator );
+}
+
+// A server whose simulator is inactive passes its packets straight through:
+// the payload sent in one update reaches the client at the next one, with
+// nothing held by the simulator.
+static void test_public_link_simulator_server_inactive_passes_straight_through()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+    uint8_t payload[4] = { 13, 14, 15, 16 };
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( live_link_client_bytes_seen( &pair, 2 ) == (int) sizeof( payload ) );
+
+    live_link_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_public_link_simulator_inactive_takes_no_lock );
+REGISTER_UNIT_TEST( test_public_link_simulator_server_inactive_passes_straight_through );
 REGISTER_UNIT_TEST( test_public_link_simulator_drops_at_loss );
 REGISTER_UNIT_TEST( test_public_link_simulator_latency );
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );

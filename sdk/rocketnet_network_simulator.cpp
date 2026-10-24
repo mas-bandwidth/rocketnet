@@ -98,6 +98,8 @@
 // the drop-every-Nth schedule is Link!Send with Pattern "everynth", the window
 // reversal is Link!ReverseWindow (rocketnet_network_simulator_flush_window)
 #define ROCKETNET_SIMULATOR_NO_SLOT (-1)
+#define ROCKETNET_SIMULATOR_SETTING_PENDING UINT64_C(1)
+#define ROCKETNET_SIMULATOR_SETTING_ACTIVE UINT64_C(2)
 #define ROCKETNET_SIMULATOR_MAX_REVERSE_WINDOW 64
 
 struct rocketnet_simulator_window_entry_t
@@ -134,6 +136,16 @@ struct rocketnet_network_simulator_t
     // lock.  The setting in force above is written by that thread alone.
     struct rocketnet_simulator_config_t pending;
     int config_pending;
+    // The lock-free view of the setting, so an inactive simulator costs a send
+    // no lock: bit 0 says a handed-over setting is waiting, bit 1 says the
+    // setting in force changes the packets.  It is written under the mutex by
+    // the hand-over and the take (and once, at configure, before any other
+    // thread sees the simulator), and read without it before every send.
+    volatile uint64_t setting_word;
+    // The packets held in the slots, counted by the thread that holds the
+    // simulator's lock and read without it, so a drain of an empty simulator
+    // takes no lock.
+    volatile uint64_t held_count;
     // Whether the setting the simulator was configured with was nonzero.  It
     // is decided once, at create, and never changes: the transports use it to
     // pick the path a connection runs on, and a connection's path never moves.
@@ -354,9 +366,11 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
     // connection runs on (the transports read it through
     // rocketnet_network_simulator_created_active).  It is recorded once, at
     // create: a live change never moves a connection's path.
-    if ( !simulator->created_active &&
-         ( latency != 0.0 || jitter != 0.0 || packet_loss_percent != 0.0f || duplicate_percent != 0.0f ) )
+    const bool active = latency != 0.0 || jitter != 0.0 || packet_loss_percent != 0.0f || duplicate_percent != 0.0f;
+    if ( !simulator->created_active && active )
         simulator->created_active = 1;
+    const uint64_t pending = rocketnet_platform_atomic_load_u64( &simulator->setting_word ) & ROCKETNET_SIMULATOR_SETTING_PENDING;
+    rocketnet_platform_atomic_store_u64( &simulator->setting_word, pending | ( active ? ROCKETNET_SIMULATOR_SETTING_ACTIVE : 0 ) );
 }
 
 // The bytes a simulator of this capacity allocates, so a transport's memory
@@ -418,17 +432,24 @@ void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator
     simulator->pending.packet_loss_percent = packet_loss_percent;
     simulator->pending.duplicate_percent = duplicate_percent;
     simulator->config_pending = 1;
+    rocketnet_platform_atomic_store_u64( &simulator->setting_word,
+        rocketnet_platform_atomic_load_u64( &simulator->setting_word ) | ROCKETNET_SIMULATOR_SETTING_PENDING );
     rocketnet_platform_mutex_release( mutex );
 }
 
 // The owner takes the setting that was handed over and applies it, and reads
 // whether the setting in force changes the packets.  A zero setting is a
-// pass-through: it adds no latency and copies nothing.
+// pass-through: it adds no latency and copies nothing.  With nothing handed
+// over the answer is read from the setting word and no lock is taken, so an
+// inactive simulator puts no mutex on the send path.
 bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator,
                                                 struct rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( simulator );
     rocketnet_assert( mutex );
+    const uint64_t word = rocketnet_platform_atomic_load_u64( &simulator->setting_word );
+    if ( !( word & ROCKETNET_SIMULATOR_SETTING_PENDING ) )
+        return ( word & ROCKETNET_SIMULATOR_SETTING_ACTIVE ) != 0;
     rocketnet_platform_mutex_acquire( mutex );
     if ( simulator->config_pending )
     {
@@ -440,6 +461,7 @@ bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulato
     }
     const bool active = simulator->latency != 0.0 || simulator->jitter != 0.0 ||
                         simulator->packet_loss_percent != 0.0f || simulator->duplicate_percent != 0.0f;
+    rocketnet_platform_atomic_store_u64( &simulator->setting_word, active ? ROCKETNET_SIMULATOR_SETTING_ACTIVE : 0 );
     rocketnet_platform_mutex_release( mutex );
     return active;
 }
@@ -480,6 +502,15 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
     return true;
 }
 
+// Whether any packet is held in the slots, read without the lock: a drain
+// that sees none has nothing to take, and a packet held a moment later leaves
+// with the next drain.
+bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
+{
+    rocketnet_assert( simulator );
+    return rocketnet_platform_atomic_load_u64( &simulator->held_count ) != 0;
+}
+
 bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network_simulator_t * simulator )
 {
     rocketnet_assert( simulator );
@@ -517,6 +548,7 @@ int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_
     memcpy( out_packet, simulator->packet_data + (size_t) slot * ROCKETNET_RECEIVE_CEILING, (size_t) bytes );
     rocketnet_simulator_unlink( simulator, slot );
     simulator->used[slot] = 0;
+    rocketnet_platform_atomic_add_u64( &simulator->held_count, UINT64_MAX );
     if ( slot < simulator->free_hint )
         simulator->free_hint = slot;
     return bytes;
@@ -851,6 +883,7 @@ static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * si
         memcpy( simulator->packet_data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packet_data, (size_t) packet_bytes );
         rocketnet_simulator_link( simulator, i );
         simulator->free_hint = i + 1;
+        rocketnet_platform_atomic_add_u64( &simulator->held_count, 1 );
         return 1;
     }
     simulator->free_hint = simulator->capacity;
@@ -1001,6 +1034,7 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
 
     rocketnet_simulator_unlink( simulator, slot );
     simulator->used[slot] = 0;
+    rocketnet_platform_atomic_add_u64( &simulator->held_count, UINT64_MAX );
     if ( slot < simulator->free_hint )
         simulator->free_hint = slot;
 
