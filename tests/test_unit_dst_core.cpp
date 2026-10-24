@@ -150,3 +150,15 @@ REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
 REGISTER_UNIT_TEST( test_dst_fail_names_seed );
 REGISTER_UNIT_TEST( test_dst_server_kick_reaches_slot_holder );
 REGISTER_UNIT_TEST( test_dst_duplicate_server_ack_explained );
+
+static void test_dst_steps_refused_past_int_range()
+{
+    rocketnet_unit_check( rocketnet_dst_steps_valid( 0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_steps_valid( 4000 ) == 1 );
+    rocketnet_unit_check( rocketnet_dst_steps_valid( ROCKETNET_DST_MAX_STEPS ) == 1 );
+    rocketnet_unit_check( rocketnet_dst_steps_valid( 3000000000ULL ) == 0 );
+    const struct rocketnet_dst_options_t options = dst_test_options( 3000000000ULL );
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &result ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_steps_refused_past_int_range );

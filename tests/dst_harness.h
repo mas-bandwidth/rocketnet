@@ -34,6 +34,7 @@
 #endif
 #include "dst_checks.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +142,16 @@ static inline void rocketnet_dst_trace_record( struct rocketnet_dst_trace_t * tr
     rocketnet_dst_trace_u64( trace, c );
     rocketnet_dst_trace_u64( trace, d );
     rocketnet_dst_trace_u64( trace, e );
+}
+
+// The one step bound. Every (int) k in this harness (connect, pause, churn and
+// quiet-window steps, and k + 50) is in range by construction because k and
+// fault_steps never exceed it: INT_MAX less room for the 1000-step quiet slack.
+#define ROCKETNET_DST_MAX_STEPS ( (uint64_t) INT_MAX - 1000 )
+
+static inline int rocketnet_dst_steps_valid( uint64_t steps )
+{
+    return steps >= 1 && steps <= ROCKETNET_DST_MAX_STEPS;
 }
 
 struct rocketnet_dst_options_t
@@ -1078,6 +1089,10 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
 {
     memset( result, 0, sizeof(*result) );
     result->seed = seed;
+
+    // Refuse before allocating: past the bound the (int) k narrowings would wrap.
+    if ( !rocketnet_dst_steps_valid( options->steps ) || !rocketnet_dst_steps_valid( options->fault_steps ) )
+        return 0;
 
     rocketnet_dst_world_t * w = (rocketnet_dst_world_t *) calloc( 1, sizeof(rocketnet_dst_world_t) );
     if ( !w )
