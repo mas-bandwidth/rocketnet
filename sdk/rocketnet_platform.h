@@ -482,14 +482,29 @@ uint64_t rocketnet_platform_receive_empties( void );
 /**
  * @brief Counts the datagrams this socket's sends dropped.
  *
- * Every sendto, sendmmsg and per-packet tail of a sendmsg_x batch that
- * answers -1 (SOCKET_ERROR on Windows) drops its datagram and increments the
- * count, including the test seam's injected errors. Monotonic for the
+ * Every sendto and sendmmsg that answers -1 (SOCKET_ERROR on Windows) drops
+ * its datagram and increments the count, including the test seam's injected
+ * errors. A refused sendmsg_x chunk counts once here, whatever its per-packet
+ * replay does: the kernel may have delivered a prefix of it, so its fate is
+ * indeterminate. The replay's own refusals count in
+ * rocketnet_platform_socket_send_replay_failures instead. Monotonic for the
  * socket's life.
  * @param socket Live socket; must be non-NULL.
- * @return Number of dropped datagrams since the socket was created.
+ * @return Number of dropped datagrams and refused sendmsg_x chunks since the socket was created.
  */
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
+
+/**
+ * @brief Counts the refused sends of the per-packet replay after a refused sendmsg_x chunk.
+ *
+ * The replay resends every packet of the refused chunk from the first one the
+ * kernel did not report sent, including any it had delivered anyway, so a
+ * refusal here may name a datagram that reached the wire. Zero on every
+ * platform without the sendmsg_x pump. Monotonic for the socket's life.
+ * @param socket Live socket; must be non-NULL.
+ * @return Number of refused replay sends since the socket was created.
+ */
+uint64_t rocketnet_platform_socket_send_replay_failures( struct rocketnet_platform_socket_t * socket );
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
@@ -1002,6 +1017,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         rocketnet_platform_socket_handle_t handle;
         /** @brief Datagrams a failed send dropped; atomic, monotonic. */
         uint64_t send_failures;
+        /** @brief Refused sends of a sendmsg_x replay; zero here; atomic, monotonic. */
+        uint64_t send_replay_failures;
     };
 
 struct sockaddr_storage;
@@ -1049,7 +1066,8 @@ bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t *
         bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
-        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
+        uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
+        uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
     };
 
 struct sockaddr_storage;
@@ -1099,6 +1117,7 @@ bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, 
         bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
+        uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
     };
 
     struct rocketnet_platform_thread_t
