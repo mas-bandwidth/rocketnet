@@ -77,7 +77,7 @@ RUN shares the reliable-ordered channel with later server-to-client data.
 A client answers ARM and GO only once it reports CONNECTED: its transport
 hands payloads from before then, and a send before CONNECTED is dropped, so
 an ARM that arrives in that window is answered at the first update after it
-connects (`tools/load_split_startup.h`, `tools/test_load_split_startup.c`).
+connects (`tools/load_split_startup.h`, `tests/test_unit_load_split_startup.cpp`).
 Every start message is reliable ordered: a lost packet is the SDK's resend
 and costs delay inside these windows, never the message. The server is the
 one authority on the start windows. A client shard waits for ARM, GO and RUN
