@@ -26,6 +26,8 @@
 #include "../sdk/rocketnet_client_protocol.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "../sdk/rocketnet_test_seams.h"
+#include "../sdk/rocketnet_memory.h"
+#include "suite_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -237,6 +239,39 @@ static void mass_disconnect_destroy_all( mass_disconnect_population_t * populati
         rn_test_client_stop_and_destroy( population->clients[i] );
     rn_test_server_stop_and_destroy( population->server );
 }
+
+// The population's planned memory: the server transport's plan (planned with
+// the portable transport, as the loopback transport has no row of its own),
+// the message server's block for its slots, the loopback server queue sized
+// from the plan, and for each client its transport's plan, its message
+// client block and its loopback queue, plus a stated 32 MiB margin for the
+// process. A regression above the plan fails the case.
+static long mass_disconnect_rss_bound_mb()
+{
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config( &server_config );
+    server_config.max_clients = MASS_DISCONNECT_CLIENTS;
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    const uint64_t server_bytes = rocketnet_server_transport_required_memory( &server_config, "portable" );
+    const uint64_t client_bytes = rocketnet_client_transport_required_memory( &client_config, "portable" );
+    const uint64_t server_object = rn_message_object_required_bytes( NULL, MASS_DISCONNECT_CLIENTS, 1 );
+    const uint64_t client_object = rn_message_object_required_bytes( NULL, 1, 0 );
+    if ( !server_bytes || !client_bytes || !server_object || !client_object )
+        return 0;                       // a refused plan keeps the suite-wide bound
+    const uint64_t overhead = (uint64_t) rocketnet_allocation_overhead();
+    const uint64_t server_queue = rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( MASS_DISCONNECT_CLIENTS ) ) + overhead;
+    const uint64_t client_queue = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead;
+    uint64_t planned = 0;
+    if ( !rocketnet_memory_add( planned, 1, server_bytes ) || !rocketnet_memory_add( planned, 1, server_object ) ||
+         !rocketnet_memory_add( planned, 1, server_queue ) ||
+         !rocketnet_memory_add( planned, (uint64_t) MASS_DISCONNECT_CLIENTS, client_bytes + client_object + client_queue ) )
+        return 0;
+    return suite_rss_bound_mb( planned, 32 );
+}
+
+SUITE_CASE_RSS_BOUND( test_server_disconnect_all_1000_real_time, mass_disconnect_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_clients_disconnect_together_server_count_exact, mass_disconnect_rss_bound_mb );
 
 // rocketnet_server_disconnect_all_clients over 1000 connected slots: the call
 // ends every slot at once and seals at most one update's allowance; each
