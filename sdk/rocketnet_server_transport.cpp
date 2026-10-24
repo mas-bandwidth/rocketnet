@@ -562,12 +562,72 @@ static void rocketnet_server_transport_io_send_packets( rocketnet_server_transpo
     transport->io.operations->flush( transport->io.instance );
 }
 
+// The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
+// the caller hands a new setting over as a config record under the
+// simulator's own tiny mutex, and the thread that owns the simulator takes it
+// before its next send.  tla/MCLinkReconfigure.tla models the change: the
+// setting in force at the send holds the packet, and the change itself
+// removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
+// stubs below stand in for the development build's functions there.
+#if ROCKETNET_TEST_SEAMS
+extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
+extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
+extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
+extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
+#else
+static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
+{
+    (void) simulator;
+    return false;
+}
+static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
+{
+    (void) simulator; (void) mutex;
+    return false;
+}
+static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window )
+{
+    (void) capacity; (void) reverse_window;
+    return 0;
+}
+#endif
+
+// The link simulator is active when the setting in force changes the packets:
+// any loss, latency, jitter or duplicate, or either pattern.  With all of
+// them zero it is a pass-through that neither adds latency nor copies, and
+// the datagram goes to the transport directly.
+//
+// Taking the setting also applies the one the caller handed over, so the
+// setting in force at the send is the setting the caller last asked for: the
+// change takes effect at once, on and off, in either direction.
+//
+// tla/Link.tla models the change: the setting in force at the send holds the
+// packet, and the change itself removes nothing that was already in flight
+// (LinkReconfigureHolds).
+static bool rocketnet_server_link_active( rocketnet_server_transport_t * transport )
+{
+    if ( !transport->link_simulator )
+        return false;
+    return rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->link_simulator_mutex ) ||
+           rocketnet_network_simulator_patterns_active( transport->link_simulator );
+}
+
 static void rocketnet_server_link_send( rocketnet_server_transport_t * transport,
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
 {
     // Datagram staging is best effort. In particular, a shutdown burst must
     // never wait for a producer that still owns the simulator lock.
+    if ( !rocketnet_server_link_active( transport ) )
+    {
+        rocketnet_platform_send_t send;
+        send.to = to;
+        send.packet_data = packet_data;
+        send.packet_bytes = packet_bytes;
+        transport->io.operations->send_batch( transport->io.instance, &send, 1 );
+        return;
+    }
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -578,18 +638,24 @@ static void rocketnet_server_link_send( rocketnet_server_transport_t * transport
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
 
-// The development network simulator call on a running transport: reconfigures
-// the link simulator under its mutex when one is running; false when none
-// runs, and the settings then take effect at the next start.
+// The development network simulator call on a running transport: applies at
+// once. A development server always owns a link simulator, so this stores the
+// new settings as a config record under the tiny mutex and the thread that owns
+// the simulator applies them before its next send. No simulator work happens
+// under the lock.
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( server_transport );
     if ( !server_transport->link_simulator )
         return false;
-    rocketnet_platform_mutex_acquire( &server_transport->link_simulator_mutex );
-    rocketnet_network_simulator_config( server_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
-    rocketnet_platform_mutex_release( &server_transport->link_simulator_mutex );
+    // The new setting is handed over as a config record under the
+    // simulator's own tiny mutex; the thread that owns the simulator takes
+    // it before its next send, so the change takes effect at once and the
+    // server's threads do not move.
+    rocketnet_network_simulator_reconfigure( server_transport->link_simulator, &server_transport->link_simulator_mutex,
+                                             latency_ms / 1000.0, jitter_ms / 1000.0,
+                                             (float) packet_loss_percent, (float) duplicate_percent );
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -597,7 +663,7 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * transport,
                                               const rocketnet_platform_send_t * sends, int num_sends, bool shutdown = false )
 {
-    if ( !transport->link_simulator )
+    if ( !rocketnet_server_link_active( transport ) )
     {
         if ( shutdown && transport->io.operations->send_batch_shutdown )
             transport->io.operations->send_batch_shutdown( transport->io.instance, sends, num_sends );
@@ -614,7 +680,7 @@ static void rocketnet_server_link_send_batch( rocketnet_server_transport_t * tra
 // link without patterns holds nothing and takes no lock here.
 static void rocketnet_server_link_flush( rocketnet_server_transport_t * transport )
 {
-    if ( !transport->link_simulator || !rocketnet_network_simulator_patterns_active( transport->link_simulator ) )
+    if ( !rocketnet_server_link_active( transport ) || !rocketnet_network_simulator_patterns_active( transport->link_simulator ) )
         return;
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
         return; // retain queued simulator packets; the next ordinary flush may retry
@@ -622,9 +688,14 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
 }
 
+// The drain runs whenever the server has a simulator, whatever the setting:
+// a switch from latency or jitter to all-zero leaves the packets the
+// simulator already holds, and they still leave when they come due (as the
+// client drain does). Gating it on the setting would strand and lose them.
+// A simulator holding nothing is read without the lock and drains nothing.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
-    if ( !transport->link_simulator )
+    if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
         return;
     for (;;)
     {
@@ -748,7 +819,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        if ( server_transport->link_simulator )
+        if ( rocketnet_server_link_active( server_transport ) )
         {
             rocketnet_server_link_send( server_transport, &frame->to,
                                         frame->data + ROCKETNET_FRAME_WIRE_OFFSET, packet_bytes );
@@ -805,6 +876,11 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
+// The link simulator's capacity: the packets a server holds while the setting
+// delays them.  A development build creates the simulator for every server
+// start, so the plan carries its bytes.
+#define ROCKETNET_SERVER_LINK_SIMULATOR_SLOTS 4096
+
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * transport, rocketnet_server_memory_plan_t & plan)
 {
@@ -839,6 +915,13 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
         plan.send_arena_bytes, plan.transport_io_bytes, plan.umem_bytes, plan.registered_region_bytes})
         if (!rocketnet_memory_add(plan.total_bytes, 1, bytes)) return false;
+    if (rocketnet_public_link_simulator_development())
+    {
+        // the link simulator every development server owns, created with it
+        const uint64_t simulator_bytes = rocketnet_network_simulator_memory_bytes(ROCKETNET_SERVER_LINK_SIMULATOR_SLOTS,
+            config->simulated_reverse_window);
+        if (!simulator_bytes || !rocketnet_memory_add(plan.total_bytes, 1, simulator_bytes)) return false;
+    }
     return plan.total_bytes <= SIZE_MAX;
 }
 
@@ -1534,11 +1617,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_RUNNING;
     server_transport->link_simulator_from = public_address;
 
-    if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
-         config->simulated_drop_every_nth || config->simulated_reverse_window )
+    // A development build creates the link simulator for every server start,
+    // memory up front; all-zero settings are a pass-through that neither adds
+    // latency nor copies. A production library creates none and carries none
+    // of its memory (rocketnet_network_simulator_create is a stub returning
+    // NULL there, and the config walk already refuses nonzero simulated values).
+    if ( rocketnet_public_link_simulator_development() )
     {
-        server_transport->link_simulator = rocketnet_network_simulator_create( context, 4096, UINT64_C(0x5345525645525349) );
+        server_transport->link_simulator = rocketnet_network_simulator_create( context, ROCKETNET_SERVER_LINK_SIMULATOR_SLOTS, UINT64_C(0x5345525645525349) );
         if ( !server_transport->link_simulator )
         {
             if ( status )
@@ -2629,7 +2715,7 @@ static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
 {
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        if ( server_transport->link_simulator )
+        if ( rocketnet_server_link_active( server_transport ) )
         {
             rocketnet_server_link_send( server_transport, &frame->to,
                                         frame->data + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
@@ -2828,7 +2914,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
         const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
-        if ( server_transport->link_simulator )
+        if ( rocketnet_server_link_active( server_transport ) )
         {
             rocketnet_server_link_send( server_transport, mapped_to,
                                         context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
