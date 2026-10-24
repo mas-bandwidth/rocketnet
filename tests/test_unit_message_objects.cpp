@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -3074,11 +3075,11 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 // Windows has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
 
 #if defined( _WIN32 )
-static void mo_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
-static void mo_unsetenv( const char * name ) { _putenv_s( name, "" ); }
+static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_putenv_s( name, value ); }
+static void mo_unsetenv( const char * name ) { rocketnet_test_env_putenv_s( name, "" ); }
 #else
-static void mo_setenv( const char * name, const char * value ) { setenv( name, value, 1 ); }
-static void mo_unsetenv( const char * name ) { unsetenv( name ); }
+static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
+static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
 #endif
 
 static void test_send_budget_message_env_is_not_read()

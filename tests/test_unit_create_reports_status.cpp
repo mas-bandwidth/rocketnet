@@ -20,6 +20,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet.h"
@@ -48,18 +49,18 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
 }
 
 #if defined( _WIN32 )
-static int create_status_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
-static int create_status_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_putenv_s( name, value ); }
+static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_putenv_s( name, "" ); }
 #else
-static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
-static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
+static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
 #endif
 
 // Whether the variable is set; its value, or empty, in value.
 static bool create_status_getenv( const char * name, std::string & value )
 {
     char buffer[4096];
-    const bool present = rocketnet_test_getenv( name, buffer, sizeof( buffer ) ) != 0;
+    const bool present = rocketnet_test_env_getenv( name, buffer, sizeof( buffer ) ) != 0;
     value = buffer;
     return present;
 }

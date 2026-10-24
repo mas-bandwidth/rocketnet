@@ -16,6 +16,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "portable_crt.h"
@@ -39,11 +40,11 @@
 // socket the step-driven loopback client never reaches. The pin is set aside
 // for the create and put back after, as test_unit_status_server_transport_create_ex.cpp does.
 #if defined(_WIN32)
-static int public_not_released_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
-static int public_not_released_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_putenv_s( name, value ); }
+static int public_not_released_unsetenv( const char * name ) { return rocketnet_test_env_putenv_s( name, "" ); }
 #else
-static int public_not_released_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
-static int public_not_released_unsetenv( const char * name ) { return unsetenv( name ); }
+static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+static int public_not_released_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
 #endif
 
 #define check rocketnet_unit_check
@@ -110,7 +111,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
 
     char saved_pin[256];
-    const bool pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin, sizeof( saved_pin ) ) != 0;
+    const bool pinned = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin, sizeof( saved_pin ) ) != 0;
     public_not_released_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 
     int status = -1;

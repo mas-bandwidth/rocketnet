@@ -10,6 +10,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "fake_client_driver.h"
 #include "portable_crt.h"
 
@@ -208,9 +209,9 @@ static void fake_disconnect_wake( void * transport )
 static int fake_disconnect_setenv( const char * name, const char * value )
 {
 #ifdef _WIN32
-    return _putenv_s( name, value );
+    return rocketnet_test_env_putenv_s( name, value );
 #else
-    return value[0] ? setenv( name, value, 1 ) : unsetenv( name );
+    return value[0] ? rocketnet_test_env_setenv( name, value, 1 ) : rocketnet_test_env_unsetenv( name );
 #endif
 }
 
@@ -224,7 +225,7 @@ struct fake_disconnect_env_guard_t
     {
         for ( int i = 0; i < 2; i++ )
         {
-            rocketnet_test_getenv( names[i], saved[i], sizeof( saved[i] ) );
+            rocketnet_test_env_getenv( names[i], saved[i], sizeof( saved[i] ) );
             rocketnet_unit_check( fake_disconnect_setenv( names[i], "" ) == 0 );
         }
     }

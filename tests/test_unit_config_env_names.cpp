@@ -33,6 +33,7 @@
 #include <vector>
 #include <algorithm>
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_config.h"
@@ -42,11 +43,11 @@
 #define check rocketnet_unit_check
 
 #if defined( _WIN32 )
-static void env_names_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
-static void env_names_unsetenv( const char * name ) { _putenv_s( name, "" ); }
+static void env_names_setenv( const char * name, const char * value ) { rocketnet_test_env_putenv_s( name, value ); }
+static void env_names_unsetenv( const char * name ) { rocketnet_test_env_putenv_s( name, "" ); }
 #else
-static void env_names_setenv( const char * name, const char * value ) { setenv( name, value, 1 ); }
-static void env_names_unsetenv( const char * name ) { unsetenv( name ); }
+static void env_names_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
+static void env_names_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
 #endif
 
 // ---------------------------------------------------------------------------

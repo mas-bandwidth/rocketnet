@@ -8874,6 +8874,13 @@ struct rocketnet_functional_test_t
     bool ( *runs_here )(); // NULL: every host; else the case is in the suite only where it returns true
 };
 
+extern void rocketnet_test_real_environment_dev_session_sequence_start();
+extern void rocketnet_test_real_environment_log_level_before_init();
+extern void rocketnet_test_real_environment_config_precedence_and_invalid();
+extern void rocketnet_test_real_environment_client_step_driven();
+extern void rocketnet_test_real_environment_dev_simulator_number();
+extern void rocketnet_test_real_environment_server_ipv4_address();
+
 // POSIX lifecycle stress: real sockets, counted file descriptors and threads
 // (and on Linux locked memory), in functional/posix_lifecycle_stress.cpp.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -9620,6 +9627,12 @@ static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_tran
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
+    { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
+    { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
+    { "test_real_environment_client_step_driven", rocketnet_test_real_environment_client_step_driven, NULL },
+    { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
+    { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
@@ -9911,6 +9924,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
+
+void rocketnet_functional_restore_log_function()
+{
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+}
 
 void rocketnet_functional_prepare()
 {

@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 #include "unit_shutdown.h"
 #include "token_string.h"
@@ -108,15 +109,15 @@ struct message_limit_env_t
     explicit message_limit_env_t( const char * key ) : name( key ), present( false )
     {
         char buffer[4096];
-        present = rocketnet_test_getenv( key, buffer, sizeof( buffer ) ) != 0;
+        present = rocketnet_test_env_getenv( key, buffer, sizeof( buffer ) ) != 0;
         previous = buffer;
     }
     void set( const char * value )
     {
 #if defined( _WIN32 )
-        check( _putenv_s( name, value ? value : "" ) == 0 );
+        check( rocketnet_test_env_putenv_s( name, value ? value : "" ) == 0 );
 #else
-        check( value ? setenv( name, value, 1 ) == 0 : unsetenv( name ) == 0 );
+        check( value ? rocketnet_test_env_setenv( name, value, 1 ) == 0 : rocketnet_test_env_unsetenv( name ) == 0 );
 #endif
     }
     ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }

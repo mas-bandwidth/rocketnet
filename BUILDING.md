@@ -162,6 +162,11 @@ clock starts at 1000.0). A binary that opens a real socket, starts a thread,
 sleeps or reads the wall clock is functional, and CI runs it only in a step
 named functional, never as a unit step.
 
+Unit cases feed SDK environment parsing through the in-memory source compiled
+only into `rocketnet_test_hooks`; they never read or mutate the process
+environment. `functional/environment_wiring.cpp` sets and restores real
+variables and pins the SDK wiring, precedence, and refusal paths.
+
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |

@@ -13,6 +13,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
@@ -47,18 +48,18 @@ static const int MASS_DISCONNECT_CLIENTS = 1000;
 static int mass_disconnect_setenv( const char * name, const char * value )
 {
 #ifdef _WIN32
-    return _putenv_s( name, value );
+    return rocketnet_test_env_putenv_s( name, value );
 #else
-    return setenv( name, value, 1 );
+    return rocketnet_test_env_setenv( name, value, 1 );
 #endif
 }
 
 static int mass_disconnect_unsetenv( const char * name )
 {
 #ifdef _WIN32
-    return _putenv_s( name, "" );
+    return rocketnet_test_env_putenv_s( name, "" );
 #else
-    return unsetenv( name );
+    return rocketnet_test_env_unsetenv( name );
 #endif
 }
 
@@ -77,7 +78,7 @@ struct mass_disconnect_env_guard_t
         for ( int i = 0; i < NUM_NAMES; i++ )
         {
             char prior[4096];
-            present[i] = rocketnet_test_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
+            present[i] = rocketnet_test_env_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
             if ( present[i] )
             {
                 check( strlen( prior ) < sizeof( saved[i] ) );

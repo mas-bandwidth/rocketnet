@@ -337,7 +337,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
-    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1)
+    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
@@ -598,7 +598,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1
         ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
@@ -829,6 +829,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/live_matrix.cpp
         functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
+        functional/environment_wiring.cpp
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp

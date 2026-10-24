@@ -14,6 +14,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "fake_client_driver.h"
 
 #include "rocketnet.h"
@@ -126,18 +127,18 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
 static int test_set_environment( const char * name, const char * value )
 {
 #if defined( _WIN32 )
-    return _putenv_s( name, value );
+    return rocketnet_test_env_putenv_s( name, value );
 #else
-    return setenv( name, value, 1 );
+    return rocketnet_test_env_setenv( name, value, 1 );
 #endif
 }
 
 static int test_unset_environment( const char * name )
 {
 #if defined( _WIN32 )
-    return _putenv_s( name, "" );
+    return rocketnet_test_env_putenv_s( name, "" );
 #else
-    return unsetenv( name );
+    return rocketnet_test_env_unsetenv( name );
 #endif
 }
 

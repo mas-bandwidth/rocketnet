@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_tests.h"
+#include "../tests/test_env_source.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
@@ -86,39 +87,6 @@ extern int rocketnet_ack_popcount64( uint64_t v );
 extern int rocketnet_ack_popcount64_portable( uint64_t v );
 
 // Sockets, select, and the raw chaff injector live in functional/.
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-// setenv/unsetenv are posix-only names: the MSVC CRT spells both
-// _putenv_s -- and getenv sees the change because the suite and the sdk
-// read the same CRT environment -- so the #106 config and transport tests RUN
-// on windows instead of being compiled out (a skipped test is named and
-// logged, never silent; a runnable test is run)
-//
-// ONE semantic gap remains, and it is the platform's rather than the
-// shim's: the windows CRT cannot represent a set-but-empty variable at
-// all. _putenv_s(name,"") DELETES the variable, so "set to empty" and
-// "not set" are the same state here, and unsetenv is spelled with it.
-// the one case that turns on the distinction -- config validation's
-// empty-value case -- is skipped on windows, named and logged with this
-// reason; rocketnet_config_apply_env's empty branch is correspondingly
-// unreachable on windows. nothing else in the suite depends on it.
-//
-// `overwrite` is HONORED rather than ignored: no call site passes 0
-// today, but a shim that silently clobbered under overwrite=0 would be a
-// trap laid for the first one that does
-
-static int setenv( const char * name, const char * value, int overwrite )
-{
-    char probe[1];
-    if ( !overwrite && rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
-        return 0;
-    return _putenv_s( name, value );
-}
-
-static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // THE SUITE RUNS SILENT. rocketnet_run_tests installs this sink, so every
 // line the library would have printed lands in the ring below instead of
@@ -12243,12 +12211,10 @@ void rocketnet_test_send_arena()
 //        the config table and the transport ladder (#106)
 // ----------------------------------------------------------------
 
-// env guard: the suite may itself run under a transport matrix leg
-// (ROCKETNET_SERVER_TRANSPORT=... ./bin/test), so every test that touches the
-// environment saves what it found and puts it back
+// Each case restores the in-memory table state it found, so cases remain
+// independent even when they exercise the same configuration name.
 
-// the process environment's value of name at any length, read through the
-// platform wrapper; false when name is unset
+// The installed in-memory value of name at any length; false when name is unset.
 static bool rocketnet_test_getenv_string( const char * name, std::string * value )
 {
     std::vector<char> buffer( 256 );
@@ -12293,21 +12259,15 @@ static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, 
 static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     rocketnet_test_env_save( guard, name );
-    unsetenv( name );
+    rocketnet_test_env_unsetenv( name );
 }
-
-// the same platform truth the empty-value case below is skipped for bounds
-// this restore on windows: a guard that saved a set-but-empty value would
-// put back a DELETED variable rather than an empty one. the state is
-// unreachable there -- the windows CRT cannot hold a set-but-empty variable
-// in the first place -- so this is disclosure, not a live defect
 
 static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guard )
 {
     if ( guard->was_set )
-        setenv( guard->name, guard->saved, 1 );
+        rocketnet_test_env_setenv( guard->name, guard->saved, 1 );
     else
-        unsetenv( guard->name );
+        rocketnet_test_env_unsetenv( guard->name );
 }
 
 // the log capture sink, shared by the tests that assert a log line rather
@@ -12409,7 +12369,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             break;
         }
 
-        setenv( env_name, value_string, 1 );
+        rocketnet_test_env_setenv( env_name, value_string, 1 );
 
         rocketnet_check( rocketnet_config_apply_env( transport_name, config, fields, num_fields ) );
         rocketnet_check( rocketnet_config_validate( transport_name, config, fields, num_fields ) );
@@ -12646,11 +12606,11 @@ void rocketnet_test_public_config_resolve()
     rocketnet_test_env_save( &server_channels_guard, "ROCKETNET_SERVER_NUM_CHANNELS" );
     rocketnet_test_env_save( &max_clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
     rocketnet_test_env_save( &server_kbps_guard, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-    unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
-    unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    unsetenv( "ROCKETNET_SERVER_NUM_CHANNELS" );
-    unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
-    unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_NUM_CHANNELS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
 
     struct rocketnet_client_transport_config_t client_transport;
     struct rocketnet_server_transport_config_t server_transport;
@@ -12691,16 +12651,16 @@ void rocketnet_test_public_config_resolve()
 
     // the env displaces the struct
 
-    setenv( "ROCKETNET_CLIENT_NUM_CHANNELS", "9", 1 );
-    setenv( "ROCKETNET_CLIENT_SEND_KBPS", "777", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_NUM_CHANNELS", "9", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "777", 1 );
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     rocketnet_check( message.num_channels == 9 && kbps == 777 );
     rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
     rocketnet_check( message.num_channels == 7 && kbps == 1234 );
-    setenv( "ROCKETNET_CLIENT_SEND_KBPS", "lots", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "lots", 1 );
     rocketnet_check( !rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
-    unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
 
     // 0 is the default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no budget (0 to
     // the message layer, uncapped), and a negative rate is refused
@@ -12750,9 +12710,9 @@ void rocketnet_test_public_config_resolve()
 
     // max_clients sizes both layers, so its override applies in the split
 
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
-    setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
-    setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
     rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
@@ -13191,8 +13151,8 @@ void rocketnet_test_config_env_names_are_per_endpoint()
     struct rocketnet_test_env_guard_t client_guard;
     rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
-    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
-    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
@@ -13206,23 +13166,23 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
     rocketnet_check( server_config.max_fragmented_messages == 19 );
     rocketnet_check( client_config.max_fragmented_messages == 0 );
-    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     // the client name moves only the client config
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
     rocketnet_check( client_config.max_fragmented_messages == 17 );
     rocketnet_check( server_config.max_fragmented_messages == 0 );
-    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // a hand-built config gets no state-change callback it did not set: the
     // default-config function zeroes the struct and the table carries no
@@ -13309,19 +13269,19 @@ void rocketnet_test_config_validation()
     rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     rocketnet_server_transport_default_config_current( &config );
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "abc", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "abc", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "12x", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "12x", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     // strtoll's lenient spellings are refused before it ever runs: no
     // leading whitespace, no '+', digits only
 
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "+5", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "+5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", " 5", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", " 5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "99999999999999999999", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "99999999999999999999", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     // the empty value is ignored as unset, with a log line, leaving the
@@ -13331,14 +13291,14 @@ void rocketnet_test_config_validation()
     // if the empty branch vanished entirely
     //
     // windows cannot run it. the CRT has no set-but-empty state at all --
-    // _putenv_s(name,"") DELETES the variable -- so the shim at the top of
+    // rocketnet_test_env_putenv_s( name,"") DELETES the variable -- so the shim at the top of
     // this file cannot put the process in the state the case needs, and
     // the branch it covers is unreachable on that platform. a skipped test
     // is named and logged, never silent
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 );
     rocketnet_server_transport_default_config_current( &config );
 
     rocketnet_test_captured_log[0] = '\0';
@@ -13360,7 +13320,7 @@ void rocketnet_test_config_validation()
 
     rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PROTOCOL_ID" );
     rocketnet_server_transport_default_config_current( &config );
-    setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "-5", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "-5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     rocketnet_test_env_restore( &guard );
 
@@ -13368,9 +13328,9 @@ void rocketnet_test_config_validation()
 
     rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PACKET_FILTER" );
     rocketnet_server_transport_default_config_current( &config );
-    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz", 1 );                  // decodes to 3 bytes, not 4
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
     rocketnet_server_transport_default_config_current( &config );
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
@@ -13633,7 +13593,7 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
             for ( int j = 0; j < (int) sizeof(bytes); ++j ) bytes[j] = (uint8_t) ( j * 13 + 7 );
             char encoded[512];
             rocketnet_check( rocketnet_base64_encode_data( bytes, (size_t) ( field->size + delta ), encoded, sizeof(encoded) ) > 0 );
-            setenv( env_name, encoded, 1 );
+            rocketnet_test_env_setenv( env_name, encoded, 1 );
             uint8_t * destination = (uint8_t*) config + field->offset;
             uint8_t before[256];
             memset( before, 0xA5, (size_t) field->size );
@@ -13676,8 +13636,8 @@ void rocketnet_test_config_override_logging()
     char secret_base64[64];
     rocketnet_check( rocketnet_base64_encode_data( secret_bytes, 32, secret_base64, sizeof(secret_base64) ) > 0 );
 
-    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "77", 1 );
-    setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", secret_base64, 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "77", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", secret_base64, 1 );
 
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
@@ -13812,7 +13772,7 @@ class rocketnet_test_environment_t
         std::string value;
         const bool present = rocketnet_test_getenv_string(name, &value);
         entries.push_back({name, value, present});
-        rocketnet_check(unsetenv(name) == 0);
+        rocketnet_check(rocketnet_test_env_unsetenv( name) == 0);
     }
 public:
     rocketnet_test_environment_t()
@@ -13837,8 +13797,8 @@ public:
     ~rocketnet_test_environment_t()
     {
         for (const auto & entry : entries)
-            rocketnet_check((entry.present ? setenv(entry.name.c_str(), entry.value.c_str(), 1)
-                                           : unsetenv(entry.name.c_str())) == 0);
+            rocketnet_check((entry.present ? rocketnet_test_env_setenv( entry.name.c_str(), entry.value.c_str(), 1)
+                                           : rocketnet_test_env_unsetenv( entry.name.c_str())) == 0);
     }
 };
 
@@ -13848,13 +13808,13 @@ void rocketnet_test_suite_environment()
     const bool server_present = rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &original_server);
     std::string original_client;
     const bool client_present = rocketnet_test_getenv_string("ROCKETNET_CLIENT_TRANSPORT", &original_client);
-    rocketnet_check(unsetenv("ROCKETNET_SERVER_IPV4_ADDRESS") == 0);
+    rocketnet_check(rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
-    rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
+    rocketnet_check(rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     {
         rocketnet_test_environment_t isolated;
         rocketnet_check(!rocketnet_test_env_is_set("ROCKETNET_SERVER_MAX_CLIENTS"));
-        rocketnet_check(setenv("ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:1234", 1) == 0);
+        rocketnet_check(rocketnet_test_env_setenv( "ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:1234", 1) == 0);
         std::string server_now;
         rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_TRANSPORT", &server_now) == server_present);
         if (server_present) rocketnet_check(original_server == server_now);
@@ -13866,7 +13826,18 @@ void rocketnet_test_suite_environment()
     std::string max_clients_now;
     rocketnet_check(rocketnet_test_getenv_string("ROCKETNET_SERVER_MAX_CLIENTS", &max_clients_now));
     rocketnet_check(long_value == max_clients_now);
-    unsetenv("ROCKETNET_SERVER_MAX_CLIENTS");
+    char raw[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    raw[0] = 'x';
+    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == -1 );
+    rocketnet_check( raw[0] == '\0' );
+    rocketnet_check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 ) == 0 );
+    raw[0] = 'x';
+    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 1 );
+    rocketnet_check( raw[0] == '\0' );
+    rocketnet_check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    raw[0] = 'x';
+    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 0 );
+    rocketnet_check( raw[0] == '\0' );
 }
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
@@ -14941,7 +14912,7 @@ void rocketnet_unit_prepare()
     // per process, so no test here can commit an XDP data plane.
 
     char verbose[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) == 0 )
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
@@ -14953,8 +14924,8 @@ void rocketnet_unit_prepare()
     // transport. Both pins are cleared for the run, as posix_pair_create does
     // around its creates (functional/posix_socket_errors.cpp). A case that
     // tests pin handling itself sets and reads its own pins after this.
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }
