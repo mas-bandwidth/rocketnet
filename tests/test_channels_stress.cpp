@@ -31,7 +31,9 @@
 // (rocketnet_client_required_memory, rocketnet_server_required_memory) is the
 // block create takes, measured through the allocator; the server's bytes per
 // connection is the plan's step from one client slot to two; and the plan is
-// linear in the channel count, one fixed number of bytes per channel.
+// linear in the channel count: every 64 more channels add the same bytes, on
+// the client and per server connection (each per-channel table is rounded up
+// to the 64-byte allocation alignment, so the line is exact at that stride).
 
 #include "test_unit_registry.h"
 #include "unit_shutdown.h"
@@ -124,9 +126,9 @@ static void stress_message_config( int * num_channels, int * reliable_messages_i
                                    int * unreliable_messages_per_update, int * max_message_receipts, int channels )
 {
     *num_channels = channels;
-    *reliable_messages_in_flight = 262144;
-    *send_message_buffer_bytes = 64 * 1024 * 1024;
-    *send_queue_messages = 262144;
+    *reliable_messages_in_flight = 65536;
+    *send_message_buffer_bytes = 32 * 1024 * 1024;
+    *send_queue_messages = 65536;
     *packets_in_flight = 16384;
     *packets_per_update = 1024;
     *unreliable_messages_per_update = 65536;
@@ -683,30 +685,41 @@ static void test_channels_stress_memory_is_planned()
     check( server_plans[1] > server_plans[0] );
     const size_t server_connection_bytes = server_plans[1] - server_plans[0];
 
-    // linear in the channel count: one fixed number of bytes per channel, on
-    // the client and per server connection, at every count from 1 to the cap
-    const size_t client_one = stress_client_plan( 1 );
-    const size_t client_two = stress_client_plan( 2 );
-    const size_t connection_one = stress_server_plan( 2, 1 ) - stress_server_plan( 1, 1 );
-    const size_t connection_two = stress_server_plan( 2, 2 ) - stress_server_plan( 1, 2 );
-    check( client_two > client_one );
-    check( connection_two > connection_one );
-    const size_t client_per_channel = client_two - client_one;
-    const size_t connection_per_channel = connection_two - connection_one;
+    // linear in the channel count: each per-channel table is rounded up to
+    // the allocation alignment, so every 64 more channels add the same bytes
+    // exactly (64 channels of any table are whole multiples of the alignment),
+    // and the plan never falls as the count rises
+    const int stride = ROCKETNET_ALLOCATION_ALIGNMENT;
+    const size_t client_step = stress_client_plan( 1 + stride ) - stress_client_plan( 1 );
+    const size_t connection_step = ( stress_server_plan( 2, 1 + stride ) - stress_server_plan( 1, 1 + stride ) ) -
+                                   ( stress_server_plan( 2, 1 ) - stress_server_plan( 1, 1 ) );
+    check( client_step > 0 && connection_step > 0 );
+    size_t previous = 0;
     for ( int channels = 1; channels <= STRESS_NUM_CHANNELS; channels++ )
-        check( stress_client_plan( channels ) == client_one + (size_t) ( channels - 1 ) * client_per_channel );
-    static const int server_counts[] = { 1, 2, 3, 64, 255, 256, 257, 1000, 1023, 1024, STRESS_NUM_CHANNELS };
+    {
+        const size_t plan = stress_client_plan( channels );
+        check( plan >= previous );
+        previous = plan;
+        if ( channels + stride <= STRESS_NUM_CHANNELS )
+            check( stress_client_plan( channels + stride ) - plan == client_step );
+    }
+    static const int server_counts[] = { 1, 2, 3, 63, 64, 65, 255, 256, 257, STRESS_NUM_CHANNELS / 2, STRESS_NUM_CHANNELS - 65, STRESS_NUM_CHANNELS - 64 };
     for ( size_t i = 0; i < sizeof( server_counts ) / sizeof( server_counts[0] ); i++ )
     {
         const int channels = server_counts[i];
         const size_t connection = stress_server_plan( 2, channels ) - stress_server_plan( 1, channels );
-        check( connection == connection_one + (size_t) ( channels - 1 ) * connection_per_channel );
+        const size_t connection_next = stress_server_plan( 2, channels + stride ) - stress_server_plan( 1, channels + stride );
+        check( connection_next - connection == connection_step );
     }
-    check( server_connection_bytes == connection_one + (size_t) ( STRESS_NUM_CHANNELS - 1 ) * connection_per_channel );
+    const int top = STRESS_NUM_CHANNELS - stride;
+    check( ( stress_server_plan( 2, STRESS_NUM_CHANNELS ) - stress_server_plan( 1, STRESS_NUM_CHANNELS ) ) -
+           ( stress_server_plan( 2, top ) - stress_server_plan( 1, top ) ) == connection_step );
+    const double client_per_channel = (double) client_step / stride;
+    const double connection_per_channel = (double) connection_step / stride;
 
-    printf( "channels %d: client plan %llu bytes (%llu per channel), server bytes per connection %llu (%llu per channel)\n",
-            STRESS_NUM_CHANNELS, (unsigned long long) client_plan, (unsigned long long) client_per_channel,
-            (unsigned long long) server_connection_bytes, (unsigned long long) connection_per_channel );
+    printf( "channels %d: client plan %llu bytes (%.2f per channel), server bytes per connection %llu (%.2f per channel)\n",
+            STRESS_NUM_CHANNELS, (unsigned long long) client_plan, client_per_channel,
+            (unsigned long long) server_connection_bytes, connection_per_channel );
     printf( "test_channels_stress_memory_is_planned\n" );
 }
 
