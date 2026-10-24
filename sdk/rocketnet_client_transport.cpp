@@ -1629,12 +1629,16 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                                   client_transport->time_callback, client_transport->context );
         client_transport->client_io.prefilter_too_large =
             &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
-        // docs/CLIENT-IO.md "The overlapped send": the built-in backend's
-        // overlapped send, when it has one (the portable client on Windows);
-        // its preallocated posts cover every slot of every ring
+        // docs/CLIENT-IO.md "The overlapped send": the I/O thread uses the
+        // built-in backend's overlapped send when it has one (the portable
+        // client on Windows), its preallocated posts covering every slot of
+        // every ring. The step-driven mode keeps the synchronous send: its
+        // caller runs the step, and a send completes in the call
+        // (tla/RNClientIo.tla IoSend under StepDriven).
         static_assert( ROCKETNET_CLIENT_IO_NUM_RINGS * ROCKETNET_CLIENT_PAYLOAD_RING_SIZE <= ROCKETNET_CLIENT_TRANSPORT_MAX_POSTED_SENDS,
                        "the overlapped send's posts cover every ring slot" );
-        client_transport->client_io.overlapped = rocketnet_client_transport_io_overlapped( client_transport->io.operations );
+        if ( !client_transport->step_driven && !client_transport->step_in_update )
+            client_transport->client_io.overlapped = rocketnet_client_transport_io_overlapped( client_transport->io.operations );
 
         // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
         // publishes the open copy at the challenge and retires it at every

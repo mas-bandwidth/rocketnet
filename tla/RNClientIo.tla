@@ -567,9 +567,13 @@ IoSend(r) ==
     /\ ioRing' = r
     /\ ring' = [ring EXCEPT ![r] = "Sending"]
     /\ sent' = [sent EXCEPT ![r] = {s \in Slots : owner[r][s] = "io"}]
+    \* the step-driven mode keeps the synchronous send, which completes in
+    \* the call (sdk/rocketnet_client_transport.cpp sets no overlapped send
+    \* for it); the I/O thread's posts complete later (Complete)
+    /\ completed' = [completed EXCEPT ![r] = StepDriven]
     /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
-    /\ UNCHANGED destVars
+    /\ UNCHANGED <<addr, dest, held, commitTo>>
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
@@ -610,6 +614,7 @@ IoStall(r) ==
    cancelled its pending posts (rocketnet_platform_wake_cancel_sends), which
    then complete with an error.  An outside event, on neither thread. *)
 Complete(r) ==
+    /\ ~StepDriven
     /\ ring[r] = "Sending"
     /\ sent[r] # {}
     /\ ~completed[r]
@@ -682,10 +687,7 @@ IoWait ==
     /\ ~StepDriven
     /\ IoReady
     /\ phase = "Running"
-    /\ \/ ioRing = "none"
-       \/ /\ ioRing # "none"
-          /\ \A s \in Slots : owner[ioRing][s] = "io" => s \in sent[ioRing]
-          /\ Outstanding(ioRing)
+    /\ ioRing = "none"
     /\ \A r \in Rings : ring[r] # "HandedOff"
     /\ ~wake
     /\ ~(count[FillBuffer] > 0 /\ HasFree)
@@ -702,8 +704,7 @@ IoWait ==
 \* completion of the posted ring's sends (their event is in the wait set)
 IoWake ==
     /\ ioAlive /\ waiting
-    /\ \/ wake \/ (waitReadable /\ pending > 0)
-       \/ ioRing # "none" /\ completed[ioRing]
+    /\ wake \/ (waitReadable /\ pending > 0)
     /\ waiting' = FALSE
     /\ wake' = FALSE
     /\ UNCHANGED sendVars
