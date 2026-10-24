@@ -98,93 +98,39 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     return true;
 }
 
-const char * rocketnet_address_to_string( const rocketnet_address_t * address, char * buffer )
-{
-    rocketnet_assert( buffer );
+// the longest rendering is bracketed IPv6 text with a port: at most 45
+// characters of IPv6 text (INET6_ADDRSTRLEN is 46 with its terminator) plus
+// "[]:65535", plus the terminator.
 
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        uint16_t ipv6_network_order[8];
-        for ( int i = 0; i < 8; ++i )
-            ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
-        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-        rocketnet_platform_inet_ntop6( ipv6_network_order, address_string, sizeof( address_string ) );
-        if ( address->port == 0 )
-        {
-            rocketnet_copy_string( buffer, address_string, ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
-            return buffer;
-        }
-        else
-        {
-            const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port );
-            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
-            {
-                rocketnet_error( "address formatting failed or string truncated: [%s]:%hu", address_string, address->port );
-            }
-            return buffer;
-        }
-    }
-    else if ( address->type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        if ( address->port != 0 )
-        {
-            const int result = snprintf( buffer,
-                                         ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
-                                         "%d.%d.%d.%d:%d",
-                                         address->data.ipv4[0],
-                                         address->data.ipv4[1],
-                                         address->data.ipv4[2],
-                                         address->data.ipv4[3],
-                                         address->port );
-            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
-            {
-                rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d:%d",
-                                 address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3], address->port );
-            }
-        }
-        else
-        {
-            const int result = snprintf( buffer,
-                                         ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
-                                         "%d.%d.%d.%d",
-                                         address->data.ipv4[0],
-                                         address->data.ipv4[1],
-                                         address->data.ipv4[2],
-                                         address->data.ipv4[3] );
-            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
-            {
-                rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d",
-                                 address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3] );
-            }
-        }
-        return buffer;
-    }
-    else
-    {
-        const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
-        if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
-        {
-            rocketnet_error( "address formatting failed or string truncated: NONE" );
-        }
-        return buffer;
-    }
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_ADDRESS_STRING_LENGTH >= 46 + sizeof( "[]:65535" ) - 1, "the address string buffer holds the longest bracketed IPv6 text with a port" );
+
+// writes "NONE" so that no caller ever reads a cut-off address after a failed write.
+
+static void rocketnet_address_write_none( char * buffer )
+{
+    rocketnet_copy_string( buffer, "NONE", ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
 }
 
-const char * rocketnet_address_to_string_without_port( const rocketnet_address_t * address, char * buffer )
-{
-    rocketnet_assert( buffer );
+// writes the port-less form into buffer: IPv6 text, dotted IPv4, or "NONE".
+// returns false, with "NONE" in buffer, when the write fails or is cut off.
 
+static bool rocketnet_address_write_without_port( const rocketnet_address_t * address, char * buffer )
+{
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         uint16_t ipv6_network_order[8];
         for ( int i = 0; i < 8; ++i )
             ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
-        char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-        rocketnet_platform_inet_ntop6( ipv6_network_order, address_string, sizeof( address_string ) );
-        rocketnet_copy_string( buffer, address_string, ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
-        return buffer;
+        if ( !rocketnet_platform_inet_ntop6( ipv6_network_order, buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH ) )
+        {
+            rocketnet_error( "ipv6 address formatting failed" );
+            rocketnet_address_write_none( buffer );
+            return false;
+        }
+        return true;
     }
-    else if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
         const int result = snprintf( buffer,
                                      ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
@@ -195,20 +141,52 @@ const char * rocketnet_address_to_string_without_port( const rocketnet_address_t
                                      address->data.ipv4[3] );
         if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
         {
-            rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d",
-                             address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3] );
+            rocketnet_error( "ipv4 address formatting failed or string truncated" );
+            rocketnet_address_write_none( buffer );
+            return false;
         }
-        return buffer;
+        return true;
     }
-    else
+
+    rocketnet_address_write_none( buffer );
+    return true;
+}
+
+const char * rocketnet_address_to_string( const rocketnet_address_t * address, char * buffer )
+{
+    rocketnet_assert( buffer );
+
+    const bool has_port = address->port != 0 && ( address->type == ROCKETNET_ADDRESS_IPV6 || address->type == ROCKETNET_ADDRESS_IPV4 );
+    if ( !has_port )
     {
-        const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
-        if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
-        {
-            rocketnet_error( "address formatting failed or string truncated: NONE" );
-        }
+        rocketnet_address_write_without_port( address, buffer );
         return buffer;
     }
+
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    if ( !rocketnet_address_write_without_port( address, address_string ) )
+    {
+        rocketnet_address_write_none( buffer );
+        return buffer;
+    }
+
+    const int result = ( address->type == ROCKETNET_ADDRESS_IPV6 )
+        ? snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port )
+        : snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s:%d", address_string, address->port );
+    if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+    {
+        rocketnet_error( "address formatting failed or string truncated: %s port %d", address_string, address->port );
+        rocketnet_address_write_none( buffer );
+    }
+    return buffer;
+}
+
+const char * rocketnet_address_to_string_without_port( const rocketnet_address_t * address, char * buffer )
+{
+    rocketnet_assert( buffer );
+
+    rocketnet_address_write_without_port( address, buffer );
+    return buffer;
 }
 
 bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_address_t * b )
