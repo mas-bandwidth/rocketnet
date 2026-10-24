@@ -15,6 +15,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_test_seams.h"
 
 // The encryption mapping table: the server's per-address record of derived
 // keys and handshake state, created only for a request that carried a valid
@@ -138,5 +139,11 @@ void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, i
 int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map, int * iterator );
 
 int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map_t * map );
+
+#if ROCKETNET_TEST_SEAMS
+// The keyed hashes this map has computed since create: one per find, add and
+// remove. The unit suite pins the receive path's cost per packet with it.
+uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
+#endif // #if ROCKETNET_TEST_SEAMS
 
 #endif // #ifndef ROCKETNET_ENCRYPTION_MAP_H

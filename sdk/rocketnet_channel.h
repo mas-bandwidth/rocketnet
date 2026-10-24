@@ -234,7 +234,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 // Every delivery, this record's or one released from a hold, is appended to
 // the region's delivery table in order; `out` is a copy of the first one this
 // call appended. A wire violation sets the channels' sticky error, counts it,
-// and the owner disconnects the peer.
+// and the owner disconnects the other side of the connection.
 //
 // RNChannel actions: OpenPacket (the arrival gate and the hold), DeliverMessage
 // (the coupling, once per delivery).
@@ -363,7 +363,7 @@ struct rn_ordered_t
     // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
     struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
     int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
-    int config_received;                            // the peer's CONFIG was taken and equals this end's (RNEndpoint peerCfg # NoCfg)
+    int config_received;                            // the remote endpoint's CONFIG was taken and equals this end's (RNEndpoint remoteCfg # NoCfg)
 };
 
 // Binds the whole path to one connection's carved region. `config` is the
@@ -416,7 +416,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 
 // tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
-// the peer's CONFIG record, already accepted by layer 3, read and compared
+// the remote endpoint's CONFIG record, already accepted by layer 3, read and compared
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line
 // naming the first differing field and both values and sets the sticky error

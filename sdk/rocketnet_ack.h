@@ -87,7 +87,7 @@ struct rocketnet_sent_packet_record_t
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
-    uint8_t was_keep_alive;                 // a keep-alive's ack is the peer's claim to hold its client index
+    uint8_t was_keep_alive;                 // a keep-alive's ack is the client's claim to hold its client index
     uint8_t pad[1];
 };
 
@@ -113,7 +113,8 @@ struct rocketnet_received_packet_record_t
     uint64_t sequence;
     double receive_time;
     uint32_t wire_bytes;
-    uint32_t pad;
+    uint16_t stats_prev;                    // the running stats' receive-time list, by ring slot;
+    uint16_t stats_next;                    // read only while the record is counted
 };
 
 // The sent ring's shadow bitmaps: one bit per slot, held (written) and
@@ -126,9 +127,9 @@ struct rocketnet_received_packet_record_t
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
-// Server statistics observe only these fields. The live ACK endpoint remains
-// the protocol authority; a worker merges dirty projections into its own
-// history and never reads an endpoint concurrently with the update/fill paths.
+// The fields the statistics definition reads, as a standalone history for the
+// reference recompute (rocketnet_ack_stats_history_compute). The live ACK
+// endpoint keeps its own running aggregates; nothing copies into this form.
 struct rocketnet_ack_stats_sent_t
 {
     uint64_t sequence;
@@ -190,21 +191,9 @@ struct rocketnet_ack_stats_validity_t
     void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
 };
 
-struct rocketnet_ack_stats_delta_t
-{
-    rocketnet_ack_stats_history_t values;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent_dirty;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received_dirty;
-    rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt_dirty;
-    uint64_t generation;
-    uint8_t reset;
-};
 
 struct rocketnet_ack_endpoint_t
 {
-    // NULL for clients. The server binds this pointer
-    // after endpoint initialization and preserves it across slot reset.
-    rocketnet_ack_stats_delta_t * stats_delta;
     uint64_t sent_lock;                         // guards sent-record reservation and publication
     // highest_sequence folds under fill-phase threads with an atomic max;
     // ack_debt increments on the update thread alone and resets from fill
@@ -212,13 +201,16 @@ struct rocketnet_ack_endpoint_t
     // overlap, per the transports' threading contract
 
     uint64_t highest_sequence;                  // highest session sequence recorded as sent
-    uint64_t largest_acked_sequence;            // highest sent sequence the peer has acknowledged; update thread only
+    uint64_t largest_acked_sequence;            // highest sent sequence the receiver has acknowledged; update thread only
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
-    // published per-connection statistics, recomputed by update_stats --
-    // amortized round-robin across slots on the server, on each stats read on the
-    // client. rtt and jitter in milliseconds, loss as a percentage.
+    // published per-connection statistics. The running aggregates below keep
+    // them current as each send, receive and ack lands, exactly the numbers
+    // update_stats recomputes from the full histories, so a server slot's
+    // stats are current at every read and cost nothing per idle slot. The
+    // client still recomputes on each stats read. rtt and jitter in
+    // milliseconds, loss as a percentage.
     float rtt;
     float jitter;
     float packet_loss;
@@ -228,19 +220,56 @@ struct rocketnet_ack_endpoint_t
     int has_rtt_sample;                         // any first-ack sample has landed
 
     // Latched by process_block the first time a sequence recorded as a
-    // keep-alive is newly acknowledged. This is the peer's CLAIM to have
+    // keep-alive is newly acknowledged. This is the client's CLAIM to have
     // received a keep-alive -- and so to hold its client index and be
     // connected, since a keep-alive carries the index and processing one is
     // the client's only transition to _connected_. It is a claim and not a
-    // proof: an ack block is the peer's own statement about its own receive
+    // proof: an ack block is the client's own statement about its own receive
     // state, and no receiver can verify it. _Acks_ requires a block to name
-    // only sequences its sender opened; a peer that violates that latches
+    // only sequences its sender opened; a client that violates that latches
     // this bit without its index and strands only itself. It is what
     // _Keep-alive generation_ flips the suppression regime on; see
     // rocketnet_server_protocol_write_keep_alive_if_due. Cleared by reset,
     // so a reused slot starts with no claim recorded.
 
     uint8_t keep_alive_acked;
+
+    // The running aggregates (sdk/rocketnet_ack.cpp, tla/RNServerStats.tla).
+    // Every counted window is a function of its high-water mark, the same
+    // one update_stats walks, so nothing here stores an edge: the sent
+    // window is [base, top] with base = max(1, highest - N + 1) and top =
+    // min(highest, base + N/2 - 1); its loss-eligible part ends at
+    // highest - N/2. Send times rise with sequence (update refuses a time
+    // that goes backwards), so the sent spans are read at the lowest and
+    // highest counted sequences. Receive times do not follow sequence
+    // (reordering, late and duplicate arrivals), so the counted received
+    // records are linked in receive-time order through their ring slots,
+    // the links held in the records themselves.
+    // All zero is the empty state.
+
+    uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
+    uint64_t stats_acked_bytes;                 // of those, acknowledged
+    uint64_t stats_sent_low;                    // lowest and highest counted sequence; 0 = none
+    uint64_t stats_sent_high;
+    uint64_t stats_acked_low;                   // lowest and highest acknowledged counted sequence; 0 = none
+    uint64_t stats_acked_high;
+    double stats_sent_low_time;                 // send times at those sequences, kept here so
+    double stats_sent_high_time;                // publishing reads no cold record
+    double stats_acked_low_time;
+    double stats_acked_high_time;
+    uint32_t stats_sent_count;                  // counted sent records
+    uint32_t stats_acked_count;                 // of those, acknowledged
+    uint32_t stats_eligible_count;              // counted records in the loss-eligible part
+    uint32_t stats_eligible_unacked;            // of those, unacknowledged
+    uint64_t stats_received_bytes;
+    double stats_received_low_time;             // receive times at the list's head and tail
+    double stats_received_high_time;
+    uint32_t stats_received_count;
+    uint16_t stats_received_head;               // slot received earliest; valid while the count is nonzero
+    uint16_t stats_received_tail;               // slot received latest
+    double stats_rtt_sum;                       // sum and count of the positive rtt samples
+    uint32_t stats_rtt_count;
+    uint32_t stats_pad;
 
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
 
@@ -260,7 +289,18 @@ struct rocketnet_ack_endpoint_t
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
     struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
+
+    // the minimum positive rtt sample: a min tree over rtt_history, node k
+    // the minimum of nodes 2k and 2k+1, a node at or past the history size
+    // the history entry it names (an empty or non-positive entry reads as
+    // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
+    float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
 };
+
+static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
+               "the rtt min tree needs a power-of-two history" );
+static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE <= 65536,
+               "the received list links are 16-bit slots" );
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
@@ -284,14 +324,14 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 //
 //   RECORDED         the slot was empty or its record was acknowledged:
 //                    nothing was lost from the history.
-//   EVICTED_LOST     the evicted record was never acknowledged and the peer
+//   EVICTED_LOST     the evicted record was never acknowledged and the receiver
 //                    has acknowledged a sequence at least
 //                    ROCKETNET_LOSS_PACKET_THRESHOLD above it (RFC 9002
 //                    6.1.1): the packet is known lost on the path. An outcome,
 //                    counted on SEND_HISTORY_LOST.
 //   EVICTED_UNKNOWN  the evicted record was never acknowledged and no such
 //                    later acknowledgment exists: its fate is unknown (a
-//                    silent peer, or a window too small for the path). A
+//                    silent receiver, or a window too small for the path). A
 //                    refusal of history, counted on SEND_HISTORY_OVERFLOW.
 //   REFUSED_STALE    the write was not recorded: the slot already holds this
 //                    or a newer sequence, or the writer fell behind the
@@ -370,8 +410,8 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 
-// Shared six-field result for direct worker-history calculation. The caller
-// owns the history exclusively while computing; this function never mutates it.
+// The six-field result of the reference recompute over a standalone history.
+// The function never mutates the history.
 struct rocketnet_ack_stats_result_t
 {
     float rtt, jitter, packet_loss, sent_kbps, received_kbps, acked_kbps;

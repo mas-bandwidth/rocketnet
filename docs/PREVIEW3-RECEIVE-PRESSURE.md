@@ -6,7 +6,7 @@ real message objects and encrypted client/server protocol engines.
 
 The test temporarily sets the SDK receive delivery capacity to zero. This is
 explicit fault injection: normal delivery storage reserves `W + Du` entries,
-so this does not establish a naturally reachable overflow with a conforming peer.
+so this does not establish a naturally reachable overflow with a conforming sender.
 It verifies the failure boundary even when storage cannot accept a message.
 
 Before the change, both directions fail: the connection disconnects with

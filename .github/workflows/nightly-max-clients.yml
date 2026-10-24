@@ -1,0 +1,105 @@
+# The nightly 10000-client build proof. rocketnet holds 1000 clients in its
+# default configuration and 10000 through the ROCKETNET_MAX_CLIENTS build
+# setting, never out of the box (BUILDING.md, "Maximum clients"). Each leg
+# builds every default target with -DROCKETNET_MAX_CLIENTS=10000 at the strict
+# flags (zero warnings: -Werror), runs the unit suite, and runs the bounded
+# loopback load of all 10000 clients for 30 seconds with the census exact.
+# Four legs: gcc and clang, each at ROCKETNET_DEV ON (development) and OFF
+# (production). docs/QUALIFICATION-max-clients-10000.md records a run.
+#
+# The load runs LOAD_PROFILE=light: the SDK's default per-client config plans
+# about 183 GB for a 10000-client server (BUILDING.md, "Maximum clients": a
+# 10000-client server sets lighter per-client limits for its game), and the
+# light profile is that lighter config, about 25 GB planned for the server
+# and its 10000 in-process clients. A host with less available memory than
+# the plan fails the leg by name before the load runs; it is never skipped.
+#
+# Nightlies are exempt from the two-minute rule: each leg builds from clean
+# and runs the load for 30 seconds plus connect and drain. The multi-hour
+# 10000-client soak is a separate job.
+
+name: nightly-max-clients
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  max-clients:
+    name: max-clients 10000 (${{ matrix.compiler }}, DEV ${{ matrix.dev }})
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        dev: [ON, OFF]
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 90
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ clang clang++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing libcurl; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build 10000 (${{ matrix.compiler }}, DEV ${{ matrix.dev }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.compiler }}" = clang ]; then
+            export CC=clang CXX=clang++
+          fi
+          rm -rf build-max-clients
+          cmake -S . -B build-max-clients -DCMAKE_BUILD_TYPE=Release \
+            -DROCKETNET_MAX_CLIENTS=10000 -DROCKETNET_DEV=${{ matrix.dev }}
+          cmake --build build-max-clients --parallel 4 2>&1 | tee build-max-clients.log
+          if grep -q "warning:" build-max-clients.log; then
+            echo "BUILD warnings in the 10000 build:"
+            grep "warning:" build-max-clients.log
+            exit 1
+          fi
+
+      - name: Unit suite
+        shell: bash
+        run: ./bin/test
+
+      - name: Check host memory against the 10000 load plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan=$(env LOAD_PROFILE=light LOAD_PLAN_ONLY=1 ./bin/load 10000 30 | grep '^load_plan:' | tail -n 1) || true
+          echo "LOAD_PLAN $plan"
+          case "$plan" in *verdict=PASS*) ;; *) echo "LOAD plan FAIL"; exit 1 ;; esac
+          need_bytes=$(echo "$plan" | sed -E "s/.*total_public_required_bytes=([0-9]+).*/\1/")
+          avail_kib=$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)
+          avail_bytes=$((avail_kib * 1024))
+          if [ "$need_bytes" -gt "$avail_bytes" ]; then
+            echo "LOAD host lacks room on $RUNNER_NAME: need $need_bytes bytes, available $avail_bytes"
+            exit 1
+          fi
+          echo "LOAD host_room=OK need_bytes=$need_bytes available_bytes=$avail_bytes"
+
+      - name: Bounded load 10000 30 (loopback, light profile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          env LOAD_PROFILE=light ./bin/load 10000 30 | tee load-10000.log
+          grep -q '^load: connected=10000 ' load-10000.log
+          grep -q ' resource_baseline=PASS ' load-10000.log
+          grep -q ' verdict=PASS$' load-10000.log

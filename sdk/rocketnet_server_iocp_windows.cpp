@@ -420,7 +420,7 @@ static void rocketnet_iocp_worker( void * argument )
     {
         if ( iocp->stopping.load( std::memory_order_acquire ) )
         {
-            // Every worker cancels after its last potential repost. A peer
+            // Every worker cancels after its last potential repost. A sibling worker
             // may have read stopping=false before another worker's cancel;
             // its next pass cancels that late post as well.
             if ( iocp->socket != INVALID_SOCKET &&

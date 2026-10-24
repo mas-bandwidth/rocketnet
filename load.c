@@ -4,9 +4,9 @@
 
     Load: single-process many-client load harness driving the public API.
     Stands up one public server (rocketnet_server_t) and N public clients
-    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
-    on loopback, connects every client within 10 seconds, drives the selected
-    profile (the existing one message per client per update in each
+    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS, 1000 by default) in
+    one process on loopback, connects every client within 10 seconds, drives
+    the selected profile (the existing one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
     message is reliable-ordered). LOAD_MESSAGES_PER_CLIENT_SECOND optionally
@@ -52,6 +52,9 @@
     when the result is below 2 fds per client plus 64, so `ulimit -n 512`
     fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
+    A -DROCKETNET_MAX_CLIENTS=10000 build runs `LOAD_PROFILE=light load 10000
+    30` nightly (.github/workflows/nightly-max-clients.yml); the default
+    profile's per-client config plans about 183 GB for that server.
 */
 
 /* the title's protocol id: the server config's and every token's */
@@ -1095,7 +1098,6 @@ int main( int argc, char ** argv )
            The 100-client slice runs every 10 ms: at 1..100 clients each
            client updates at 100 Hz (25.6 kbps payload; 2.5x budget headroom).
            Intermediate populations follow the number of slices per round. */
-        server_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         server_config.max_fragmented_messages = 1;
         server_config.per_client_send_kbps = 64;
         server_config.num_channels = 8;
@@ -1106,7 +1108,6 @@ int main( int argc, char ** argv )
         server_config.send_queue_messages = 16;
         server_config.packets_in_flight = 16;
 
-        client_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         client_config.max_fragmented_messages = 1;
         client_config.send_kbps = 64;
         client_config.num_channels = 8;

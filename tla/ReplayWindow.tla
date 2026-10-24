@@ -12,7 +12,7 @@
 (* and advance (the mark after the open).  A third reads it: the ack block *)
 (* builder, sdk/rocketnet_ack.cpp:48-52 and 54-137, enumerates the same    *)
 (* bits between the floor and the high-water mark, so what the window says *)
-(* is what the peer is told was received (STANDARD.md, Replay Protection   *)
+(* is what the sender is told was received (STANDARD.md, Replay Protection *)
 (* and Acks).                                                              *)
 (*                                                                         *)
 (* The window has one job: inside the retained range (highest - W,         *)
@@ -267,7 +267,7 @@ NoAdvanceBeforeConnect ==
 
 \* The harm behind OV-34: the ack block names only packets a slot processed.
 \* A sequence marked on a pending mapping and then ignored would be reported
-\* to the peer as received although nothing processed it.
+\* to the sender as received although nothing processed it.
 AckReportsOnlyProcessed ==
     \A s \in Seqs : AckReports(s) => s \in processed
 
