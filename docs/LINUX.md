@@ -223,7 +223,10 @@ stay in the completion queue for a later call and are counted
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
-  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`
+  (on current main 16 reassembly slots at 1000 clients is refused at create by
+  the memory plan whatever the limit; `1000 1416 0 io_uring 0`, the default
+  slots, is the geometry `tools/check_memlock.sh` measures):
   on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
   (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
   for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are single-server measurements.
@@ -541,7 +544,14 @@ other processes of its user, so every CI runner of the user on a host shares
 the budget: `tools/check_memlock.sh`, which CI runs before the functional
 suite on the Linux legs, prints the limit, the per-server need on this kernel
 and PASS when the limit is at least the user's runners times the per-case
-need, else FAIL. **The runner limit is 1048576 KiB (`LimitMEMLOCK=1G`)** on
+need, else FAIL. Its per-server measurement counts the user's other locked
+pages too (1328 to 2608 KiB for one default server on amd-1 on 2026-10-24,
+with the runners busy, where 656 KiB was measured on a quiet host), so a
+measurement over the per-case need is printed as a note, never a FAIL. Runner
+services at `LimitMEMLOCK=1G` were confirmed in `/proc/<Runner.Listener
+pid>/limits` on amd-1, amd-2, amd-3 and vision on 2026-10-24, and the check
+PASSes there under the user manager's limit (`systemd-run --user --wait --pipe
+bash tools/check_memlock.sh`). **The runner limit is 1048576 KiB (`LimitMEMLOCK=1G`)** on
 every fleet host whose kernel is after 6.8; a host already higher (the 6.8
 hosts carry about 8 to 16 GiB) keeps its limit. The same 26 cases at once,
 with the fleet's other work of that user on the host, refused 5 at 8192 KiB
