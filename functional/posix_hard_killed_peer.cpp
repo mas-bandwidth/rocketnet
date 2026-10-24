@@ -195,6 +195,13 @@ struct posix_hk_live_t
     double max_gap_down;
 };
 
+// every payload carries the counting epoch it was sent in (byte 2), and a
+// payload counts only in the epoch it was sent in: a case that counts from
+// zero starts a new epoch, so a payload still in flight from before the reset
+// is never counted after it, however long a loaded host takes to deliver it
+
+static uint8_t posix_hk_epoch = 0;
+
 static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_transport_t * client )
 {
     memset( &live, 0, sizeof(live) );
@@ -222,7 +229,7 @@ static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::
         {
             int bytes = 0;
             uint8_t * data = rocketnet_client_transport_payload( live[i].client, p, &bytes );
-            if ( !data || bytes != (int) sizeof(payload) || data[0] != 0xD0 )
+            if ( !data || bytes != (int) sizeof(payload) || data[0] != 0xD0 || data[2] != posix_hk_epoch )
                 continue;
             live[i].received_down++;
             if ( measure && live[i].last_down > 0.0 && now - live[i].last_down > live[i].max_gap_down )
@@ -239,7 +246,7 @@ static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::
         int slot = -1;
         int bytes = 0;
         uint8_t * data = rocketnet_server_transport_payload( server, p, &slot, &bytes );
-        if ( !data || bytes != (int) sizeof(payload) || data[0] != 0x0U )
+        if ( !data || bytes != (int) sizeof(payload) || data[0] != 0x0U || data[2] != posix_hk_epoch )
             continue;
         for ( size_t i = 0; i < live.size(); i++ )
         {
@@ -263,6 +270,7 @@ static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::
         memset( payload, 0, sizeof(payload) );
         payload[0] = 0xD0;
         payload[1] = (uint8_t) slot;
+        payload[2] = posix_hk_epoch;
         rocketnet_server_transport_send_packet( server, slot, payload, (int) sizeof(payload) );
         if ( sent_to_slot_total )
             sent_to_slot_total[slot]++;
@@ -286,6 +294,7 @@ static double posix_hk_tick( struct rocketnet_server_transport_t * server, std::
             memset( payload, 0, sizeof(payload) );
             payload[0] = 0x0U;
             payload[1] = (uint8_t) i;
+            payload[2] = posix_hk_epoch;
             rocketnet_client_transport_send_packet( live[i].client, payload, (int) sizeof(payload) );
             rocketnet_client_transport_send_packets( live[i].client );
             live[i].sent_up++;
@@ -360,13 +369,28 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
 }
 
 // drain in-flight traffic without sending, so sent and received counts can
-// be compared exactly
+// be compared exactly. with case_name set, the drain also waits for the event
+// it is about: every payload sent in this epoch received, both directions. a
+// loaded host may take any wall time to deliver them, so that wait is bounded
+// by polls, and the wall cap is a hang guard that names the case.
 
-static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live )
+static bool posix_hk_all_counted( const std::vector<posix_hk_live_t> & live )
 {
+    for ( size_t i = 0; i < live.size(); i++ )
+        if ( live[i].received_up < live[i].sent_up || live[i].received_down < live[i].sent_down )
+            return false;
+    return true;
+}
+
+static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, const char * case_name )
+{
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name ? case_name : "posix_hk_quiesce", 60.0, 10000 );
     const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 0.25 )
+    while ( rocketnet_platform_time() - start < 0.25 || ( case_name && !posix_hk_all_counted( live ) ) )
     {
+        if ( case_name )
+            posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
         const double now = rocketnet_platform_time();
         for ( size_t i = 0; i < live.size(); i++ )
         {
@@ -376,7 +400,7 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
             {
                 int bytes = 0;
                 uint8_t * data = rocketnet_client_transport_payload( live[i].client, p, &bytes );
-                if ( data && bytes == 32 && data[0] == 0xD0 )
+                if ( data && bytes == 32 && data[0] == 0xD0 && data[2] == posix_hk_epoch )
                     live[i].received_down++;
             }
         }
@@ -387,7 +411,7 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
             int slot = -1;
             int bytes = 0;
             uint8_t * data = rocketnet_server_transport_payload( server, p, &slot, &bytes );
-            if ( !data || bytes != 32 || data[0] != 0x0U )
+            if ( !data || bytes != 32 || data[0] != 0x0U || data[2] != posix_hk_epoch )
                 continue;
             for ( size_t i = 0; i < live.size(); i++ )
                 if ( live[i].slot == slot )
@@ -653,7 +677,8 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
 
     // let the handshake's own traffic settle, then count from zero
 
-    posix_hk_quiesce( server, live );
+    posix_hk_quiesce( server, live, NULL );
+    posix_hk_epoch++;
     for ( size_t i = 0; i < 3; i++ )
     {
         live[i].sent_up = live[i].received_up = live[i].sent_down = live[i].received_down = 0;
@@ -684,7 +709,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
         posix_hk_tick( server, live, true, NULL );
         posix_hk_sleep_rest_of_tick( tick_start );
     }
-    posix_hk_quiesce( server, live );
+    posix_hk_quiesce( server, live, "test_posix_send_to_closed_port" );
 
     double worst_gap = 0.0;
     for ( size_t i = 0; i < 3; i++ )
@@ -744,10 +769,17 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
     posix_hk_connect_all( server, live, "test_posix_client_server_gone" );
     const double connected_in = rocketnet_platform_time() - server_start;
 
-    for ( int t = 0; t < 30; t++ )
+    // thirty ticks of traffic, then on until a payload has crossed each way:
+    // the wait for arrival is bounded by ticks, not by wall time, and the
+    // wall cap is a hang guard that names the case
+
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, "test_posix_client_server_gone", 60.0, POSIX_HK_CONNECT_TICKS );
+    for ( int t = 0; t < 30 || live[0].received_down == 0 || live[0].received_up == 0; t++ )
     {
         const double tick_start = rocketnet_platform_time();
         posix_hk_tick( server, live, true, NULL );
+        posix_hard_killed_require( rocketnet_bounded_wait_poll( wait ) );
         posix_hk_sleep_rest_of_tick( tick_start );
     }
     printf( "posix_client_server_gone server=%s family=%s client=%s: port %d closed for 1.0s, connected %.2fs after the server came up, down %llu up %llu\n",
