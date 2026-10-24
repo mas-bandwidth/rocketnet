@@ -646,7 +646,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    // tla/RNSlots.tla TransportAck: feeds each acked packet id to the slot it was opened on.
+    // tla/RNSlots.tla TransportAck: feeds the transport's acked packet ids to the slot each one was opened on.
     {
         const int * client_index = NULL;
         const uint64_t * packet_ids = NULL;
@@ -667,7 +667,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
     }
 
-    // tla/RNSlots.tla TransportOpen: feeds each opened payload to the slot it arrived on.
+    // tla/RNSlots.tla TransportOpen: feeds each opened payload to the slot it arrived on (RNChannel OpenPacket, DeliverMessage).
     {
         const int * client_index = NULL;
         uint8_t * const * payload_data = NULL;
@@ -1045,9 +1045,10 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
     return rn_message_object_finish( object, index, bytes );
 }
 
-// tla/RNSlots.tla Send: writes one requested record into a transport frame under a free packet id.
-// The endpoint plans each packet, the object starts one frame from the transport at a time,
-// the endpoint writes it in place, and the object finishes it under the transport's packet id.
+// tla/RNSlots.tla Send: writes one requested record into a transport frame under the transport's packet id (RNSlots Send).
+// RNChannel WritePacket with the send budget, for one connection: the endpoint plans the frame
+// (rn_endpoint_next_packet_bytes), the object starts one frame from the transport at a time,
+// the endpoint writes it in place, and the object finishes it.
 
 static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
