@@ -679,6 +679,81 @@ static void test_message_client_start_dropped_before_transport_connected()
 }
 REGISTER_UNIT_TEST( test_message_client_start_dropped_before_transport_connected );
 
+// A finish whose bytes_written is outside 1 .. the reservation is refused and
+// aborts its start; a second start while one is pending is refused too. Each
+// refusal logs exactly one ERROR line naming the refused size and the reserved
+// size (or the pending start). Control flow, return values, counters and the
+// abort are unchanged: this pins the log lines.
+static int g_mo_error_lines = 0;
+static char g_mo_last_line[512];
+
+static void mo_log_capture( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+        return;
+    const size_t n = length < sizeof( g_mo_last_line ) - 1 ? length : sizeof( g_mo_last_line ) - 1;
+    memcpy( g_mo_last_line, message, n );
+    g_mo_last_line[n] = '\0';
+    g_mo_error_lines++;
+}
+
+static void test_message_refused_finish_and_start_log_one_error()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    rn_message_object_t * object = &pair.server->object;
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    g_mo_error_lines = 0;
+    rocketnet_log_function( mo_log_capture, NULL );
+
+    const int channel = 0;
+    // both finish appusals, on a fitting-unreliable in-place start (the
+    // in-place build or whole-frame refusal) and a reliable region start: each
+    // logs one error naming the bytes and the reservation, returns 0, and
+    // leaves no start pending
+    for ( int mode = 0; mode < 2; mode++ )
+    {
+        const int reliability = mode == 0 ? ROCKETNET_RELIABILITY_UNRELIABLE : ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
+        uint8_t * p = rn_message_object_start( object, 0, channel, reliability, 10 );
+        check( p != NULL );
+        if ( !p ) break;
+        const uint64_t line_before = (uint64_t) g_mo_error_lines;
+        check( rn_message_object_finish( object, 0, 0 ) == 0 );     // bytes_written 0
+        check( (uint64_t) g_mo_error_lines == line_before + 1 );
+        check( strstr( g_mo_last_line, "message finish refused" ) != NULL );
+
+        p = rn_message_object_start( object, 0, channel, reliability, 10 );
+        check( p != NULL );
+        if ( !p ) break;
+        check( rn_message_object_finish( object, 0, 11 ) == 0 );    // past the reservation
+        check( (uint64_t) g_mo_error_lines == line_before + 2 );
+        check( strstr( g_mo_last_line, "message finish refused" ) != NULL );
+    }
+
+    // a second start while one is pending: NULL, counted REFUSED, one error line
+    const uint64_t refused_before = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    const uint64_t line_before = (uint64_t) g_mo_error_lines;
+    uint8_t * first = rn_message_object_start( object, 0, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 );
+    check( first != NULL );
+    check( rn_message_object_start( object, 0, channel, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 ) == NULL );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before + 1 );
+    check( (uint64_t) g_mo_error_lines == line_before + 1 );
+    check( strstr( g_mo_last_line, "start is already pending" ) != NULL );
+    check( rn_message_object_finish( object, 0, 10 ) != 0 );         // the first start still finishes
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    mo_pair_teardown( &pair );
+}
+REGISTER_UNIT_TEST( test_message_refused_finish_and_start_log_one_error );
+
 static const uint8_t * mo_find( const uint8_t * haystack, int haystack_bytes, const uint8_t * needle, int needle_bytes )
 {
     for ( int i = 0; i + needle_bytes <= haystack_bytes; i++ )
@@ -904,6 +979,116 @@ static void test_release_returns_room()
 
     mo_pair_teardown( &pair );
 }
+
+// A code 1 in-place start reserves the record shape's header (finding 8), and
+// release finds every held view after receive, out of order and across the
+// scan's wrap (finding 12).
+static void test_message_release_after_receive_and_in_place_header()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    config.num_channels = 4;
+    config.reliable_messages_in_flight = 64;
+    config.unreliable_messages_per_update = 64;
+    config.packets_per_update = 64;
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config, 20000, 20000 );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    // ROCKETNET_MAX_CHANNELS is 32, so the start is reached with the object's
+    // channel count and the send table widened for the start alone; the start
+    // is then aborted before the channel counters are read.
+    rn_message_connection_t * connection = mo_client_connection( pair.clients[0] );
+    std::vector<rn_channel_send_t> wide_send( 512 );
+    for ( size_t i = 0; i < wide_send.size(); i++ )
+    {
+        memset( &wide_send[i], 0, sizeof( wide_send[i] ) );
+        wide_send[i].queue_head = RN_DESCRIPTOR_NONE;
+        wide_send[i].queue_tail = RN_DESCRIPTOR_NONE;
+    }
+    rn_channel_send_t * saved_send = connection->region->channel_send;
+    connection->region->channel_send = wide_send.data();
+    const int channels[2] = { 255, 256 };
+    for ( int c = 0; c < 2; c++ )
+    {
+        struct rocketnet_message_record_t shape = {};
+        shape.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+        shape.channel = (uint32_t) channels[c];
+        const int header = rocketnet_message_record_header_bytes( &shape );
+        check( header == ( channels[c] >= 256 ? 11 : 10 ) );
+
+        pair.clients[0]->object.config.num_channels = channels[c] + 1;
+        uint8_t * p = rocketnet_message_client_start( pair.clients[0], channels[c], ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 128 );
+        pair.clients[0]->object.config.num_channels = 4;
+        check( p != NULL );
+        check( connection->pending_header == header );
+        check( connection->pending_channel == channels[c] );
+        if ( pair.clients[0]->object.in_place == 2 )
+            check( p == connection->unreliable_build.writer.payload + connection->unreliable_build.writer.bytes + header );
+        else
+            check( pair.clients[0]->object.in_place == 1 && p == pair.clients[0]->object.in_place_payload + header );
+        check( rocketnet_message_client_finish( pair.clients[0], 0 ) == 0 );
+    }
+    connection->region->channel_send = saved_send;
+
+    const int messages = 64;
+    for ( int m = 0; m < messages; m++ )
+    {
+        uint8_t * q = rocketnet_message_client_start( pair.clients[0], 1, ROCKETNET_RELIABILITY_UNRELIABLE, 32 );
+        check( q != NULL );
+        mo_fill( q, (uint32_t) m, 32 );
+        check( rocketnet_message_client_finish( pair.clients[0], 32 ) != 0 );
+    }
+    rocketnet_message_client_send_packets( pair.clients[0] );
+
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    std::vector<const uint8_t *> views;
+    for ( ;; )
+    {
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        if ( !rn_message_object_receive( &pair.server->object, NULL, NULL, &data, &bytes ) )
+            break;
+        check( data != NULL && bytes == 32 );
+        views.push_back( data );
+    }
+    check( (int) views.size() == messages );
+
+    rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    check( slot->hot->held == (uint32_t) messages );
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+
+    // first, then last behind a forced cursor (the wrap), then middle
+    rocketnet_message_server_release( pair.server, views[0] );
+    check( slot->hot->held == (uint32_t) messages - 1 );
+    const uint32_t cursor = slot->hot->cursors[0];
+    slot->hot->cursors[0] = (uint32_t) ( messages / 2 );
+    rocketnet_message_server_release( pair.server, views[(size_t) ( messages - 1 )] );
+    check( slot->hot->held == (uint32_t) messages - 2 );
+    rocketnet_message_server_release( pair.server, views[(size_t) ( messages / 2 )] );
+    check( slot->hot->held == (uint32_t) messages - 3 );
+    slot->hot->cursors[0] = cursor;
+
+    for ( int m = messages - 2; m > 0; m-- )
+    {
+        if ( m == messages / 2 )
+            continue;
+        const uint64_t before = rocketnet_api_misuse_count();
+        rocketnet_message_server_release( pair.server, views[(size_t) m] );
+        check( rocketnet_api_misuse_count() == before );
+    }
+    check( slot->hot->held == 0 );
+    check( rocketnet_api_misuse_count() == misuse_before );
+
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    mo_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_message_release_after_receive_and_in_place_header );
 
 // ---------------------------------------------------------------------------
 // both shipped types end to end over the pair, both directions, with loss:

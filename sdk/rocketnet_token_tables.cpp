@@ -217,9 +217,11 @@ static void rocketnet_token_table_unlink( struct rocketnet_token_table_t * table
 // protect_claims so a live claim is never replaced or evicted: it is the
 // token-to-address claim that keeps one token to one half-open mapping until
 // the handshake deadline. A binding record leaves protect_claims clear, as
-// the history it writes is the documented capacity-bounded one. The scans run
-// only on the record path, which is bounded by genuinely issued tokens; find
-// stays hot and short. A used victim is unlinked from its own chain here.
+// the history it writes is the documented capacity-bounded one. The same
+// deadline scan also runs on every cookie-validated request before the
+// signature, via rocketnet_used_token_history_claim_can_record: one pass over
+// the claim table's capacity, returning at the first expired or released slot.
+// Find stays hot and short. A used victim is unlinked from its own chain here.
 
 static int rocketnet_token_table_select_slot( struct rocketnet_token_table_t * table,
                                               uint64_t current_timestamp,

@@ -97,5 +97,35 @@ static void test_slots_same_batch_churn_discards_the_old_connection()
     check( rn_slots_admit( &slots, 0, 100 ) == RN_SLOTS_DISCARD );
 }
 
+static void slots_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+}
+
+// An out-of-range count is refused as zero slots, never clamped to a working
+// machine of the wrong size; the boundary count keeps every slot.
+static void test_slots_init_out_of_range_count_has_no_slots()
+{
+    rocketnet_assert_function( slots_quiet_assert );
+    struct rn_slots_t slots;
+
+    rn_slots_init( &slots, -1 );
+    check( slots.max_clients == 0 );
+    check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_NONE );
+    check( rn_slots_admit( &slots, 0, 7 ) == RN_SLOTS_DISCARD );
+
+    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS + 1 );
+    check( slots.max_clients == 0 );
+    check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_NONE );
+    check( rn_slots_admit( &slots, 0, 7 ) == RN_SLOTS_DISCARD );
+
+    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS );
+    check( slots.max_clients == ROCKETNET_MAX_CLIENTS );
+    check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_RESET );
+
+    rocketnet_assert_function( NULL );
+}
+
 REGISTER_UNIT_TEST( test_slots_observe_and_admit );
 REGISTER_UNIT_TEST( test_slots_same_batch_churn_discards_the_old_connection );
+REGISTER_UNIT_TEST( test_slots_init_out_of_range_count_has_no_slots );

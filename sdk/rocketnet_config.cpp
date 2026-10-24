@@ -698,7 +698,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a row whose max is above its min has that range (the
-                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                // step_driven row's 0 .. 1); a 0 .. 0 row takes any value
                 if ( field->max_value > field->min_value )
                 {
                     uint64_t value;
