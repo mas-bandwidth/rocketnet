@@ -1023,10 +1023,10 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6680832 );
-    check( layout.region_bytes == 6680832 );
-    check( rocketnet_message_connection_bytes( &config ) == 6680832 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6680832 );
+    check( layout.formula_bytes == 6680960 );
+    check( layout.region_bytes == 6680960 );
+    check( rocketnet_message_connection_bytes( &config ) == 6680960 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6680960 );
 
     const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 56 * C );
@@ -1039,7 +1039,7 @@ static void test_channels_allocator_layout()
     check( layout.bytes[RN_PART_SEND_STORE] == S );
     check( layout.bytes[RN_PART_SENT_PACKETS] + layout.bytes[RN_PART_SENT_INDEX] + layout.bytes[RN_PART_SENT_REFS] == 128 * P );
     check( layout.bytes[RN_PART_DELIVERIES] == 24 * ( W + Du ) );
-    check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) * Ru );
+    check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 2 * sizeof(uint32_t) ) * Ru );
     check( layout.bytes[RN_PART_RECEIPTS] == 16 * Rq );
     check( layout.bytes[RN_PART_RESEND_FIFO] == 8 * W );
     check( layout.bytes[RN_PART_SEND_SPANS] == B );
@@ -1590,10 +1590,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6680832" ) != NULL );
-    check( strstr( text, "formula bytes 6680832" ) != NULL );
-    check( strstr( text, "1000 connections 6680832000" ) != NULL );
+    check( strstr( text, "56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 6680960" ) != NULL );
+    check( strstr( text, "formula bytes 6680960" ) != NULL );
+    check( strstr( text, "1000 connections 6680960000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
