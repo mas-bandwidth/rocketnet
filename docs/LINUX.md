@@ -512,7 +512,7 @@ cover a hard-killed client and the socket error paths per transport cell.
 `max_clients`: the plan's `sockets` field (`bench/transport_memory.cpp`).
 For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
 (the plan output in section 10). The default soft limit of 1024 is ample; the
-section 10 commands create 1000-client `gso` and 32-queue `io_uring` servers
+section 10 commands create 1000-client `gso` and four-queue `io_uring` servers
 under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 (`sdk/rocketnet_driver_builtin.cpp`,
 `sdk/rocketnet_platform.cpp`), so a process that runs N clients needs about
@@ -630,12 +630,12 @@ make JOBS=4
 ./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory
-./bin/transport_memory 1000 1416 16 portable 0 --plan-only
-./bin/transport_memory 1000 1416 16 gso 0 --plan-only
-./bin/transport_memory 1000 1416 16 io_uring 0 --plan-only
-./bin/transport_memory 1000 1416 16 xdp 7 --plan-only
-bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 16 gso 0'
-bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 16 io_uring 32'
+./bin/transport_memory 1000 1416 1 portable 0 --plan-only
+./bin/transport_memory 1000 1416 1 gso 0 --plan-only
+./bin/transport_memory 1000 1416 1 io_uring 4 --plan-only
+./bin/transport_memory 1000 1416 1 xdp 7 --plan-only
+bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 1 gso 0'
+bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 1 io_uring 4'
 ```
 
 `./bin/functional` with no pin runs over the `auto` ladder, which on an
