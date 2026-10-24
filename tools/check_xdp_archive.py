@@ -87,7 +87,7 @@ DEFAULT_MAX_CLIENTS = 1000
 
 def build_max_clients(build):
     """The ROCKETNET_MAX_CLIENTS a build tree embedded its object with: the
-    third line of generated/xdp-build-settings.txt (CMakeLists.txt), or the
+    fourth line of generated/xdp-build-settings.txt (CMakeLists.txt), or the
     default when there is no build tree."""
     if build is None:
         return DEFAULT_MAX_CLIENTS
@@ -95,9 +95,9 @@ def build_max_clients(build):
     if not settings.exists():
         return DEFAULT_MAX_CLIENTS
     lines = settings.read_text(encoding="utf-8").splitlines()
-    if len(lines) < 3 or not lines[2].strip().isdigit():
+    if len(lines) < 4 or not lines[3].strip().isdigit():
         raise RuntimeError(f"{settings} names no ROCKETNET_MAX_CLIENTS")
-    return int(lines[2].strip())
+    return int(lines[3].strip())
 
 
 def embed(root, output, xxd, clang, max_clients):
