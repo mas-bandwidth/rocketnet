@@ -441,5 +441,55 @@ static void test_claim_released_with_integrity_limit_mapping()
 
     handshake_server_teardown( &test );
 }
+// Non-zero padding in an opened connection response should not be counted as
+// DID_NOT_OPEN or increment the integrity-failure count.
+static void test_response_nonzero_padding_is_not_an_integrity_failure()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+    test.server.handshake_deadline_seconds = 30;
+
+    struct rocketnet_address_t client_address;
+    check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process_from( &test, &client_address, request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );
+    check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+
+    uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    padding[0] = 1;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                      rocketnet_test_filter_value, 1, NULL,
+                                                      padding, (int) sizeof(padding),
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      mapping->client_ephemeral_public_key,
+                                                      mapping->keys.session_client_to_server );
+    check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    check( rocketnet_server_protocol_process_packet( &test.server, &client_address, packet, packet_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                      response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO] == 1 );
+    check( mapping->integrity_failures == 0 );
+
+    handshake_server_teardown( &test );
+}
 REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
 REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
+REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
