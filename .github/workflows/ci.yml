@@ -560,6 +560,11 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_xdp_archive.py
 
+      # One SDK source list for the library and every vendoring application.
+      - name: Every SDK source is in cmake/RocketnetSources.cmake
+        if: contains(matrix.leg, 'a')
+        run: python3 tools/check_sdk_sources.py
+
       - name: The build compiled and embedded the XDP program
         if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: test -s build/generated/server_xdp.o
