@@ -21,6 +21,7 @@ int rocketnet_unit_test_count();
 const char * rocketnet_unit_test_name( int index );
 void rocketnet_unit_prepare();
 int rocketnet_unit_run_named( const char * name );
+long rocketnet_unit_rss_bound_isolated( long ( *bound_mb )() );
 
 // the message layer's tests, in test_channels.cpp
 
@@ -261,6 +262,8 @@ int main( int argc, char ** argv )
     }
     else
     {
+        // the parent plans each declared bound under the cases' config isolation
+        *suite_case_rss_bound_caller() = rocketnet_unit_rss_bound_isolated;
         result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0 );
     }
 

@@ -168,6 +168,20 @@ inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
     return &head;
 }
 
+// The parent evaluates a declared bound. A bound plans the case's config, and
+// a suite whose cases isolate the config environment installs a caller that
+// evaluates the bound under that same isolation, so the parent plans what the
+// case will run with and never parses an ambient override itself. NULL calls
+// the bound as it is.
+typedef long ( *suite_case_rss_bound_function_t )();
+typedef long ( *suite_case_rss_bound_caller_t )( suite_case_rss_bound_function_t bound_mb );
+
+inline suite_case_rss_bound_caller_t * suite_case_rss_bound_caller()
+{
+    static suite_case_rss_bound_caller_t caller = NULL;
+    return &caller;
+}
+
 struct suite_case_rss_bound_registrar_t
 {
     suite_case_rss_bound_t entry;
@@ -213,7 +227,8 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
     {
         if ( name == entry->name )
         {
-            const long declared = entry->bound_mb();
+            const suite_case_rss_bound_caller_t caller = *suite_case_rss_bound_caller();
+            const long declared = caller ? caller( entry->bound_mb ) : entry->bound_mb();
             if ( declared > 0 )
                 planned = declared;
             break;

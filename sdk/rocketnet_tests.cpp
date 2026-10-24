@@ -14959,6 +14959,16 @@ void rocketnet_unit_prepare()
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }
 
+// A case's declared RSS bound, evaluated by the suite's parent under the same
+// config isolation the case runs in (rocketnet_unit_prepare): the bound plans
+// the config the case will create, and an ambient override such as an
+// unparsable ROCKETNET_SERVER_NUM_OS_CPUS never reaches the parent's planning.
+long rocketnet_unit_rss_bound_isolated( long ( *bound_mb )() )
+{
+    rocketnet_test_environment_t isolated;
+    return bound_mb();
+}
+
 int rocketnet_unit_test_count()
 {
     return (int) ( sizeof( rocketnet_unit_tests ) / sizeof( rocketnet_unit_tests[0] ) );
