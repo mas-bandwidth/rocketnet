@@ -1415,7 +1415,11 @@ struct rocketnet_receipt_t
 
 /// Each connection starts fresh.
 /// The last failure state remains until disconnect or the next connect.
-/// Connect opens a socket for the address family in the token.
+/// Connect opens a socket for the address family in the token. When the token
+/// names both families and the host can use both, connect opens a socket for
+/// each, the cookie request goes to both servers, and the first cookie commits
+/// the connection to the family that answered; the other socket is closed
+/// then. The token's lifetime and timeout bound the attempt as before.
 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
