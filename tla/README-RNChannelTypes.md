@@ -92,6 +92,18 @@ checked against the watermark, then collected in the future-state slot and
 compared with the held state there. Until that file follows the rule, the
 code is this witness.
 
+### Drain refusal is counted
+
+When the ordered successor opens an epoch, `Drain` may find a held sequenced
+record the watermark refuses. That branch (`DrainStale`) releases the hold,
+delivers nothing and, after the fix, adds the record to the receiver's
+`dropped` set; `DroppedCount(r)` is its count. `SequencedArrivedAccounted`
+(m7.4, "nothing is silent") requires every sequenced record that arrived to be
+in the delivered trace, still held, superseded, or dropped. The earlier code
+released the hold without counting it: `Broken = "DrainStaleSilent"` models
+that branch and `MCRNChannelBrokenDrainStaleSilent.cfg` fails
+`SequencedArrivedAccounted`.
+
 ## Shared delivery and comparison
 
 `DeliverMessage` is the common direct/held delivery function. Ordered delivery
@@ -174,6 +186,11 @@ runtime allocation design.
   never delivered: `InTurnDeliveredWhenComplete` fails. Checked by hand
   against the code: the second fragment takes the hold path, `gap` is
   negative against block 4 and it returns STALE with SEQUENCED_SUPERSEDED.
+- `BrokenDrainStaleSilent`: a sequenced record is held ahead of its epoch; the
+  ordered record opens the epoch and the drain releases the held record
+  without delivering or counting it. `SequencedArrivedAccounted` fails.
+  `MCRNChannelBrokenDrainStaleSilent.cfg` is the witness; the fixed
+  `DrainStale` branch adds it to `dropped`.
 
 ## Evaluation and measurements
 
