@@ -587,6 +587,11 @@ const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t 
 // platform socket is its portable or msgx transport's socket, NULL for any
 // other transport.
 void rocketnet_platform_inject_receive_errno_for_testing( int error );
+// the repeating form: the next count receives each return error (the
+// one-shot call is a count of 1), and the remaining count of those
+// injections not yet taken by a receive.
+void rocketnet_platform_inject_receive_errno_repeat_for_testing( int error, int count );
+int rocketnet_platform_receive_errno_remaining_for_testing( void );
 struct rocketnet_server_transport_t;
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
