@@ -103,6 +103,42 @@ Its own cases live in `tools/test_check_space_vendor.py` and run with
 `python3 tools/test_check_space_vendor.py`. They build temporary git
 repositories and read canned answers; no case opens a socket.
 
+## The space soak gate
+
+Vendoring the release byte for byte is not the same as running on it. The
+`space builds and soaks on the release` job in
+[release-check.yml](../.github/workflows/release-check.yml) runs
+`tools/space_release_soak.sh <space ref> 90`, after the vendor job and on the
+same triggers (a `v*` tag push and a manual dispatch, whose `space_ref` input
+defaults to `main`). The harness clones the application read-only into a
+temporary directory under `tmp/`, runs `tools/check_space_vendor.py --space-dir` on the clone, builds it with its own `make` (`./space env local`,
+then `make build-fast`), runs its `scripts/bot_swarm.sh 8 90`, and passes the
+dedicated server's `logs/server` and the swarm's output to
+`tools/check_space_soak_log.py`.
+
+The dedicated server pegs its loop to real time and logs every frame it
+drops. The log check fails on any dropped-frame line from the first frame on,
+with no warm-up window; any `large hitch detected!` line; a server exit
+before the bound (no `shutting down` line, a segmentation fault, or a
+shutdown less than the hold after the last client connected); a `BOTS FAIL`
+line; or no client connected. The harness prints one verdict line carrying
+the vendor and build results, the dropped-frame count, the hitch count and
+the swarm's `BOTS` line. A fail is reported with its lines; it is never
+retried into a pass, and the bound is never relaxed.
+
+The token is `SPACE_READ_TOKEN`, handed to git as an `http.extraHeader`
+through git's environment, never on a command line and never in a log.
+`SPACE_URL` points the clone at another URL (a bench's read-only deploy key
+alias), and then no token is read. The machine needs Linux with four or more
+CPUs, passwordless sudo, Go, cmake and libcurl headers. The owner reproduces
+a failure with the same command:
+
+    tools/space_release_soak.sh main 90
+
+Its log check's own cases live in `tools/test_check_space_soak_log.py` and run
+with `python3 tools/test_check_space_soak_log.py`, on canned logs. The
+multi-hour soak is a separate run, not this gate.
+
 ## Preview-2 qualification
 
 For `v1.0.0-preview-2`, fully recorded manual qualification is the release
@@ -165,6 +201,8 @@ whose required runs are green. Those runs are:
   the release version, and on the tag push itself.
 - **Release Check**'s `space vendors the release` job, dispatched on the
   release commit before the tag is cut, and again on the tag push itself.
+- **Release Check**'s `space builds and soaks on the release` job, in the same
+  dispatch and on the same tag push, after the vendor job.
 
 The nightly discovery and soak workflows are watches, not release gates, except
 for the bounded `nightly.yml` threaded-transport TSAN run listed above, which is
@@ -193,7 +231,8 @@ also be the commit the tag points at, not a later merge.
    re-vendor script so that `game/ThirdParty/rocketnet/` holds that commit,
    and commit the result with the pin in `game/ThirdParty/rocketnet/VENDOR.md`
    naming it. Then dispatch the `space vendors the release` gate on that
-   commit and let it pass before the tag is cut. The gate fails when the
+   commit and let it pass before the tag is cut; the same dispatch runs the
+   `space builds and soaks on the release` gate, which must pass too. The gate fails when the
    application pins another commit, when a vendored file is missing or extra,
    or when a vendored file's bytes differ from the released ones.
 7. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,

@@ -670,7 +670,6 @@ static void run_matrix( opts_t * o )
     st.status = status;
     st.cfg.seed = (uint32_t) o->seed;
     st.cfg.max_message_bytes = 262144;
-    st.cfg.max_payload_bytes = 16384;
     st.streams = (stream_t *) calloc( ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS, sizeof(stream_t) );
     st.cells = (cell_counts_t *) calloc( 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS, sizeof(cell_counts_t) );
     st.rtt = (double *) calloc( 200000, sizeof(double) );
