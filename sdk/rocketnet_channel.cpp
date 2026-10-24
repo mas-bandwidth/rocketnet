@@ -1300,6 +1300,10 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
         {
             item->resend = unsent ? 0 : 1;
+            // a refused resend is due now (last_send < 0) and still a resend:
+            // the commit of the retry is the one send that reached the wire
+            if ( !item->resend && rn_packet_builder_resend_pending( &ordered->builder, slot->number ) )
+                item->resend = 1;
             plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
             plan->count++;
         }

@@ -36,6 +36,7 @@
 
 #define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets ONE builder call tracks; the endpoint asks for one packet per call and counts the update's packets against the config's packets_per_update (1 .. 1024), so this is not the per-update limit
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
+#define ROCKETNET_PACKET_BUILDER_PENDING_RESENDS        128     // refused resends remembered until the packet that carries them commits
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 
 #define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // the four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
@@ -101,6 +102,11 @@ struct rn_packet_builder_t
         uint32_t payload_bytes;                 // the sealed payload's length L
         int admitted_wire_bytes;                // what the budget charged for it, to settle after sealing
     } packet[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+
+    // Numbers whose finish was refused after a real send. The due-now sentinel
+    // makes the retry look unsent; this list keeps it a resend until commit.
+    uint64_t pending_resend[ROCKETNET_PACKET_BUILDER_PENDING_RESENDS];
+    uint32_t pending_resend_count;
 };
 
 // Binds a builder to one connection. Allocates nothing. packets_per_update
@@ -163,6 +169,10 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
 // resend FIFO, due now, so the next update resends them first.
 
 void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int packet_index, double now );
+
+// True when `number` was already sent and the packet that carried the resend
+// was refused, so the retry is still a resend.
+int rn_packet_builder_resend_pending( const struct rn_packet_builder_t * builder, uint64_t number );
 
 // After sealing: refunds what the packet did not use, when the transport's
 // ack block came in under the bound admitted at write time

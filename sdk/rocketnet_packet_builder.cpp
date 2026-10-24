@@ -498,6 +498,8 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     return (int) builder->packets;
 }
 
+static void rn_builder_clear_pending_resend( struct rn_packet_builder_t * builder, uint64_t number );
+
 void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_index, uint64_t packet_id, double now )
 {
     if ( !builder || packet_index < 0 || packet_index >= (int) builder->packets || !builder->ack )
@@ -513,6 +515,40 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
     // a resend is counted when the packet carrying it is sent (6.4, RNResendTiming)
     for ( uint32_t i = 0; i < builder->packet[packet_index].resends; i++ )
         rn_builder_count( builder->region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
+
+    for ( uint32_t n = 0; n < count; n++ )
+        rn_builder_clear_pending_resend( builder, builder->packet[packet_index].numbers[n] );
+}
+
+static void rn_builder_note_refused_resend( struct rn_packet_builder_t * builder, uint64_t number )
+{
+    if ( rn_packet_builder_resend_pending( builder, number ) )
+        return;
+    if ( builder->pending_resend_count >= ROCKETNET_PACKET_BUILDER_PENDING_RESENDS )
+        return;
+    builder->pending_resend[builder->pending_resend_count++] = number;
+}
+
+static void rn_builder_clear_pending_resend( struct rn_packet_builder_t * builder, uint64_t number )
+{
+    uint32_t kept = 0;
+    for ( uint32_t i = 0; i < builder->pending_resend_count; i++ )
+    {
+        if ( builder->pending_resend[i] == number )
+            continue;
+        builder->pending_resend[kept++] = builder->pending_resend[i];
+    }
+    builder->pending_resend_count = kept;
+}
+
+int rn_packet_builder_resend_pending( const struct rn_packet_builder_t * builder, uint64_t number )
+{
+    if ( !builder )
+        return 0;
+    for ( uint32_t i = 0; i < builder->pending_resend_count; i++ )
+        if ( builder->pending_resend[i] == number )
+            return 1;
+    return 0;
 }
 
 void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int packet_index, double now )
@@ -524,7 +560,24 @@ void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int 
     if ( count == 0 )
         return;
 
-    rn_window_ack_packet_failed( builder->ack, builder->packet[packet_index].numbers, count, now );
+    // A number that has already been sent stays a resend when this finish is
+    // refused. A first send that never committed stays a first write.
+    rn_region_t * region = builder->region;
+    const uint32_t W = region->window;
+    const uint64_t * numbers = builder->packet[packet_index].numbers;
+    uint8_t refused_resend[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
+    const uint32_t noted = count < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS ? count : ROCKETNET_PACKET_BUILDER_MAX_NUMBERS;
+    for ( uint32_t i = 0; i < noted; i++ )
+    {
+        const uint32_t slot_index = (uint32_t) ( numbers[i] & ( W - 1 ) );
+        refused_resend[i] = region->send_numbers[slot_index].last_send >= 0.0;
+    }
+
+    rn_window_ack_packet_failed( builder->ack, numbers, count, now );
+
+    for ( uint32_t i = 0; i < noted; i++ )
+        if ( refused_resend[i] )
+            rn_builder_note_refused_resend( builder, numbers[i] );
 }
 
 bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_index, int actual_wire_bytes )
