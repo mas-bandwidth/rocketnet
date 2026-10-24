@@ -295,6 +295,7 @@ ClientConnects(i, t) ==
 Establish(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ state = "RUNNING" /\ slot[i].st = "HANDSHAKE"
     /\ LET s == slot[i].sess
            t == tokOf[s]
@@ -315,6 +316,7 @@ Establish(i) ==
 Deny(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ slot[i].st = "HANDSHAKE"
     /\ EndSlot(slot, i, "DENIED", FALSE)
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
@@ -323,6 +325,7 @@ Deny(i) ==
 SlotTimeout(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ slot[i].st \in {"HANDSHAKE", "CONNECTED"}
     /\ EndSlot(slot, i, "TIMED_OUT", FALSE)
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
@@ -420,8 +423,8 @@ SealWaiting(s) ==
     /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, ghosts, overspent>>
 
 \* Every step but a drop clears droppedIn, and every step but a
-\* DisconnectAll clears allBefore; the fair actions name both too, so that
-\* their fairness conditions name a whole step.
+\* DisconnectAll clears allBefore; the fair actions name both too, and leave
+\* the drain unchanged, so that their fairness conditions name a whole step.
 \* The drain's steps, whole: an update's allowance and one seal.
 UpdateStep == ServerUpdate /\ droppedIn' = {} /\ allBefore' = {}
 SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {}

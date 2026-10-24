@@ -34,8 +34,12 @@ A client owns one region; it is the same machine with one slot.
     the connection with that reason. A server kicks the slot; a client
     disconnects itself.
   - `Leave(s)`: an ordinary disconnect, not from exhaustion.
-  - `Reuse(s)`: the slot is freed and its region reset (`rn_region_reset`,
-    which is `rn_region_carve`).
+  - `Reuse(s)`: the slot is freed in O(1) (`rn_message_connection_release`,
+    sdk/rocketnet_message_server.cpp); its region keeps what the ended client
+    left, reachable by nothing, and the `Connect` that next takes the slot
+    carves it (`rn_region_reset`, which is `rn_region_carve`, at the Observe
+    that binds the slot: the lazy reset). Carving at the end as well cost the
+    update after a mass disconnect of 1000 clients about 11.5 ms.
 - **Fairness.** Weak fairness on `Kick(s)` and `Reuse(s)` for every slot.
 
 ## Properties
@@ -44,9 +48,12 @@ A client owns one region; it is the same machine with one slot.
   connected slot, the steps that change that slot are the kick to
   `Disconnected` with the reason kept, and a release that gives one record
   back; no further use, span or delivery takes room.
-- **`ReusedSlotStartsClean`** (invariant): a free slot has `used = 0`, no
-  exhaustion, no reason and no records, so the `Connect` that takes it sees a
-  fresh region. A connected slot holds records of its own client only.
+- **`ReusedSlotStartsClean`** (invariant): a free slot holds no client, so
+  what its region still holds is reachable by nothing. A connected slot holds
+  records of its own client only.
+- **`ConnectStartsClean`** (action property): the `Connect` that takes a slot
+  leaves it with `used = 0`, no exhaustion, no reason and no records: a fresh
+  region.
 - **`NoCrossSlotEffect`** (action property): every step changes at most one
   slot. One slot's use or exhaustion never changes another slot's state or
   region.
@@ -60,7 +67,7 @@ A client owns one region; it is the same machine with one slot.
 
 | Case | Change | Must fail |
 |---|---|---|
-| `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: `Reuse` frees the slot without the carve | `ReusedSlotStartsClean` |
+| `MCRNConnectionMemoryBrokenNoReset.cfg` | `Reset = FALSE`: the `Connect` that takes a freed slot skips the carve | `ReusedSlotStartsClean` |
 | `MCRNConnectionMemoryBrokenCarryOn.cfg` | `CarryOn = TRUE`: an exhausted connection keeps taking room (`Use`, `UseSpan`) | `ExhaustionOnlyLeadsToDisconnect` |
 
 The traces TLC printed, checked against the code by hand:
