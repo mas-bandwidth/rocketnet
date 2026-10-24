@@ -461,12 +461,11 @@ returns. A completion query does not free the object or promise receipt by the o
 
 Between two updates the server's socket holds every packet that arrives.
 The portable transport's receive worker reads the socket into one of three
-banks and hands a filled bank to the main thread at the next update, so at a
-low update rate nearly a whole update interval of inbound packets waits
-somewhere. It waits in the bank: the worker appends every packet it reads to
-its bank and goes on draining the socket while main holds the other banks,
-and only a bank at its capacity stops the worker until a free bank comes.
-Each server socket therefore asks for:
+banks and publishes a bank after every read. While main holds the other
+banks the worker has no free bank, stops reading the socket and waits
+(`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
+the kernel's receive buffer, and a buffer too small for it drops datagrams
+before the server sees them. Each server socket therefore asks for:
 
 ```
 receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
