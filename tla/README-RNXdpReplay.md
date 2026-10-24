@@ -201,9 +201,10 @@ done
 
 `MCRNXdpReplay.cfg`: one address, `MaxSeq = 5`, `W = 2`, `Sessions = 2`,
 `MaxInFlight = 2`. TLC explores every send, forgery, duplicate, kernel pass
-or drop, open, release, walk and commit interleaving: 2,331,306 distinct
-states (6,939,416 generated, depth 52) in about 28 seconds on two workers,
-and every invariant and `KernelNeverWrites` holds.
+or drop, open, release, walk and commit interleaving, with one refused
+forget allowed anywhere in the run: 4,939,448 distinct states (15,236,074
+generated, depth 54) in about 58 seconds on two workers, and every invariant
+and `KernelNeverWrites` holds.
 
 ## Reversed witnesses
 
@@ -212,7 +213,7 @@ and every invariant and `KernelNeverWrites` holds.
 | `MCRNXdpReplayBrokenKernelAdvances.cfg` | the kernel never writes: `KernelAdvances <- KernelAdvancesBroken`, `kmap[a] := seq` on every pass | `FreshGenuineNeverDropped`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 17 |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
-| `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12 |
+| `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
