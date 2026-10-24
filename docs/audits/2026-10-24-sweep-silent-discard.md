@@ -288,9 +288,9 @@ and the smallest fix. No code was changed.
 - Failure or cost: A capture with two comments, or an unsupported option, reads back as valid with data missing.
 - Smallest fix: Refuse a repeated comment and unknown option codes with `ROCKETNET_PCAPNG_BAD_OPTION`.
 
-### 35. quality — `tests/suite_runner.h:341`
+### 35. quality — `tests/suite_runner.h:364`
 
-- Defect: The `ROCKETNET_TEST_JOBS` value is clamped to 8 with no comment or message, though the cap is load-bearing for the `handles[8]` array (line 1057).
+- Defect: The `ROCKETNET_TEST_JOBS` value is clamped to 8 with no comment or message, though the cap is load-bearing for the `handles[8]` array (line 1109).
 - Failure or cost: A user asking for more jobs silently gets 8, and a maintainer raising the cap cannot see what depends on it.
 - Smallest fix: Name the cap as a constant shared with `handles[]` and print a line when the request is clamped.
 
