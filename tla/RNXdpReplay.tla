@@ -6,8 +6,9 @@
 (* server_xdp_replay_map, keyed by the source address and port.  For the   *)
 (* session packet types (keep-alive, payload, disconnect, ack, fragment)   *)
 (* it looks the source up and, with an entry, drops a packet whose         *)
-(* sequence is W or more behind the entry's high_water.  The kernel never  *)
-(* writes the map.  Userspace writes it once per server update: the        *)
+(* sequence is KernelWindow or more behind the entry's high_water; the     *)
+(* design's KernelWindow is W, the userspace replay window.  The kernel    *)
+(* never writes the map.  Userspace writes it once per server update: the  *)
 (* transport walks its client slots, FORGETs the address of every slot     *)
 (* that held a mark and is no longer connected, then MARKs every connected *)
 (* slot whose session replay window's highest_opened is nonzero and        *)
@@ -21,9 +22,12 @@
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
 (* sequence) is left out, as are the byte layout of the key and value and  *)
-(* the map's capacity.  The userspace replay window (4096 sequences) is    *)
-(* wider than every sequence this instance explores, so a genuine packet   *)
-(* of the live session always opens and only raises highest_opened.        *)
+(* the map's capacity.  W is the userspace replay window's depth           *)
+(* (ROCKETNET_REPLAY_WINDOW_BITS).  UserOpen opens every genuine packet    *)
+(* of the live session: a genuine packet the userspace window refuses is   *)
+(* at or below highest_opened, so opening it would change nothing either.  *)
+(* FreshGenuineNeverDropped is then the rule that the kernel drops only    *)
+(* what the userspace window refuses.                                      *)
 (*                                                                         *)
 (* Session ids are ghosts: the kernel reads only high_water.  kmap[a].sess *)
 (* names the session whose highest_opened the entry was taken from, so a   *)
@@ -34,7 +38,7 @@ EXTENDS Integers, FiniteSets
 CONSTANTS
     Addresses,    \* the client source addresses (address and port)
     MaxSeq,       \* the highest sequence a client sends or a forger names
-    W,            \* the kernel window: ROCKETNET_XDP_REPLAY_WINDOW (16)
+    W,            \* the replay window depth: ROCKETNET_REPLAY_WINDOW_BITS
     Sessions,     \* the number of sessions over the whole run
     MaxInFlight   \* the bound on packets in the network at once
 
@@ -51,9 +55,12 @@ ASSUME /\ Addresses # {}
 (*     design: FALSE, the kernel only looks up).                           *)
 (*   WalkForgets: the walk forgets the old address of a slot that held a   *)
 (*     mark and is no longer connected (the design: TRUE).                 *)
+(*   KernelWindow: the distance behind the mark the kernel drops at (the   *)
+(*     design: W, ROCKETNET_XDP_REPLAY_WINDOW, the userspace window).      *)
 (***************************************************************************)
 KernelAdvances == FALSE
 WalkForgets    == TRUE
+KernelWindow   == W
 
 NoSession == 0
 SessionIds == 1..Sessions
@@ -171,8 +178,9 @@ Duplicate(p) ==
 
 (***************************************************************************)
 (* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
-(* when (high_water - sequence) >= W, counting DROPPED_REPLAYED; a genuine *)
-(* drop is recorded with the session of the mark it was dropped against.  *)
+(* when (high_water - sequence) >= KernelWindow, counting                  *)
+(* DROPPED_REPLAYED; a genuine drop is recorded with the session of the    *)
+(* mark it was dropped against.                                            *)
 (* With no entry, or a sequence inside or ahead of the window, the packet  *)
 (* goes on to userspace.  The kernel runs beside the update, so it is      *)
 (* enabled in every phase.  The design never writes kmap here; the broken  *)
@@ -181,7 +189,7 @@ Duplicate(p) ==
 KernelFilter(p) ==
     /\ p.stage = "wire"
     /\ LET e == kmap[p.addr]
-       IN  IF e.hw # 0 /\ e.hw - p.seq >= W
+       IN  IF e.hw # 0 /\ e.hw - p.seq >= KernelWindow
              THEN /\ net' = net \ {p}
                   /\ dropped' = IF p.genuine
                                   THEN dropped \cup {[addr |-> p.addr,
@@ -305,7 +313,8 @@ MarkNeverAhead ==
 
 (* FreshGenuineNeverDropped: a genuine packet of the live session dropped *)
 (* against a mark of its own session is never fresh: its sequence is at    *)
-(* most opened[a] - W.                                                     *)
+(* most opened[a] - W, so the userspace window, W deep, refuses it too.    *)
+(* A reordered packet the userspace window accepts is never dropped.       *)
 FreshGenuineNeverDropped ==
     \A d \in dropped :
         (d.session # NoSession /\ d.session = session[d.addr]
