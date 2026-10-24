@@ -1,16 +1,22 @@
 -------------------------- MODULE MCReceiveOrder --------------------------
 (***************************************************************************)
 (* The committed run of ReceiveOrder in the ruled order.  Every invariant  *)
-(* passes while requests repeat, each claim lives until its mapping dies,  *)
+(* passes while requests repeat; claims end at binding or mapping removal. *)
 (* and the mapping table fills and empties.  A half-open mapping can also  *)
 (* leave alone on its idle deadline, as idle timeout and integrity limit   *)
 (* do in the code, and that removal releases its token's claim.  The       *)
 (* witnesses are the same module under the Broken cfgs, each moving one    *)
 (* cheap rung behind a crypto rung, removing the token claim, writing the  *)
 (* claim at its check rung before the signature, or leaving a claim behind *)
-(* when its mapping is removed; TLC must reject them.                     *)
+(* on mapping removal or response binding; TLC must reject them.          *)
 (***************************************************************************)
 EXTENDS ReceiveOrder
+
+VARIABLE bound
+MCVars == <<vars, bound>>
+
+ResponseBindReleasesClaim == TRUE
+MCResponseBindLeavesClaim == FALSE
 
 MCTokenClaimRemoved == FALSE
 
@@ -39,6 +45,9 @@ NewRequest ==
     \* mapping with its stored challenge and never reaches the claim or
     \* accept rungs; a new ladder run starts only for a free address
     /\ maps[reqAddr'] = None
+    \* Explore fresh unbound-token requests between response bindings.
+    \* Binding expiry, eviction and reconnect are outside this instance.
+    /\ bound[reqToken'] = None
     /\ spent' = FALSE
     /\ spentKp' = FALSE
     /\ outcome' = "pending"
@@ -76,9 +85,28 @@ IdleRemove ==
                       spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
                       claimWritten, verified>>
 
-MCNext == Next \/ NewRequest \/ Deadline \/ IdleRemove \/ Terminating
+\* An opened response binds an unexpired token and ends its request claim.
+ResponseBind ==
+    /\ Done
+    /\ \E a \in Addrs :
+        /\ maps[a] /= None
+        /\ bound[maps[a]] = None
+        /\ LET t == maps[a] IN
+           /\ bound' = [bound EXCEPT ![t] = a]
+           /\ claims' = IF ResponseBindReleasesClaim /\ claims[t] = a
+                         THEN [claims EXCEPT ![t] = None] ELSE claims
+        /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
+                       spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
+                       maps, claimWritten, verified>>
 
-MCSpec == Init /\ [][MCNext]_vars
+MCNext == ((Next \/ NewRequest \/ Deadline \/ IdleRemove \/ Terminating)
+           /\ UNCHANGED bound) \/ ResponseBind
+
+MCInit == Init /\ bound = [t \in Tokens |-> None]
+MCSpec == MCInit /\ [][MCNext]_MCVars
+
+BoundTypeOK == bound \in [Tokens -> Addrs \cup {None}]
+BoundHasNoClaim == Done => \A t \in Tokens : bound[t] /= None => claims[t] = None
 
 \* a claim that is live once a request is done names a token some address's
 \* mapping holds: it cannot outlive the mapping it stands for
