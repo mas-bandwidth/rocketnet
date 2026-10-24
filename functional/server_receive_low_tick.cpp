@@ -63,6 +63,8 @@ SUITE_CASE_RSS_BOUND( test_server_receive_1000_clients_256kbps_10hz, server_rece
 
 #if defined(__linux__)
 
+#include <sys/resource.h>
+
 struct server_receive_low_tick_udp_row_t
 {
     bool found;
@@ -138,6 +140,17 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     server_config.game_clock_epoch = 1700000000ULL;
     server_config.handshake_deadline_seconds = 30;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+
+    // each portable client holds a socket and wake descriptors: raise the
+    // soft descriptor limit toward the hard one, as bin/load does
+    struct rlimit limit;
+    server_receive_low_tick_require( getrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    const rlim_t wanted = (rlim_t) max_clients * 8 + 1024;
+    if ( limit.rlim_cur < wanted )
+    {
+        limit.rlim_cur = limit.rlim_max < wanted ? limit.rlim_max : wanted;
+        server_receive_low_tick_require( setrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    }
 
     const double start = rocketnet_platform_time();
     double time = 1000.0;
