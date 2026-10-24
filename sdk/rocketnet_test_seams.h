@@ -37,17 +37,7 @@
 // on, so both ends of a run and every later session use one value. Unset or
 // empty is one, the production start, and nothing changes; a value outside
 // 1 .. 2^62 is refused with one error line and one is used. Decimal, or hex
-// with 0x.
-//
-// The receiver of an ack block needs the seam too: an empty block (largest
-// received 0, first range length 0, no ranges; t15) reads as empty only while
-// the reader's highest sent sequence is below 2^31 -- true of every real
-// session, which starts at one and sends nonempty blocks long before it nears
-// the wrap, but false from the first packet of a session started near it. So
-// a seam build reads that one block as empty
-// (sdk/rocketnet_client_protocol.cpp rocketnet_client_ack_block_read) and
-// every other block as production does. Defined in
-// sdk/rocketnet_encryption_map.cpp.
+// with 0x. Defined in sdk/rocketnet_encryption_map.cpp.
 
 #define ROCKETNET_DEV_SESSION_SEQUENCE_START_MAX 0x4000000000000000ULL
 
