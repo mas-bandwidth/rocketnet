@@ -259,8 +259,14 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
 // XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED counters.
+// Repinned for deferred established keep-alives: the keep-alive now leaves
+// at the send_packets flush, after this step's payloads, instead of in the
+// update sweep before them, so the client's ack coalescing in the
+// simulator-off trace shifts by one small packet (one more client packet
+// sent and received, fewer client bytes); the simulator-on trace, whose
+// latency already reorders the two, is unchanged.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x3a4ca14352981827 ), UINT64_C( 0xd20b6fbd00ad1785 ), 24 };
+    { 68, 67, 5775, 4389, 67, 67, 4389, 5714, UINT64_C( 0x00e8e5e56b6e7a06 ), UINT64_C( 0x00cc23c3b23f8444 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
     { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xb0ecc9f17b293867 ), UINT64_C( 0xd20b6fbd00ad1785 ), 26 };
 

@@ -359,7 +359,12 @@ static void test_staged_idle_maintenance_preflight()
 {
     // A connected but idle slot should not touch staged frame ownership.
     // The boundary, the pre-ACK keep-alive clock, the post-ACK send clock,
-    // and ACK debt each still request exactly one frame when due.
+    // and ACK debt each still request exactly one frame when due. Once a
+    // keep-alive has been acknowledged, maintenance is deferred to the
+    // send_packets flush (so a payload sent this update can suppress it),
+    // so the post-ACK steps below complete each frame with send_packets,
+    // as the frame contract requires; the pre-ACK write still lands in
+    // the update itself.
     auto * f = new control_fixture_t(); f->capacity = 16;
     rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 1, true);
@@ -386,11 +391,13 @@ static void test_staged_idle_maintenance_preflight()
     rocketnet_server_transport_update(server, 1001.5);
     CHECK(f->start_calls == 1 && f->aborts == 0);
     rocketnet_server_transport_update(server, 1002.0);
+    rocketnet_server_transport_send_packets(server);
     CHECK(f->start_calls == 2 && f->keep_alives[0] == 2);
 
     // A single owed ACK is due before the next paced keep-alive.
     server->protocol.acks->endpoints[0].ack_debt = 1;
     rocketnet_server_transport_update(server, 1002.25);
+    rocketnet_server_transport_send_packets(server);
     CHECK(f->start_calls == 3 && f->acks[0] == 1);
     CHECK(server->protocol.acks->endpoints[0].ack_debt == 0);
 
@@ -398,6 +405,7 @@ static void test_staged_idle_maintenance_preflight()
     // its ACK block clears the debt without a second reservation.
     server->protocol.acks->endpoints[0].ack_debt = 1;
     rocketnet_server_transport_update(server, 1003.25);
+    rocketnet_server_transport_send_packets(server);
     CHECK(f->start_calls == 4 && f->keep_alives[0] == 3 && f->acks[0] == 1);
     CHECK(server->protocol.acks->endpoints[0].ack_debt == 0 && f->aborts == 0);
 

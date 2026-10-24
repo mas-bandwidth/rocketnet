@@ -260,6 +260,18 @@ struct rocketnet_server_stats_worker_t
     uint64_t next_submit, next_publish, published, busy_skips;
 };
 
+// One established client's maintenance deferred from the update sweep to
+// the send_packets flush (see rocketnet_server_deferred_maintenance_flush).
+// No frame is reserved at maintenance: a staged frame started there would
+// belong to the producer bank the update-end flush rotates away, and its
+// finish at send_packets would fail closed as a lost packet. The frame is
+// reserved at the flush instead, in the bank the fill just used.
+struct rocketnet_server_deferred_maintenance_t
+{
+    int client_index;
+    rocketnet_address_t to;
+};
+
 struct rocketnet_server_transport_t
 {
     // the cache-line-aligned members lead, each a whole number of cache
@@ -329,6 +341,8 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_wire_totals_t * client_wire_totals;         // one per client slot
     int client_wire_totals_capacity;
     int maintenance_next_client;                       // first unserved slot after staged backpressure
+    struct rocketnet_server_deferred_maintenance_t deferred_maintenance[ROCKETNET_MAX_CLIENTS];   // established clients whose maintenance waits for the flush
+    int deferred_maintenance_count;
 
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
@@ -990,6 +1004,72 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
     // reserve; nothing to undo
 
     frame->data = NULL;
+}
+
+// Deferred established maintenance (tla/ServerConnection.tla ServerKeepAlive).
+// The update sweep runs before the fill phase, so a keep-alive written there
+// cannot know that the fill is about to send the same client a payload in
+// the same update -- and at a tick at or below the send rate it does, which
+// makes the keep-alive a second sealed packet carrying nothing the payload
+// does not. The sweep therefore defers maintenance for a client that has
+// acknowledged a keep-alive (keep_alive_acked: it holds its index, so no
+// packet it is waiting for is being withheld) to send_packets, where the
+// due predicate is simply re-run: a payload sealed during the fill stamped
+// last_send_time at this update's time, so the keep-alive is no longer due
+// and is skipped, while an idle client is still due and is written, one
+// fill phase later in the same update. A client that has NOT acknowledged
+// a keep-alive is never deferred: its keep-alives are written in the sweep
+// exactly as before, on the keep-alive's own clock, so payload traffic can
+// no more starve establishment than it could before this change (#90).
+// Server timeouts read last_receive_time and are untouched either way.
+
+static void rocketnet_server_deferred_maintenance_discard( struct rocketnet_server_transport_t * server_transport )
+{
+    // no frames are held (see the entry comment), so discarding is just
+    // forgetting the list; the keep-alive clocks were never stamped, and
+    // this update's sweep re-derives what is due
+    server_transport->deferred_maintenance_count = 0;
+}
+
+static void rocketnet_server_deferred_maintenance_flush( struct rocketnet_server_transport_t * server_transport, bool shutdown )
+{
+    const double current_time = server_transport->time;
+    bool staged_wrote = false;
+    for ( int i = 0; i < server_transport->deferred_maintenance_count; i++ )
+    {
+        struct rocketnet_server_deferred_maintenance_t * entry = &server_transport->deferred_maintenance[i];
+        struct rocketnet_server_frame_t frame;
+        if ( !rocketnet_server_reserve_send_frame( server_transport, &entry->to, &frame, shutdown ) )
+        {
+            // the fill filled the staging bank: publish it (it was about
+            // to be published by this same send_packets) and reserve in
+            // the fresh bank, so a full bank cannot starve an established
+            // keep-alive frame after frame
+            if ( !rocketnet_server_transport_staged( server_transport ) )
+                continue;
+            rocketnet_server_transport_io_send_packets( server_transport );
+            if ( !rocketnet_server_reserve_send_frame( server_transport, &entry->to, &frame, shutdown ) )
+                continue;
+        }
+        frame.client_index = entry->client_index;
+        int send_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, entry->client_index, current_time, frame.data + ROCKETNET_FRAME_WIRE_OFFSET );
+        if ( send_bytes == 0 )
+            send_bytes = rocketnet_server_protocol_write_ack_if_due( &server_transport->protocol, entry->client_index, current_time, frame.data + ROCKETNET_FRAME_WIRE_OFFSET );
+        if ( send_bytes > 0 )
+        {
+            rocketnet_server_commit_send_frame( server_transport, &frame, send_bytes );
+            if ( rocketnet_server_transport_staged( server_transport ) )
+                staged_wrote = true;
+        }
+        else
+            rocketnet_server_abort_send_frame( server_transport, &frame );
+    }
+    server_transport->deferred_maintenance_count = 0;
+
+    // a staged transport whose counters already agree would not flush in
+    // send_packets; a keep-alive committed here must still leave now
+    if ( staged_wrote )
+        rocketnet_server_transport_io_send_packets( server_transport );
 }
 
 // rocketnet_server_transport_default_config lives in rocketnet_config.cpp,
@@ -2319,6 +2399,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     server_transport->payloads.num_payloads = 0;
 
+    // maintenance deferred by the previous update whose flush never came
+    // is stale now: forget it and let this update's sweep re-derive what
+    // is due (the keep-alive clocks were never stamped)
+
+    rocketnet_server_deferred_maintenance_discard( server_transport );
+
     // the acked-packet batch drains per update: what the blocks processed
     // below acknowledge lands here, valid until the next update
 
@@ -2623,6 +2709,23 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             continue;
         }
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+
+        // established clients are deferred to the flush, where a payload
+        // sent this update can still suppress the keep-alive; a client that
+        // has not acknowledged one keeps the immediate sweep write, so
+        // establishment pacing is exactly as before (see the flush helper)
+
+        if ( acks && acks->endpoints[i].keep_alive_acked )
+        {
+            struct rocketnet_server_deferred_maintenance_t * entry =
+                &server_transport->deferred_maintenance[server_transport->deferred_maintenance_count];
+            entry->client_index = i;
+            entry->to = *client_address;
+            server_transport->deferred_maintenance_count++;
+            server_transport->maintenance_next_client = (i + 1) % max_clients;
+            continue;
+        }
+
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
@@ -3264,6 +3367,12 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
+        // deferred established maintenance is decided first, while the
+        // fill's send stamps are final: a client the fill just sent a
+        // payload to is no longer keep-alive due and is skipped
+
+        rocketnet_server_deferred_maintenance_flush( server_transport, shutdown );
+
         // fold the fill phase's payload sends into the current bucket. the fill
         // is closed before this call by the threading contract, so the pending
         // pair is quiescent and a plain read-and-clear is safe.
@@ -3325,6 +3434,12 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         rocketnet_server_link_send_batch( server_transport, sends, num_sends, shutdown );
 
     ring->num_packets = 0;
+
+    // deferred established maintenance, decided with the fill's send
+    // stamps final (a payload this update suppresses the keep-alive);
+    // the frames land in the control buffer the flush below sends
+
+    rocketnet_server_deferred_maintenance_flush( server_transport, shutdown );
 
     // The disconnect_client header promise: buffered control frames leave on
     // the next flush even when this fill phase sent no payload-ring packet.

@@ -582,6 +582,17 @@ serverSendUnchanged == <<clientVars, bound, churnDenied, c2sVars>>
 \* rocketnet_server_protocol_write_keep_alive_if_due: paced off the
 \* keep-alive's own clock, to a client that has not acknowledged one
 \* (RepeatKeepAlive) and to one that has
+\*
+\* The transport's deferred-maintenance flush (established clients only:
+\* the sweep defers, send_packets re-runs the due predicate after the fill
+\* phase, and a payload sealed in that fill suppresses the write) is
+\* model-preserving here and needs no action of its own: this module has
+\* no payload send and no intra-update phase distinction, so deferral
+\* changes neither ServerKeepAlive's enabledness over modelled state nor
+\* any state it writes (sinceKA still resets exactly when a keep-alive is
+\* sent). The unacknowledged regime the liveness properties turn on --
+\* RepeatKeepAlive recurrence until acked -- is never deferred in the
+\* code, so Connects and ServerNotStranded are unaffected.
 ServerKeepAlive(i) ==
     /\ slot[i].used
     /\ LET a == slot[i].addr

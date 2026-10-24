@@ -262,3 +262,58 @@ fakes as in `tests/test_unit_message_objects.cpp` / `test_unit_slots.cpp`):
 5. Rebase on current `origin/main` (watch #527), bench Linux Release
    unit+functional, Windows gate on captain for `sdk/` changes, then one PR
    (split after layer 1 if the diff grows large), merge own PR when green.
+
+## 11. Cut (2026-10-23): keep-alive redundant-write cut (Rowan's lane, PR #548)
+
+- **Evidence.** The only keep-alive writers are the connect response
+  (`rocketnet_server_protocol.cpp:881`, the first keep-alive — untouched)
+  and the maintenance sweep's `write_keep_alive_if_due`
+  (transport update). The frame order is update (sweep) → fill →
+  `send_packets` flush, so a keep-alive written in the sweep cannot see
+  the payload the fill seals to the same client in the same update. At a
+  tick at or below the send rate (10 Hz), an established client due a
+  keep-alive therefore received two sealed packets that update, the
+  second carrying nothing the payload does not (ack block included).
+  Perf measured these writes at ~6% of the game thread on vision GSO.
+- **Predicate implemented.** Defer, don't predict: the sweep defers
+  maintenance for a client whose `keep_alive_acked` latch is set to
+  `send_packets`, where the unchanged due predicate is re-run with the
+  fill's send stamps final. A payload sealed this update stamps
+  `last_send_time` at this update's time, so the keep-alive is no longer
+  due and is skipped; an idle client is still due and is written in the
+  same update. No frame is reserved at maintenance (a staged frame
+  started there would belong to the producer bank the update-end flush
+  rotates away; GSO finish resolves against the current bank and would
+  fail closed as a lost packet). At the flush, a full staging bank is
+  published and reservation retried once, so a full bank cannot starve
+  an established keep-alive frame after frame.
+- **Establishment/timeout argument.** Unacknowledged clients are never
+  deferred: their keep-alives are written in the sweep on the
+  keep-alive's own clock exactly as before, so #90 recurrence under
+  continuous payload is preserved bit-for-bit. Server timeouts read
+  `last_receive_time`, untouched; client-side, the suppressing payload
+  refreshes the client's receive clock just as the keep-alive would.
+- **TLA.** Model-preserving for `tla/ServerConnection.tla`
+  `ServerKeepAlive`; the argument is recorded as a comment beside the
+  action (no payload send or intra-update phase exists in the module, so
+  enabledness and modelled state are unchanged; `RepeatKeepAlive`
+  recurrence is never deferred). Comment-only: no CASES.tsv change;
+  `tools/check_tla_coverage.py` passes (99 rows). No TLC run (bench).
+- **Tests.** `tests/test_unit_keep_alive_deferred.cpp`: (a)+(b) one
+  loopback world — with the latch unset the server sends payload +
+  keep-alive per tick (12 ticks, `packets_sent` bounded-polled), once
+  acked a payload tick delivers exactly the payload packets for 5
+  consecutive ticks; (c) idle established client receives exactly one
+  packet per tick and a silent client still times out server-side
+  inside the token timeout plus a bound. Existing #90 protocol tests in
+  `sdk/rocketnet_tests.cpp` unchanged and passing. Two collateral
+  updates: the simulator-off loopback golden trace repinned (ack
+  coalescing shifts by one small packet; simulator-on unchanged), and
+  functional `test_staged_idle_maintenance_preflight` now completes
+  post-ACK frames with `send_packets`, per the frame contract.
+- **Verify.** Local Release on studio.local: build clean,
+  `./bin/test` and `./bin/functional` both `*** ALL TESTS PASSED ***`.
+  Still owed (main): Linux bench 3-run worst case (1000 connected, all
+  active, vision GSO) before/after, expecting the keep-alive share of
+  the game thread to fall from ~6% to under the ~5% floor's noise;
+  TLC on a bench if the model-preserving call is challenged.

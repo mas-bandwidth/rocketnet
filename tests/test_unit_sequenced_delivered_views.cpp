@@ -146,6 +146,8 @@ static void test_sequenced_end_update_clears_exactly_the_delivered_set()
     rn_channels_end_update( &f.channels );
     for ( uint32_t i = 0; i < f.region->holds; i++ )
     {
+        if ( delivered[i] )
+            rocketnet_unit_check( f.region->sequenced_messages_held[i].used == 0 );
         const uint8_t expected = held[i] ? 1 : 0;
         rocketnet_unit_check( f.region->sequenced_messages_held[i].used == expected );
     }
