@@ -215,7 +215,7 @@ static void test_server_stats_creates_no_thread()
 
     struct rocketnet_server_client_stats_t stats;
     rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
-    check( stats.rtt > 0.0f && stats.bandwidth_sent_kbps > 0.0f && stats.bandwidth_received_kbps > 0.0f );
+    check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
 
     printf( "threads before %d, after create %d, after updates %d\n", before, after_create, after_updates );
     if ( before >= 0 )
@@ -254,7 +254,7 @@ static void test_server_stats_current_every_update()
     for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )
     {
         rocketnet_server_client_stats( world->server, slot, &before[slot] );
-        check( before[slot].rtt > 90.0f );
+        check( before[slot].rtt_ms > 90.0 );
     }
 
     // the server's last send went out at a 10 ms step; this update's acks
@@ -269,10 +269,10 @@ static void test_server_stats_current_every_update()
         rocketnet_server_client_stats( world->server, slot, &stats );
         check( stats.packets_sent > before[slot].packets_sent );
         check( stats.packets_received > before[slot].packets_received );
-        check( stats.bandwidth_sent_kbps > 0.0f );
-        check( stats.bandwidth_received_kbps > 0.0f );
-        check( stats.bandwidth_acked_kbps > 0.0f );
-        if ( stats.rtt > 9.0f && stats.rtt < 11.0f )
+        check( stats.bandwidth_sent_kbps > 0.0 );
+        check( stats.bandwidth_received_kbps > 0.0 );
+        check( stats.bandwidth_acked_kbps > 0.0 );
+        if ( stats.rtt_ms > 9.0 && stats.rtt_ms < 11.0 )
             current++;
     }
     printf( "slots with the new rtt sample on the same update: %d of %d\n", current, NO_WORKER_CLIENTS );
