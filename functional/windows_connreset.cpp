@@ -51,6 +51,12 @@
 // a correctness bound.
 #define WINDOWS_CONNRESET_GAP_REFERENCE ( WINDOWS_CONNRESET_TICK + 0.050 * ROCKETNET_FUNCTIONAL_TIME_SCALE )
 #define WINDOWS_CONNRESET_CLOSED_PORT_GAP_BOUND WINDOWS_CONNRESET_GAP_REFERENCE
+// the closed-port case's correctness bound is the same allowance counted in
+// updates, not in wall time: one tick plus 50 ms is four ticks of 1/60 s. a
+// loaded host may take any wall time between two updates, but a receive path
+// the ICMP reports stalled misses updates, so the gap is counted in them; the
+// wall gap is printed beside it against the reference
+#define WINDOWS_CONNRESET_CLOSED_PORT_GAP_TICKS 4
 #define WINDOWS_CONNRESET_LIVE_CLIENTS 3
 #define WINDOWS_CONNRESET_PAYLOAD_BYTES 32
 // packets a server sends each client per tick in the hard-killed case: a
@@ -125,13 +131,33 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
     return client;
 }
 
+// every payload a session sends carries the tick sequence it was sent in
+// (its first four bytes). a case that counts from zero sets count_after to
+// the sequence it resets at, and from then on a payload counts only when it
+// was sent after the reset: one still in flight from before it is never
+// counted, however long a loaded host takes to deliver it. zero counts all.
+
+static uint32_t windows_connreset_count_after = 0;
+
+static bool windows_connreset_counts( const uint8_t * payload, int payload_bytes )
+{
+    if ( windows_connreset_count_after == 0 )
+        return true;
+    if ( !payload || payload_bytes < (int) sizeof( uint32_t ) )
+        return false;
+    uint32_t sequence = 0;
+    memcpy( &sequence, payload, sizeof( sequence ) );
+    return sequence > windows_connreset_count_after;
+}
+
 static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received )
 {
     rocketnet_client_transport_update( client, now );
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-    while ( rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) > 0 )
+    int payload_bytes = 0;
+    while ( ( payload_bytes = rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) ) > 0 )
     {
-        if ( received )
+        if ( received && windows_connreset_counts( payload, payload_bytes ) )
             ( *received )++;
     }
     if ( send && rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
@@ -337,12 +363,14 @@ struct windows_connreset_session_t
     struct rocketnet_client_transport_t * live[WINDOWS_CONNRESET_LIVE_CLIENTS];
     int live_index[WINDOWS_CONNRESET_LIVE_CLIENTS];
     double last_receive[WINDOWS_CONNRESET_LIVE_CLIENTS];
+    uint32_t last_receive_sequence[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t client_sent[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t client_received[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t server_received[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t server_sent[WINDOWS_CONNRESET_LIVE_CLIENTS];
     bool measuring;
     double max_gap;
+    uint32_t max_gap_ticks;
     int child_index;
     // the child's slot: its wire receive count and the time of the last
     // update that received a packet from it, the library's last_receive_time
@@ -390,9 +418,9 @@ static double windows_connreset_tick( windows_connreset_session_t * session, int
     {
         int client_index = -1;
         int payload_bytes = 0;
-        rocketnet_server_transport_payload( session->server, i, &client_index, &payload_bytes );
+        const uint8_t * data = rocketnet_server_transport_payload( session->server, i, &client_index, &payload_bytes );
         const int slot = windows_connreset_live_slot( session, client_index );
-        if ( slot < 0 )
+        if ( slot < 0 || !windows_connreset_counts( data, payload_bytes ) )
             continue;
         session->server_received[slot]++;
         if ( session->measuring )
@@ -400,11 +428,16 @@ static double windows_connreset_tick( windows_connreset_session_t * session, int
             const double gap = now - session->last_receive[slot];
             if ( gap > session->max_gap )
                 session->max_gap = gap;
+            const uint32_t gap_ticks = session->sequence - session->last_receive_sequence[slot];
+            if ( gap_ticks > session->max_gap_ticks )
+                session->max_gap_ticks = gap_ticks;
         }
         session->last_receive[slot] = now;
+        session->last_receive_sequence[slot] = session->sequence;
     }
     uint8_t payload[WINDOWS_CONNRESET_PAYLOAD_BYTES];
     memset( payload, 0x5a, sizeof( payload ) );
+    memcpy( payload, &session->sequence, sizeof( session->sequence ) );
     for ( int client_index = 0; client_index < 8; client_index++ )
     {
         if ( !rocketnet_server_transport_is_client_connected( session->server, client_index ) )
@@ -435,6 +468,7 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
 {
     memset( session, 0, sizeof( *session ) );
     session->child_index = -1;
+    windows_connreset_count_after = 0;
     session->server = windows_connreset_server( transport, 0, 8 );
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     windows_connreset_server_address( session->server, transport->ipv6, server_address, sizeof( server_address ) );
@@ -473,11 +507,21 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
             session->child_index = client_index;
     windows_connreset_require( session->child_index >= 0 );
 
-    // one second of traffic before the measurement starts
+    // one second of traffic before the measurement starts, and on until the
+    // server has received from every live client: that wait is bounded by
+    // ticks, and the wall cap is a hang guard that names the case
     const double warm = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - warm < 1.0 )
+    rocketnet_bounded_wait_t warm_wait;
+    rocketnet_bounded_wait_start( warm_wait, case_name, 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
+    for ( ;; )
     {
+        bool received_from_all = true;
+        for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+            received_from_all = received_from_all && session->server_received[i] > 0;
+        if ( received_from_all && rocketnet_platform_time() - warm >= 1.0 )
+            break;
         windows_connreset_tick( session, 1, 0 );
+        windows_connreset_require( rocketnet_bounded_wait_poll( warm_wait ) );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -486,6 +530,7 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
     {
         windows_connreset_require( session->server_received[i] > 0 );
         session->last_receive[i] = now;
+        session->last_receive_sequence[i] = session->sequence;
     }
     session->measuring = true;
 }
@@ -496,6 +541,7 @@ static void windows_connreset_session_finish( windows_connreset_session_t * sess
         rn_native_client_transport_stop_and_destroy( session->live[i] );
     rn_native_server_transport_stop_and_destroy( session->server );
     windows_connreset_child_close( &session->child );
+    windows_connreset_count_after = 0;
 }
 
 static const char * windows_connreset_label( const windows_connreset_transport_t * transport )
@@ -614,13 +660,29 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     windows_connreset_session_finish( &session );
 }
 
-// no sends: every side only reads, for seconds, counting what still arrives
-static void windows_connreset_drain( windows_connreset_session_t * session, double seconds )
+// no sends: every side only reads, for seconds, counting what still arrives.
+// with case_name set, the drain also waits for the event it is about: every
+// payload sent since the reset received, both directions. a loaded host may
+// take any wall time to deliver them, so that wait is bounded by polls, and
+// the wall cap is a hang guard that names the case.
+static bool windows_connreset_all_counted( const windows_connreset_session_t * session )
 {
+    for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+        if ( session->server_received[i] < session->client_sent[i] || session->client_received[i] < session->server_sent[i] )
+            return false;
+    return true;
+}
+
+static void windows_connreset_drain( windows_connreset_session_t * session, double seconds, const char * case_name )
+{
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name ? case_name : "windows_connreset_drain", 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
     const double start = rocketnet_platform_time();
     double next = start;
-    while ( rocketnet_platform_time() - start < seconds )
+    while ( rocketnet_platform_time() - start < seconds || ( case_name && !windows_connreset_all_counted( session ) ) )
     {
+        if ( case_name )
+            windows_connreset_require( rocketnet_bounded_wait_poll( wait ) );
         const double now = rocketnet_platform_time();
         for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
             windows_connreset_client_tick( session->live[i], now, 0, false, NULL, &session->client_received[i] );
@@ -630,9 +692,9 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
         {
             int client_index = -1;
             int payload_bytes = 0;
-            rocketnet_server_transport_payload( session->server, j, &client_index, &payload_bytes );
+            const uint8_t * data = rocketnet_server_transport_payload( session->server, j, &client_index, &payload_bytes );
             const int slot = windows_connreset_live_slot( session, client_index );
-            if ( slot >= 0 )
+            if ( slot >= 0 && windows_connreset_counts( data, payload_bytes ) )
                 session->server_received[slot]++;
         }
         rocketnet_server_transport_send_packets( session->server );
@@ -657,12 +719,14 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     // counts start here, on a link drained quiet: nothing sent before is
     // still in flight
     session.measuring = false;
-    windows_connreset_drain( &session, 0.25 );
+    windows_connreset_drain( &session, 0.25, NULL );
     session.measuring = true;
+    windows_connreset_count_after = session.sequence;
     const double restart = rocketnet_platform_time();
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         session.last_receive[i] = restart;
+        session.last_receive_sequence[i] = session.sequence;
         session.client_sent[i] = 0;
         session.client_received[i] = 0;
         session.server_received[i] = 0;
@@ -681,18 +745,19 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
 
     // stop sending; drain until every count settles
     session.measuring = false;
-    windows_connreset_drain( &session, 0.5 );
+    windows_connreset_drain( &session, 0.5, case_name );
     const uint64_t resets = rocketnet_platform_receive_resets() - resets_before;
 
     printf( "windows_connreset_send_to_closed_port %s: %d datagrams to the closed port, max receive gap %.1f ms (bound %.1f ms), reset statuses skipped %llu\n",
             windows_connreset_label( transport ), dead_sends, session.max_gap * 1000.0, WINDOWS_CONNRESET_CLOSED_PORT_GAP_BOUND * 1000.0, (unsigned long long) resets );
+    printf( "    max receive gap %u ticks (bound %d ticks)\n", (unsigned) session.max_gap_ticks, WINDOWS_CONNRESET_CLOSED_PORT_GAP_TICKS );
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
         printf( "    live client %d: client sent %llu, server received %llu; server sent %llu, client received %llu\n", i,
                 (unsigned long long) session.client_sent[i], (unsigned long long) session.server_received[i],
                 (unsigned long long) session.server_sent[i], (unsigned long long) session.client_received[i] );
     fflush( stdout );
 
-    windows_connreset_require( session.max_gap <= WINDOWS_CONNRESET_CLOSED_PORT_GAP_BOUND );
+    windows_connreset_require( session.max_gap_ticks <= WINDOWS_CONNRESET_CLOSED_PORT_GAP_TICKS );
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         windows_connreset_require( rocketnet_client_transport_state( session.live[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
