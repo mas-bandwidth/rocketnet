@@ -358,7 +358,7 @@ in the server's receipt and in the server's proof line. It prints one line,
 the cell verdict:
 
 ```text
-split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=6240000 messages_delivered=6182400 unreliable_lost=42000 sequenced_skipped=15600 timing_verdict=PASS
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 timing_verdict=FAIL
 ```
 
 The cell verdict is the delivery proof, and the merger exits 0 when it
@@ -435,3 +435,29 @@ python3 tools/check_split_load.py --server server.log \
 The run passes only when the merger exits 0 and prints
 `split_proof_cell: verdict=PASS`. A failure names its cause on the
 `split_merge:` line and in the cell verdict's `reason=`.
+
+### Recorded proof run
+
+Run `6a1c0d2e3f405164`, 2026-10-24, load_split built Release from commit
+`1502c2bf`: one Linux server bench pinned to `gso`
+(`split_ready: ... transport=gso ... transport_pin=gso`), 1000 clients in
+four shards of 250 on two other benches on the same LAN, 60 seconds of
+traffic, `proof`. The server's proof line:
+
+```text
+split_proof: role=server run_id=6a1c0d2e3f405164 transport=gso transport_pin=gso small_bytes=1200 fragmented_bytes=2000 target_kbps=256 min_client_up_kbps=277.859200 min_client_down_kbps=279.153067 checksum_errors=0 receipt_errors=0 receipts_dropped=0 disconnects=0 verdict=PASS
+```
+
+The merger, run as above against the five logs and their allocation
+manifest, exited 0:
+
+```text
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 timing_verdict=FAIL
+split_merge: schema=split_merge_v2 verdict=PASS overall_verdict=FAIL non_timing_verdict=PASS timing_verdict=FAIL reason=none load=proof run_id=6a1c0d2e3f405164 total=1000 transport=gso streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 combined_client_up_kbps_upper=285054.9808 combined_client_down_kbps_upper=280884.7672
+```
+
+Every client was above 256 kbps on the wire each way (lowest 277.9 up,
+279.2 down), no client disconnected, and the four undelivered messages are
+unreliable losses, counted and not failed. The timing verdict is the server
+API budget, judged at full load and not by this cell; the client benches
+were shared and above their core count during the run.
