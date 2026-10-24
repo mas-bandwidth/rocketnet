@@ -669,10 +669,10 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
 }
 
 // one receive CQE's datagrams into the FILL bank (tla/RNUringDriver.tla Reap,
-// the "recv" case, and CopySegment: always the fill bank, whether reaped here
-// from receive_packets or from inside send_packets), then its buffer back to
-// the ring (tla/RNUringDriver.tla ReturnBuffer, after the last segment's
-// copy). with UDP_GRO the buffer holds one coalesced receive, cut at the
+// the "recv" case, which copies every segment of the buffer: always the fill
+// bank, whether reaped here from receive_packets or from inside
+// send_packets), then its buffer back to the ring (tla/RNUringDriver.tla
+// ReturnBuffer, after the last segment's copy; ReturnAfterLastCopy). with UDP_GRO the buffer holds one coalesced receive, cut at the
 // stride its UDP_GRO cmsg carries (rocketnet_coalesce_split); each segment is
 // copied, or counted dropped, before the buffer goes back. a fill bank that
 // fills mid-split drops and counts the rest as RECEIVE_DROPPED_OVERFLOW.
@@ -764,7 +764,6 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
             }
             else
             {
-                // tla/RNUringDriver.tla CopySegment
                 const int index = fill->num_packets++;
                 fill->from[index] = from;
                 fill->packet_bytes[index] = bytes;
