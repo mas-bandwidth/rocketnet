@@ -325,7 +325,7 @@ jobs:
   # test_loopback_transport_ipv6, test_transport_dual_stack_ipv4_client), with
   # the matrix's pins and pass rule. One CELL line per case; a failure is
   # reported with its first log, never retried. The iocp and rio server cells
-  # join with rn-win-transport-family-50x-native.
+  # join in a separate change.
   # docs/runs/windows-transport-family-50x.md records a run.
 
   windows-transport-cells-repeat:
