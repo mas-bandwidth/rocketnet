@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-// The connect token, per STANDARD.md. All layouts are packed little-endian at
+// The connect token, per TRANSPORT.md t6. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
 
@@ -294,7 +294,8 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 // A development token lives 30 seconds from its create timestamp, as a
 // netcode.io token does by default: a connect token is meant to be used
 // once, soon after it is minted, and the short expiry is what bounds reuse
-// of a token whose connection has closed (docs/SESSION.md, Token reuse). A
+// of a token whose connection has closed (TRANSPORT.md t6, the token's expire
+// timestamp bounds reuse). A
 // production backend sets its own expiry in the signed fields; 30 seconds is
 // the recommended value.
 
