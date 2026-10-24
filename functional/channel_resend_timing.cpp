@@ -168,7 +168,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     memset( seen, 0, sizeof(seen) );
     memset( sends, 0, sizeof(sends) );
 
-    uint8_t payload[RESEND_TIMING_BYTES];
+    uint8_t message_data[RESEND_TIMING_BYTES];
     uint8_t state[32];
     memset( state, 0x5A, sizeof(state) );
 
@@ -187,9 +187,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         if ( sent < RESEND_TIMING_MESSAGES )
         {
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
-                payload[i] = (uint8_t) ( sent * 13 + i );
-            memcpy( payload, &sent, sizeof(sent) );
-            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, payload, RESEND_TIMING_BYTES ) != 0 );
+                message_data[i] = (uint8_t) ( sent * 13 + i );
+            memcpy( message_data, &sent, sizeof(sent) );
+            resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, message_data, RESEND_TIMING_BYTES ) != 0 );
             send_time[sent] = h.now;
             sent++;
         }
@@ -341,7 +341,7 @@ void resend_timing_table_over_lossy_links()
     way, jitter a tenth of that) at 10% loss both ways, while the server
     sends one 32-byte unreliable message per update so acks ride packets
     going the other way. Each run prints the client's wire bytes per block
-    payload byte, the block's completion time and the copies sent per record.
+    message byte, the block's completion time and the copies sent per record.
     A fifth run ("resend_delay+small") also sends one 64-byte reliable message per
     60 Hz update from 0.35 s, once the block's first sends are written, until
     the block is delivered, so the small records are resent beside chunks
@@ -356,7 +356,7 @@ void resend_timing_table_over_lossy_links()
     estimator (resend_delay_max = resend_delay_initial = resend_delay = 100 ms, which leaves the small
     records' delay at 100 ms on this path). The case asserts: the
     block arrives whole in every run; under "resend_delay" the client's wire bytes are
-    at most 1.4 times the block's payload, and below the cap's; and the small
+    at most 1.4 times the block's message bytes, and below the cap's; and the small
     messages beside the block are all delivered and never held behind its
     chunks: after every update's packets are written, the oldest unacked
     number of the client's small-record FIFO is not due
@@ -376,7 +376,7 @@ struct block_cost_row_t
     const char * sender;
     int delivered;
     double completion_s;
-    double wire_per_payload;
+    double wire_per_message_byte;
     double chunk_copies;
     int small_sent;
     int small_delivered;
@@ -513,7 +513,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     row->sender = burst ? "burst" : "game";
     row->delivered = delivered;
     row->completion_s = completion;
-    row->wire_per_payload = (double) wire_at_completion / (double) BLOCK_COST_BYTES;
+    row->wire_per_message_byte = (double) wire_at_completion / (double) BLOCK_COST_BYTES;
     row->chunk_copies = ( chunks + (double) resent_at_completion ) / chunks;
     row->small_sent = small_sent;
     row->small_delivered = small_delivered;
@@ -533,17 +533,17 @@ void block_resend_cost_over_long_path()
     block_cost_run( "resend_delay+small", 0, 1, 1, &rows[4] );
 
     printf( "test_block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
-    printf( "schedule  sender delivered completion_s wire_per_payload_byte copies_per_record small_sent small_p99_ms small_held\n" );
+    printf( "schedule  sender delivered completion_s wire_per_message_byte copies_per_record small_sent small_p99_ms small_held\n" );
     for ( int s = 0; s < 5; s++ )
         printf( "%-9s %6s %9d %12.3f %21.3f %17.2f %10d %12.1f %10d\n", rows[s].schedule, rows[s].sender, rows[s].delivered, rows[s].completion_s,
-                rows[s].wire_per_payload, rows[s].chunk_copies, rows[s].small_sent, rows[s].small_p99_ms, rows[s].small_held );
+                rows[s].wire_per_message_byte, rows[s].chunk_copies, rows[s].small_sent, rows[s].small_p99_ms, rows[s].small_held );
     fflush( stdout );
 
     for ( int s = 0; s < 5; s++ )
         resend_timing_check( rows[s].delivered );
-    resend_timing_check( rows[0].wire_per_payload <= 1.4 );                 // the shipped rule, block in one RTT
-    resend_timing_check( rows[2].wire_per_payload <= 1.4 );                 // the shipped rule, budget-paced
-    resend_timing_check( rows[0].wire_per_payload < rows[1].wire_per_payload );
+    resend_timing_check( rows[0].wire_per_message_byte <= 1.4 );                 // the shipped rule, block in one RTT
+    resend_timing_check( rows[2].wire_per_message_byte <= 1.4 );                 // the shipped rule, budget-paced
+    resend_timing_check( rows[0].wire_per_message_byte < rows[1].wire_per_message_byte );
     resend_timing_check( rows[4].small_sent > 0 && rows[4].small_delivered == rows[4].small_sent );
     resend_timing_check( rows[4].small_held == 0 );
 }

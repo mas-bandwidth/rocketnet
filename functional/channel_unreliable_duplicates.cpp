@@ -17,7 +17,7 @@
 
 #define DUP_KINDS               3       // code 0, code 1, one reliable type
 #define DUP_MESSAGES            400     // per kind per direction (ids 0..399)
-#define DUP_PAYLOAD_BYTES       16
+#define DUP_MESSAGE_BYTES       16
 #define DUP_PER_TICK            4       // code 0 sends per update
 #define DUP_SEND_TICKS          ( DUP_MESSAGES / DUP_PER_TICK )
 #define DUP_SETTLE_TICKS        600     // ten seconds of test time after the last send
@@ -54,7 +54,7 @@ static void dup_make( uint8_t * bytes, int direction, int kind, uint32_t id )
     bytes[1] = (uint8_t) id;
     bytes[2] = (uint8_t) ( id >> 8 );
     bytes[3] = (uint8_t) ( id >> 16 );
-    for ( int i = 4; i < DUP_PAYLOAD_BYTES; i++ )
+    for ( int i = 4; i < DUP_MESSAGE_BYTES; i++ )
         bytes[i] = dup_pattern( direction, kind, id, i );
 }
 
@@ -66,12 +66,12 @@ typedef struct dup_seen_t
 
 static void dup_receive( dup_seen_t * s, int direction, const rocketnet_channel_delivery_t * d )
 {
-    dup_check( d->bytes == DUP_PAYLOAD_BYTES, "payload length" );
+    dup_check( d->bytes == DUP_MESSAGE_BYTES, "message length" );
     const int kind = d->data[0];
     dup_check( kind >= 0 && kind < DUP_KINDS, "payload kind" );
     const uint32_t id = (uint32_t) d->data[1] | ( (uint32_t) d->data[2] << 8 ) | ( (uint32_t) d->data[3] << 16 );
     dup_check( id < DUP_MESSAGES, "payload id" );
-    for ( int i = 4; i < DUP_PAYLOAD_BYTES; i++ )
+    for ( int i = 4; i < DUP_MESSAGE_BYTES; i++ )
         dup_check( d->data[i] == dup_pattern( direction, kind, id, i ), "payload intact" );
     if ( s->seen[direction][kind][id] )
         dup_fail_twice( direction, kind, id );
@@ -96,22 +96,22 @@ static void dup_leg( float loss_percent, const char * label )
         {
             for ( int n = 0; n < DUP_PER_TICK; n++ )
             {
-                uint8_t bytes[DUP_PAYLOAD_BYTES];
+                uint8_t bytes[DUP_MESSAGE_BYTES];
                 const uint32_t id = next_id[0]++;
                 dup_make( bytes, 0, 0, id );
-                dup_check( rocketnet_channel_harness_client_send( &h, 0, dup_codes[0], bytes, DUP_PAYLOAD_BYTES ) != 0, "client send code 0" );
+                dup_check( rocketnet_channel_harness_client_send( &h, 0, dup_codes[0], bytes, DUP_MESSAGE_BYTES ) != 0, "client send code 0" );
                 dup_make( bytes, 1, 0, id );
-                dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[0], bytes, DUP_PAYLOAD_BYTES ) != 0, "server send code 0" );
+                dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[0], bytes, DUP_MESSAGE_BYTES ) != 0, "server send code 0" );
             }
             // controls: one code 1 and one reliable message per update each way
             for ( int kind = 1; kind < DUP_KINDS; kind++ )
             {
-                uint8_t bytes[DUP_PAYLOAD_BYTES];
+                uint8_t bytes[DUP_MESSAGE_BYTES];
                 const uint32_t id = next_id[kind]++;
                 dup_make( bytes, 0, kind, id );
-                dup_check( rocketnet_channel_harness_client_send( &h, 0, dup_codes[kind], bytes, DUP_PAYLOAD_BYTES ) != 0, "client send control" );
+                dup_check( rocketnet_channel_harness_client_send( &h, 0, dup_codes[kind], bytes, DUP_MESSAGE_BYTES ) != 0, "client send control" );
                 dup_make( bytes, 1, kind, id );
-                dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[kind], bytes, DUP_PAYLOAD_BYTES ) != 0, "server send control" );
+                dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[kind], bytes, DUP_MESSAGE_BYTES ) != 0, "server send control" );
             }
         }
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );

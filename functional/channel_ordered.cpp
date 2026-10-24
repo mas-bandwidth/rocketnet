@@ -175,7 +175,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     // A 50 ms base delay plus [0, 50 ms] jitter permits at most 50 ms skew.
     rocketnet_channel_harness_set_link( &h, 0.050, 0.050, rocketnet_ordered_loss_percent(), 5.0f );
 
-    uint8_t payload[262144];
+    uint8_t message_data[262144];
     double send_time[64] = { 0 };
     rocketnet_ordered_measurement_t measurement;
     memset( &measurement, 0, sizeof(measurement) );
@@ -199,8 +199,8 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
             const int bytes = rocketnet_ordered_size( next_to_send );
             if ( bytes >= RN_SPAN_MIN_BYTES && !rocketnet_ordered_span_ring_empty( &h, client_to_server ) )
                 break;
-            rocketnet_ordered_fill( payload, next_to_send, bytes );
-            const uint32_t serial = rocketnet_ordered_send( &h, client_to_server, payload, bytes );
+            rocketnet_ordered_fill( message_data, next_to_send, bytes );
+            const uint32_t serial = rocketnet_ordered_send( &h, client_to_server, message_data, bytes );
             if ( serial == 0 )
             {
                 break;
@@ -219,11 +219,11 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
             if ( expected_index >= rocketnet_ordered_message_count )
                 break;
             const int expected_bytes = rocketnet_ordered_size( expected_index );
-            rocketnet_ordered_fill( payload, expected_index, expected_bytes );
-            const uint64_t expected_hash = rocketnet_channel_hash( payload, expected_bytes );
+            rocketnet_ordered_fill( message_data, expected_index, expected_bytes );
+            const uint64_t expected_hash = rocketnet_channel_hash( message_data, expected_bytes );
             const int exact = delivery.channel == 0 && delivery.bytes == expected_bytes &&
                               delivery.hash == expected_hash &&
-                              memcmp( delivery.data, payload, (size_t) expected_bytes ) == 0;
+                              memcmp( delivery.data, message_data, (size_t) expected_bytes ) == 0;
             if ( !exact )
             {
                 measurement.completion_seconds = h.now - start_time;

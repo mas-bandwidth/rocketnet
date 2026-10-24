@@ -16,7 +16,7 @@ static void unreliable_budget_check_impl( bool condition, const char * label, in
 
 #define unreliable_budget_check( condition, label ) unreliable_budget_check_impl( condition, label, __LINE__ )
 
-static void unreliable_budget_payload( int id, uint8_t data[4] )
+static void unreliable_budget_message( int id, uint8_t data[4] )
 {
     data[0] = (uint8_t) id;
     data[1] = (uint8_t) ( id ^ 0x5A );
@@ -27,7 +27,7 @@ static void unreliable_budget_payload( int id, uint8_t data[4] )
 static int unreliable_budget_matches( const rocketnet_channel_delivery_t * delivery, int id )
 {
     uint8_t expected[4];
-    unreliable_budget_payload( id, expected );
+    unreliable_budget_message( id, expected );
     return delivery->bytes == (int) sizeof( expected ) &&
            delivery->hash == rocketnet_channel_hash( expected, (int) sizeof( expected ) ) &&
            memcmp( delivery->data, expected, sizeof( expected ) ) == 0;
@@ -46,7 +46,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
     for ( int i = 0; i < count; i++ )
     {
         uint8_t data[4];
-        unreliable_budget_payload( i, data );
+        unreliable_budget_message( i, data );
         unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, data, sizeof( data ) ) != 0, "send" );
     }
 
@@ -89,13 +89,13 @@ void reliable_delivered_when_unreliable_budget_full()
     for ( int i = 0; i < unreliable_count; i++ )
     {
         uint8_t data[4];
-        unreliable_budget_payload( i, data );
+        unreliable_budget_message( i, data );
         unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, data, sizeof( data ) ) != 0, "send unreliable" );
     }
     for ( int i = 0; i < reliable_count; i++ )
     {
         uint8_t data[4];
-        unreliable_budget_payload( 32 + i, data );
+        unreliable_budget_message( 32 + i, data );
         unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, data, sizeof( data ) ) != 0, "send reliable" );
     }
 

@@ -27,9 +27,9 @@ static void test_reliable_disabled_before_and_enabled_after()
 
     rn_channels_t enabled;
     check( rn_channels_init( &enabled, region, 1, 0 ) );
-    uint8_t * payload = rn_channels_start( &enabled, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE, 16 );
-    check( payload != NULL );
-    memset( payload, 0xA5, 16 );
+    uint8_t * message_data = rn_channels_start( &enabled, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE, 16 );
+    check( message_data != NULL );
+    memset( message_data, 0xA5, 16 );
     check( rn_channels_finish( &enabled, 16 ) );
     rn_arena_destroy( arena );
 }

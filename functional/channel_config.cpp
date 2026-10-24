@@ -34,7 +34,7 @@ do                                                                              
 } while( 0 )
 
 static const int rocketnet_config_message_count = 32;
-static const int rocketnet_config_payload_bytes = 32;
+static const int rocketnet_config_message_bytes = 32;
 static const double rocketnet_config_step = 1.0 / 60.0;
 
 static float rocketnet_config_loss_percent( float fallback )
@@ -47,7 +47,7 @@ static float rocketnet_config_loss_percent( float fallback )
 
 static void rocketnet_config_fill( uint8_t * data, int index )
 {
-    for ( int i = 0; i < rocketnet_config_payload_bytes; i++ )
+    for ( int i = 0; i < rocketnet_config_message_bytes; i++ )
     {
         uint32_t x = (uint32_t) index * 0x9E3779B9u + (uint32_t) i * 0x85EBCA6Bu + 0xC2B2AE35u;
         x ^= x >> 16;
@@ -205,8 +205,8 @@ void config_equal_over_lossy_loopback()
     int sent_to_client = 0;
     int delivered_server = 0;
     int delivered_client = 0;
-    uint8_t payload[rocketnet_config_payload_bytes];
-    uint8_t expected[rocketnet_config_payload_bytes];
+    uint8_t message_data[rocketnet_config_message_bytes];
+    uint8_t expected[rocketnet_config_message_bytes];
     int order_error = 0;
 
     while ( ( delivered_server < rocketnet_config_message_count || delivered_client < rocketnet_config_message_count ) &&
@@ -214,15 +214,15 @@ void config_equal_over_lossy_loopback()
     {
         while ( sent_to_server < rocketnet_config_message_count )
         {
-            rocketnet_config_fill( payload, sent_to_server );
-            if ( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            rocketnet_config_fill( message_data, sent_to_server );
+            if ( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_data, rocketnet_config_message_bytes ) == 0 )
                 break;
             sent_to_server++;
         }
         while ( sent_to_client < rocketnet_config_message_count )
         {
-            rocketnet_config_fill( payload, sent_to_client );
-            if ( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            rocketnet_config_fill( message_data, sent_to_client );
+            if ( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message_data, rocketnet_config_message_bytes ) == 0 )
                 break;
             sent_to_client++;
         }
@@ -236,7 +236,7 @@ void config_equal_over_lossy_loopback()
             if ( delivered_server < rocketnet_config_message_count )
             {
                 rocketnet_config_fill( expected, delivered_server );
-                if ( delivery.bytes != rocketnet_config_payload_bytes || memcmp( delivery.data, expected, rocketnet_config_payload_bytes ) != 0 )
+                if ( delivery.bytes != rocketnet_config_message_bytes || memcmp( delivery.data, expected, rocketnet_config_message_bytes ) != 0 )
                     order_error = 1;
             }
             delivered_server++;
@@ -246,7 +246,7 @@ void config_equal_over_lossy_loopback()
             if ( delivered_client < rocketnet_config_message_count )
             {
                 rocketnet_config_fill( expected, delivered_client );
-                if ( delivery.bytes != rocketnet_config_payload_bytes || memcmp( delivery.data, expected, rocketnet_config_payload_bytes ) != 0 )
+                if ( delivery.bytes != rocketnet_config_message_bytes || memcmp( delivery.data, expected, rocketnet_config_message_bytes ) != 0 )
                     order_error = 1;
             }
             delivered_client++;

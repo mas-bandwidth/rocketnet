@@ -126,7 +126,7 @@ void harness_one_message_each_way_lossy()
             drain++;
         else if ( i < max_updates )
         {
-            // payload: 'l', 'o', the message index (two bytes)
+            // message data: 'l', 'o', the message index (two bytes)
             if ( server_got == 0 )
             {
                 const uint8_t m[4] = { 'l', 'o', (uint8_t) ( client_sent >> 8 ), (uint8_t) client_sent };
@@ -260,8 +260,8 @@ void harness_no_allocation_after_create()
         return;
     }
 
-    const uint8_t payload[4] = { 1, 2, 3, 4 };
-    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload, 4 ) != 0 );
+    const uint8_t message_data[4] = { 1, 2, 3, 4 };
+    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message_data, 4 ) != 0 );
     int got = 0;
     for ( int i = 0; i < 60 * 10 && got == 0; i++ )
     {
@@ -291,9 +291,9 @@ void harness_collect_preserves_other_channels()
     }
     const uint8_t channel_zero[] = { 'c', 'h', '0' };
     const uint8_t channel_one[] = { 'c', 'h', '1' };
-    uint8_t large_payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
-    for ( int i = 0; i < (int) sizeof(large_payload); i++ )
-        large_payload[i] = (uint8_t) i;
+    uint8_t large_message[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
+    for ( int i = 0; i < (int) sizeof(large_message); i++ )
+        large_message[i] = (uint8_t) i;
     // Unreliable message objects route to channel 0 on receive. Populate the
     // collector's bounded queue directly to prove filtering channel 0 cannot
     // discard an unrelated channel's already-delivered view. The third view
@@ -301,7 +301,7 @@ void harness_collect_preserves_other_channels()
     // reassembled reliable message to the packet size.
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 1, channel_one, sizeof(channel_one) ) );
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 0, channel_zero, sizeof(channel_zero) ) );
-    rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 2, large_payload, sizeof(large_payload) ) );
+    rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 2, large_message, sizeof(large_message) ) );
     rocketnet_channel_delivery_t d;
     rocketnet_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) );
     rocketnet_check( d.bytes == (int) sizeof(channel_zero) );
@@ -310,8 +310,8 @@ void harness_collect_preserves_other_channels()
     rocketnet_check( d.bytes == (int) sizeof(channel_one) );
     rocketnet_check( memcmp( d.data, channel_one, sizeof(channel_one) ) == 0 );
     rocketnet_check( rocketnet_channel_harness_server_collect( &h, 2, &d ) );
-    rocketnet_check( d.bytes == (int) sizeof(large_payload) );
-    rocketnet_check( d.hash == rocketnet_channel_hash( large_payload, sizeof(large_payload) ) );
+    rocketnet_check( d.bytes == (int) sizeof(large_message) );
+    rocketnet_check( d.hash == rocketnet_channel_hash( large_message, sizeof(large_message) ) );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
         rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof(channel_zero) ) );
