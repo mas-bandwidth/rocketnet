@@ -12,7 +12,7 @@
     /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
     umem is a posix_memalign block of ROCKETNET_XDP_UMEM_FRAMES *
     ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
-    (sdk/rocketnet_server_socket_linux.cpp:1723-1725 and :1995), with no mlock,
+    (sdk/rocketnet_server_socket_linux.cpp:1733-1735 and :2005), with no mlock,
     so it moves neither VmLck nor VmPin; the kernel charges its pin to the
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
