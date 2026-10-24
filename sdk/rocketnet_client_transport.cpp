@@ -70,13 +70,14 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 // clamped time they hand out. tla/RNUpdateClock.tla models it: ForwardStep, a
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
 // non-finite sample. A forward step of d advances the clamped time by exactly
-// d, so a clock whose caller stepped backwards resumes with the caller
-// instead of standing still until the caller's clock passes the last good
-// time again (BASE's rule, which tla/MCRNUpdateClockBrokenStall.cfg
-// reverses). While no backwards step has happened the offset is exactly 0.0
-// and the returned time is the caller's time, bit for bit: the common path
-// never adds to the last good time, so every caller that reads an exact time
-// still reads it.
+// d while the caller's clock is still behind, so a clock whose caller
+// stepped backwards resumes with the caller instead of standing still until
+// the caller's clock passes the last good time again (BASE's rule, which
+// tla/MCRNUpdateClockBrokenStall.cfg reverses). Once the caller's clock has
+// caught up, the clock is the caller's clock again. While no backwards step
+// has happened the offset is exactly 0.0 and the returned time is the
+// caller's time, bit for bit: the common path never adds to the last good
+// time, so every caller that reads an exact time still reads it.
 
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
 {
@@ -110,15 +111,22 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
         return last_good;
     }
 
-    // a forward step, or the same time again: the clamped time advances by
-    // the caller's step
+    if ( time >= last_good )
+    {
+        // the caller's clock has caught up with the clamped one: the clock is
+        // the caller's clock again, bit for bit, and the offset keeps the
+        // distance the clock fell behind
+
+        *raw_time = time;
+        return time;
+    }
+
+    // the caller's clock is still behind: the elapsed time is preserved, so
+    // the clamped time advances by exactly the caller's step and the clock
+    // does not stand still for the whole step
 
     const double step = time - raw;
     *raw_time = time;
-
-    if ( *time_offset == 0.0 )
-        return time;
-
     return last_good + step;
 }
 

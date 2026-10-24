@@ -5,11 +5,12 @@
 \* transport and the message object each keep one, and the message object
 \* hands its own resumed time to its transport.
 \*
-\* A forward raw step of d advances the clamped time by exactly d. A
-\* backwards raw step returns the last good time, records the new raw time
-\* and counts one misuse. A non-finite sample changes neither value and
-\* counts one misuse. While no backwards step has happened the offset is
-\* exactly 0 and the clamped time is the caller's time, bit for bit.
+\* A forward raw step of d advances the clamped time by exactly d while the
+\* caller's clock is still behind the clamped one. A backwards raw step
+\* returns the last good time, records the new raw time and counts one
+\* misuse. A non-finite sample changes neither value and counts one misuse.
+\* Once the caller's clock has caught up with the clamped one, the clock is
+\* the caller's clock again.
 \*
 \* BASE's rule stands still after a backwards step until the caller's clock
 \* passes the last good time again; the broken variant "stall" models that
@@ -35,16 +36,17 @@ Init ==
     /\ lastDelta = 0
     /\ steps = 0
 
-\* A forward raw step of d: the caller's clock moved forward by d. The
-\* clamped time advances by exactly d. The broken variant "stall" is BASE's
-\* rule: the clamped time stands until the caller's clock passes it again.
+\* A forward raw step of d: the caller's clock moved forward by d. While the
+\* caller's clock is still behind the clamped one, the clamped time advances
+\* by exactly d. Once the caller's clock has caught up, the clamped time is
+\* the caller's time. The broken variant "stall" is BASE's rule: the clamped
+\* time stands still until the caller's clock passes it again.
 ForwardStep(d) ==
     /\ steps < MaxSteps
     /\ d \in 1..MaxTime
     /\ raw + d <= MaxTime
-    /\ clamped' = IF "stall" \in Broken
-                    THEN (IF raw + d >= clamped THEN raw + d ELSE clamped)
-                    ELSE (IF offset = 0 THEN raw + d ELSE clamped + d)
+    /\ clamped' = IF raw + d >= clamped THEN raw + d
+                    ELSE (IF "stall" \in Broken THEN clamped ELSE clamped + d)
     /\ raw' = raw + d
     /\ offset' = offset
     /\ misuse' = misuse
@@ -110,11 +112,13 @@ TypeOK ==
 ClampedNeverDecreases == clamped >= prevClamped
 
 \* After a backwards step, each later forward raw step of d advances the
-\* clamped time by exactly d: the clock resumes with the caller.
+\* clamped time by exactly d while the caller's clock is still behind; the
+\* step that catches up with the clamped time makes the clock the caller's
+\* clock again.
 ResumeAdvances ==
     (lastStep = "forward" /\ offset > 0) =>
-        (/\ clamped = prevClamped + lastDelta
-         /\ lastDelta = raw - prevRaw)
+        (/\ (raw >= prevClamped => clamped = raw)
+         /\ (raw < prevClamped => clamped = prevClamped + lastDelta))
 
 \* A non-finite sample leaves both values alone.
 NonFiniteChangesNothing ==

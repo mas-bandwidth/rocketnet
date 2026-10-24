@@ -16,9 +16,11 @@ or the slots.
 - **The offset.** `offset` is how far the caller's clock fell behind. It is
   exactly 0 until the first backwards step and never returns to 0, so it is
   the state that says a backwards step has happened.
-- **ForwardStep(d).** A forward raw step of `d`: the clamped time advances by
-  exactly `d`. While `offset` is 0 the clamped time is the caller's time,
-  bit for bit, so a caller that reads an exact time still reads it.
+- **ForwardStep(d).** A forward raw step of `d`: while the caller's clock is
+  still behind the clamped one, the clamped time advances by exactly `d`;
+  once the caller's clock has caught up, the clamped time is the caller's
+  time. While `offset` is 0 the clamped time is the caller's time, bit for
+  bit, so a caller that reads an exact time still reads it.
 - **BackwardStep(t).** A backwards raw step: the clamped time stands (the
   last good time), `raw` and `offset` record the step, and the misuse is
   counted. This is the case BASE could not resume from: BASE returned the
@@ -34,7 +36,9 @@ or the slots.
 - `TypeOK` holds the ranges.
 - `ClampedNeverDecreases`: no sample moves the clamped time back.
 - `ResumeAdvances`: after a backwards step, each later forward raw step of
-  `d` advances the clamped time by exactly `d`.
+  `d` advances the clamped time by exactly `d` while the caller's clock is
+  still behind; the step that catches up with the clamped time makes the
+  clock the caller's clock again.
 - `NonFiniteChangesNothing`: a non-finite sample leaves both values alone.
 
 ## Cases
