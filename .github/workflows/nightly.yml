@@ -39,6 +39,15 @@
 #                           ci.yml's tsan job on 2026-10-22 step for step:
 #                           345-454s on the fleet's 16-core runner hosts.
 #
+#   macos / Release         the macOS functional suite's nightly tier
+#   functional nightly      (ROCKETNET_TEST_NIGHTLY=1, functional/main.cpp):
+#   tier                    the four hard-killed client cells on the portable
+#                           server, each of which waits out the real 10 s
+#                           token timeout, and three of the four transport
+#                           pairs of connect/disconnect x1000 and of
+#                           destroy-under-traffic. ci.yml's macOS rows keep the
+#                           msgx cells of each on every commit (docs/MACOS.md).
+#
 #   linux / transport       every cell of ci.yml's Linux transport family
 #   cells x50 and ASan      matrix fifty times in a row, then the same cells
 #                           and the whole functional suite once per cell on
@@ -109,6 +118,40 @@ jobs:
 
       - name: Functional suite (clang)
         timeout-minutes: 20
+        run: ./bin/functional
+
+  # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole Release functional suite with
+  # ROCKETNET_TEST_NIGHTLY=1 on the fleet's darwin runner (the same host
+  # ci.yml's macOS rows use), which adds the cases moved off the per-commit
+  # path (functional/main.cpp, rocketnet_functional_test_group). Every case
+  # keeps every assertion; the tier exists because those cells wait out real
+  # protocol timeouts or repeat a transport pair a per-commit case keeps.
+  # Measured times: docs/MACOS.md.
+
+  macos-functional-nightly:
+    name: macos / Release functional nightly tier
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-macos-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, through the Makefile)
+        run: make -j8
+
+      - name: Functional suite, nightly tier
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_REPORT: "1"
         run: ./bin/functional
 
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
