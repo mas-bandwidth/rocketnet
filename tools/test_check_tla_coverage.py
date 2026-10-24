@@ -140,6 +140,104 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("COVERAGE OK", out)
 
+    # ------------------------------------------------------------------
+    # Per-action citation checks (--actions / --actions-strict).
+    # ------------------------------------------------------------------
+
+    ACTION_MODULE = r"""MODULE ActMod
+VARIABLES x
+ActionA == /\ x = 0 /\ x' = 1
+ActionB == /\ x = 1 /\ x' = 0
+EnvStep == /\ x = 0 /\ UNCHANGED x
+Next == ActionA \/ ActionB \/ EnvStep
+"""
+
+    ACTION_NOTE = "ActMod models the demo view of sdk/act.c."
+
+    def plant_action_repo(self, code_text, note=None, module_text=None):
+        root = Path(self.tmp.name)
+        (root / "tla").mkdir()
+        (root / "sdk").mkdir()
+        (root / "tla" / "ActMod.tla").write_text(module_text or self.ACTION_MODULE)
+        (root / "sdk" / "act.c").write_text(code_text)
+        write_row(root, {
+            "machine": "rn-act",
+            "code": "sdk/act.c",
+            "module": "ActMod",
+            "status": "current",
+            "owed_by": "-",
+            "note": note or self.ACTION_NOTE,
+        })
+        return root
+
+    def test_actions_read_from_next(self):
+        code_text = ("// tla/ActMod.tla ActionA\n"
+                     "// tla/ActMod.tla ActionB\n"
+                     "// tla/ActMod.tla EnvStep\n")
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+
+    def test_actions_uncited_action_reported(self):
+        code_text = "// tla/ActMod.tla ActionA\n"
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ActMod ActionB: sdk/act.c", out)
+        self.assertIn("ActMod EnvStep: sdk/act.c", out)
+        self.assertIn("ACTIONS UNCITED 2", out)
+
+    def test_actions_citation_spans_comment_lines(self):
+        code_text = "// tla/ActMod.tla ActionA and\n// ActionB\n"
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 1", out)
+        self.assertNotIn("ActMod ActionB:", out)
+
+    def test_actions_cited_in_any_current_row_file(self):
+        root = Path(self.tmp.name)
+        (root / "tla").mkdir()
+        (root / "sdk").mkdir()
+        (root / "tla" / "ActMod.tla").write_text(self.ACTION_MODULE)
+        (root / "sdk" / "act.c").write_text(
+            "// tla/ActMod.tla ActionB\n// tla/ActMod.tla EnvStep\n")
+        (root / "sdk" / "act2.c").write_text("// tla/ActMod.tla ActionA\n")
+        head = "\t".join(["machine", "code", "module", "status", "owed_by", "note"])
+        lines = [head,
+                 "\t".join(["rn-act", "sdk/act.c", "ActMod", "current", "-", self.ACTION_NOTE]),
+                 "\t".join(["rn-act-2", "sdk/act2.c", "ActMod", "current", "-", self.ACTION_NOTE])]
+        (root / "tla" / "COVERAGE.tsv").write_text("\n".join(lines) + "\n")
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+
+    def test_actions_environment_note_exempts(self):
+        code_text = ("// tla/ActMod.tla ActionA\n"
+                     "// tla/ActMod.tla ActionB\n")
+        note = "ActMod models the demo; environment actions EnvStep."
+        root = self.plant_action_repo(code_text, note=note)
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+
+    def test_actions_environment_note_names_unknown_action_fails(self):
+        code_text = ("// tla/ActMod.tla ActionA\n"
+                     "// tla/ActMod.tla ActionB\n")
+        note = "ActMod models the demo; environment actions EnvStep and Bogus."
+        root = self.plant_action_repo(code_text, note=note)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("unknown action Bogus", out)
+
+    def test_actions_strict_fails_on_uncited(self):
+        code_text = "// tla/ActMod.tla ActionA\n"
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 2", out)
+
 
 if __name__ == "__main__":
     unittest.main()
