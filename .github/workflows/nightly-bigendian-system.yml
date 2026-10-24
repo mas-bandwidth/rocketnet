@@ -224,7 +224,7 @@ jobs:
             names=$(sed -n 's/^check failed: \(test_[a-z0-9_]*\) \(exceeded\|exit\|signal\).*/\1/p' "$out")
             if [ "$from_function" = 1 ]; then
               names="$names
-$(sed -n 's/^check failed: ( .* ), function \(test_[a-z0-9_]*\), file .*/\1/p' "$out")"
+          $(sed -n 's/^check failed: ( .* ), function \(test_[a-z0-9_]*\), file .*/\1/p' "$out")"
             fi
             names=$(printf '%s\n' "$names" | sed '/^$/d' | sort -u)
             if [ -z "$names" ]; then

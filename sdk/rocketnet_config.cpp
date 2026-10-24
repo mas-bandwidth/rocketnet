@@ -890,8 +890,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     {
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value ? value : "auto", ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
         return true;
     }
 
@@ -995,8 +1003,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
     }
 
     return true;
