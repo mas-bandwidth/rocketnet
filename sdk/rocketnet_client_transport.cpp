@@ -2397,7 +2397,8 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// The client's acquire/commit family: the same shape, layout and phase
+// tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring, the arena or the lease refuses the frame.
+// The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
 // send-it-now meaning for simple callers.
@@ -2542,6 +2543,8 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
     context->frame = NULL;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a sequence already taken is spent unsent when the ring is full before any frame is sealed.
+// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate leaves every frame unsent.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -2707,6 +2710,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     return result;
 }
 
+// tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
