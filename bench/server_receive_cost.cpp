@@ -18,6 +18,7 @@
 #include "../tests/native_shutdown.h"
 #include "../sdk/rocketnet_server_transport.cpp"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_driver_loopback.h"
 
 #include <algorithm>
 #include <chrono>
