@@ -29,6 +29,16 @@ code. The action mapping and runs below retain their historical scope.
   Each phase has a reservation index (`next`) and an outstanding count.
   `sending` marks the main thread between the post and the switch of
   `send_packets`, when the fill threads are joined.
+- **USO runs.** `Post` groups the finished slots of the phase into runs of
+  consecutive slots, any grouping (the code's `rocketnet_coalesce_send_run`
+  picks one of them), and each run is one `RIOSendEx`:
+  `rocketnet_rio_post_run` copies the run into the phase's staging area of
+  the USO region and posts it with the stride as a `UDP_SEND_MSG_SIZE`
+  control message; a run of one is `rocketnet_rio_post_datagram`.
+  `head[p][s]` is the first slot of the post that carries slot `s` (0 when
+  it is not posted), the outstanding count counts posts, and one completion,
+  named by the run's first slot, retires every slot of the run.
+  `RunRetiresAll = FALSE` frees only the first slot.
 - **Send completions.** `sendCQ` is the set of completions
   `<<phase, slot, status>>` not yet dequeued. Each posted request completes
   at most once, so a set stands for the queue's bag.
@@ -57,7 +67,8 @@ code. The action mapping and runs below retain their historical scope.
 | `Finish(s)` | finish records the bytes |
 | `Abort(s)` | abort zeroes them: the slot is never posted |
 | `Post` | send_packets, fill threads joined, posts every slot of the fill phase with bytes > 0 by RIOSendEx with RIO_MSG_DEFER, then one commit; records that phase's outstanding count |
-| `KernelCompleteSend(p, s)` | the kernel completes a posted send, with a good or a failed status |
+| `Post` (USO) | with USO each run of the fill phase is one RIOSendEx (`rocketnet_rio_post_run`), each other slot one RIOSendEx (`rocketnet_rio_post_datagram`); the outstanding count adds one per post |
+| `KernelCompleteSend(p, s)` | the kernel completes a posted send (a datagram, or a whole USO run named by its first slot), once, with a good or a failed status |
 | `DequeueSend(p, s)` | send_packets dequeues the send CQ without blocking and retires each completed slot of either phase (a failed status counts SEND_FAILED) |
 | `SwitchPhase` | send_packets opens the other fill phase only when its outstanding count is zero; otherwise the switch stays owed and this call returns (SEND_WAITS) |
 | `KernelFillSlice(i)` | the kernel completes a posted RIOReceiveEx: a datagram in the slice, or a failed status |
@@ -81,7 +92,13 @@ schedule, which only strengthens the safety result.
   `Finished`) is always in a phase with no outstanding send. Reserve never
   returns a slot of a phase the kernel still owns any of.
 - **`OutstandingCounts`**: each phase's outstanding count is the number of
-  its `Posted` slots.
+  its posts the kernel owns: `Posted` slots that head their post (a USO run
+  is one post).
+- **`RunPostedTogether`**: a slot is `Posted` exactly while the post that
+  carries it is: its head is a `Posted` slot at or before it that heads
+  itself, and a slot that is not posted names no post. A completion that
+  freed part of a run would leave a member `Posted` with no post to
+  complete it.
 - **`CompletionsOwned`**: every queued send completion names a `Posted`
   slot, and a slice is `Completed` exactly when its completion is queued.
 - **`ExposedStable`**: the exposed bank equals what the last `Swap` left,
@@ -166,16 +183,26 @@ instance is a smaller one, not a passing claim.
 
 ## Runs
 
-The five rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on a
-Linux bench (Java 21.0.12.1, the pinned JAR, 110-second budget):
+The seven rows are in `tla/RUNS.tsv`, each measured by `tlacheck run` on
+vision (Java 21.0.12.1, the pinned JAR, 110-second budget) after the USO
+extension (rn-rio-uso-uro):
 
 | Case | Outcome | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|
-| `MCRNRioDriver.cfg` | PASS, exit 0, no error | 70,881 | 18,464 | 5.2 |
-| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12 | 6,243 | 2,446 | 1.2 |
-| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12 | 56 | 38 | 1.0 |
-| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12 | 27 | 23 | 1.0 |
-| `MCRNRioDriverBrokenUnboundedReceive.cfg` | `ReceiveCallBound` violated, exit 12, depth 7 | 6,523 | 2,782 | 1.2 |
+| `MCRNRioDriver.cfg` | PASS, exit 0, no error | 72,321 | 18,464 | 21.3 |
+| `MCRNRioDriverUso.cfg` | PASS, exit 0, no error | 58,381 | 13,308 | 33.1 |
+| `MCRNRioDriverBrokenSwitchWithoutDrain.cfg` | `NoReserveIntoPostedPhase` violated, exit 12 | 6,422 | 2,483 | 7.2 |
+| `MCRNRioDriverBrokenFreeBeforeDrain.cfg` | `FreedOnlyWhenDrained` violated, exit 12 | 56 | 38 | 4.0 |
+| `MCRNRioDriverBrokenRetireOnRefusal.cfg` | `ReceiveDepthNeverShrinks` violated, exit 12 | 27 | 23 | 3.7 |
+| `MCRNRioDriverBrokenUnboundedReceive.cfg` | `ReceiveCallBound` violated, exit 12 | 6,619 | 2,790 | 5.2 |
+| `MCRNRioDriverBrokenRunRetiresFirst.cfg` | `RunPostedTogether` violated, exit 12 | 658 | 320 | 4.9 |
+
+`MCRNRioDriverUso.cfg` is the USO control: `Slots = 2` so `Post` can group
+two slots into one run, with `Slices = 1, MaxSteps = 0` to keep the receive
+side small, the safety invariants and both liveness properties under
+`SpecFair`. Vision's load (about 43 on 64 cores) explains the longer
+seconds; the state counts of the five older rows moved only by the `head`
+variable's `Post` choices.
 
 ## The reversed witnesses
 
@@ -259,6 +286,25 @@ limit, so `Swap` waits for an empty receive queue as the old loop did.
   completions it dequeues and stops at `ROCKETNET_RIO_RECEIVES`, one bank;
   the queued tail is dequeued by the next call. The counterexample is real
   for that defect.
+
+### `MCRNRioDriverBrokenRunRetiresFirst.cfg`
+
+`Slots = 2, Slices = 1, MaxSteps = 0` with `RunRetiresAll = FALSE`: a run's
+one completion frees only the slot it is named by.
+
+- **The trace TLC printed:** `Reserve`, `Reserve`, `Finish(1)`, `Finish(2)`,
+  `Post` grouping slots 1 and 2 into one run (`head = <<1, 1>>`,
+  outstanding 1), `KernelCompleteSend(0, 1)`, `DequeueSend(0, 1)`: slot 1 is
+  `Free`, slot 2 is still `Posted` with head 1, outstanding is 0, and
+  `RunPostedTogether` fails at state 8.
+- **Against the code, by hand:** `rocketnet_rio_retire_send` reads the
+  run's first slot from the request context and its length from
+  `slot_run`; a retire that freed only `slot_bytes[index]`, as the
+  per-datagram code did, would leave the run's other slots holding bytes
+  while `outstanding` reached 0, so the worker would return the phase idle
+  and count one `PACKETS_SENT` for a run of many. The loop over the run's
+  slots is the fix the witness pins. The counterexample is real for that
+  defect.
 
 ## Code correspondence
 
