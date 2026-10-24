@@ -1532,3 +1532,4 @@ Hits of this sweep that earlier audits already report; listed once here, never a
 | `sdk/rocketnet_ack.cpp:303` | `docs/audits/2026-10-24-code-quality-johnny.md` | 1 | the `fresh` pointer that filing names reaches this `memset` behind an assert-only null check |
 | `sdk/rocketnet_window_send.cpp:32` | `docs/audits/2026-10-24-code-quality-johnny.md` | 2 | `count <= W` asserted only before `W - count` |
 | `sdk/rocketnet_client_slots.cpp:294` | `docs/audits/2026-10-24-code-quality-johnny.md` | 3 | chain search result asserted only, then the slot is freed |
+| `sdk/rocketnet_server_socket_linux.cpp:2689` | `docs/audits/2026-10-24-area-transports-linux-af-xdp.md` | 4 | the XDP pin target is checked against the online CPU count by an assert only; filed after the swept sha as a pre-flight defect, and the Pattern 1 table judges the `CPU_SET` index itself guarded |
