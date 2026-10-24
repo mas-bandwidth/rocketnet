@@ -298,12 +298,23 @@ jobs:
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
   # libc++ headers exactly as tools/run_msan.sh does, and each target links
-  # against that archive with -fsanitize=fuzzer,memory, origins tracked, and
-  # the instrumented libc++. A runner without
-  # /opt/msan-libcxx-<clang version> fails with a TOOL-MISSING line naming it.
-  # Any MemorySanitizer report fails the leg; tools/msan_known.txt belongs to
-  # the unit gate and is not an allowlist for fuzzing. The corpus cache is
-  # separate from the asan leg's (corpus-msan/).
+  # against that archive with -fsanitize=fuzzer-no-link,memory, origins
+  # tracked, and the instrumented libc++.
+  #
+  # libFuzzer's engine is built here against that same libc++ and with MSan.
+  # The engine clang ships (libclang_rt.fuzzer-<arch>.a) is compiled against
+  # libstdc++, so a target whose objects use the instrumented libc++ cannot
+  # resolve its std::__cxx11 references; forced to link anyway, its
+  # uninstrumented std::string writes leave poison that the instrumented
+  # libc++ then reports. Compiling compiler-rt/lib/fuzzer at the release
+  # pinned by tools/build_msan_libcxx.sh, with the same libc++ headers and
+  # the same MSan flags, gives an engine whose every write updates the shadow.
+  # The source tarball is the one that script verifies, at its pinned sha256.
+  #
+  # A runner without /opt/msan-libcxx-<clang version> fails with a
+  # TOOL-MISSING line naming it. Any MemorySanitizer report fails the leg;
+  # tools/msan_known.txt belongs to the unit gate and is not an allowlist for
+  # fuzzing. The corpus cache is separate from the asan leg's (corpus-msan/).
   fuzz-msan:
     name: nightly fuzz MSan (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -363,6 +374,46 @@ jobs:
           done
           exit "$missing"
 
+      - name: Restore the MSan libFuzzer engine
+        uses: actions/cache@v4
+        with:
+          path: .msan-libfuzzer
+          key: msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-v1
+          restore-keys: |
+            msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build the MSan libFuzzer engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .msan-libfuzzer/libFuzzer.a ]; then
+            echo "using the cached MSan libFuzzer engine"
+            exit 0
+          fi
+          version=$(clang++ -dumpversion)
+          # the tarball and pins tools/build_msan_libcxx.sh verifies
+          case "$version" in
+            18.1.3) sha256=2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651 ;;
+            21.1.8) sha256=4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142 ;;
+            *) echo "TOOL-MISSING llvm-project source pin for clang $version (add it to tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"; exit 1 ;;
+          esac
+          work=.msan-libfuzzer
+          mkdir -p "$work"
+          tarball="llvm-project-$version.src.tar.xz"
+          curl -fsSL -o "$work/$tarball" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/$tarball"
+          echo "$sha256  $work/$tarball" | sha256sum -c -
+          tar -xJf "$work/$tarball" -C "$work"
+          src="$work/llvm-project-$version.src/compiler-rt/lib/fuzzer"
+          mkdir -p "$work/obj"
+          for f in "$src"/Fuzzer*.cpp; do
+            clang++ -O1 -g -std=c++17 -fPIC \
+              -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+              -nostdinc++ -isystem "$MSAN_LIBCXX/include/c++/v1" -I "$src" \
+              -c "$f" -o "$work/obj/$(basename "${f%.cpp}").o"
+          done
+          ar rcs "$work/libFuzzer.a" "$work/obj"/*.o
+          rm -rf "$work/llvm-project-$version.src" "$work/$tarball"
+
       - name: Restore corpus
         uses: actions/cache@v4
         with:
@@ -390,11 +441,12 @@ jobs:
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
-            -fsanitize=fuzzer,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+            -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
             -nostdinc++ -isystem "${{ env.MSAN_LIBCXX }}/include/c++/v1" \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
+            .msan-libfuzzer/libFuzzer.a \
             -stdlib=libc++ -L"${{ env.MSAN_LIBCXX }}/lib" -Wl,-rpath,"${{ env.MSAN_LIBCXX }}/lib" \
-            -lbpf -lxdp -luring -lpthread \
+            -lbpf -lxdp -luring -lpthread -lm \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 
       - name: Fuzz ${{ fromJSON(matrix.leg).target }}
