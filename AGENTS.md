@@ -307,7 +307,7 @@ configured families refuses start with
 Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
 `receive_message_buffer_bytes = 1048576`, `max_message_bytes = 1048576`,
 `send_message_buffer_bytes = 4194304`, `send_queue_messages = 1024`,
-`packets_in_flight = 256`, `unreliable_messages_per_update = 1024`,
+`packets_in_flight = 1024`, `unreliable_messages_per_update = 1024`,
 `sequenced_messages_held = 16`, `max_message_receipts = 256`,
 `reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server
 `per_client_send_kbps = 10000`, and server `max_clients = 1000`. A send rate of
