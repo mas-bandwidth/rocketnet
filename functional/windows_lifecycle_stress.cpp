@@ -9,15 +9,24 @@
 
         handles        GetProcessHandleCount
         threads        a Toolhelp32 walk of this process's threads
+        heap_bytes     HeapSummary cbAllocated, summed over GetProcessHeaps
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
     These are the Windows counters of tests/process_resources.h
     (rn-linux-soak-30min-per-transport-a) and load.c, read the same way, and
     the comparison is that header's flat rule: the counts are taken after one
     warm cycle, so every path the case repeats has run once; at the end the
-    handle and thread counts must equal them exactly, and private bytes may
-    exceed theirs by at most one page for every ten minutes of run, rounded
-    up, never less than one page. Private bytes below the warm count pass.
+    handle count must equal its warm count exactly and the thread count must
+    not exceed it (the system thread pool retires idle workers of its own, so
+    fewer threads pass; a thread left behind is one more). Heap bytes in use,
+    the Windows form of the POSIX file's mallinfo2 bytes in use, may exceed
+    the warm count by at most one page for every ten minutes of run, rounded
+    up, never less than one page. Private bytes also count the heap's free
+    but committed pages, which a heap keeps as it fragments, so they are
+    judged per cycle: the growth must stay under one page per cycle, which
+    any mapping left behind by a cycle exceeds. Counts below the warm count
+    pass. The run time is read from the performance counter directly, since
+    rocketnet_platform_time restarts at rocketnet_init.
     Each case prints one line with the before and after counts and the run
     time, and fails when a count moved.
 
@@ -85,8 +94,40 @@ struct windows_resource_counts_t
 {
     int64_t handles;
     int64_t threads;
+    int64_t heap_bytes;
     int64_t private_bytes;
 };
+
+// the run time, from the performance counter: rocketnet_platform_time
+// restarts at rocketnet_init, which the init_term case calls every cycle
+static double windows_run_clock()
+{
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    QueryPerformanceFrequency( &frequency );
+    QueryPerformanceCounter( &counter );
+    return (double) counter.QuadPart / (double) frequency.QuadPart;
+}
+
+// bytes allocated and not freed, over every heap of the process
+static int64_t windows_heap_bytes()
+{
+    HANDLE heaps[256];
+    const DWORD heap_count = GetProcessHeaps( 256, heaps );
+    if ( heap_count == 0 || heap_count > 256 )
+        return -1;
+    int64_t bytes = 0;
+    for ( DWORD i = 0; i < heap_count; i++ )
+    {
+        HEAP_SUMMARY summary;
+        memset( &summary, 0, sizeof( summary ) );
+        summary.cb = sizeof( summary );
+        if ( !HeapSummary( heaps[i], 0, &summary ) )
+            return -1;
+        bytes += (int64_t) summary.cbAllocated;
+    }
+    return bytes;
+}
 
 static int64_t windows_threads()
 {
@@ -115,6 +156,7 @@ static windows_resource_counts_t windows_read_counts()
     windows_resource_counts_t counts;
     counts.handles = -1;
     counts.threads = -1;
+    counts.heap_bytes = -1;
     counts.private_bytes = -1;
 
     // the handle count first: the thread walk opens and closes one handle
@@ -123,6 +165,7 @@ static windows_resource_counts_t windows_read_counts()
         counts.handles = (int64_t) handles;
 
     counts.threads = windows_threads();
+    counts.heap_bytes = windows_heap_bytes();
 
     PROCESS_MEMORY_COUNTERS_EX memory;
     memset( &memory, 0, sizeof( memory ) );
@@ -152,13 +195,20 @@ static int64_t windows_memory_allowance_bytes( double seconds )
     return periods * windows_page_bytes();
 }
 
+// private bytes: under one page per cycle (see the header)
+static int64_t windows_private_allowance_bytes()
+{
+    return (int64_t) WINDOWS_LIFECYCLE_CYCLES * windows_page_bytes();
+}
+
 static bool windows_counts_flat( const windows_resource_counts_t * before, const windows_resource_counts_t * after, double seconds )
 {
-    if ( before->handles < 0 || before->threads < 0 || before->private_bytes < 0 ||
-         after->handles < 0 || after->threads < 0 || after->private_bytes < 0 )
+    if ( before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
+         after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
         return false;
-    return after->handles == before->handles && after->threads == before->threads &&
-           after->private_bytes <= before->private_bytes + windows_memory_allowance_bytes( seconds );
+    return after->handles == before->handles && after->threads <= before->threads &&
+           after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
+           after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
 }
 
 // A transport's threads are joined inside destroy, and a joined thread leaves
@@ -189,7 +239,7 @@ static windows_resource_counts_t windows_stable_counts()
     {
         rocketnet_platform_sleep( 0.001 );
         const windows_resource_counts_t current = windows_read_counts();
-        if ( current.handles == previous.handles && current.threads == previous.threads && current.private_bytes == previous.private_bytes )
+        if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes )
             return current;
         previous = current;
     }
@@ -374,10 +424,11 @@ static void windows_case_result( const char * case_name, const windows_cell_t * 
                                  const windows_resource_counts_t * after, double seconds )
 {
     const bool flat = windows_counts_flat( before, after, seconds );
-    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, private_bytes %lld -> %lld (allowed +%lld), %.3fs%s\n",
+    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, heap_bytes %lld -> %lld (allowed +%lld), private_bytes %lld -> %lld (allowed under +%lld), %.3fs%s\n",
             case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) before->threads,
-            (long long) after->threads, (long long) before->private_bytes, (long long) after->private_bytes,
-            (long long) windows_memory_allowance_bytes( seconds ), seconds, flat ? "" : " FAIL resource count moved" );
+            (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
+            (long long) windows_memory_allowance_bytes( seconds ), (long long) before->private_bytes, (long long) after->private_bytes,
+            (long long) windows_private_allowance_bytes(), seconds, flat ? "" : " FAIL resource count moved" );
     fflush( stdout );
     if ( !flat )
         exit( 1 );
@@ -473,10 +524,10 @@ static void windows_init_term_1000( const char * server_transport )
     windows_clear_transport_env();
     windows_init_term_cycle();
     const windows_resource_counts_t before = windows_stable_counts();
-    const double start = rocketnet_platform_time();
+    const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_init_term_cycle();
-    const double seconds = rocketnet_platform_time() - start;
+    const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "init_term_1000", cell, &before, &after, seconds );
 }
@@ -487,10 +538,10 @@ static void windows_server_create_destroy_1000( const char * server_transport )
     windows_clear_transport_env();
     windows_server_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
-    const double start = rocketnet_platform_time();
+    const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_server_create_destroy_cycle( cell );
-    const double seconds = rocketnet_platform_time() - start;
+    const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "server_create_destroy_1000", cell, &before, &after, seconds );
 }
@@ -501,10 +552,10 @@ static void windows_client_create_destroy_1000( const char * server_transport )
     windows_clear_transport_env();
     windows_client_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
-    const double start = rocketnet_platform_time();
+    const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_client_create_destroy_cycle( cell );
-    const double seconds = rocketnet_platform_time() - start;
+    const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "client_create_destroy_1000", cell, &before, &after, seconds );
 }
@@ -518,10 +569,10 @@ static void windows_connect_disconnect_1000( const char * server_transport )
     windows_server_address( server, server_address, sizeof( server_address ) );
     windows_connect_disconnect_cycle( cell, server, server_address, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
-    const double start = rocketnet_platform_time();
+    const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_connect_disconnect_cycle( cell, server, server_address, i );
-    const double seconds = rocketnet_platform_time() - start;
+    const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     rn_native_server_transport_stop_and_destroy( server );
     windows_case_result( "connect_disconnect_1000", cell, &before, &after, seconds );
@@ -537,10 +588,10 @@ static void windows_server_restart_1000( const char * server_transport )
     snprintf( fixed_address, sizeof( fixed_address ), "127.0.0.1:%u", fixed_port );
     windows_server_restart_cycle( cell, fixed_address, fixed_port, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
-    const double start = rocketnet_platform_time();
+    const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_server_restart_cycle( cell, fixed_address, fixed_port, i );
-    const double seconds = rocketnet_platform_time() - start;
+    const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
     windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
 }
