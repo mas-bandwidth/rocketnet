@@ -1463,7 +1463,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 /// Set all values to zero to disable the simulator.
 ///
 /// In a development build the settings apply at once to a live connection, on
-/// and off, in either direction. Out-of-range values count as API misuse and
+/// and off, in either direction. Every development connection owns a
+/// simulator from the start, so a zero setting costs the memory of one and
+/// neither latency nor a copy. Out-of-range values count as API misuse and
 /// leave the settings unchanged.
 ///
 /// These environment variables set the values at create.
@@ -1476,8 +1478,10 @@ ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_clien
 
 /// Simulates outgoing server packets with the same ranges as the client call.
 /// In a development build the settings apply at once to a running server, on
-/// and off, in either direction. Invalid values count as API misuse and leave
-/// the settings unchanged.
+/// and off, in either direction. Every development server owns a simulator
+/// from the start, so a zero setting costs the memory of one and neither
+/// latency nor a copy. Invalid values count as API misuse and leave the
+/// settings unchanged.
 /// Use the ROCKETNET_DEV_SERVER_LATENCY_MS, ROCKETNET_DEV_SERVER_JITTER_MS,
 /// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
 /// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.

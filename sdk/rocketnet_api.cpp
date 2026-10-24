@@ -2104,6 +2104,12 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 // ---------------------------------------------------------------------------
 // The development network simulator: a development library's calls, and a
 // unit-test build's (the test hooks switch the development posture on).
+//
+// The setting applies at once to a live connection and to a running server:
+// the call hands it to the thread that owns the simulator as a config record
+// under a tiny mutex, and that thread takes it before its next send. The
+// connection's threads do not move, and a production library refuses the
+// simulator and carries none of its memory.
 
 #if ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
 
