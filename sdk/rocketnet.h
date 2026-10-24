@@ -1599,11 +1599,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 /// ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
 /// ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
 ///
-/// @param client The client whose outgoing packets are simulated.
+/// @param client The client whose outgoing traffic is simulated.
 /// @param latency_ms Added delay in milliseconds, 0 .. 60000.
 /// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
 /// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
-/// @param duplicate_percent Percentage of packets delivered twice, 0 .. 100.
+/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
 ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
@@ -1617,11 +1617,11 @@ ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_clien
 /// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
 /// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.
 ///
-/// @param server The server whose outgoing packets are simulated.
+/// @param server The server whose outgoing traffic is simulated.
 /// @param latency_ms Added delay in milliseconds, 0 .. 60000.
 /// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
 /// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
-/// @param duplicate_percent Percentage of packets delivered twice, 0 .. 100.
+/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
 ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
