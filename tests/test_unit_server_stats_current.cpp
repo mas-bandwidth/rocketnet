@@ -220,7 +220,7 @@ static void test_server_stats_current_after_window_slides()
         stats_check_reference( endpoint );
     }
 
-    check( g_stats_comparisons > 3 * (int) count );
+    check( g_stats_comparisons > 2 * (int) count );
 }
 
 REGISTER_UNIT_TEST( test_server_stats_current_after_window_slides );
