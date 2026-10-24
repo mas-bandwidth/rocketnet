@@ -6501,6 +6501,18 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     // whose payload never arrived never acked. Mutation that must bite:
     // ack a payload id without it entering the batch (or enter it twice);
     // the acked-implies-delivered-exactly-once check below goes red.
+    //
+    // The client's sender paces on its I/O thread: a hand-off the I/O thread
+    // has not caught up with is deferred (CLIENT_SEND_DEFERRED, an expected
+    // count), and the sender starts no payload after a deferral until a
+    // hand-off goes through, so the Filling ring never runs full and no
+    // SEND_RING_FULL refusal is counted. A starved I/O thread on a loaded
+    // host (the macOS sanitizer nightly, docs/MACOS.md "Sanitizers and
+    // leaks", finding 2) is made here on purpose: halfway through, the case
+    // holds the hand-off mutex for 512 iterations, so the I/O thread waits
+    // at its exchange and every hand-off is deferred. A sender that kept
+    // committing one payload an iteration filled the 256-slot ring and the
+    // clean-counters check at destroy went red.
 
     const int total = 10000;
 
@@ -6551,10 +6563,26 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
     int sent_client = 0, sent_server = 0, acked_client = 0, acked_server = 0;
 
+    rocketnet_client_io_t * client_io = rocketnet_client_transport_client_io( client );
+    const int stall_iterations = 512;
+    int stall_left = -1;    // -1 not yet stalled, then iterations left holding the mutex, 0 done
+    uint64_t client_deferred_seen = rocketnet_counter_value( rocketnet_client_transport_counters( client ), ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
+    bool client_send_late = false;
+
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 90.0 && ( sent_client < total || sent_server < total ) )
     {
-        if ( sent_client < total )
+        if ( client_io && stall_left < 0 && sent_client >= total / 2 )
+        {
+            rocketnet_platform_mutex_acquire( client_io->mutex );
+            stall_left = stall_iterations;
+        }
+        else if ( stall_left > 0 && --stall_left == 0 )
+        {
+            rocketnet_platform_mutex_release( client_io->mutex );
+        }
+
+        if ( sent_client < total && !client_send_late )
         {
             struct rocketnet_packet_context_t ctx;
             uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
@@ -6589,6 +6617,10 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
         rocketnet_client_transport_send_packets( client );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
+
+        const uint64_t client_deferred = rocketnet_counter_value( rocketnet_client_transport_counters( client ), ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
+        client_send_late = client_deferred != client_deferred_seen;
+        client_deferred_seen = client_deferred;
 
         for ( int i = 0; i < rocketnet_client_transport_num_payloads( client ); i++ )
         {
@@ -6650,6 +6682,10 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
         rocketnet_platform_sleep( 0.0005 );
     }
+
+    if ( stall_left > 0 )
+        rocketnet_platform_mutex_release( client_io->mutex );
+    rocketnet_check( !client_io || stall_left == 0 );
 
     for ( int sequence = 1; sequence <= total; sequence++ )
     {
