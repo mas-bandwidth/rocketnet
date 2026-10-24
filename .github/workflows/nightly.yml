@@ -237,7 +237,7 @@ jobs:
   macos-transport-cells-repeat:
     name: macos / transport cells x50
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 90
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -256,7 +256,7 @@ jobs:
         run: make -j4
 
       - name: Every macOS transport cell, fifty times in a row
-        timeout-minutes: 75
+        timeout-minutes: 15
         shell: bash
         run: scripts/transport-cells-repeat --runs 50
 
