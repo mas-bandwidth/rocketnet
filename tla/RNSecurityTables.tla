@@ -566,8 +566,9 @@ OrderIsDeadlineOrder ==
     \A i, j \in 1..Len(orderList) : i < j => claimSlot[orderList[i]].dl <= claimSlot[orderList[j]].dl
 \* a record never lands on another token's live claim
 LiveClaimNeverReplaced == ~claimReplaced
-\* the O(1) capacity answer equals the scan's, for every token
-CanRecordMatchesScan == \A tk \in ClaimTokens : CanRecord(tk) = CanRecordScan(tk)
+\* the O(1) capacity answer equals the scan's, for every token ("te" takes
+\* no claim, so it asks the capacity question for a token not in the table)
+CanRecordMatchesScan == \A tk \in Tokens : CanRecord(tk) = CanRecordScan(tk)
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :
