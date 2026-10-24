@@ -211,8 +211,8 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // lower in the config field itself disables that direction's budget.
     // The environment is not read here: the public creates resolve the
     // budget from ROCKETNET_CLIENT_SEND_KBPS or
-    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (sdk/rocketnet_api.cpp:135
-    // and :173) and pass it as default_kbps.
+    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (rn_client_split and
+    // rn_server_split) and pass it as default_kbps.
     if ( default_kbps == 0 )
         default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
 
@@ -277,6 +277,8 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->default_kbps = default_kbps;
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
+    object->raw_time = time;                    // the seed is the clock's origin, not a step
+    object->time_offset = 0.0;
     object->pending_connection = -1;
     object->send_next_connection = 0;
     object->block = block;
@@ -373,6 +375,8 @@ static void rn_message_flush_unreliable( rn_message_object_t * object, int index
     }
     else if ( records > 0 )
     {
+        if ( admitted )
+            rocketnet_send_budget_settle( &connection->budget, admitted, 0 );    // tla/RNSendBudget.tla SendFailed: refund the whole charge
         for ( int i = 0; i < records; ++i ) rn_message_count( object, failed_counter );
         for ( uint32_t i = 0; i < build->receipt_count; ++i )
             rn_window_ack_receipt_emit_loss( &connection->ordered.ack, build->receipt_serials[i] );
@@ -590,7 +594,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_flush_unreliable( object, i, false );
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    time = rocketnet_update_clock_advance( object->time, &object->raw_time, &object->time_offset, time, &time_clamped );
     if ( time_clamped && !object->clock_started )
         return result;
     object->time = time;
@@ -804,6 +808,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel)
     if ( object->pending_connection >= 0 )
     {
+        rocketnet_error( "message start refused: a start is already pending on connection %d; finish or abort it first", object->pending_connection );
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
@@ -818,8 +823,15 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( unreliable && object->link.start_packet )
     {
         const int eligible = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
-        const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ?
-                           9 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+        int header = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+        if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
+        {
+            // the code 1 header is the record shape's, the same call rn_channels_finish makes
+            struct rocketnet_message_record_t sequenced_shape = {};
+            sequenced_shape.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+            sequenced_shape.channel = (uint32_t) channel;
+            header = rocketnet_message_record_header_bytes( &sequenced_shape );
+        }
         rn_message_packet_build_t * build = &connection->unreliable_build;
         const int room = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
         if ( eligible >= 0 && bytes <= room - header )
@@ -827,7 +839,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             const bool receipt = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
             if ( build->writer.payload &&
                  ( bytes + header > rocketnet_message_writer_space( &build->writer ) ||
-                   ( receipt && build->receipt_count == 16 ) ||
+                   ( receipt && build->receipt_count == RN_MESSAGE_RECEIPT_SERIALS_MAX ) ||
                    !rn_endpoint_in_place_affordable( connection, build->writer.bytes + header + bytes + 1, object->time ) ) )
                 rn_message_flush_unreliable( object, index, false );
             if ( !build->writer.payload )
@@ -986,6 +998,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         rn_message_packet_build_t * build = &connection->unreliable_build;
         if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
         {
+            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
             rn_message_connection_cancel_pending( object, index );
             return 0;
         }
@@ -1029,9 +1042,12 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
+        const uint32_t reserved = connection->pending_bytes;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
         {
+            if ( bytes < 1 || (uint32_t) bytes > reserved )
+                rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
             rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
             return 0;
         }
@@ -1052,9 +1068,12 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         return serial;
     }
 
+    const uint32_t reserved = object->connections[index].pending_bytes;
     const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
     {
+        if ( bytes < 1 || (uint32_t) bytes > reserved )
+            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
         rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (tla/RNSlots.tla FinishPending)
         return 0;
     }
@@ -1232,43 +1251,17 @@ int rn_message_object_receive( struct rn_message_object_t * object, int * index,
     return 1;
 }
 
-int rn_message_object_receive_channel( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes )
-{
-    // the per-channel cursor the unit suite's pre-batch cases still use; the
-    // public one queue passes through rn_message_object_receive instead
-    *data = NULL;
-    *bytes = 0;
-    if ( index < 0 || index >= object->num_connections || channel < 0 || channel >= object->config.num_channels )
-        return 0;
-
-    rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
-        return 0;
-
-    const uint32_t deliveries = connection->ordered.channels.deliveries;
-    const rn_delivery_t * table = connection->region->deliveries;
-    for ( uint32_t k = connection->hot->cursors[channel]; k < deliveries; k++ )
-    {
-        if ( table[k].channel != (uint16_t) channel || connection->hot->views[k] != RN_MESSAGE_VIEW_WAITING )
-            continue;
-        connection->hot->views[k] = RN_MESSAGE_VIEW_HELD;
-        connection->hot->held++;
-        connection->hot->cursors[channel] = k + 1;
-        *data = table[k].data;
-        *bytes = table[k].bytes;
-        return 1;
-    }
-    connection->hot->cursors[channel] = deliveries;
-    return 0;
-}
-
 static bool rn_message_connection_release_view( rn_message_connection_t * connection, const uint8_t * data )
 {
     if ( connection->hot->held == 0 )
         return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
-    for ( uint32_t k = 0; k < deliveries; k++ )
+    uint32_t cursor = connection->hot->cursors[0];
+    if ( cursor > deliveries )
+        cursor = deliveries;
+    uint32_t k = cursor == 0 ? deliveries - 1 : cursor - 1;
+    for ( uint32_t n = 0; n < deliveries; n++ )
     {
         if ( table[k].data == data && connection->hot->views[k] == RN_MESSAGE_VIEW_HELD )
         {
@@ -1276,6 +1269,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
             connection->hot->held--;
             return true;
         }
+        k = k == 0 ? deliveries - 1 : k - 1;
     }
     return false;
 }
@@ -1706,17 +1700,6 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
     if ( !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rn_message_object_receive( &server->object, client_index, channel, data, bytes );
-}
-
-int rocketnet_message_server_receive_channel( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( data ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    return rn_message_object_receive_channel( &server->object, client_index, channel, data, bytes );
 }
 
 int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages )

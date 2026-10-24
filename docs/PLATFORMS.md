@@ -9,7 +9,7 @@ that no workflow runs is unsupported, even if the code happens to build there.
 The table below is the whole claim. Each row names the workflow file and the
 runner label that prove it. `tools/check_platform_policy.py` reads the table
 and refuses a supported or nightly row whose label is not in the workflow it
-names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide.
+names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
 
 ## The table
 
@@ -18,7 +18,7 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | self-hosted, Linux, X64, fleet |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | self-hosted, Windows, X64, rocketnet-windows |
+| [Windows 11 (self-hosted fleet)](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, self-hosted fleet) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | self-hosted, Linux, X64, fleet |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
@@ -26,9 +26,9 @@ names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kern
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
 | [macOS 27 (self-hosted fleet)](MACOS.md) | x86_64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | self-hosted, macOS, ARM64, rocketnet-macos |
-| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
-| Windows 11 (self-hosted fleet) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
-| Windows 11 (self-hosted fleet) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
+| [Windows 11 (self-hosted fleet)](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | self-hosted, Windows, X64, rocketnet-windows |
+| [Windows 11 (self-hosted fleet)](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
+| [Windows 11 (self-hosted fleet)](WINDOWS.md) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | self-hosted, Windows, X64, rocketnet-windows |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
 
@@ -41,7 +41,8 @@ libraries with MSVC for ARM64, checks that `rocketnet.dll` is an ARM64 image
 and checks its exports. Nothing runs on arm64, so its row stays unsupported.
 
 The macOS rows link to [MACOS.md](MACOS.md), the guide for building, pinning
-and verifying on a Mac. The transports column names the backends the row actually
+and verifying on a Mac, and the Windows rows to [WINDOWS.md](WINDOWS.md), the
+same guide for Windows. The transports column names the backends the row actually
 exercises or proves in CI. The registry (`rocketnet_drivers.inc`) also lists
 portable and loopback on every platform, gso, io_uring and xdp on Linux, msgx on
 macOS, and iocp and rio on Windows. A transport that the row does not name is not part of that row's claim.

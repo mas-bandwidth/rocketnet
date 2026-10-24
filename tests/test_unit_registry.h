@@ -185,15 +185,6 @@ inline int rocketnet_unit_tests_run_named( const char * name )
     return 1;
 }
 
-// runs every registered test in this process, in list order. the suite runs
-// through run_named in worker subprocesses; this is the whole-list form.
-
-inline void rocketnet_unit_tests_run()
-{
-    for ( int i = 0; i < rocketnet_unit_tests_count(); i++ )
-        rocketnet_unit_tests_run_named( rocketnet_unit_tests_name( i ) );
-}
-
 // Key and seed sizes the SDK's internal key makers (sdk/rocketnet_connect_token.h)
 // write: an Ed25519 backend secret is 64 bytes and its seed 32; an X25519
 // server secret is 32. The public header carries only the public-key sizes.

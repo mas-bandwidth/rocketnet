@@ -180,6 +180,31 @@ static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
     rocketnet_unit_check( rocketnet_xdp_cpu_in_set( 1023, 1024 ) );
 }
 
+static void test_xdp_transport_preflight_refuses_pin_targets_outside_isolated()
+{
+    int first_missing = -1;
+
+    // the audit's example: two OS cpus, seven queues and isolcpus=1-7 on an
+    // eight-cpu machine pass the old count-only check, but the last thread
+    // targets cpu 8
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "1-7\n", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 8 );
+
+    // a layout that holds every pin target: 2 .. 8
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2-8\n", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == -1 );
+
+    // a gap at 5
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-4,6-8", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 5 );
+
+    // no list, a malformed list: neither verifies
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 2 );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-8x", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 2 );
+}
+
 static void test_xdp_transport_stats_cpus_are_bounded()
 {
     rocketnet_unit_check( !rocketnet_xdp_stats_cpus_fit( -1 ) );
@@ -189,9 +214,41 @@ static void test_xdp_transport_stats_cpus_are_bounded()
     rocketnet_unit_check( rocketnet_xdp_stats_cpus_fit( ROCKETNET_XDP_STATS_MAX_CPUS ) );
 }
 
+static void test_xdp_transport_receive_drain_rotates_first_queue()
+{
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 1 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 1, 1 ) == 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 2 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 1, 2 ) == 1 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 1, 1, 2 ) == 0 );
+
+    for ( int step = 0; step < 7; step++ )
+    {
+        rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, step, 7 ) == step );
+        rocketnet_unit_check( rocketnet_xdp_drain_queue( 3, step, 7 ) == ( 3 + step ) % 7 );
+    }
+
+    // three queues, each holding more than one call's budget. The call that
+    // starts at S fills on S, so the next call starts at S + 1. Over three
+    // calls every queue is first once.
+    int start = 0;
+    int served_first[3] = { 0, 0, 0 };
+    for ( int call = 0; call < 3; call++ )
+    {
+        const int first = rocketnet_xdp_drain_queue( start, 0, 3 );
+        rocketnet_unit_check( first >= 0 && first < 3 );
+        served_first[first] += 1;
+        start = rocketnet_xdp_drain_queue( first, 1, 3 );
+    }
+    rocketnet_unit_check( served_first[0] == 1 && served_first[1] == 1 && served_first[2] == 1 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_receive_drain_rotates_first_queue );
 REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
+REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
 
 #endif // #if defined(__linux__)

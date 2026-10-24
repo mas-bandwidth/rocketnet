@@ -40,7 +40,7 @@ static void rn_sequenced_release_number( rn_channels_t * channels, uint64_t numb
 }
 
 // A hold is a slot (held_sequenced or block_in_turn) and the first number of
-// its code-4 span (pad or block_in_turn_first).
+// its code-4 span (held_sequenced_first or block_in_turn_first).
 static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
 {
     const uint32_t hold = *slot;
@@ -61,7 +61,7 @@ static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot
 
 static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->pad );
+    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->held_sequenced_first );
 }
 
 static void rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_receive_t * rx )
@@ -109,7 +109,7 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
 // RNChannelTypes!DispatchFragment for a code-4 block. The first fragment to
 // arrive is the anchor; *hold names it and *first holds its first number. An
 // in-turn block collects in rx->block_in_turn, a future one in the one
-// future-state slot (rx->held_sequenced, rx->pad), so each channel has at most
+// future-state slot (rx->held_sequenced, rx->held_sequenced_first), so each channel has at most
 // one of each. Each fragment is copied once to its own offset because its
 // receive batch expires before the block can complete.
 static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message_record_t * record,
@@ -119,14 +119,26 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
-    const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
+
+    int64_t base = 0;
+    if ( !rn_block_shape_valid( channels, record, &base ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
+                                      ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
     const bool last = index + 1 == count;
-    const int64_t base = (int64_t) record->ring - (int64_t) index * ( F / 16 );
     const uint64_t end = base < 0 ? UINT64_MAX : (uint64_t) base * 16 + (uint64_t) ( count - 1 ) * F +
         ( last ? ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) : 16 );
-    if ( record->fragments == 0 || count > max_count || count > region->window || index >= count ||
-         ( last ? record->bytes < 1 || (uint32_t) record->bytes > F : (uint32_t) record->bytes != F ) ||
-         base < 0 || end > region->ring_bytes )
+    if ( base < 0 || end > region->ring_bytes )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -340,7 +352,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     if ( reliable )
     {
         if ( record->block )
-            return rn_sequenced_block( channels, record, &rx->held_sequenced, &rx->pad, delta, number_slot, out );
+            return rn_sequenced_block( channels, record, &rx->held_sequenced, &rx->held_sequenced_first, delta, number_slot, out );
         const uint64_t offset = (uint64_t) record->ring * 16;
         const uint64_t span = ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15;
         if ( !rn_region_ring_span_valid( region, offset, span ) )
@@ -351,7 +363,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         // THE COPIES (b): this future state outlives the receive batch.
         memcpy( region->receive_ring + offset, record->data, (size_t) record->bytes );
         rx->held_sequenced = number_slot | RN_SEQUENCED_RELIABLE_HOLD;
-        rx->pad = (uint32_t) region->receive_descriptors[number_slot].number;
+        rx->held_sequenced_first = (uint32_t) region->receive_descriptors[number_slot].number;
         return ROCKETNET_CHANNEL_DISPATCH_HELD;
     }
 
@@ -424,7 +436,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
         if ( rx->block_in_turn == RN_DESCRIPTOR_NONE )
         {
             rx->block_in_turn = slot;
-            rx->block_in_turn_first = rx->pad;
+            rx->block_in_turn_first = rx->held_sequenced_first;
             rx->held_sequenced = RN_DESCRIPTOR_NONE;
         }
         return false;
