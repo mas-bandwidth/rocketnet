@@ -804,6 +804,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel)
     if ( object->pending_connection >= 0 )
     {
+        rocketnet_error( "message start refused: a start is already pending on connection %d; finish or abort it first", object->pending_connection );
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
@@ -993,6 +994,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         rn_message_packet_build_t * build = &connection->unreliable_build;
         if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
         {
+            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
             rn_message_connection_cancel_pending( object, index );
             return 0;
         }
@@ -1036,9 +1038,12 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
+        const uint32_t reserved = connection->pending_bytes;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
         {
+            if ( bytes < 1 || (uint32_t) bytes > reserved )
+                rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
             rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
             return 0;
         }
@@ -1059,9 +1064,12 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         return serial;
     }
 
+    const uint32_t reserved = object->connections[index].pending_bytes;
     const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
     {
+        if ( bytes < 1 || (uint32_t) bytes > reserved )
+            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
         rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (tla/RNSlots.tla FinishPending)
         return 0;
     }
