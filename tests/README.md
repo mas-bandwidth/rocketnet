@@ -22,6 +22,12 @@ captured and dropped when it passes; set `ROCKETNET_TEST_VERBOSE=1` to skip
 the capture and watch the log live. A test that a platform does not build is
 not registered there, so it is neither run nor printed.
 
+Functional cases run one at a time, even with `ROCKETNET_TEST_JOBS` set.
+Use generous completion deadlines to catch hangs; do not assert wall-clock
+latency or receive-gap thresholds. Unit tests use deterministic inputs and
+simulated time for protocol deadlines, never host scheduling speed. See
+[BUILDING.md](../BUILDING.md) for the 60-second target and 120-second cap.
+
 ## Peak memory per case
 
 Both runners record each case process's peak resident set (`wait4`
