@@ -28,8 +28,8 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   `BindAtRequest = TRUE` is the code before 2026-10-17, which recorded at
   the request. Recording is a no-op for a live entry,
   then a free slot, then an expired slot, then — in the code — the
-  oldest entry, live or not (`rocketnet_token_table_select_slot` with
-  `evict_oldest = 1`, reached from `rocketnet_used_token_history_record`).
+  oldest entry, live or not (`rocketnet_token_table_select_slot`, reached from
+  `rocketnet_used_token_history_record`).
 - **One live connection.** The code has no admitted-token set (removed
   2026-10-18, `docs/SESSION.md` 1.6). A token is kept to one live
   connection by the history (another address is refused while the entry
@@ -68,11 +68,21 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   past the verify; a same-address request after a disconnect finds its own
   live claim, records nothing and releases it from wherever it sits in the
   order list); a mapping swept by `Tick` at its handshake deadline
-  releases nothing, as its claim expires at the same instant. Claim
-  deadlines are held at `MaxClock + 1`, which changes no live-or-expired
-  answer and keeps their order; the claim actions take `ClaimTokens`
-  (`th` and `tf`), one token fewer than `Tokens`, so the instance stays
-  inside the checking budget. A release unlinks the entry and
+  releases nothing, as its claim expires at the same instant. The table's
+  `ClaimRecord` then reclaims an expired order head directly, matching
+  `rocketnet_used_token_history_claim_record`; no intermediate free-list
+  push is needed and no slot leaks. Claim deadlines are held at
+  `MaxClock + 1`, which changes no live-or-expired answer and keeps their
+  order. The integrated control takes `ClaimTokens = {"th"}` so the full
+  protocol state space remains within the runner's 110-second budget.
+  `MCRNSecurityTablesClaims.cfg` runs `ClaimsSpec` with both `th` and `tf`
+  and both slots, holding unrelated protocol variables fixed. It checks
+  record, renewal, release, wrong-address/repeated release and expiry
+  against all four claim invariants. The capacity invariant queries all
+  three tokens, including an identifier absent from a full table. Both
+  release witnesses retain the two-token integrated instance. The original
+  two-token full control timed out; no protocol constant or invariant was
+  weakened to obtain a passing run. A release unlinks the entry and
   pushes its slot on the free list. `ReleaseToFree = FALSE` is the code
   before the free list, without its scan: the release zeroed the deadline
   and left the slot in place. `ReleaseChecksLive = FALSE` pushes the slot

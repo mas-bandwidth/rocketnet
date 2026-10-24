@@ -625,3 +625,30 @@ static void test_claim_out_of_order_deadline_delays_reuse_only()
 }
 
 REGISTER_UNIT_TEST( test_claim_out_of_order_deadline_delays_reuse_only );
+
+// Re-recording an expired identifier moves it behind the remaining claims;
+// the next expired head can then be reused without replacing the renewed one.
+static void test_claim_expired_identifier_moves_to_order_tail()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t ids[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 5; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    for ( int i = 0; i < TC_CLAIM_CAPACITY; i++ )
+    {
+        const double at = 1000.0 + (double) i;
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, at + TC_CLAIM_DEADLINE_SECONDS, at ) == 1 );
+    }
+    check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1010.0, 1005.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_can_record( history, ids[4], 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &other, 1011.0, 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1006.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[1], &other, 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_expired_identifier_moves_to_order_tail );
