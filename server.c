@@ -54,7 +54,7 @@ static volatile int quit;
 // section 2: the run seed offsets the length rule (section 4), and both ends
 // get the same seed, so every schedule computation in this program reads it
 // from here rather than a literal.
-static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes = 262144, .max_payload_bytes = 16384 };
+static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes = 262144 };
 
 void interrupt_handler( int signal )
 {
@@ -259,7 +259,7 @@ struct server_stream_t
     uint64_t seen[ROCKETNET_SERVER_MAX_SEQUENCES / 64];
     uint32_t bucket_sent[ROCKETNET_LIVE_NUM_BUCKETS];
     uint32_t bucket_received[ROCKETNET_LIVE_NUM_BUCKETS];
-    uint32_t confirmed;             // contiguous sequences the peer reported received (highest + 1)
+    uint32_t confirmed;             // contiguous sequences the client reported received (highest + 1)
     uint32_t contiguous;            // the sequence after the highest contiguous one received (section 5)
     uint64_t bytes_received;        // the bytes of the messages received for this stream
 };
@@ -325,8 +325,8 @@ static void matrix_fail( struct server_client_t * c, int mode, int channel, int6
 
 // the pacing ledger (docs/LIVE-XDP.md section 6): outstanding bytes, messages
 // and reliable numbers, admitted only while each stays under its half margin.
-// Outstanding is sent minus what the peer's progress reports have confirmed
-// (section 5: the peer reports, per stream, the highest contiguous sequence
+// Outstanding is sent minus what the client's progress reports have confirmed
+// (section 5: the client reports, per stream, the highest contiguous sequence
 // it received); the ledger shrinks as those reports arrive. Tiny messages
 // carry no sequence and occupy negligible memory, so they are never admitted
 // or counted here.
@@ -957,7 +957,6 @@ int main( int argc, char ** argv )
     rocketnet_message_default_config( &message_config );
     message_config.packets_per_update = packets_per_update;
     g_live.max_message_bytes = (uint32_t) message_config.max_message_bytes;
-    g_live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, address, &config, &message_config, NULL, 0, send_kbps );
     if ( !server )

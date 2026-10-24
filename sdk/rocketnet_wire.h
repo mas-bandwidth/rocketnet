@@ -64,7 +64,7 @@
 #define ROCKETNET_IPV6_HEADER_BYTES             40
 #define ROCKETNET_UDP_HEADER_BYTES              8
 
-// The IP and UDP header bytes on one datagram, from the peer's address family:
+// The IP and UDP header bytes on one datagram, from the remote endpoint's address family:
 // 28 for IPv4 and 48 for IPv6. The values are the rocketnet_address_t.type
 // families from rocketnet_layers.h (1 IPv4, 2 IPv6); an address with no family
 // has no headers.

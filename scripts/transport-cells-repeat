@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+#
+# transport-cells-repeat: every transport family matrix cell, N times in a row.
+#
+# ci.yml's "Transport family matrix" step runs each cell of its OS once. This
+# script runs the same cells N times in a row with the same pins and the same
+# pass rule, so a cell that passes once but flakes one run in fifty is seen.
+# The cell lists and the case lists are read from .github/workflows/ci.yml
+# (the TRANSPORT_MATRIX_LINUX, _MACOS and _WINDOWS blocks and the
+# socket_cases / cases / xdp_cases lines of the step that holds each block),
+# never copied here, so the matrix and the repeat cannot drift.
+#
+#   scripts/transport-cells-repeat --list                    # this OS's cells and cases
+#   scripts/transport-cells-repeat --list --os windows       # another OS's
+#   scripts/transport-cells-repeat --runs 50                 # every cell of this OS, 50 times
+#   scripts/transport-cells-repeat --runs 5 --cell gso/portable --cell loopback/loopback
+#   scripts/transport-cells-repeat --asan --runs 1           # the same on an ASan build, and the
+#                                                            # whole functional suite once per cell
+#
+# A cell line in ci.yml is: server transport, client transport, then
+# case=card for each case expected to fail until that card lands. A run of a
+# case passes when the functional binary exits 0, prints the case's own name
+# on a line of its own and prints no [SKIPPED. Each cell runs its cases in
+# series, run after run, never two runs of one cell at once; the cells run
+# in parallel, as the matrix step runs them. The xdp cell runs its cases as
+# root inside a virtme-ng guest of this machine's own kernel, exactly as the
+# matrix does, and never on the host: a machine with no VM tier (vng, a
+# readable ~/vm-kernels/vmlinuz-$(uname -r), a writable /dev/kvm) fails the
+# xdp cell. The xdp cell belongs on the dedicated XDP machine only. The
+# io_uring cell is skipped, as the matrix skips it, when the kernel disables
+# io_uring.
+#
+# Output: one line per case of every cell,
+#
+#   CELL <server>/<client> <case> runs=N pass=P fail=F
+#
+# with " first_fail=<log>" appended when a run failed (that run's whole log is
+# kept, later failing logs of the same case are not) and " expected=<card>"
+# when ci.yml marks the case expected to fail. A failure is reported, never
+# retried. The exit status is 0 only when every run of every unmarked case
+# passed, no marked case passed, and (with --asan) every suite passed.
+#
+# --asan configures and builds a Release build with ROCKETNET_SANITIZE_ADDRESS
+# into its own build directory (build-asan by default, binaries in its bin/,
+# so ./bin is never replaced), runs the same cells on it, then runs the whole
+# functional suite once per cell with that cell's server and client
+# transports pinned, printing
+#
+#   SUITE <server>/<client> runs=1 pass=P fail=F
+#
+# The xdp cell has no SUITE line: its server needs root and a veth pair, so
+# under --asan it runs its cells' cases in the guest like every other mode.
+#
+# Options:
+#   --runs N          runs of each case of each cell (default 50)
+#   --cell S/C        run only this cell (repeatable); default every cell of the OS
+#   --os NAME         linux, macos or windows (default: this host's)
+#   --list            print the cells and cases read from ci.yml and exit
+#   --functional PATH the functional binary (default ./bin/functional, or
+#                     ./bin/Release/functional.exe on Windows)
+#   --asan            build and run on an AddressSanitizer build (see above)
+#   --asan-dir DIR    the ASan build directory (default build-asan)
+#   --jobs N          build jobs for --asan (default 4)
+#   --out DIR         where the logs go (default build/transport-cells-repeat)
+#   --ci PATH         the workflow to read (default .github/workflows/ci.yml)
+#
+# Bash 3.2 and later: Linux, macOS and Windows git-bash. Run from the
+# repository root.
+
+set -uo pipefail
+
+runs=50
+cells_wanted=""
+os=""
+list=0
+functional=""
+asan=0
+asan_dir=build-asan
+jobs=4
+out=build/transport-cells-repeat
+ci=.github/workflows/ci.yml
+
+usage() { sed -n '3,/^# Bash 3.2/s/^# \{0,1\}//p' "$0"; exit "${1:-2}"; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --runs) runs=${2:?--runs needs N}; shift 2 ;;
+        --cell) cells_wanted="$cells_wanted ${2:?--cell needs server/client}"; shift 2 ;;
+        --os) os=${2:?--os needs a name}; shift 2 ;;
+        --list) list=1; shift ;;
+        --functional) functional=${2:?--functional needs a path}; shift 2 ;;
+        --asan) asan=1; shift ;;
+        --asan-dir) asan_dir=${2:?--asan-dir needs a directory}; shift 2 ;;
+        --jobs) jobs=${2:?--jobs needs N}; shift 2 ;;
+        --out) out=${2:?--out needs a directory}; shift 2 ;;
+        --ci) ci=${2:?--ci needs a path}; shift 2 ;;
+        -h|--help) usage 0 ;;
+        *) echo "transport-cells-repeat: unknown option $1" >&2; usage 2 ;;
+    esac
+done
+
+case "$runs" in ''|*[!0-9]*|0) echo "transport-cells-repeat: --runs must be a positive integer" >&2; exit 2 ;; esac
+
+if [ -z "$os" ]; then
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=macos ;;
+        MINGW*|MSYS*|CYGWIN*) os=windows ;;
+        *) echo "transport-cells-repeat: no matrix for $(uname -s)" >&2; exit 2 ;;
+    esac
+fi
+case "$os" in
+    linux) OS=LINUX ;;
+    macos) OS=MACOS ;;
+    windows) OS=WINDOWS ;;
+    *) echo "transport-cells-repeat: --os is linux, macos or windows" >&2; exit 2 ;;
+esac
+
+[ -r "$ci" ] || { echo "transport-cells-repeat: cannot read $ci (run from the repository root)" >&2; exit 2; }
+
+# THE PARSE. The TRANSPORT_MATRIX_<OS>: | block: every following line indented
+# deeper than the key is a cell. The step that holds the block (from its
+# "- name:" to the next) names the cases: socket_cases="..." (or cases="..."
+# where the step has no xdp cell) and xdp_cases="...". Output lines:
+#   cell <server> <client> [case=card ...]
+#   socket <case> ...
+#   xdp <case> ...
+parse() {
+    awk -v want="TRANSPORT_MATRIX_$1" '
+        function flush() {
+            if (found) { for (i = 0; i < ncell; i++) print "cell " cell[i]; if (sock != "") print "socket " sock; if (xdp != "") print "xdp " xdp; done = 1; found = 0 }
+        }
+        done { next }
+        /^[[:space:]]*- name:/ { flush(); if (done) exit; found = 0; ncell = 0; sock = ""; xdp = ""; inblock = 0; next }
+        {
+            if (inblock) {
+                ind = match($0, /[^ ]/) - 1
+                if ($0 ~ /^[[:space:]]*$/) next
+                if (ind > blockind) { line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line); cell[ncell++] = line; next }
+                inblock = 0
+            }
+            if ($0 ~ ("^[[:space:]]*" want ":[[:space:]]*\\|[[:space:]]*$")) { found = 1; inblock = 1; blockind = match($0, /[^ ]/) - 1; next }
+            if (match($0, /^[[:space:]]*(socket_cases|cases)="[^"]*"/)) { v = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", v); sub(/"$/, "", v); sock = v }
+            if (match($0, /^[[:space:]]*xdp_cases="[^"]*"/)) { v = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", v); sub(/"$/, "", v); xdp = v }
+        }
+        END { flush() }
+    ' "$ci"
+}
+
+parsed=$(parse "$OS")
+socket_cases=$(printf '%s\n' "$parsed" | sed -n 's/^socket //p')
+xdp_cases=$(printf '%s\n' "$parsed" | sed -n 's/^xdp //p')
+all_cells=$(printf '%s\n' "$parsed" | sed -n 's/^cell //p')
+
+[ -n "$all_cells" ] || { echo "transport-cells-repeat: no TRANSPORT_MATRIX_$OS cells in $ci" >&2; exit 2; }
+[ -n "$socket_cases" ] || { echo "transport-cells-repeat: the TRANSPORT_MATRIX_$OS step in $ci names no cases" >&2; exit 2; }
+if printf '%s\n' "$all_cells" | grep -q '^xdp ' && [ -z "$xdp_cases" ]; then
+    echo "transport-cells-repeat: TRANSPORT_MATRIX_$OS has an xdp cell but its step names no xdp_cases" >&2; exit 2
+fi
+
+cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
+
+# the cells to run: every cell, or the ones --cell names (each must exist)
+cells=""
+if [ -z "$cells_wanted" ]; then
+    cells=$all_cells
+else
+    for want in $cells_wanted; do
+        line=$(printf '%s\n' "$all_cells" | awk -v s="${want%%/*}" -v c="${want#*/}" '$1 == s && $2 == c { print; exit }')
+        [ -n "$line" ] || { echo "transport-cells-repeat: no cell $want in TRANSPORT_MATRIX_$OS" >&2; exit 2; }
+        cells="$cells$line"$'\n'
+    done
+fi
+
+if [ "$list" = 1 ]; then
+    printf '%s\n' "$cells" | while read -r server client expected; do
+        [ -n "$server" ] || continue
+        echo "CELL $os $server/$client cases=$(cell_cases "$server" | tr ' ' ',')${expected:+ expected=$expected}"
+    done
+    exit 0
+fi
+
+host_os=""
+case "$(uname -s)" in Linux) host_os=linux ;; Darwin) host_os=macos ;; MINGW*|MSYS*|CYGWIN*) host_os=windows ;; esac
+[ "$host_os" = "$os" ] || { echo "transport-cells-repeat: --os $os runs only on $os (this host is ${host_os:-unknown}); --list reads any OS" >&2; exit 2; }
+
+# THE BINARY. --asan builds its own; otherwise the build the caller made.
+if [ "$asan" = 1 ]; then
+    if [ "$os" = windows ]; then
+        cmake -B "$asan_dir" -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$asan_dir/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$asan_dir/bin" > "$asan_dir.configure.log" 2>&1 \
+            && cmake --build "$asan_dir" --config Release --parallel "$jobs" > "$asan_dir.build.log" 2>&1
+    else
+        mkdir -p "$asan_dir"
+        cmake -B "$asan_dir" -DCMAKE_BUILD_TYPE=Release -DROCKETNET_SANITIZE_ADDRESS=ON "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$asan_dir/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$asan_dir/bin" > "$asan_dir/configure.log" 2>&1 \
+            && cmake --build "$asan_dir" --parallel "$jobs" > "$asan_dir/build.log" 2>&1
+    fi
+    rc=$?
+    if [ "$rc" != 0 ]; then
+        echo "transport-cells-repeat: the ASan build failed (exit $rc); its log is under $asan_dir" >&2
+        exit 1
+    fi
+    [ -n "$functional" ] || { if [ "$os" = windows ]; then functional=./$asan_dir/bin/Release/functional.exe; else functional=./$asan_dir/bin/functional; fi; }
+fi
+[ -n "$functional" ] || { if [ "$os" = windows ]; then functional=./bin/Release/functional.exe; else functional=./bin/functional; fi; }
+[ -x "$functional" ] || { echo "transport-cells-repeat: no functional binary at $functional (build first, or --functional)" >&2; exit 2; }
+
+uring_offered=0
+if [ "$os" = linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+
+# the logs live under the working directory: the xdp guest writes them through --rwdir "$PWD"
+mkdir -p "$out"
+case "$out" in /*) ;; *) out=$PWD/$out ;; esac
+logs=$(mktemp -d "$out/run.XXXXXX")
+
+# one run of one case: passes on exit 0, its own name on a line, no [SKIPPED
+case_passed() { [ "$1" = 0 ] && grep -qx "$2" "$3" && ! grep -q '\[SKIPPED' "$3"; }
+
+# record one run's outcome: count it, and keep the first failing log of the case
+record() { # server client case run rc log
+    key="$logs/$1.$2.$3"
+    if case_passed "$5" "$3" "$6"; then
+        echo pass >> "$key.tally"
+        rm -f "$6"
+    else
+        echo "fail run=$4 exit=$5" >> "$key.tally"
+        if [ ! -f "$key.first-fail.log" ]; then mv "$6" "$key.first-fail.log"; else rm -f "$6"; fi
+    fi
+}
+
+run_socket_cell() { # server client
+    run=1
+    while [ "$run" -le "$runs" ]; do
+        for case in $socket_cases; do
+            log="$logs/$1.$2.$case.run$run.log"
+            ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 "$functional" --run "$case" 2>&1 | tr -d '\r' > "$log"
+            record "$1" "$2" "$case" "$run" "${PIPESTATUS[0]}" "$log"
+        done
+        run=$((run + 1))
+    done
+}
+
+# the xdp cell, exactly as the matrix step runs it: one guest per run, the
+# cases as root inside it, the host never touched
+run_xdp_cell() { # server client
+    vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+    run=1
+    while [ "$run" -le "$runs" ]; do
+        prefix="$logs/$1.$2.run$run"
+        if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+            for case in $xdp_cases; do
+                echo "no VM tier on this machine: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$prefix.$case.log"
+                record "$1" "$2" "$case" "$run" 1 "$prefix.$case.log"
+            done
+        else
+            timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$prefix"'.$case.log" 2>&1; echo $? > "'"$prefix"'.$case.rc"; done' \
+                > "$prefix.vm.log" 2>&1
+            for case in $xdp_cases; do
+                if [ -f "$prefix.$case.rc" ]; then
+                    rc=$(cat "$prefix.$case.rc")
+                else
+                    rc=1
+                    { echo "the guest wrote no exit status for $case; the guest's log follows"; cat "$prefix.vm.log"; } > "$prefix.$case.log"
+                fi
+                record "$1" "$2" "$case" "$run" "$rc" "$prefix.$case.log"
+                rm -f "$prefix.$case.rc"
+            done
+            rm -f "$prefix.vm.log"
+        fi
+        run=$((run + 1))
+    done
+}
+
+# each cell runs its runs in series; the cells run in parallel
+while read -r server client expected; do
+    [ -n "$server" ] || continue
+    if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+        echo "CELL $server/$client [SKIPPED this kernel disables io_uring]"
+        continue
+    fi
+    if [ "$server" = xdp ]; then run_xdp_cell "$server" "$client" & else run_socket_cell "$server" "$client" & fi
+done <<< "$cells"
+wait
+
+failed=0
+while read -r server client expected; do
+    [ -n "$server" ] || continue
+    [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
+    for case in $(cell_cases "$server"); do
+        key="$logs/$server.$client.$case"
+        pass=0; fail=0
+        [ -f "$key.tally" ] && { pass=$(grep -c '^pass' "$key.tally"); fail=$(grep -c '^fail' "$key.tally"); }
+        card=""
+        for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
+        line="CELL $server/$client $case runs=$runs pass=$pass fail=$fail"
+        [ -f "$key.first-fail.log" ] && line="$line first_fail=$key.first-fail.log"
+        if [ -n "$card" ]; then
+            line="$line expected=$card"
+            [ "$pass" -gt 0 ] && failed=1
+        else
+            { [ "$fail" -gt 0 ] || [ "$pass" != "$runs" ]; } && failed=1
+        fi
+        echo "$line"
+    done
+done <<< "$cells"
+
+# --asan: the whole functional suite once per cell, both transports pinned
+if [ "$asan" = 1 ]; then
+    while read -r server client expected; do
+        [ -n "$server" ] || continue
+        [ "$server" = xdp ] && continue
+        [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
+        log="$logs/$server.$client.suite.log"
+        ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" 2>&1 | tr -d '\r' > "$log"
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" = 0 ]; then
+            echo "SUITE $server/$client runs=1 pass=1 fail=0 log=$log"
+        else
+            echo "SUITE $server/$client runs=1 pass=0 fail=1 exit=$rc log=$log"
+            failed=1
+        fi
+    done <<< "$cells"
+fi
+
+echo "TRANSPORT-CELLS-REPEAT os=$os runs=$runs asan=$asan logs=$logs result=$([ "$failed" = 0 ] && echo pass || echo fail)"
+exit "$failed"

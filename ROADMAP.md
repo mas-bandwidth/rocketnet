@@ -171,7 +171,7 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | Kernel replay protection with a read-only high-water map | ✅ | — | — | — | — | — | — | — |
 | The standard sizes the kernel replay map apart from the userspace replay window | ✅ | — | — | — | — | — | — | — |
 | AF_XDP bind requests zero-copy | ✅ | — | — | — | — | — | — | — |
-| Replies go to the peer's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
+| Replies go to the client's own MAC address on link, to the gateway otherwise | ✅ | — | — | — | — | — | — | — |
 | AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
@@ -541,7 +541,7 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | Every Windows transport, every address family, fifty times clean | — | — | ❌ |
 | Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ❌ | — | — |
 | Linux: 1000 light clients on every transport | ❌ | — | — |
-| Linux: a hard-killed peer or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
+| Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
 | macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary | — | ❌ | — |
 | macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ❌ | — |
 | Linux: the nightly soak jobs green at the branch | ❌ | — | — |

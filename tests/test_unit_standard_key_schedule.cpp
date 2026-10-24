@@ -7,7 +7,7 @@
 // (standard/TRANSPORT.md, Key schedule), regenerated through the
 // implementation. The four key vectors come from the frozen token keys, salt,
 // session nonce and ephemeral keypair; the last is the one-byte result of a
-// derivation whose peer key is the small-order point, which must refuse it.
+// derivation whose remote key is the small-order point, which must refuse it.
 
 #include "test_unit_standard.h"
 
@@ -22,10 +22,10 @@ static const rn_standard_vector_t standard_key_schedule_table[] =
     RN_STANDARD_VECTOR( "t7.handshake-server-to-client", "86045b5f8e2da94dbf445a658086d63d50b73b1e666c76c4952fabf998c0c0e0" ),
     RN_STANDARD_VECTOR( "t7.session-client-to-server", "aedc4656e3f82b7e8791279588c7f6204ed2c1bc0c17ba9779c04e3b1c9ef43c" ),
     RN_STANDARD_VECTOR( "t7.session-server-to-client", "3c637e37b101b82c9edaa9a3b55a31a8a3bc108f133ba05e8a416b3cfb730ef0" ),
-    RN_STANDARD_VECTOR( "t7.small-order-peer-refused", "00" ),
+    RN_STANDARD_VECTOR( "t7.small-order-key-refused", "00" ),
 };
 
-static int standard_key_schedule_derive( const uint8_t * peer_ephemeral_public_key, struct rocketnet_connection_keys_t * keys )
+static int standard_key_schedule_derive( const uint8_t * remote_ephemeral_public_key, struct rocketnet_connection_keys_t * keys )
 {
     return rocketnet_derive_connection_keys( keys,
                                              rocketnet_test_token_c2s_key,
@@ -33,14 +33,14 @@ static int standard_key_schedule_derive( const uint8_t * peer_ephemeral_public_k
                                              rocketnet_test_salt,
                                              rocketnet_test_session_nonce,
                                              rocketnet_test_client_eph_secret,
-                                             peer_ephemeral_public_key,
+                                             remote_ephemeral_public_key,
                                              rocketnet_test_client_eph_public,
                                              rocketnet_test_server_eph_public );
 }
 
 static int standard_key_schedule_generate( const char * id, uint8_t * out, int capacity )
 {
-    if ( strcmp( id, "t7.small-order-peer-refused" ) == 0 )
+    if ( strcmp( id, "t7.small-order-key-refused" ) == 0 )
     {
         if ( capacity < 1 )
             return -1;
