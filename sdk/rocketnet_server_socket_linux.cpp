@@ -869,8 +869,10 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     // script does the clearing, deliberately).
 
     {
-        unsigned int attached_program_id = 0;
-        const int query_result = rocketnet_xdp_query_id( (int) interface_index, &attached_program_id );
+        // every attach mode is read: a multi-mode attachment reports prog_id 0
+        rocketnet_xdp_attached_t attached;
+        memset( &attached, 0, sizeof(attached) );
+        const int query_result = rocketnet_xdp_query_attached( (int) interface_index, &attached );
         if ( query_result != 0 )
         {
             // silence must never verify: an unanswerable exclusivity query
@@ -881,9 +883,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
             provisioned = false;
         }
-        else if ( attached_program_id != 0 )
+        else if ( rocketnet_xdp_attached_any( &attached ) )
         {
-            rocketnet_warn( "xdp pre-flight: an XDP program (id %u) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, interface_name, interface_name, num_queues );
+            unsigned int attached_program_id = attached.prog_id;
+            const char * attached_mode = "single";
+            if ( attached.drv_prog_id != 0 ) { attached_program_id = attached.drv_prog_id; attached_mode = "native"; }
+            else if ( attached.skb_prog_id != 0 ) { attached_program_id = attached.skb_prog_id; attached_mode = "generic"; }
+            else if ( attached.hw_prog_id != 0 ) { attached_program_id = attached.hw_prog_id; attached_mode = "offload"; }
+            rocketnet_warn( "xdp pre-flight: an XDP program (id %u, %s mode) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, attached_mode, interface_name, interface_name, num_queues );
             provisioned = false;
         }
     }
