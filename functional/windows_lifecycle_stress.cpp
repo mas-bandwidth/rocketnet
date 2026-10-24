@@ -106,12 +106,16 @@ static HANDLE windows_library_heap = NULL;
 
 static void * windows_library_malloc( void * context, size_t bytes )
 {
-    return HeapAlloc( (HANDLE) context, 0, bytes );
+    // Object creation can pass NULL context even while the allocator is
+    // installed. All allocations in this case still belong to its one heap.
+    (void) context;
+    return HeapAlloc( windows_library_heap, 0, bytes );
 }
 
 static void windows_library_free( void * context, void * p )
 {
-    windows_lifecycle_check( HeapFree( (HANDLE) context, 0, p ) != 0 );
+    (void) context;
+    windows_lifecycle_check( HeapFree( windows_library_heap, 0, p ) != 0 );
 }
 
 static void windows_library_heap_begin()
