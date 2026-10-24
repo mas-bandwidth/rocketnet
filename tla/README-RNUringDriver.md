@@ -16,16 +16,21 @@ contents:
   `Finished` or `Kernel`. A `bytes` flag says whether finish recorded bytes
   or abort zeroed them. `idx` is the reservation index. `kown` is the set of
   slots whose frame and msghdr the kernel owns, from the moment of submit to
-  the moment of the send CQE. `pending` is the set of slots submitted, by
-  this `send_packets` or an earlier one, whose CQE has not been reaped yet.
+  the moment of the send CQE. A send is a **run** of slots: one slot, or,
+  with `UDP_SEGMENT`, consecutive slots sent as one segmented SENDMSG.
+  `head` maps each kernel-owned slot to its run's first slot, which names
+  the send. `pending` is the set of run heads submitted, by this
+  `send_packets` or an earlier one, whose CQE has not been reaped yet.
   `sending` is true while the main thread is inside `send_packets`.
 - **Receive.** Each ring buffer is in one of three states: `Ring`, `Filled`
-  or `Copied`. `bufdg` is the datagram last filled into each buffer.
+  or `Copied`. `bufdg` is the set of datagrams last filled into each
+  buffer: one, or with `UDP_GRO` a coalesced run of up to `Segments` of
+  them in the one buffer and the one CQE.
   `copied` is the set of datagrams copied out into a bank. The banks are
   `fill` and `exposed`, each a set of datagram ids. `snap` is the exposed
   bank as the last Swap left it, and `gen` is the exposed generation.
   `armed` is true while the multishot RECVMSG is active in the kernel.
-- **Completions.** `cq` is the set of pending CQEs: a send CQE per slot, a
+- **Completions.** `cq` is the set of pending CQEs: a send CQE per run (named by its head), a
   receive CQE per buffer, `Term` (a multishot CQE without F_MORE) and
   `Cancel` (the CQE of the cancel SQE). A set is enough because each CQE
   is unique while it is pending.
@@ -39,9 +44,20 @@ contents:
   inside a call; destroy's drain reaps outside the budget, and its rounds
   are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
 
-Four constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap` and `RearmOnReceive`.
-All are `TRUE` in the rule. `RearmOnReceive` says receive_packets re-arms a
+Five constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap`, `RearmOnReceive` and
+`RunRetiredByCqe`. All are `TRUE` in the rule. A sixth rule switch,
+`ReturnAfterLastCopy`, and the segment bound `Segments` (2) are
+definitions rather than constants, so the configurations that predate
+them check the rule unchanged; a configuration replaces one with `<-`.
+`ReturnAfterLastCopy` says a buffer goes back to the ring only after its
+last segment is copied; the reversed witness
+`MCRNUringDriverBrokenReturnBeforeSplit.cfg` replaces it with
+`MCReturnAfterFirstCopy` (`FALSE`, in `MCRNUringDriver.tla`), so the reap
+marks a coalesced buffer copied once its first segment is in the bank. `RunRetiredByCqe` says a
+run's slots stay the kernel's until the run's one CQE; it is `FALSE` only in
+the reversed witness `MCRNUringDriverBrokenFreeRunAtSubmit.cfg`, which hands
+the slots after a run's head back to the staging at Submit. `RearmOnReceive` says receive_packets re-arms a
 disarmed multishot (`rocketnet_server_uring_rearm_unarmed`); it is `FALSE`
 only in the reversed witness `MCRNUringDriverBrokenNoRearmRetry.cfg`.
 
@@ -52,12 +68,12 @@ only in the reversed witness `MCRNUringDriverBrokenNoRearmRetry.cfg`.
 | `Reserve` | start_packet reserves the next slot with one atomic fetch_add; it returns NULL, with no step, when the staging is full |
 | `Finish(s)` | finish records the bytes |
 | `Abort(s)` | abort zeroes them; send_packets then skips the slot |
-| `Submit` | send_packets, with the fill threads joined (no slot still `Reserved`), adds one SENDMSG SQE for each slot with bytes > 0 not submitted by an earlier call and submits; from then on the kernel owns those frames. The send call begins (`call = "send"`, `work = 0`) |
-| `KernelComplete(s)` | the kernel finishes the send (any res, where a negative one counts SEND_DROPPED) and posts the send CQE |
-| `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE |
+| `Submit` | send_packets, with the fill threads joined (no slot still `Reserved`), cuts the slots with bytes > 0 not submitted by an earlier call into runs of consecutive slots and adds one SENDMSG SQE per run, then submits; from then on the kernel owns every frame of every run. The model lets Submit pick any cut (any set of heads that includes the first slot); the code's cut is `rocketnet_uring_gso_message` (one slot per run without `UDP_SEGMENT`; with it, equal sizes to one destination, one shorter tail, bounded), which is one of them. The send call begins (`call = "send"`, `work = 0`) |
+| `KernelComplete(s)` | the kernel finishes the run headed by `s` (any res, where a negative one counts SEND_DROPPED for every packet of the run) and posts the run's one send CQE; every slot of the run leaves `kown` at once |
+| `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE; with `UDP_GRO` the buffer holds a coalesced receive of one to `Segments` datagrams, its stride in the buffer's `UDP_GRO` cmsg |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
-| `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the slot from `pending`. A receive CQE is copied into the **fill** bank. `Term` ends the multishot. While running, the one-shot re-arm `rocketnet_server_uring_multishot_ended` attempts either succeeds (`armed` TRUE) or finds no submission entry (`RECEIVE_REARM_FAILED`, `armed` FALSE until a receive re-arms it): the model takes both. During destroy it is never re-armed |
-| `ReturnBuffer(b)` | after the copy, the buffer goes back to the ring |
+| `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the run's head from `pending`. A receive CQE's buffer is split at its stride (`rocketnet_uring_recvmsg_parse`, `rocketnet_coalesce_split`) and every segment is copied into the **fill** bank in the one reap, as `rocketnet_server_uring_receive_cqe` does on the one main thread (a segment dropped by size, or by a full bank as `RECEIVE_DROPPED_OVERFLOW`, is counted in place of its copy). `Term` ends the multishot. While running, the one-shot re-arm `rocketnet_server_uring_multishot_ended` attempts either succeeds (`armed` TRUE) or finds no submission entry (`RECEIVE_REARM_FAILED`, `armed` FALSE until a receive re-arms it): the model takes both. During destroy it is never re-armed |
+| `ReturnBuffer(b)` | after the copy of the buffer's last segment, the buffer goes back to the ring |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send submitted has its CQE reaped; the call returns |
 | `SendReturn` | send_packets returns with some send still without its CQE, once its budget is spent or the cq is empty after its one wait: the index and every slot stay as they are, and a later call retires the rest (`SEND_DEFERRED`). Only under `BoundedReap` |
 | `RecvBegin` | receive_packets begins; its reaps count against the budget. It is enabled while `gen < MaxSteps` or while the multishot is disarmed, so a re-arm is never cut off by the generation bound |
@@ -72,13 +88,16 @@ only in the reversed witness `MCRNUringDriverBrokenNoRearmRetry.cfg`.
 Invariants:
 
 - `TypeOK`
-- `NoReuseWhileKernelOwned`: a slot held by a fill thread (`Reserved` or
-  `Finished`) is never in `kown`, so Reserve never returns a slot the
-  kernel owns.
+- `NoReuseWhileKernelOwned`: a slot the staging holds (`Free` for the next
+  Reserve, or `Reserved` or `Finished` by a fill thread) is never in
+  `kown`, whichever send of a run carries it, so Reserve never returns a
+  slot the kernel owns. `Free` joined the list with send runs: a slot freed
+  early is the defect before any Reserve reaches it.
 - `ExposedStable`: `exposed = snap`, so the exposed bank never changes
   between two Swaps.
-- `BufferReturnedAfterCopy`: a buffer is back in `Ring` only after its
-  datagram is in `copied`.
+- `BufferReturnedAfterCopy`: a buffer is back in `Ring` only after every
+  datagram it carried is in `copied`: with `UDP_GRO`, after the copy of its
+  last segment.
 - `FreedOnlyWhenDrained`: in `Freed` there is no kernel-owned slot, no
   `Filled` buffer, and the cq is empty.
 - `ReapWithinBudget`: `work <= Budget`, so every Reap step of a send or
@@ -96,7 +115,7 @@ Liveness, under `SpecFair`:
 
 `SpecFair` gives weak fairness to the following, strong where marked:
 
-- **`KernelComplete(s)`, per slot.** The kernel completes every send.
+- **`KernelComplete(s)`, per slot.** The kernel completes every send; it is enabled only for a run's head.
 - **`Reap(c)`, per CQE.** A CQ is FIFO, so a pending CQE is never starved
   by later ones. With a single disjunctive fairness on Reap, TLC could pick
   `Term` forever while a send CQE waits.
@@ -147,7 +166,12 @@ call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
 
 ## What the model leaves out
 
-- Byte layout, the msghdr and iovec contents, and address conversion.
+- Byte layout, the msghdr, iovec and `UDP_SEGMENT` control contents, and
+  address conversion (the msghdr of a run is unit tested in
+  `test_uring_gso_message_stride_and_tail`).
+- Which cut of the slots into runs the code makes: the model takes every
+  cut into consecutive runs. A live segmentation refusal (`GSO_FALLBACKS`)
+  only changes the cut of later calls, so it is not modelled.
 - The GSO-style SO_REUSEPORT socket group. The N queues are folded into
   one multishot receive. Each queue arms and re-arms on its own in the same
   way, and the banks are shared.
@@ -158,50 +182,59 @@ call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
 
 ## The small instance and the runs
 
-`MCRNUringDriver.tla` extends the module with no overrides. Every case
-uses `Slots = 2`, `Buffers = 2`, `MaxSteps = 2` (two datagrams, two bank
-swaps) and `Budget = 1` (a call reaps one CQE, so deferral is exercised at
-every call). The five cases form group `rnuringdriver` in `CASES.tsv`.
+`MCRNUringDriver.tla` extends the module and adds one definition,
+`MCReturnAfterFirstCopy`, the witness's replacement for
+`ReturnAfterLastCopy`. Every case uses `Slots = 2`, `Buffers = 2`,
+`MaxSteps = 2` (two datagrams, two bank swaps), `Budget = 1` (a call reaps
+one CQE, so deferral is exercised at every call) and `Segments = 2`. The
+seven cases form group `rnuringdriver` in `CASES.tsv`. With two slots,
+Submit can send both slots as one run or as two sends; with two segments,
+the kernel can fill both datagrams into one buffer as one coalesced receive.
 
 To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `tla/README.md`:
 
 ```sh
-for i in 0 1 2 3 4; do
+for i in 0 1 2 3 4 5 6; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 5 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 7 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on a linux-amd64 bench (Java 21.0.12.1, the pinned JAR,
-2026-10-20):
+Outcomes measured on a 16-cpu linux-amd64 bench (Java 21.0.12.1, the pinned
+JAR, 2026-10-24, the records in `RUNS.tsv`):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 606276 | 159168 | 84.7 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 763 | 370 | 0.8 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 112 | 67 | 0.6 |
-| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1011 | 473 | 0.7 |
-| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 531357 | 141455 | 20.3 |
+| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 628770 | 164469 | 100.7 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 248 | 138 | 0.7 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 112 | 67 | 0.8 |
+| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1013 | 474 | 0.8 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 550575 | 146081 | 17.8 |
+| `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 509 | 257 | 0.7 |
 
-The control's 84.7 s is inside the 110 s record budget; before the re-arm
-rule (two liveness properties, weak fairness on `Submit`) it measured 53.7 s.
+The control's 100.7 s is inside the 110 s record budget, with little margin:
+send runs took it from 159168 distinct states (84.7 s, 2026-10-20) to 164469,
+and the run is slower on a loaded or slower bench (171 s on a 64-cpu bench
+under load, 123 s on an 8-cpu one). Before the re-arm rule (two liveness
+properties, weak fairness on `Submit`) it measured 53.7 s.
 
 ## Counterexamples, checked by hand against THE DESIGN
 
 **BrokenResetBeforeReap** (`ResetWaitsForReap = FALSE`): ResetIndex may run
-right after Submit. TLC printed six states:
+right after Submit. TLC printed five states:
 
 1. Init.
 2. `Reserve`: slot 1 is `Reserved`, idx = 1.
 3. `Finish(1)`: slot 1 is `Finished` with bytes.
 4. `Submit`: slot 1 is `Kernel`, kown = {1}, pending = {1}.
 5. `ResetIndex`: idx = 0 and every slot is `Free`, but kown and pending
-   are still {1}.
-6. `Reserve`: slot 1 is `Reserved` while 1 is still in kown.
+   are still {1}: slot 1 is `Free` for the next `Reserve` while the kernel
+   owns it. (Before `Free` was in the invariant the trace went one state
+   further, to the `Reserve` that hands slot 1 out.)
 
 By hand, against the design: send_packets submitted slot 1's SENDMSG, and
 until its CQE the kernel owns slot 1's frame and msghdr. A reset before the
@@ -262,6 +295,44 @@ the CQE handler at the end of a multishot. When `rocketnet_server_uring_arm`
 finds no submission entry there, the queue stays disarmed and
 receive_packets never looks at it again, so the queue receives nothing for
 the rest of the run. The trace is that defect.
+
+**BrokenFreeRunAtSubmit** (`RunRetiredByCqe = FALSE`): Submit hands the
+slots of a run after its head back to the staging. TLC printed six states:
+
+1. Init.
+2. `Reserve`: slot 1 is `Reserved`, idx = 1.
+3. `Reserve`: slot 2 is `Reserved`, idx = 2.
+4. `Finish(1)`: slot 1 is `Finished` with bytes.
+5. `Finish(2)`: slot 2 is `Finished` with bytes.
+6. `Submit` with the one head {1}: both slots go out as one run, kown =
+   {1, 2}, head = <<1, 1>>, pending = {1}; slot 1 is `Kernel` but slot 2 is
+   `Free` while 2 is in kown. `NoReuseWhileKernelOwned` fails (exit 12).
+
+By hand, against the code: rocketnet_server_uring_send_packets builds slot
+1's msghdr over `send.iovecs[1..2]`, which point at the frames of slots 1
+and 2, and the kernel reads both frames until the run's one CQE. The code
+keeps every slot of the run behind the reservation index, because
+`sends_pending` counts the run's SENDMSG and ResetIndex waits for it to
+reach zero; a driver that counted slot 2 retired at submit (as a send that
+copies at submit would allow) could reset the index with the run in flight
+and hand slot 2's frame to a fill thread. The trace is that defect.
+
+**BrokenReturnBeforeSplit** (`ReturnAfterLastCopy <- MCReturnAfterFirstCopy`):
+the reap of a coalesced buffer copies its first segment and marks the
+buffer copied. TLC printed the trace to `BufferReturnedAfterCopy`: Init;
+`Submit` (a send_packets call with nothing staged begins); `KernelFill(1)`
+with both datagrams, bufdg = <<1..2, {}>>; `Reap(RecvCqe(1))`, copied =
+{1}, buffer 1 `Copied`; `ReturnBuffer(1)`: buffer 1 is `Ring` with
+datagram 2 not in `copied`, and the invariant fails (exit 12).
+
+By hand, against the code: rocketnet_server_uring_receive_cqe loops over
+every segment rocketnet_coalesce_split cut from the buffer, copying each
+(or counting it dropped) into the fill bank, and only after the loop calls
+io_uring_buf_ring_add. A transport that handed the buffer back after the
+first segment would let the kernel refill it with a new coalesced receive
+while the rest of the old one was still to be copied out of it: the
+datagrams after the first would be read from bytes the kernel is
+rewriting. The trace is that defect.
 
 Each witness fails on exactly its declared invariant or property (exit 12
 for the invariants, exit 13 for `ReceiveLiveness`), and the control passes
