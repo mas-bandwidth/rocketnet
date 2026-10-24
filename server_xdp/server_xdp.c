@@ -129,7 +129,11 @@ static void server_xdp_count( __u32 counter )
 
 // The IPv6 next header values that name an extension header (RFC 8200
 // section 4): hop-by-hop options, routing, fragment, destination options,
-// AH and ESP. The program does not walk the chain behind any of them.
+// AH and ESP. The function names the headers the walk below starts from.
+// Hop-by-hop, routing, destination options, AH and a first fragment are
+// opened and stepped over. Only ESP stops the walk unopened. A non-first
+// fragment is read far enough to see a nonzero offset, then the walk stops
+// and the headers behind it stay unopened.
 
 static __always_inline int server_xdp_is_ipv6_extension( __u8 next_header )
 {
@@ -296,10 +300,34 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
 
     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
     const __u32 udp_len = __builtin_bswap16( udp->len );
-    if ( udp_len < sizeof(struct udphdr) || udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
+
+    // Below the UDP header is too small. A zero ip_udp_bytes is a malformed
+    // IP length (it does not name a UDP header that fits the frame) and stays
+    // too small. A length past the frame, or past a real datagram bound, is
+    // too large.
+
+    if ( udp_len < sizeof(struct udphdr) )
     {
-        debug_printf( "packet udp length is too small or exceeds bounds" );
+        debug_printf( "packet udp length is too small" );
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+        return XDP_DROP;
+    }
+    if ( udp_len > frame_udp_bytes )
+    {
+        debug_printf( "packet udp length exceeds the frame" );
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+        return XDP_DROP;
+    }
+    if ( ip_udp_bytes == 0 )
+    {
+        debug_printf( "packet ip length does not bound a udp datagram" );
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+        return XDP_DROP;
+    }
+    if ( udp_len > ip_udp_bytes )
+    {
+        debug_printf( "packet udp length exceeds the datagram" );
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
         return XDP_DROP;
     }
 
