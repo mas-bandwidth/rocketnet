@@ -146,6 +146,33 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
     return &object->connections[index];
 }
 
+#if ROCKETNET_DEV
+void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !object || !capture || index < 0 || index >= object->num_connections )
+        return;
+    if ( object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
+        return;
+    const struct rn_ordered_t * ordered = &object->connections[index].ordered;
+    capture->reliable_unacked = ordered->send.next >= ordered->send.U ? ordered->send.next - ordered->send.U : 0;
+    capture->reliable_resend_queued = ordered->ack.resend_count;
+    capture->reliable_oldest_unacked_age_seconds = capture->reliable_unacked > 0 && ordered->ack.has_oldest ?
+                                                   object->time - ordered->ack.oldest_first_send : -1.0;
+    capture->srtt_seconds = ordered->ack.srtt;
+    capture->resend_delay_seconds = ordered->ack.resend_delay;
+    capture->window_stalled = ordered->send.stalled ? 1 : 0;
+    capture->budget_reliable_waiting = ordered->budget ? ordered->budget->reliable_waiting : 0;
+    capture->budget_tokens = ordered->budget ? ordered->budget->tokens : 0.0;
+}
+
+void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    rn_message_object_delivery_capture( &server->object, client_index, capture );
+}
+#endif // #if ROCKETNET_DEV
+
 // ---------------------------------------------------------------
 //                     create and destroy
 // ---------------------------------------------------------------
@@ -439,6 +466,30 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         result = ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED;
     }
 
+    // RNChannel EndUpdate, the misuse end (standard/MESSAGES.md m1.6): every
+    // delivery of the last update is handed to the application before this
+    // one. The transport acked each one already, so a delivery still waiting
+    // here would be lost with the sender told it arrived. It is the
+    // application's error, handled like a send with no room: counted, an
+    // assert in a debug build, and that connection ends with
+    // MESSAGE_NOT_RECEIVED. Nothing is dropped silently.
+    for ( int i = 0; i < object->num_connections; i++ )
+    {
+        if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
+            continue;                                   // a kicked connection's deliveries were never offered
+        rn_message_connection_t * connection = &object->connections[i];
+        const uint32_t deliveries = connection->ordered.channels.deliveries;
+        uint32_t waiting = 0;
+        for ( uint32_t k = 0; k < deliveries; k++ )
+            waiting += connection->hot->views[k] == RN_MESSAGE_VIEW_WAITING ? 1u : 0u;
+        if ( waiting == 0 )
+            continue;
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED, waiting );
+        rocketnet_error( "message update with %u delivered message(s) not received on connection %d: loop receive_messages until NULL before update", waiting, i );
+        rocketnet_assert( waiting == 0 && "every delivered message is received before the next update" );
+        rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
+    }
+
     rn_message_object_close_in_place( object );
 
     bool time_clamped = false;
@@ -562,8 +613,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         for ( int k = 0; k < count; k++ )
         {
             rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.payload_connection, k );
-            if ( connection )
-                rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
+            if ( connection && rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time ) &&
+                 object->link.accept_payload )
+                object->link.accept_payload( object->link.transport, k );
         }
     }
 
@@ -1193,12 +1245,20 @@ static void rn_server_link_destroy( void * transport )
     rocketnet_server_transport_destroy( (rocketnet_server_transport_t *) transport );
 }
 
+static void rn_server_link_accept_payload( void * transport, int k )
+{
+    rocketnet_server_transport_accept_payload( (rocketnet_server_transport_t *) transport, k );
+}
+
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = rn_server_link_update;
     link->payloads = rn_server_link_payloads;
+    link->accept_payload = rn_server_link_accept_payload;
+    if ( transport )
+        rocketnet_server_transport_defer_payload_acks( transport );
     link->acked = rn_server_link_acked;
     link->payload_connection = rn_server_link_payload_connection;
     link->acked_connection = rn_server_link_acked_connection;

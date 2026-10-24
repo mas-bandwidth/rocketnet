@@ -3,7 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Backend server: the server a backend sends clients to. It takes the
-    published development backend key, makes its own server keypair at
+    backend public key from ROCKETNET_SERVER_BACKEND_PUBLIC_KEY (or the
+    published development key in a development build), makes its own server keypair at
     create, and listens on 127.0.0.1 at the port from --port <n>, else the
     ROCKETNET_EXAMPLE_PORT environment variable, else the default 40000.
 
@@ -121,7 +122,9 @@ int main( int argc, char ** argv )
 {
     struct rocketnet_server_config_t config;
     struct rocketnet_server_t * server = NULL;
+#if ROCKETNET_DEV
     static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+#endif
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     char server_public_key_base64[4 * ( ( ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 2 ) / 3 ) + 1];
     char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
@@ -154,7 +157,11 @@ int main( int argc, char ** argv )
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     config.max_clients = 1;
     config.transport = "portable";
+    const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
+    memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
+#if ROCKETNET_DEV
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
+#endif
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, address, NULL, &config, &create_status );
@@ -165,6 +172,7 @@ int main( int argc, char ** argv )
         server = NULL;
     }
     CHECK( server != NULL );
+    printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_server_transport_name( server ) );
 
     // the server registers its address and public key with the backend; here
     // it prints them and writes them as the backend's environment

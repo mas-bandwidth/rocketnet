@@ -14,7 +14,7 @@
     drops the senders counted.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -692,6 +692,54 @@ static const char * posix_msgx_pump()
     return "msgx";
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#include <signal.h>
+#include <pthread.h>
+
+// A real kernel EPIPE must be counted as a failed datagram, never delivered
+// to the embedding application's SIGPIPE handler. Block only this test
+// thread's signal while checking both send paths, without changing the
+// process-wide signal disposition or substituting the errno seam.
+void rocketnet_test_darwin_send_epipe_no_signal()
+{
+    sigset_t blocked, previous, pending;
+    sigemptyset( &blocked );
+    sigaddset( &blocked, SIGPIPE );
+    posix_check( pthread_sigmask( SIG_BLOCK, &blocked, &previous ) == 0 );
+    posix_check( sigpending( &pending ) == 0 );
+    posix_check( !sigismember( &pending, SIGPIPE ) );
+    for ( int ipv6 = 0; ipv6 < 2; ++ipv6 )
+    {
+        for ( int batch = 0; batch < 2; ++batch )
+        {
+            rocketnet_address_t address;
+            posix_check( rocketnet_address_parse( &address, ipv6 ? "[::1]:0" : "127.0.0.1:0" ) );
+            rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump(
+                NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 65536, 65536,
+                batch ? "msgx" : "portable" );
+            posix_check( socket != NULL );
+            posix_check( strcmp( rocketnet_platform_socket_pump( socket ), batch ? "msgx" : "portable" ) == 0 );
+            posix_check( rocketnet_platform_socket_connect( socket, &address ) );
+            posix_check( shutdown( socket->handle, SHUT_WR ) == 0 );
+            const uint8_t data = 42;
+            if ( batch )
+            {
+                const rocketnet_platform_send_t send = { &address, &data, 1 };
+                rocketnet_platform_socket_send_packets( socket, &send, 1 );
+            }
+            else
+                rocketnet_platform_socket_send_packet( socket, &address, &data, 1 );
+            posix_check( socket->send_failures > 0 );
+            posix_check( sigpending( &pending ) == 0 );
+            posix_check( !sigismember( &pending, SIGPIPE ) );
+            printf( "  ipv%d %s: EPIPE counted, no SIGPIPE\n", ipv6 ? 6 : 4, batch ? "msgx" : "portable" );
+            rocketnet_platform_socket_destroy( socket );
+        }
+    }
+    posix_check( pthread_sigmask( SIG_SETMASK, &previous, NULL ) == 0 );
+}
+#endif
 
 void rocketnet_test_posix_server_receive_weather()
 {
@@ -1397,6 +1445,41 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
     rocketnet_platform_thread_destroy( thread );
 }
 
+// the native server's send path holds no work: nothing staged, nothing
+// published and untaken, nothing in flight. The gso transport sends on its TX
+// worker and counts a bank's sends and drops before it returns the bank; the
+// io_uring transport counts each send when its CQE is reaped. Either way the
+// send counters are final only once this answers true.
+
+static bool posix_linux_send_idle( struct posix_pair_t * pair )
+{
+    if ( pair->native == POSIX_NATIVE_GSO )
+        return rocketnet_server_gso_test_send_idle( (struct rocketnet_server_gso_t*) pair->transport );
+    if ( pair->native == POSIX_NATIVE_URING )
+        return rocketnet_server_uring_test_send_idle( (struct rocketnet_server_uring_t*) pair->transport );
+    return true;
+}
+
+// bring the server's send path to quiescence through the ordinary send
+// boundary: the transport's send_packets re-runs the gso and io_uring flush
+// even with no new commit (sdk/rocketnet_server_transport.cpp), so a gso bank
+// retained on a contended or full handoff is published, and io_uring sends
+// owed their CQEs are reaped and the index reset. Nothing new is staged while
+// the path settles.
+
+static void posix_linux_wait_send_idle( struct posix_pair_t * pair, const char * what )
+{
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( !posix_linux_send_idle( pair ) && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_transport_send_packets( pair->server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    if ( !posix_linux_send_idle( pair ) )
+        printf( "%s: the server send path did not go idle within 5 seconds\n", what );
+    posix_check( posix_linux_send_idle( pair ) );
+}
+
 // a flush whose every send fails: eight payloads staged, none sent, each
 // dropped one counted, and none of them reaches the client
 
@@ -1408,13 +1491,20 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
     const int uring_sent = ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT;
     const int uring_dropped = ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED;
 
-    // drain the update's own sends first, so the failing flush holds ours
+    // drain the update's own sends, and every earlier flush's (the previous
+    // cell's traffic can reach the client before the gso worker has counted
+    // it), so the counters read below are final and the failing flush holds
+    // only ours
     posix_pair_update( pair );
+    posix_linux_wait_send_idle( pair, "before the failing flush" );
 
     const uint64_t sent_before = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent );
     const uint64_t dropped_before = posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped );
     const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
+    // the failure is armed before anything is staged: every send from here
+    // until the path is idle again fails, and only ours are staged
+    fail( pair, 1000 );
     for ( int i = 0; i < 8; i++ )
     {
         struct rocketnet_packet_context_t context;
@@ -1423,19 +1513,10 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void (*fail)(
         memset( frame + context.payload_index, 0xdd, 16 );
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
-    fail( pair, 1000 );
     posix_linux_bounded_flush( pair, gso_dropped, uring_dropped );
-    // the GSO transport sends on its transmit worker: hold the injected
-    // failure until the worker has taken and dropped the flushed bank. A
-    // try-publish can retain the producer while the previous bank is still in
-    // flight, so retry the ordinary send boundary while waiting for its drop.
-    const double drop_deadline = rocketnet_platform_time() + 5.0;
-    while ( posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) - dropped_before < 8 &&
-            rocketnet_platform_time() < drop_deadline )
-    {
-        rocketnet_server_transport_send_packets( pair->server );
-        rocketnet_platform_sleep( 0.001 );
-    }
+    // hold the injected failure until the flushed bank is published, taken
+    // and dropped, and the path is idle again
+    posix_linux_wait_send_idle( pair, "after the failing flush" );
     fail( pair, 0 );
 
     const uint64_t sent = posix_native_counter( pair->native, pair->transport, gso_sent, uring_sent ) - sent_before;

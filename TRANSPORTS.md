@@ -251,7 +251,7 @@ registration is compiled into the SDK; this is not a dynamic plugin ABI.
 Backend symbols are not public C exports. Per-transport settings and resource
 validation belong in the factory; the public transport configuration is unchanged.
 
-`test/driver_extension` is an executable example: an external row and backend
+`tests/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
 the public transport API. `tools/check_driver_extension.py build` builds and
 runs it independently. `test_transport` checks registry ordering, factory refusal,
@@ -334,7 +334,7 @@ and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
 `io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
 probes once that the kernel accepts the ring, the opcodes and the provided
-buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30)
+buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
 Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
@@ -515,9 +515,9 @@ or later) is not used.
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
-compiles `test/xdp_host/server_xdp_host.c`, which includes
+compiles `tests/xdp_host/server_xdp_host.c`, which includes
 `server_xdp/server_xdp.c` unchanged, with the BPF build's defines
-(`-D__linux__ -D__BPF__ -ffreestanding`) and `test/xdp_host/` first on that
+(`-D__linux__ -D__BPF__ -ffreestanding`) and `tests/xdp_host/` first on that
 one target's include path. That directory is a shim: minimal `linux/*.h` and
 `bpf/bpf_helpers.h` with only the types, constants and map macros the filter
 uses. `struct xdp_md` carries `data` and `data_end` as `unsigned long` so they

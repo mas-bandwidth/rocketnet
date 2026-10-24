@@ -8,15 +8,16 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | release gate | status |
 |---|:---:|
-| Source pin eaf420df45614fe1b0d8f1152b76b815d33cfdd2 is not an exact-head test receipt | ❌ |
-| Unit tier at the exact preview-2 head and named platform | ❌ |
-| Functional tier at the exact preview-2 head and named platform | ❌ |
-| Sanitizer, soak and model tiers at the exact preview-2 head and named execution platform | ❌ |
-| Dedicated-server load qualification at the exact preview-2 head, named platform and allocated-host tier | ❌ |
+| Reviewed runtime source pin a76d641ad64768e239528cd1c6bfdf37a0caaa41 and qualification index recorded | ✅ |
+| Unit tier at the tested preview-2 heads and named platforms | ✅ |
+| Functional tier at the tested preview-2 heads and named platforms | ❌ |
+| Sanitizer and soak tiers at their recorded preview-2 heads and named execution platforms | ❌ |
+| Required TLA cases for the release model inputs | ✅ |
+| Dedicated-server load qualification at recorded preview-2 heads, named platforms and allocated-host tiers | ❌ |
 | Server update and send p99 at or below 100 microseconds at 1000 clients | ❌ |
 | Windows native-server LAN qualification on a provisioned 10 GbE NIC | ❌ |
-| AF_XDP live qualification identifies copy or zero-copy mode | ❌ |
-| complete | 0% |
+| AF_XDP live qualification identifies copy or zero-copy mode | ✅ |
+| complete | 44% |
 
 ## Historical preview-1 baseline: tests per platform
 

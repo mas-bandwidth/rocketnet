@@ -969,7 +969,7 @@ jobs:
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
   # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
-  # in test/connect_token_vectors.json from its fixed inputs and compare byte for
+  # in tests/connect_token_vectors.json from its fixed inputs and compare byte for
   # byte, so a change to the token format that the vectors record and the
   # backends do not follow goes red here. No sockets and no real time, so no C
   # build: each leg is a toolchain and seconds of tests, its own job with NO

@@ -62,7 +62,7 @@ def convert(root, harness, input_path, name):
     else:
         raise Refusal(_no_form(harness, selector, "corpus", name))
 
-    target = os.path.join(root, "test", "pcapng", "regress", name + ".pcapng")
+    target = os.path.join(root, "tests", "pcapng", "regress", name + ".pcapng")
     seed = os.path.join(root, "fuzz", corpus, "regress_" + name)
     for path in (target, seed):
         if os.path.exists(path):
@@ -90,7 +90,7 @@ def selftest():
 
     with tempfile.TemporaryDirectory() as directory:
         root = directory
-        for part in ("fuzz/corpus", "fuzz/corpus_message", "test/pcapng/regress"):
+        for part in ("fuzz/corpus", "fuzz/corpus_message", "tests/pcapng/regress"):
             os.makedirs(os.path.join(root, *part.split("/")), exist_ok=True)
 
         prefilter = bytes([0x00]) + b"\x05\x00\xb7\x59\x01\x00abc"

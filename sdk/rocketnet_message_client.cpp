@@ -119,12 +119,20 @@ static void rn_client_link_destroy( void * transport )
     rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
 }
 
+static void rn_client_link_accept_payload( void * transport, int k )
+{
+    rocketnet_client_transport_accept_payload( (rocketnet_client_transport_t *) transport, k );
+}
+
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
+    link->accept_payload = rn_client_link_accept_payload;
+    if ( transport )
+        rocketnet_client_transport_defer_payload_acks( transport );
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
     link->acked_connection = rn_client_link_entry_connection;
@@ -237,6 +245,15 @@ struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct
         return NULL;
     return client->object.link.destroy == rn_client_link_destroy ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
 }
+
+#if ROCKETNET_DEV
+void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    rn_message_object_delivery_capture( &client->object, 0, capture );
+}
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
 {

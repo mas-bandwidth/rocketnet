@@ -13,7 +13,7 @@
 // arrives in a later update, late and stale. The counter shows the drop; the
 // two cases assert the absence over simulated time.
 #include "channel_harness.h"
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>

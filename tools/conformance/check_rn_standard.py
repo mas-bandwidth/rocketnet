@@ -557,7 +557,7 @@ def strip_c_comments(source):
 
 def test_twins(faults):
     twins = {}
-    for path in sorted(glob.glob(os.path.join(ROOT, "test_unit_standard_*.cpp"))):
+    for path in sorted(glob.glob(os.path.join(ROOT, "tests", "test_unit_standard_*.cpp"))):
         name = os.path.basename(path)
         source = strip_c_comments(read(path))
         matches = list(TWIN_RE.finditer(source))

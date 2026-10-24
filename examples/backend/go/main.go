@@ -29,16 +29,19 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/nacl/box"
@@ -196,6 +199,61 @@ type config struct {
 	expireSeconds     uint64
 	timeoutSeconds    int32
 	developmentKey    bool
+	serverConfigured  bool
+}
+
+type registeredServer struct {
+	addresses []string
+	publicKey [keyBytes]byte
+}
+
+type serverRegistry struct {
+	mutex   sync.Mutex
+	servers map[string]registeredServer
+	choose  func(int) (int, error)
+}
+
+func newServerRegistry(choose func(int) (int, error)) *serverRegistry {
+	return &serverRegistry{servers: make(map[string]registeredServer), choose: choose}
+}
+
+func (registry *serverRegistry) register(id string, addresses []string, publicKeyText string) error {
+	if id == "" || len(id) > 128 {
+		return errors.New("server id is empty or longer than 128 bytes")
+	}
+	if err := writeServerAddresses(&signedConnectData{}, addresses); err != nil {
+		return err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(publicKeyText)
+	if err != nil || len(decoded) != keyBytes {
+		return errors.New("public_key is not the base64 of a 32 byte server public key")
+	}
+	server := registeredServer{addresses: append([]string(nil), addresses...)}
+	copy(server.publicKey[:], decoded)
+	registry.mutex.Lock()
+	registry.servers[id] = server
+	registry.mutex.Unlock()
+	return nil
+}
+
+func (registry *serverRegistry) random() (registeredServer, bool, error) {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.servers) == 0 {
+		return registeredServer{}, false, nil
+	}
+	index, err := registry.choose(len(registry.servers))
+	if err != nil || index < 0 || index >= len(registry.servers) {
+		return registeredServer{}, false, errors.New("failed to select a registered server")
+	}
+	for _, server := range registry.servers {
+		if index == 0 {
+			server.addresses = append([]string(nil), server.addresses...)
+			return server, true, nil
+		}
+		index--
+	}
+	return registeredServer{}, false, errors.New("failed to select a registered server")
 }
 
 // mints a token for clientID with fresh session keys, created at
@@ -227,7 +285,7 @@ func generateConnectToken(config *config, clientID uint64, createTimestamp uint6
 
 // reads the config from the environment through getenv, so tests pass a map
 
-func readConfig(getenv func(string) string) (*config, error) {
+func readConfigMode(getenv func(string) string, requireServer bool) (*config, error) {
 	config := &config{
 		port:            8080,
 		protocolID:      exampleProtocolID,
@@ -267,20 +325,30 @@ func readConfig(getenv func(string) string) (*config, error) {
 		config.protocolID = protocolID
 	}
 
-	if text := getenv("ROCKETNET_BACKEND_SERVER_ADDRESSES"); text != "" {
+	addressesText := getenv("ROCKETNET_BACKEND_SERVER_ADDRESSES")
+	if addressesText != "" {
+		text := addressesText
 		config.serverAddresses = strings.Split(text, ",")
-	}
-	if err := writeServerAddresses(&signedConnectData{}, config.serverAddresses); err != nil {
-		return nil, fmt.Errorf("ROCKETNET_BACKEND_SERVER_ADDRESSES: %w", err)
 	}
 
 	// each server makes its own keypair at create; the backend needs its public half
 	text := getenv("ROCKETNET_BACKEND_SERVER_PUBLIC_KEY")
-	key, err := base64.StdEncoding.DecodeString(text)
-	if text == "" || err != nil || len(key) != keyBytes {
-		return nil, errors.New("ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)")
+	if text == "" {
+		if requireServer || addressesText != "" {
+			return nil, errors.New("ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)")
+		}
+		config.serverAddresses = nil
+	} else {
+		key, err := base64.StdEncoding.DecodeString(text)
+		if err != nil || len(key) != keyBytes {
+			return nil, errors.New("ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)")
+		}
+		if err := writeServerAddresses(&signedConnectData{}, config.serverAddresses); err != nil {
+			return nil, fmt.Errorf("ROCKETNET_BACKEND_SERVER_ADDRESSES: %w", err)
+		}
+		copy(config.serverPublicKey[:], key)
+		config.serverConfigured = true
 	}
-	copy(config.serverPublicKey[:], key)
 
 	if text := getenv("ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS"); text != "" {
 		seconds, err := strconv.ParseUint(text, 10, 32)
@@ -300,16 +368,36 @@ func readConfig(getenv func(string) string) (*config, error) {
 	return config, nil
 }
 
+func readConfig(getenv func(string) string) (*config, error) {
+	return readConfigMode(getenv, true)
+}
+
+func readServiceConfig(getenv func(string) string) (*config, error) {
+	return readConfigMode(getenv, false)
+}
+
 var stderrLogger = log.New(os.Stderr, "rocketnet-backend: ", log.LstdFlags)
 
-func matchHandler(config *config) http.HandlerFunc {
+func matchHandler(config *config, registry *serverRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clientID, err := strconv.ParseUint(r.PathValue("clientID"), 10, 64)
 		if err != nil {
 			http.Error(w, "the client id is not a decimal 64 bit number", http.StatusBadRequest)
 			return
 		}
-		token, err := generateConnectToken(config, clientID, uint64(time.Now().Unix()), rand.Reader, sealAnonymous)
+		server, found, err := registry.random()
+		if err != nil {
+			http.Error(w, "failed to select a server", http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			http.Error(w, "no servers are registered", http.StatusServiceUnavailable)
+			return
+		}
+		selected := *config
+		selected.serverAddresses = server.addresses
+		selected.serverPublicKey = server.publicKey
+		token, err := generateConnectToken(&selected, clientID, uint64(time.Now().Unix()), rand.Reader, sealAnonymous)
 		if err != nil {
 			stderrLogger.Printf("failed to generate a connect token: %v", err)
 			http.Error(w, "failed to generate a connect token", http.StatusInternalServerError)
@@ -319,15 +407,74 @@ func matchHandler(config *config) http.HandlerFunc {
 		// a token is for one client, once: never cached
 		w.Header().Set("Cache-Control", "no-store")
 		io.WriteString(w, base64.StdEncoding.EncodeToString(token))
-		stderrLogger.Printf("matched client %.16x to %s", clientID, strings.Join(config.serverAddresses, ","))
+		stderrLogger.Printf("matched client %.16x to %s", clientID, strings.Join(server.addresses, ","))
 	}
+}
+
+const registrationBodyBytes = 4096
+
+func registerHandler(registry *serverRegistry) http.HandlerFunc {
+	type requestBody struct {
+		Addresses []string `json:"addresses"`
+		PublicKey string   `json:"public_key"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, registrationBodyBytes)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var request requestBody
+		if err := decoder.Decode(&request); err != nil {
+			http.Error(w, "invalid server registration", http.StatusBadRequest)
+			return
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			http.Error(w, "invalid server registration", http.StatusBadRequest)
+			return
+		}
+		if err := registry.register(r.PathValue("serverID"), request.Addresses, request.PublicKey); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// writeBackendKeys emits the environment used by the backend and its servers.
+// The caller supplies entropy so the unit fixture can use a known signing seed.
+func writeBackendKeys(output io.Writer, random io.Reader) error {
+	publicKey, privateKey, err := ed25519.GenerateKey(random)
+	if err != nil {
+		return err
+	}
+	defer clear(privateKey)
+	_, err = fmt.Fprintf(output, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=%s\nROCKETNET_BACKEND_PRIVATE_KEY=%s\n",
+		base64.StdEncoding.EncodeToString(publicKey), base64.StdEncoding.EncodeToString(privateKey))
+	return err
 }
 
 func main() {
 	mint := flag.String("mint", "", "print one connect token for this client id and exit, instead of serving")
+	keygen := flag.Bool("keygen", false, "print a fresh backend signing keypair as environment assignments and exit")
 	flag.Parse()
+	mintSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "mint" {
+			mintSet = true
+		}
+	})
+	if flag.NArg() != 0 || (*keygen && mintSet) {
+		stderrLogger.Fatal("usage: rocketnet-backend [--keygen | --mint <client id>]")
+	}
+	if *keygen {
+		if err := writeBackendKeys(os.Stdout, rand.Reader); err != nil {
+			stderrLogger.Fatalf("key generation failed: %v", err)
+		}
+		return
+	}
 
-	config, err := readConfig(os.Getenv)
+	requireServer := mintSet
+	config, err := readConfigMode(os.Getenv, requireServer)
 	if err != nil {
 		stderrLogger.Fatalf("error: %v", err)
 	}
@@ -335,7 +482,7 @@ func main() {
 		stderrLogger.Printf("WARNING: using the published development backend key. DEVELOPMENT ONLY: anyone can mint tokens for a server that accepts it. Set ROCKETNET_BACKEND_PRIVATE_KEY to deploy.")
 	}
 
-	if *mint != "" {
+	if mintSet {
 		clientID, err := strconv.ParseUint(*mint, 10, 64)
 		if err != nil {
 			stderrLogger.Fatalf("error: --mint takes a decimal client id, not %q", *mint)
@@ -349,9 +496,22 @@ func main() {
 	}
 
 	router := http.NewServeMux()
-	router.HandleFunc("GET /match/{clientID}", matchHandler(config))
+	registry := newServerRegistry(func(max int) (int, error) {
+		value, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+		if err != nil {
+			return 0, err
+		}
+		return int(value.Int64()), nil
+	})
+	if config.serverConfigured {
+		if err := registry.register("environment", config.serverAddresses, base64.StdEncoding.EncodeToString(config.serverPublicKey[:])); err != nil {
+			stderrLogger.Fatalf("error: %v", err)
+		}
+	}
+	router.HandleFunc("PUT /servers/{serverID}", registerHandler(registry))
+	router.HandleFunc("GET /match/{clientID}", matchHandler(config, registry))
 
-	stderrLogger.Printf("started backend on port %d, minting tokens for %s", config.port, strings.Join(config.serverAddresses, ","))
+	stderrLogger.Printf("started backend on port %d", config.port)
 	err = http.ListenAndServe(":"+strconv.Itoa(config.port), router)
 	if err != nil {
 		stderrLogger.Fatalf("error: %v", err)

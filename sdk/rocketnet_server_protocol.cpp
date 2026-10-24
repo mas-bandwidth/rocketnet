@@ -369,10 +369,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
 
-        // a token created more than the 5-second skew allowance after the
+        // a token created more than the 30-second skew allowance after the
         // server's clock is refused, always: there is no maximum lifetime.
         // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
-        if ( token_create_timestamp > current_timestamp && token_create_timestamp - current_timestamp > 5 )
+        if ( token_create_timestamp > current_timestamp &&
+             token_create_timestamp - current_timestamp > ROCKETNET_TOKEN_CREATION_SKEW_SECONDS )
         {
             rocketnet_debug( "server ignored connection request. connect token created in future" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE]++;
@@ -1203,6 +1204,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // never elicits: that exemption is what makes the ack conversation
     // terminate.
 
+    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+        rocketnet_replay_advance( &mapping->accepted_session, sequence );
+
     mapping->control->last_receive_time = current_time;
 
     if ( !rocketnet_client_slots_confirmed( server->client_slots, client_index ) )
@@ -1229,7 +1233,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                 server->acked_connection_ids[i] = connection_id;
         }
 
-        if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET )
+        if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET &&
+             ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET ) )
             endpoint->ack_debt++;
     }
 
@@ -1253,7 +1258,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         if ( !rocketnet_server_payload_copy( out_payload, out_payload_capacity, type_data, type_data_bytes, out_payload_bytes, counters ) )
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         *out_payload_client_index = client_index;
+        server->payload_sequence = sequence;
         server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
+        if ( !server->defer_payload_acks )
+            rocketnet_server_protocol_accept_payload( server, client_index, server->payload_connection_id, sequence );
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
 
@@ -1298,6 +1306,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         if ( server->reassembly->completed_bytes > 0 )
         {
             *out_payload_client_index = client_index;
+            server->payload_sequence = 0; // fragmented payload has no delivery ACK
             server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
         }
 
@@ -1566,7 +1575,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - type_data_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->accepted_session );
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
 
@@ -1846,7 +1855,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &mapping->replay_session );
+    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &mapping->accepted_session );
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, server->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
@@ -1893,7 +1902,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
     uint64_t sequence = mapping->send_sequence_session;
@@ -2014,7 +2023,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->accepted_session );
 
     rocketnet_write_fragment_header( plaintext + block_bytes, payload_id, fragment_index, fragment_count );
     memcpy( plaintext + block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES, fragment_data, (size_t) fragment_bytes );
@@ -2141,4 +2150,18 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
 
     rocketnet_server_connection_reset( server, client_index );
+}
+
+void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence )
+{
+    if ( !sequence || !rocketnet_client_slots_connected( server->client_slots, client_index ) ||
+         rocketnet_server_protocol_connection_id( server, client_index ) != connection_id )
+        return;
+    const int index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );
+    if ( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) )
+        return;
+    rocketnet_replay_advance( &mapping->accepted_session, sequence );
+    if ( server->acks )
+        server->acks->endpoints[client_index].ack_debt++;
 }

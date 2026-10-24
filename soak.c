@@ -38,11 +38,11 @@
     uses as its negative control.
 */
 
-#include "test/native_shutdown.h"
+#include "tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_connect_token.h"
-#include "test/portable_crt.h"
+#include "tests/portable_crt.h"
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>

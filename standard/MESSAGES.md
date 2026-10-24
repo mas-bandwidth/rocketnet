@@ -80,6 +80,15 @@ implementation, stated here because RN-2 is the party that relies on it.
    reports a type 5 packet acknowledged, the peer's connection layer MUST have
    handed its payload to the peer's message layer exactly once. A connection
    layer MUST NOT acknowledge a type 5 packet whose payload it then discards.
+   The receiver MUST finish successful message-layer processing before ACK publication.
+   If a reliable record cannot reserve receive storage, the receiver MUST leave
+   that record's number, ordering state and received bit uncommitted, withhold
+   the carrying packet's ACK, and keep the connection alive for retry. Records
+   already accepted from the packet remain retained or delivered; a retry MUST
+   deduplicate that prefix. Once capacity returns, a fresh-sequence retransmission
+   MUST be accepted normally. Existing reliable-message timeouts still apply.
+   Admission MUST reserve space for every held delivery an ordered record can
+   release, not only the record itself. Malformed records remain protocol errors.
 3. **A fragmented payload carries no delivery fact.** An acknowledgement of
    the fragments of a type 9 payload does not prove the payload was
    delivered. A message layer sender MUST NOT place a reliable record or a
@@ -117,6 +126,29 @@ implementation, stated here because RN-2 is the party that relies on it.
 An endpoint MUST NOT send an application message on a connection that is not connected. A send the application makes on such a connection MUST be dropped, MUST NOT be held for a later send, and MUST be counted once in `MESSAGE_SEND_NOT_CONNECTED`. The rule is the same for a client and for a server.
 
 A client's connection is connected while the client is in connected (4) of [RN-1 t11 Handshake: client](TRANSPORT.md#t11); a server's connection to a slot is connected from the session [RN-1 t12 Handshake: server](TRANSPORT.md#t12) assigns that slot until the session ends. The CONFIG control record is not an application message and keeps the timing of [m11 CONFIG control record](#m11). The drop is visible to the application as a refused send and in the counter.
+
+<a id="m1.6"></a>
+### m1.6. Receiving every delivered message
+
+A receiver hands each update's deliveries to the application through one
+receive queue. RN-1 acknowledges a packet when it accepts it, before the
+application has seen the messages it carried, and the sender's window then
+moves past their numbers ([m5.1 Sender numbering](#m5.1)). The receiver
+therefore cannot keep a delivered message past the update that delivered it,
+and it cannot ask for the message again.
+
+1. The application MUST take every message delivered in an update from the
+   receive queue before the next update of that endpoint.
+2. When an update finds a delivered message that the application did not
+   take, the receiver MUST treat it as application misuse. It MUST count each
+   such message once in `MESSAGE_NOT_RECEIVED`, and MUST end that connection
+   with the reason `MESSAGE_NOT_RECEIVED`. A server ends only the connections
+   that have a message left; the others are unaffected. An implementation
+   SHOULD also assert in a debug build.
+3. A receiver MUST NOT drop a delivered message without the count and the
+   end of rule 2, and MUST NOT deliver it at a later update.
+4. A message the receiver did not offer to the application because its
+   connection already ended is not misuse and is not counted.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules

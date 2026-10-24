@@ -7,7 +7,7 @@
     test_lifecycle.cpp, which is part of the unit suite.
 */
 
-#include "../test/native_shutdown.h"
+#include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -16,7 +16,7 @@
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #include <atomic>
 #include <stddef.h>

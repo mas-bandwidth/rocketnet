@@ -894,6 +894,15 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
     uring->test_fail_sends = count > 0 ? count : 0;
 }
 
+// main thread only: true when no staged slot waits and no send is without
+// its CQE (RNUringDriver ResetIndex has run), so the send counters are final
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    return uring->sends_pending == 0 && uring->send_submitted == 0 &&
+           uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
+}
+
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
 #if ROCKETNET_TEST_SEAMS
@@ -1134,7 +1143,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     const int init_result = io_uring_queue_init_params( ROCKETNET_URING_ENTRIES, &uring->ring, &params );
     if ( init_result < 0 )
     {
-        rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s", strerror( -init_result ) );
+        rocketnet_error( "io_uring transport: io_uring_queue_init_params failed: %s (errno %d%s)", strerror( -init_result ), -init_result, -init_result == ENOMEM ? ", the ring is charged to RLIMIT_MEMLOCK, summed per user" : "" );
         rocketnet_server_uring_abort_create( uring );
         return NULL;
     }
@@ -1158,7 +1167,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         queue->buf_ring = rocketnet_server_uring_setup_buf_ring( &uring->ring, ROCKETNET_URING_RECV_BUFFERS, i, &queue->buf_ring_inverted_resv, &error );
         if ( !queue->buf_ring )
         {
-            rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
+            rocketnet_error( "io_uring transport: io_uring_setup_buf_ring failed for queue %d: %s (errno %d%s)", i, strerror( -error ), -error, -error == ENOMEM ? ", the buffer ring is charged to RLIMIT_MEMLOCK, summed per user" : "" );
             rocketnet_server_uring_abort_create( uring );
             return NULL;
         }
@@ -1704,6 +1713,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
+bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 #endif
 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Unit tests: no sockets, no real time. The known answers are the C
-    library's own, test/connect_token_vectors.json, minted by
+    library's own, tests/connect_token_vectors.json, minted by
     rocketnet_write_connect_token_deterministic; this backend must write
     every one of them byte for byte.
 
@@ -45,14 +45,14 @@ static class Tests
 
     static string VectorsPath()
     {
-        // walk up from the working directory to the repository's test/connect_token_vectors.json
+        // walk up from the working directory to the repository's tests/connect_token_vectors.json
         for ( DirectoryInfo? directory = new DirectoryInfo( Directory.GetCurrentDirectory() ); directory != null; directory = directory.Parent )
         {
-            string path = Path.Combine( directory.FullName, "test", "connect_token_vectors.json" );
+            string path = Path.Combine( directory.FullName, "tests", "connect_token_vectors.json" );
             if ( File.Exists( path ) )
                 return path;
         }
-        throw new TestFailure( "test/connect_token_vectors.json not found above the working directory" );
+        throw new TestFailure( "tests/connect_token_vectors.json not found above the working directory" );
     }
 
     static List<JsonElement> LoadVectors()
@@ -229,10 +229,62 @@ static class Tests
         }
     }
 
+    static void test_keygen_matches_signing_vector()
+    {
+        JsonElement vector = LoadVectors()[0];
+        byte[] seed = Unhex( vector, "backend_signing_seed", 32 );
+        var expected = PublicKeyAuth.GenerateKeyPair( seed );
+        using StringWriter output = new StringWriter();
+        BackendKeys.Write( output, buffer => seed.CopyTo( buffer, 0 ) );
+        string[] lines = output.ToString().Split( '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries );
+        Check( lines.Length == 2, "keygen emits two environment assignments" );
+        Check( lines[0] == "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=" + Convert.ToBase64String( expected.PublicKey ), "keygen public key" );
+        Check( lines[1] == "ROCKETNET_BACKEND_PRIVATE_KEY=" + Convert.ToBase64String( expected.PrivateKey ), "keygen expanded 64-byte private key" );
+    }
+
+    static void test_server_registry()
+    {
+        ServerRegistry registry = new ServerRegistry( count => count - 1 );
+        Check( registry.Random() == null, "empty registry" );
+        byte[] keyA = Enumerable.Repeat( (byte) 0x11, ConnectToken.KeyBytes ).ToArray();
+        byte[] keyB = Enumerable.Repeat( (byte) 0x22, ConnectToken.KeyBytes ).ToArray();
+        string[] addressA = { "127.0.0.1:40000" };
+        string[] addressB = { "127.0.0.1:40001" };
+        string[] addressC = { "[::1]:40002" };
+        registry.Register( "one", addressA, Convert.ToBase64String( keyA ) );
+        registry.Register( "one", addressB, Convert.ToBase64String( keyB ) );
+        RegisteredServer? server = registry.Random();
+        Check( server != null && server.Addresses.SequenceEqual( addressB ) && server.PublicKey.SequenceEqual( keyB ), "re-registration replaces" );
+        registry.Register( "two", addressC, Convert.ToBase64String( keyA ) );
+        server = registry.Random();
+        Check( server != null &&
+               ( server.Addresses.SequenceEqual( addressB ) && server.PublicKey.SequenceEqual( keyB ) ||
+                 server.Addresses.SequenceEqual( addressC ) && server.PublicKey.SequenceEqual( keyA ) ),
+               "random selection stays in the registered set" );
+        bool refused = false;
+        string[] invalidAddress = { "127.0.0.1:0" };
+        try { registry.Register( "bad", invalidAddress, Convert.ToBase64String( keyA ) ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "invalid address refused" );
+        refused = false;
+        try { registry.Register( "bad", new string[] { null! }, Convert.ToBase64String( keyA ) ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "null address refused" );
+        refused = false;
+        try { registry.Register( "bad", addressA, "AAAA" ); }
+        catch ( ArgumentException ) { refused = true; }
+        Check( refused, "invalid public key refused" );
+
+        BackendConfig config = BackendConfig.Read( Environment( new Dictionary<string, string>() ), requireServer: false );
+        Check( !config.ServerConfigured && config.ServerAddresses.Length == 0, "service starts with an empty registry" );
+    }
+
     static int Main()
     {
         (string, Action)[] tests =
         {
+            ( nameof( test_keygen_matches_signing_vector ), test_keygen_matches_signing_vector ),
+            ( nameof( test_server_registry ), test_server_registry ),
             ( nameof( test_connect_token_vectors ), test_connect_token_vectors ),
             ( nameof( test_server_addresses_match_vectors ), test_server_addresses_match_vectors ),
             ( nameof( test_server_addresses_refused ), test_server_addresses_refused ),

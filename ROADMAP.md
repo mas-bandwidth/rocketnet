@@ -45,13 +45,13 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ❌ | ❌ | ❌ |
 | Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ❌ | ❌ | ❌ |
 | Attack-surface reduction: the token claim is written only after the signature verifies | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a token created beyond the five-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a token created beyond the 30-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
 | ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ❌ | ❌ | ❌ |
 | With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
 | AGENTS.md has a Before production section: what a production build sets and refuses | ❌ | — | — |
 | The client trusts only the server: the idle timer and the RTT sample come only from the authenticated challenge, never the clear-salt cookie, and the client socket is connected | ❌ | ❌ | ❌ |
-| The portable server transport is unavailable at ROCKETNET_DEV=0; clients are unchanged | ❌ | ❌ | ❌ |
+| Portable server and client transports are available in production; native server transports remain preferred | ❌ | ❌ | ❌ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ | ❌ | ❌ |
 | complete | 65% | 68% | 68% |
 
@@ -136,13 +136,13 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 ## Transports
 
-The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. The portable server rung is development-only; portable client I/O remains available in production. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
+The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. Portable server and client I/O are available in both builds. Production Windows servers rank iocp and rio ahead of portable. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
 
 AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of its public address, and the ladder offers xdp for either. Its IPv6 cell is ❌ because no CI step runs AF_XDP end to end (it needs root and a VM guest); the msgx and iocp IPv6 cells are ❌ until the CI transport family matrix runs green on them.
 
 — is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
 
-portable is a fallback, not a production transport, on the client and the server (Glenn, 2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
+Portable remains a fallback rather than a performance target. Glenn enabled it in production on 2026-10-22; his earlier performance guidance remains (2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -175,11 +175,12 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | AF_XDP on AWS GameLift fleets: the research | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
+| Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients | ✅ | — | — | — | — | — | — | — |
 | Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
 | Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ | — | — | — | — | — | — | — |
 | Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
 | The live stress run: the XDP server against one client from every test machine (later) | ❌ | — | — | — | — | — | — | — |
-| complete | 73% | — | — | — | — | — | — | — |
+| complete | 75% | — | — | — | — | — | — | — |
 
 [Source data](docs/roadmap.sexp)
 
@@ -451,9 +452,27 @@ Correctness work that follows v1.0.0-preview-1.
 
 [Source data](docs/roadmap.sexp)
 
-## Known issues (addressed in the final deliverable)
+## Preview-2 known issues (deferred to preview-3)
 
-What v1.0.0-preview-1 does not yet meet, one row per issue: what it is today, and how the final deliverable addresses it. Review these limits for your game before deployment. Each cell is ❌ until the final deliverable lands it there; — is a platform the issue does not apply to.
+Current limits accepted for the preview-2 cut. These rows describe preview-2; the historical preview-1 table below is retained only as history.
+
+| known issue | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server. | ❌ | — | ❌ |
+| The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified. | — | ❌ | — |
+| The big-endian full-system fixture has an endian mismatch, and emulated completion runs retain timeouts. | ❌ | — | — |
+| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. The AF_XDP cell and full soak are incomplete; no OOM cause is claimed. | ❌ | — | — |
+| Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
+| The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
+| Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |
+| Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified. io_uring suite-concurrency and runner memlock provisioning work is deferred. | ❌ | — | — |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
+## Historical preview-1 known issues and plans
+
+Historical preview-1 planning retained for context. Some fixes listed here landed before preview-2, so this table does not state current preview-2 status; use the preview-2 known-issues table above.
 
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
@@ -529,14 +548,14 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | The fuzz targets build and run under libFuzzer on Windows | — | — | ❌ |
 | Create, destroy, connect, restart: a thousand times on Windows with nothing left behind | — | — | ❌ |
 | Windows nightlies: all jobs run, warnings gated, verifier script safe | — | — | ❌ |
-| TLA ledger: every case finishes or says why; docs current | ❌ | ❌ | ❌ |
+| TLA ledger: every case finishes or says why; docs current | ✅ | — | — |
 | Server send capacity is sized from the config, never a fixed 256 | ❌ | ❌ | ❌ |
 | macOS: 1000 light clients on msgx and portable | — | ❌ | — |
 | Windows: 1000 light clients on portable, iocp and rio | — | — | ❌ |
 | macOS: the nightly soak job green at the branch | — | ❌ | — |
 | Ack receipts: LOSS only after the receipt deadline | ❌ | ❌ | ❌ |
 | The whole tree formatted with clang-format in the netcode style, the format checked in CI | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| complete | 10% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
 

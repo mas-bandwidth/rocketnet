@@ -63,7 +63,7 @@ do                                                                              
 }                                                                                       \
 while ( 0 )
 
-#include "../../test/route_checks.h"
+#include "../../tests/route_checks.h"
 
 // the standard's wire order, little-endian, as literal bytes: every value
 // below is checked against THESE, never against a host integer, so each

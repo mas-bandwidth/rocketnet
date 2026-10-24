@@ -8,8 +8,8 @@
     through the state machines and the in-memory simulator.
 */
 
-#include "../test/native_shutdown.h"
-#include "../test/time_scale.h"
+#include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 
 // The shared harness carries one call with the retired create-time argument.
@@ -41,7 +41,7 @@ extern std::atomic<unsigned long long> g_client_ack_stats_count;
 // A macro, so a failure names the test that ended the transport.
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
-#include "../test/counters_expect.h"
+#include "../tests/counters_expect.h"
 
 // The clean-run rule rides along: every refusal reads 0 on a run that injects
 // no fault. A test that provokes a refusal on purpose ends with the _EXCEPT
@@ -3681,6 +3681,9 @@ void rocketnet_test_public_client_server_queries()
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
+        // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+        while ( rocketnet_server_receive_messages( server ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( client ) != NULL ) {}
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.005 );
@@ -5053,7 +5056,7 @@ void rocketnet_test_server_transport_io_pin_msgx()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #include "rocketnet_driver.h"
-#include "../test/suite_runner.h"
+#include "../tests/suite_runner.h"
 
 // test_transport_all_skipped_uses_auto, and on Linux
 // test_server_transport_io_ladder_fall, create the development config's
@@ -8504,6 +8507,11 @@ extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
 extern void config_mismatch_over_loopback();
 extern void config_equal_over_lossy_loopback();
+extern void reliable_receive_full_ordered_gap_recovers();
+extern void reliable_receive_full_recovers_all_modes();
+extern void reliable_receive_full_partial_packet_recovers();
+extern void reliable_receive_full_recovers_client_to_server();
+extern void reliable_receive_full_recovers_server_to_client();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
@@ -8820,6 +8828,9 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 }
 
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+void rocketnet_test_darwin_send_epipe_no_signal();
+#endif
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
 void rocketnet_test_posix_client_drops_foreign_sources();
@@ -8976,6 +8987,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip, NULL },
 #endif
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
+#endif
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
@@ -9080,6 +9094,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ordered_small_and_large_interleaved", ordered_small_and_large_interleaved, NULL },
     { "test_loopback_transport_config_mismatch", config_mismatch_over_loopback, NULL },
     { "test_loopback_transport_config_equal_over_lossy", config_equal_over_lossy_loopback, NULL },
+    { "test_reliable_receive_full_ordered_gap_recovers", reliable_receive_full_ordered_gap_recovers, NULL },
+    { "test_reliable_receive_full_recovers_all_modes", reliable_receive_full_recovers_all_modes, NULL },
+    { "test_reliable_receive_full_partial_packet_recovers", reliable_receive_full_partial_packet_recovers, NULL },
+    { "test_reliable_receive_full_recovers_client_to_server", reliable_receive_full_recovers_client_to_server, NULL },
+    { "test_reliable_receive_full_recovers_server_to_client", reliable_receive_full_recovers_server_to_client, NULL },
     { "test_reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link, NULL },
     { "test_reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once, NULL },
     { "test_unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link, NULL },

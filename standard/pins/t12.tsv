@@ -2,5 +2,5 @@
 #include "rocketnet_server.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_encryption_map.h"
-token creation skew	(uint64_t) 5	5
+token creation skew	(uint64_t) ROCKETNET_TOKEN_CREATION_SKEW_SECONDS	30
 failed-signature source table	ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS	64

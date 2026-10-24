@@ -55,6 +55,9 @@ struct rn_message_link_t
     // link leaves *client_index NULL.
     int (*payloads)( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
+    // Publish ACK eligibility only after successful message processing.
+    void (*accept_payload)( void * transport, int k );
+
     // the transport's acked packet ids of the last update (R1: the only ack).
     // The client's link leaves *client_index NULL.
     int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
@@ -275,6 +278,13 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 
 // The connection's state, for the unit suite.
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index );
+
+#if ROCKETNET_DEV
+// The message half of the delivery capture (rocketnet_layers.h) for one
+// connection: the ordered path's window, resend FIFOs, RTT estimate and send
+// budget. A connection that is not CONNECTED leaves the capture untouched.
+void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture );
+#endif // #if ROCKETNET_DEV
 
 // The client and server links over the real transports.
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport );

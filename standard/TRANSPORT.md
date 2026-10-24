@@ -2684,7 +2684,7 @@ The policy values of this section are below.
 
 | Name | Value | Unit |
 |---|---|---|
-| token creation skew | `5` | seconds |
+| token creation skew | `30` | seconds |
 | failed-signature source table | `64` | sources |
 
 The cookie lifetime, the cookie key rotation period and the used-token history
@@ -2768,14 +2768,14 @@ input: an empty receive replay state, so the ack block is the minimum
 
 ```vector t12.token-created-in-future
 input: the request of [t8 Packet formats](#t8)
-input: signed create timestamp 1756166406, expire 1756166700, server time 1756166400
+input: signed create timestamp 1756166431, expire 1756166700, server time 1756166400
 input: the return cookie is valid for the source and connection salt
 00 00 b7 59 01 00 03 f9 ac 68 00 00 00 00 0f b2
 b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
 4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
 c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
-22 11 06 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+22 11 1f f9 ac 68 00 00 00 00 2c fa ac 68 00 00
 00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
@@ -2810,11 +2810,11 @@ d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 11 9e b3 02 5c ab 63 a6 65 63
-5d 30 d7 73 5c 6f 88 9e e2 1c eb 7d 8c 7e 1e 9f
-53 f2 26 e8 5f b4 92 ed 6b d3 43 f8 51 92 b3 91
-d2 fe ff 81 9e ea 88 f4 02 6e ba 4b cf a8 f0 1c
-b7 a1 ab c4 74 09
+00 00 00 00 00 00 e1 60 8a e2 f7 0d 6b f4 d4 68
+ad 25 1e c3 c3 2a 00 78 ee 3d 48 7d 30 de 25 51
+5d 59 7d 32 da 40 e4 e0 b6 a1 c7 1c 45 35 4d ea
+bd 52 02 95 e5 2d d6 3e 4a 0e 4d 1a 13 b4 7d 87
+67 5d 4a b0 af 01
 ```
 
 ```vector t12.token-expired
@@ -3153,7 +3153,7 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence successfully opened from the peer | Any u32; zero denotes no opened session packet only after reconstruction |
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero denotes no acknowledgement-eligible session packet only after reconstruction |
 | range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
 | first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
 | gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
@@ -3162,13 +3162,13 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 The block length is the [t3 Constants and registries](#t3) (ack block minimum row) plus each declared range entry's gap and range-length fields. Bytes after that length belong to the packet type's
 data, when present. The range count maximum is pinned below.
 
-A sender MUST construct ranges from the opened session-sequence state it
+A sender MUST construct ranges from the acknowledgement-eligible session-sequence state it
 maintains for the peer. The first range ends at largest received, inclusive.
 Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
 
-The largest received field is the low 32 bits of the highest opened 64-bit
+The largest received field is the low 32 bits of the highest acknowledgement-eligible 64-bit
 session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
 with those low 32 bits that is nearest to its own highest sent session sequence;
 the higher value wins an equidistant tie. The receiver MUST evaluate every
@@ -3203,9 +3203,17 @@ marked as specified by [t14 Replay protection](#t14).
 <a id="t15.3"></a>
 ### t15.3. Building and processing
 
-A sender MUST build a block from the single session replay state defined in
-[t14 Replay protection](#t14), shared by all opened session packet types. It
-MUST list the newest received run first and may include older
+A sender MUST build a block from a separate acknowledgement-eligible history.
+The security replay window in [t14 Replay protection](#t14) still marks every
+successfully opened packet immediately; opening alone MUST NOT acknowledge it.
+A session packet becomes eligible after its acknowledgement block and type data
+pass validation. A type 5 payload delivered to a message layer MUST remain
+ineligible until that layer confirms successful processing of the whole payload.
+If receive storage is unavailable, the receiver MUST withhold that payload's
+acknowledgement. A retransmitted message uses a fresh packet sequence; the
+receiver MUST NOT undo security replay protection to permit a retry.
+The eligible history has the same bounded depth as the replay window. It
+MUST list the newest eligible run first and may include older
 runs while its range-count and packet-capacity limits permit. When capacity
 omits entries, it MUST drop the oldest entries first and MUST NOT emit a
 trailing gap without a received run. Every session packet MUST have room for
@@ -3224,8 +3232,8 @@ that assertion and MUST process an in-window sent sequence as acknowledged.
 <a id="t15.4"></a>
 ### t15.4. Elicitation and standalone acknowledgement
 
-All opened session packet types contribute to the receive state represented
-by a block. Acknowledgement debt is the number of accepted eliciting packets
+All session packet types can contribute to the eligible history represented
+by a block after the acceptance conditions in [t15.3 Building and processing](#t15.3) hold. Acknowledgement debt is the number of accepted eliciting packets
 received since a session packet last carried a block. A receiver MUST add debt
 for each accepted connection keep-alive, connection payload, connection
 disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).
@@ -3925,6 +3933,7 @@ The registry of counters, in index order, is:
 | `XDP_KERNEL_DROPPED_NO_SOCKET` | `refusal` | `none` |
 | `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION` | `refusal` | `none` |
+| `MESSAGE_NOT_RECEIVED` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4047,7 +4056,7 @@ b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00
+f8 12 00 00 00 a4 58 a7 b3 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

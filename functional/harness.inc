@@ -37,7 +37,7 @@
 #include <string>
 #include <vector>
 
-#include "../test/portable_crt.h"
+#include "../tests/portable_crt.h"
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>
@@ -121,6 +121,13 @@ static void rocketnet_test_log_ring_dump()
     for ( int i = 0; i < lines; i++ )
         printf( "%s\n", rocketnet_test_log_ring[( first + i ) % ROCKETNET_FUNCTIONAL_LOG_RING_LINES] );
     rocketnet_test_log_ring_lines = 0;
+}
+
+// the ring for a check outside this file (functional/posix_lifecycle_stress.cpp),
+// so its failure shows the library's error lines too
+void rocketnet_functional_log_ring_dump()
+{
+    rocketnet_test_log_ring_dump();
 }
 
 static void rocketnet_check_handler( const char * condition, const char * function, const char * file, int line )

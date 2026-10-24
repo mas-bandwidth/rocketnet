@@ -215,7 +215,7 @@ that waits in frame sync, put back to the standard policy afterwards
 `rocketnet_frame_sync_elevate_priority` returns before that call when
 `rocketnet_platform_thread_priority_enabled` is false.
 
-Each msgx or development portable server has two socket workers, one for
+Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
 do not receive the client thread's `SCHED_RR` priority request. Every server
 also has the separate background stats worker described in [BUILDING.md,
@@ -367,7 +367,7 @@ on (`DevToolsSecurity -status` prints its state; enabling it needs an
 administrator), or a logged-in desktop session that answers the authorization
 prompt. Without it, `run` waits on that prompt; over ssh nobody can answer it.
 With access, the unit and functional suites each run one case in-process under
-the debugger, through `--run <case>` (`test/suite_runner.h`, `suite_main`):
+the debugger, through `--run <case>` (`tests/suite_runner.h`, `suite_main`):
 
 ```sh
 lldb -- ./bin/functional --run test_loopback_transport_udp
@@ -436,7 +436,7 @@ How to read them:
 
 - `./bin/test` prints each unit case's name, then `*** ALL TESTS PASSED ***`;
   it opens no socket. A case over 120 seconds is killed and the suite fails
-  (`test/suite_runner.h`; Debug scales the limit).
+  (`tests/suite_runner.h`; Debug scales the limit).
 - `./bin/functional` opens real sockets on loopback. With no pin set
   `test_transport_env_pin_is_honoured` is not in the suite; under the portable pin
   it prints `test_transport_env_pin_is_honoured`, which is what CI greps for

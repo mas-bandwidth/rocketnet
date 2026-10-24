@@ -395,7 +395,8 @@ the server:
 1. `rocketnet_client_update` or `rocketnet_server_update` pumps the transport
    and takes in what arrived.
 2. Drain the endpoint's one receive queue with `rocketnet_client_receive_messages`
-   or `rocketnet_server_receive_messages`.
+   or `rocketnet_server_receive_messages`, calling it until it returns `NULL`.
+   This is required: see [Receiving messages](#receiving-messages).
 3. Run the game simulation for the frame.
 4. Queue this frame's outgoing messages with start message and finish message.
 5. Call `rocketnet_client_send_packets` or `rocketnet_server_send_packets`
@@ -558,6 +559,17 @@ client's entries use client index 0. Keep calling until the function returns
 on that endpoint, whichever comes first. Process or copy every entry first;
 there is no release call.
 
+The application must take every message before the next update. The transport
+has already acknowledged each delivered message to its sender, so a message
+left in the queue cannot be kept or delivered again. An update that finds a
+message still in the queue treats it as API misuse: it asserts in a debug
+build, counts `MESSAGE_NOT_RECEIVED`, and ends that connection. The server
+disconnects each client with a message left with
+`ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED`, and the client ends its own
+connection in `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`. Nothing is dropped
+silently. Calling receive once per frame is not enough: one update can deliver
+more than one batch.
+
 ```c
 #include "rocketnet.h"
 
@@ -718,9 +730,9 @@ ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
 A client whose server disconnected it, stopped, or was destroyed reads
 `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` once its update accepts the
 server's disconnect packet; a reliable timeout, a protocol violation, a config
-mismatch and exhausted message memory read `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT`,
-`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`, `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH`
-and `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Each stays until
+mismatch, exhausted message memory and an update with a message not received read `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT`,
+`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`, `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH`,
+`ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` and `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`. Each stays until
 disconnect, or until connect ends it to start the next connection. A NULL
 client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, counted as misuse.
 

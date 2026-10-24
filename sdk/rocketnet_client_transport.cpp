@@ -115,6 +115,7 @@ struct rocketnet_client_received_packets_t
     int receive_index;
     uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
     int packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
+    uint64_t sequence[ROCKETNET_NUM_CLIENT_PACKETS];
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
@@ -1496,6 +1497,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         const int index = received->num_packets;
         received->packet_data[index] = payload;
         received->packet_bytes[index] = payload_bytes;
+        received->sequence[index] = session_sequence;
         received->num_packets++;
     }
 
@@ -1511,6 +1513,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
             const int index = received->num_packets;
             received->packet_data[index] = reassembly->completed_payload;
             received->packet_bytes[index] = reassembly->completed_bytes;
+            received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
             received->num_packets++;
         }
         else
@@ -2476,6 +2479,26 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     return &client_transport->counters;
 }
 
+#if ROCKETNET_DEV
+// The transport's half of the delivery capture (rocketnet_layers.h): plain
+// copies of the protocol's receive window, send sequence and ack endpoint, on
+// the main thread outside update. Not connected leaves the capture untouched.
+void rocketnet_client_transport_delivery_capture( rocketnet_client_transport_t * client_transport, struct rocketnet_delivery_capture_t * capture )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) || !rocketnet_api_null_guard( capture ) )
+        return;
+    const struct rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    if ( protocol->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        return;
+    capture->connected = 1;
+    capture->last_receive_age_seconds = protocol->last_receive_time > 0.0 ? client_transport->time - protocol->last_receive_time : -1.0;
+    capture->highest_received_sequence = protocol->replay_session.highest_opened;
+    capture->highest_sent_sequence = protocol->send_sequence_session > 0 ? protocol->send_sequence_session - 1 : 0;
+    capture->largest_acked_sequence = protocol->ack.largest_acked_sequence;
+    capture->keep_alive_acked = protocol->ack.keep_alive_acked ? 1 : 0;
+}
+#endif // #if ROCKETNET_DEV
+
 int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2683,3 +2706,15 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
+
+void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport )
+{
+    transport->protocol.defer_payload_acks = 1;
+}
+
+void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k )
+{
+    const rocketnet_client_received_packets_t * batch = &transport->received_packets;
+    if ( k >= 0 && k < batch->num_packets )
+        rocketnet_client_protocol_accept_payload( &transport->protocol, batch->sequence[k] );
+}

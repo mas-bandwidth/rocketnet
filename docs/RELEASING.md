@@ -1,7 +1,8 @@
 # Releasing rocketnet
 
 A release is cut from `main`. Nothing is tagged from a feature branch, and a tag
-is never moved: if a tag is wrong, cut the next version.
+is never moved: if a tag is wrong, cut the next version, except for the
+explicit preview-2 recut authorization recorded below.
 
 ## Version sites
 
@@ -72,9 +73,31 @@ commit and the comparison of its relevant inputs with the release candidate.
 Keep failures, incomplete runs and accepted limitations explicit. Manual
 results must not be described as successful GitHub CI runs.
 
+The preview-2 release owner also authorized cutting this preview with unresolved
+findings and unfinished experiments recorded as known issues for preview-3.
+These are not reported as passing qualification. Experiments and further fixes
+resume after publication.
+
 Before tagging, reconcile the qualification record with the merged `main`
 commit and verify the version, wire-change and tag consistency checks directly.
-The tag still names that exact commit and must never be moved.
+The tag names that exact commit. The explicit recut exception below is the
+only authorization to replace this preview tag.
+
+## Authorized preview-2 recut
+
+On 2026-10-22 the release owner explicitly requested replacing the
+`v1.0.0-preview-2` tag and GitHub release after the move of root-level test
+sources into `tests/` and the resulting Windows resource-path repair.
+This is an exception for this preview, not permission to move other tags.
+Preserve the superseded commit and tag-object identities in the publication
+record. Publish the corrected GitHub release as Latest, not prerelease.
+
+The updated acceptance requirement for this recut is passing native unit and
+functional suites on Linux, macOS and Windows at the final release commit.
+Record the exact commit, configuration, commands and complete results. CI
+infrastructure remains outside the deliverable; recorded manual runs satisfy
+this requirement. This supersedes the earlier permission to defer those suites.
+Other unresolved limits remain explicit known issues.
 
 ## Default CI requirements
 
@@ -125,7 +148,8 @@ also be the commit the tag points at, not a later merge.
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-2`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
-   reuse a tag after pushing it. Verify its consistency with the header before
+   reuse a tag after pushing it, except for the authorized preview-2 recut
+   above. Verify its consistency with the header before
    pushing it. Release Check also performs this check on the tag push.
 7. Publish the GitHub release for that tag.
 

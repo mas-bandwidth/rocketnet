@@ -260,6 +260,22 @@ void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, 
     gso->test_fail_sends.store( count > 0 ? count : 0, std::memory_order_release );
 }
 
+// main thread only: true when the TX path holds no work -- the producer is
+// empty, no bank waits in the ready FIFO, and the worker has returned every
+// bank it took. The worker counts a bank's sends and drops before it returns
+// the bank under send_mutex, so once this answers true the send counters are
+// final for every bank published so far.
+bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    if ( gso->send_producer < 0 ) return true;
+    if ( gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed ) != 0 ) return false;
+    rocketnet_platform_mutex_acquire( &gso->send_mutex );
+    const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &gso->send_mutex );
+    return idle;
+}
+
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index )
 {
     rocketnet_assert( gso );

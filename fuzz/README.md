@@ -118,7 +118,7 @@ table). The files have three origins:
   seed generator;
 - **wire seeds** (`prefilter_pcap_*`, and their `wire_*` and `garbage_*`
   wrappings in the pair corpora), derived from the pcapng captures under
-  `test/pcapng/` by `tools/pcapng_fuzz_seeds.py --write`. `--check` confirms
+  `tests/pcapng/` by `tools/pcapng_fuzz_seeds.py --write`. `--check` confirms
   the committed set matches the captures;
 - **regressions** (`regress_<name>`), minimized findings kept forever (see
   "Replaying a crash").
@@ -188,7 +188,7 @@ the standalone mode reproduces with the same `FUZZ_ITERS` and `FUZZ_SEED`.
 After the fix, keep the finding as a regression. For `rocketnet_fuzz`
 (prefilter selector) and `rocketnet_fuzz_message`,
 `python3 tools/fuzz_finding_to_pcapng.py <harness> <input> --name <name>`
-writes `fuzz/<corpus>/regress_<name>` and `test/pcapng/regress/<name>.pcapng`,
+writes `fuzz/<corpus>/regress_<name>` and `tests/pcapng/regress/<name>.pcapng`,
 so the unit tier replays it too. `python3 tools/check_fuzz_regressions.py`
 checks that every regression seed has its capture. For any other target,
 commit the minimized input to its corpus as `regress_<name>`.

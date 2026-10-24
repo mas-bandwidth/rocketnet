@@ -4,14 +4,14 @@
 
     Functional suite. Each test is a process. Sibling binaries that open a
     socket or start a real transport are tests of this suite, under the same
-    120s failure limit (test/suite_runner.h).
+    120s failure limit (tests/suite_runner.h).
 */
 
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
-#include "../test/suite_runner.h"
-#include "../test/portable_crt.h"
+#include "../tests/suite_runner.h"
+#include "../tests/portable_crt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,15 +64,33 @@ int rocketnet_posix_hard_killed_peer_test_group( const char * name );
 
 #if defined(__APPLE__) || defined(__linux__)
 
-// the suite's groups (test/suite_runner.h): a group runs alone, so a case that
+// the suite's groups (tests/suite_runner.h): a group runs alone, so a case that
 // measures wall time is not measured against the rest of the suite. The live
 // message matrix holds a wall-clock pass bound (functional/live_matrix.cpp), so
 // it is a group of its own, after every other case.
+//
+// A case that creates io_uring servers (its name says io_uring or uring) runs
+// one at a time (SUITE_ONE_AT_A_TIME): each server pins its rings against
+// RLIMIT_MEMLOCK, summed per user across processes, and a destroyed ring's
+// pin is released after the destroy returns, so a create and destroy loop
+// pins about two servers. The connect and disconnect case holds its one
+// server for its whole run (76s on vision, longer than the rest together)
+// and runs beside them: a suite then pins at most that server and one case's.
 static int rocketnet_functional_test_group( const char * name )
 {
+#if defined(__APPLE__)
+    // This case drives eight unpaced senders while destroying their server.
+    // On Darwin its flood can overflow the shared loopback input queue and
+    // drop packets belonging to unrelated exact-delivery cases. Keep the
+    // flood and every assertion intact, but run it apart from those cases.
+    if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
+        return 3;
+#endif
+    const bool uring = strstr( name, "uring" ) != NULL && strstr( name, "connect_disconnect" ) == NULL;
+    const int one_at_a_time = uring ? SUITE_ONE_AT_A_TIME : 0;
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
-        return 2;
-    return rocketnet_posix_hard_killed_peer_test_group( name );
+        return 2 | one_at_a_time;
+    return rocketnet_posix_hard_killed_peer_test_group( name ) | one_at_a_time;
 }
 
 #endif // #if defined(__APPLE__) || defined(__linux__)

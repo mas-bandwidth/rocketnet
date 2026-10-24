@@ -63,6 +63,8 @@
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
+#define ROCKETNET_CHANNEL_RECEIVE_DEFERRED                    -1
+
 #define ROCKETNET_CHANNEL_DISPATCH_NONE                         0   // nothing: refused or counted
 #define ROCKETNET_CHANNEL_DISPATCH_DELIVERED                    1   // a view into the batch, or a delivery from the ring
 #define ROCKETNET_CHANNEL_DISPATCH_HELD                         2   // kept ahead of its turn, live (7.2, 7.3)
