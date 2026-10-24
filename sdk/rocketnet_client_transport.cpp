@@ -1219,6 +1219,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    // A token naming port 0 can never reach a server: macOS refuses the
+    // connect, and Linux and Windows accept it and the packets reach no
+    // server. Every flagged address is checked, so the refusal does not
+    // depend on the host's IPv6.
+    if ( rocketnet_signed_connect_data_names_port_zero( &client_transport->protocol.signed_fields ) )
+    {
+        rocketnet_error( "connect token names a server address with port 0; refusing to connect" );
+        rocketnet_client_transport_abort_create( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO;
+        return NULL;
+    }
+
     // the socket binds after the token parse so the bind family can follow
     // the server and the host's IPv6 capability. A token naming both
     // families selects its IPv4 address on a host with no IPv6.
