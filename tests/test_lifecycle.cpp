@@ -690,6 +690,7 @@ static void check_client_memory_budget( allocator_state & state )
 #define TWO_THREADS_CLIENTS 3
 #define TWO_THREADS_ROUNDS 2
 #define TWO_THREADS_MESSAGES 200
+#define TWO_THREADS_PACKET_FILTER 0x5A
 
 struct two_threads_world_t
 {
@@ -720,6 +721,9 @@ static void two_threads_server( void * data )
     config.protocol_id = TWO_THREADS_PROTOCOL;
     config.max_clients = TWO_THREADS_CLIENTS;
     config.transport = "loopback";
+    // not the published test packet filter, which a production build
+    // (ROCKETNET_DEV=0) refuses; the clients set the same value
+    memset( config.packet_filter, TWO_THREADS_PACKET_FILTER, sizeof( config.packet_filter ) );
     memcpy( config.backend_public_key, world->backend_public, sizeof( config.backend_public_key ) );
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
     check( server && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -764,6 +768,7 @@ static void two_threads_client( void * data )
         rocketnet_client_config_t config;
         check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
         config.transport = "loopback";
+        memset( config.packet_filter, TWO_THREADS_PACKET_FILTER, sizeof( config.packet_filter ) );
         rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
         check( client );
         const char * addresses[] = { world->server_address };
