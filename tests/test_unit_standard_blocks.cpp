@@ -16,6 +16,8 @@
 
 #include "test_unit_standard.h"
 
+#include "rocketnet.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_message.h"
 #include "rocketnet_window_send.h"
 
@@ -237,3 +239,66 @@ static void test_standard_blocks_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_blocks_vectors );
+
+// A region whose ring is zero bytes (a carve outside the validated config
+// path; tla/RNRing.tla ASSUME B > 0 does not hold) stalls a holdable first
+// write and a block first write instead of dividing by zero, counting the
+// stall once. rocketnet_assert compiles out in Release (NDEBUG), so the init
+// assert is no guard there; a quiet hook keeps builds with asserts running.
+
+static void standard_blocks_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+}
+
+static void test_window_send_zero_ring_stalls()
+{
+    rocketnet_assert_function( standard_blocks_quiet_assert );
+    rn_region_t region;
+    static rn_send_number_t numbers[16];
+    static rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    standard_blocks_region( &region, numbers, 0, 64 );
+    region.counters = &counters;
+    rn_window_send_t send;
+    rn_window_send_init( &send, &region, 0 );
+
+    uint64_t number = 0;
+    uint64_t ring_start = 0;
+    rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &number, &ring_start ) == RN_WINDOW_SEND_STALL );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    rocketnet_unit_check( send.next == 0 );
+    rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &number, &ring_start ) == RN_WINDOW_SEND_STALL );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    rocketnet_unit_check( send.next == 0 );
+    rocketnet_assert_function( NULL );
+}
+
+REGISTER_UNIT_TEST( test_window_send_zero_ring_stalls );
+
+static void test_window_send_zero_ring_block_stalls()
+{
+    rocketnet_assert_function( standard_blocks_quiet_assert );
+    rn_region_t region;
+    static rn_send_number_t numbers[16];
+    static rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    standard_blocks_region( &region, numbers, 0, 64 );
+    region.counters = &counters;
+    rn_window_send_t send;
+    rn_window_send_init( &send, &region, 0 );
+
+    // Two fragments: larger than one fragment, so the block path is taken.
+    const uint32_t bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES + 32;
+    uint64_t first = 0;
+    uint64_t ring_start = 0;
+    rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, 0, &first, &ring_start ) == (uint32_t) RN_WINDOW_SEND_STALL );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    rocketnet_unit_check( send.next == 0 );
+    rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, 0, &first, &ring_start ) == (uint32_t) RN_WINDOW_SEND_STALL );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    rocketnet_unit_check( send.next == 0 );
+    rocketnet_assert_function( NULL );
+}
+
+REGISTER_UNIT_TEST( test_window_send_zero_ring_block_stalls );
