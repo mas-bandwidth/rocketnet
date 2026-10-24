@@ -234,7 +234,6 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<int> send_flow_index{-1};
 
     uint8_t server_ethernet_address[ETH_ALEN];
-    uint8_t gateway_ethernet_address[ETH_ALEN];
     rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
     int serves_both;                        // 1: ipv4_address and ipv6_address are both live
     rocketnet_address_t ipv4_address;
@@ -252,8 +251,6 @@ struct rocketnet_server_socket_t
     void * context;
     int state;
     rocketnet_address_t public_address;
-    uint64_t server_id;
-    uint64_t match_id;
 
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
@@ -389,8 +386,7 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         return true;
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
-        if ( ipv6 )
-            rocketnet_error( "ipv6 gateway discovery: no neighbor entry with a link-layer address for %s on %s", gateway_ip_string, interface_name );
+        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
         return false;
     }
     rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
@@ -1404,7 +1400,30 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    if ( server_socket->gateway_known )
+    if ( server_socket->serves_both )
+    {
+        if ( server_socket->reply_macs.gateway_ipv4_known )
+            rocketnet_info( "ipv4 gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+                server_socket->reply_macs.gateway_ipv4[0],
+                server_socket->reply_macs.gateway_ipv4[1],
+                server_socket->reply_macs.gateway_ipv4[2],
+                server_socket->reply_macs.gateway_ipv4[3],
+                server_socket->reply_macs.gateway_ipv4[4],
+                server_socket->reply_macs.gateway_ipv4[5] );
+        else
+            rocketnet_warn( "no ipv4 gateway on %s: ipv4 replies go only to clients learned on link", interface_name );
+        if ( server_socket->reply_macs.gateway_ipv6_known )
+            rocketnet_info( "ipv6 gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
+                server_socket->reply_macs.gateway_ipv6[0],
+                server_socket->reply_macs.gateway_ipv6[1],
+                server_socket->reply_macs.gateway_ipv6[2],
+                server_socket->reply_macs.gateway_ipv6[3],
+                server_socket->reply_macs.gateway_ipv6[4],
+                server_socket->reply_macs.gateway_ipv6[5] );
+        else
+            rocketnet_warn( "no ipv6 gateway on %s: ipv6 replies go only to clients learned on link", interface_name );
+    }
+    else if ( server_socket->gateway_known )
     {
         rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x",
             server_socket->gateway_ethernet_address[0],
@@ -1792,7 +1811,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // copy across data needed by the socket to send packets
 
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
-        memcpy( socket->gateway_ethernet_address, server_socket->gateway_ethernet_address, ETH_ALEN );
         socket->server_address = public_address;
         socket->serves_both = server_socket->serves_both;
         if ( server_socket->serves_both )
@@ -1909,11 +1927,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     server_socket->public_address = public_address;
     server_socket->state = ROCKETNET_SERVER_SOCKET_RUNNING;
-    server_socket->server_id = rocketnet_hash_string( public_address_string );
-    server_socket->match_id = rocketnet_random_uint64();
-
-    rocketnet_info( "server id is %016" PRIx64, server_socket->server_id );
-    rocketnet_info( "match id is %016" PRIx64, server_socket->match_id );
 
     return server_socket;
 }
