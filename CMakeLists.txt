@@ -671,6 +671,42 @@ if(ROCKETNET_BUILD_TESTS)
             target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
         endif()
     endif()
+    # The message layer stressed at 1024 and at 10000 channels
+    # (tests/test_channels_stress.cpp): one source, two binaries, each compiling
+    # the SDK once more with its ROCKETNET_MAX_CHANNELS, as test_wide does at 512.
+    # Neither is part of ./bin/test or the per-push tier; the nightly
+    # .github/workflows/nightly-channels-stress.yml runs both on Linux, macOS
+    # and Windows.
+    foreach(rocketnet_stress IN ITEMS "1024;1024" "10k;10000")
+        list(GET rocketnet_stress 0 rocketnet_stress_name)
+        list(GET rocketnet_stress 1 rocketnet_stress_channels)
+        set(rocketnet_stress_target test_channels_${rocketnet_stress_name})
+        add_executable(${rocketnet_stress_target}
+            tests/test_channels_stress.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+        add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
+        target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
+            ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
+            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+        target_include_directories(${rocketnet_stress_target} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_features(${rocketnet_stress_target} PRIVATE cxx_std_11)
+        target_compile_options(${rocketnet_stress_target} PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        rocketnet_use_sodium(${rocketnet_stress_target})
+        rocketnet_warning_floor(${rocketnet_stress_target})
+        target_link_libraries(${rocketnet_stress_target} PRIVATE Threads::Threads)
+        if(APPLE)
+            target_link_libraries(${rocketnet_stress_target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            if(ROCKETNET_XDP)
+                target_link_libraries(${rocketnet_stress_target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+            endif()
+            if(TARGET RocketNet::Uring)
+                target_link_libraries(${rocketnet_stress_target} PRIVATE RocketNet::Uring)
+                target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_IO_URING=1)
+            endif()
+        endif()
+    endforeach()
     # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
     # linker sends every call to the library's clock, rocketnet_platform_time,
     # from any object file of the test binary, to the test's counting wrapper.
