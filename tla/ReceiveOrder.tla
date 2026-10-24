@@ -2,9 +2,10 @@
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
 (* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate and budget, used token lookup, the        *)
-(* token-to-address claim and the mapping capacity, restart rule,          *)
-(* signature, seal open, slots, keypair.  Keyed hashes (the cookie MAC,    *)
+(* and key compares, cookie gate and handshake budget, used token lookup,  *)
+(* the failed-signature budget, the token-to-address claim and the mapping *)
+(* capacity, restart rule, signature, seal open, slots, keypair.  Keyed    *)
+(* hashes (the cookie MAC,                                                 *)
 (* the token identifier, key derivation) are the cheap tier and spend no   *)
 (* counted cryptography.                                                   *)
 (*                                                                         *)
@@ -33,27 +34,30 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
           PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "capacity", "claim", "admitted", "restart", "signature", "seal",
-          "slots", "keypair"}
+          "verifybudget", "claim", "capacity", "admitted", "restart",
+          "signature", "seal", "slots", "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
-                "capacity", "claim", "admitted", "restart"}
+                "verifybudget", "claim", "capacity", "admitted", "restart"}
 
 Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "admitted", "signature", "seal"}
+           "budget", "admitted", "signature", "seal"}
 
-\* Positions are scaled by ten so the two new cheap rungs sit between the
-\* used rung and the next configured rung without a new config constant.
+\* Positions are scaled by ten so the three cheap rungs below sit between
+\* the used rung and the next configured rung without a new config constant.
+\* The order is the code's: used, failed-signature budget, claim, mapping
+\* capacity (sdk/rocketnet_server_protocol.cpp; TRANSPORT.md t12 rule 9).
 Pos(r) ==
     CASE r = "version"   -> 10 * PosVersion
       [] r = "timestamps" -> 10 * PosTimestamps
       [] r = "compares"  -> 10 * PosCompares
       [] r = "cookie"    -> 10 * PosCookie
       [] r = "used"      -> 10 * PosUsed
-      [] r = "capacity"  -> 10 * PosUsed + 2
-      [] r = "claim"     -> 10 * PosUsed + 5
+      [] r = "verifybudget" -> 10 * PosUsed + 1
+      [] r = "claim"     -> 10 * PosUsed + 2
+      [] r = "capacity"  -> 10 * PosUsed + 5
       [] r = "admitted"  -> 10 * PosAdmitted
       [] r = "restart"   -> 10 * PosRestart
       [] r = "signature" -> 10 * PosSignature
@@ -97,8 +101,9 @@ ClaimOther == claims[reqToken] /= None /\ claims[reqToken] /= reqAddr
 Refuses(r, f) ==
     \/ (r = "version" /\ f = "version")
     \/ (r = "timestamps" /\ f = "expired")
-    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
+    \/ (r = "verifybudget" /\ f = "budget")
     \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
+    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
     \/ (r = "signature" /\ f = "signature")

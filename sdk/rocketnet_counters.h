@@ -957,7 +957,15 @@
     /* (standard/MESSAGES.md m1.6). REFUSAL. appended: indices are the */ \
     /* contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED: Counts messages delivered in an update that the application never took with receive before the next update; the connection then ends with MESSAGE_NOT_RECEIVED. Unit: messages. Class: refusal; family: none. */ \
-    X( MESSAGE_NOT_RECEIVED, REFUSAL, NONE )
+    X( MESSAGE_NOT_RECEIVED, REFUSAL, NONE ) \
+    \
+    /* The request-claim table had no free or expired slot for a token that */ \
+    /* passed every earlier rung while the mapping table still had room. */ \
+    /* Distinct from COULD_NOT_ADD_MAPPING, which names a mapping refusal; */ \
+    /* the standard names this one too (t12 rule 9, t18). appended: indices */ \
+    /* are the contract. */ \
+    /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL: Counts connection requests refused because the request-claim table has no free or expired slot. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
+    X( CONNECTION_REQUEST_CLAIM_TABLE_FULL, REFUSAL, CONNECTION_REQUEST_RECEIVED )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.
