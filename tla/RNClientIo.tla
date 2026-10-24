@@ -170,7 +170,8 @@ VARIABLES ring,      \* each send ring's state
 \* completed is carried with the destination variables: every action that
 \* leaves the destinations alone leaves it alone too
 destVars == <<addr, dest, held, commitTo, completed>>
-sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, addr, dest, held, commitTo>>
+sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, addr, dest, held, commitTo,
+             completed>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 destroyVars == <<destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
