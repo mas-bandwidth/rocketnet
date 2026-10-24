@@ -361,6 +361,38 @@ static void rocketnet_server_stats_clear_delta( rocketnet_ack_stats_delta_t * de
     delta->reset = false;
 }
 
+static inline int rocketnet_server_stats_lowest_bit( uint64_t bits )
+{
+#if defined(_MSC_VER)
+    unsigned long index;
+    _BitScanForward64(&index, bits);
+    return (int) index;
+#else
+    return __builtin_ctzll(bits);
+#endif
+}
+
+static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0 && ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 64 == 0 &&
+               ROCKETNET_RTT_HISTORY_SIZE % 64 == 0, "the stats dirty bitmaps cover whole words" );
+
+// Copies the records whose dirty bit is set, one dirty word at a time: a
+// word with no change costs one test, never 64.
+template <typename Record>
+static void rocketnet_server_stats_copy_dirty( Record * history, const Record * values,
+                                               const uint64_t * dirty, int records )
+{
+    for ( int word = 0; word < records / 64; ++word )
+    {
+        uint64_t bits = dirty[word];
+        while ( bits )
+        {
+            const int i = word * 64 + rocketnet_server_stats_lowest_bit(bits);
+            history[i] = values[i];
+            bits &= bits - 1;
+        }
+    }
+}
+
 static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot,
                                             const rocketnet_ack_stats_delta_t * input,
                                             rocketnet_server_stats_result_t * output )
@@ -375,15 +407,12 @@ static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot
     }
     history->highest_sent = input->values.highest_sent;
     history->highest_received = input->values.highest_received;
-    for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
-        if ( input->sent_dirty[i / 64] & (1ull << (i % 64)) )
-            history->sent[i] = input->values.sent[i];
-    for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
-        if ( input->received_dirty[i / 64] & (1ull << (i % 64)) )
-            history->received[i] = input->values.received[i];
-    for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
-        if ( input->rtt_dirty[i / 64] & (1ull << (i % 64)) )
-            history->rtt_history[i] = input->values.rtt_history[i];
+    rocketnet_server_stats_copy_dirty(history->sent, input->values.sent, input->sent_dirty,
+                                      ROCKETNET_SENT_PACKET_BUFFER_SIZE);
+    rocketnet_server_stats_copy_dirty(history->received, input->values.received, input->received_dirty,
+                                      ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE);
+    rocketnet_server_stats_copy_dirty(history->rtt_history, input->values.rtt_history, input->rtt_dirty,
+                                      ROCKETNET_RTT_HISTORY_SIZE);
 
     // Read the worker-owned compact history directly. No scratch reset or
     // full-ring copy, and no calculation under the exchange mutex.
