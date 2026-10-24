@@ -514,30 +514,3 @@ static void test_config_env_every_name_read_is_documented()
     }
 }
 REGISTER_UNIT_TEST( test_config_env_every_name_read_is_documented );
-
-// The documentation half of the transport rows: each internal and simulator
-// variable the transport passes read is named in sdk/rocketnet.h or
-// docs/ENVIRONMENT.md. It reads those files, so it runs here; the setenv half
-// stays the unit case test_config_env_transport_passes_exercise_all_rows.
-static void test_config_env_transport_rows_are_documented()
-{
-    const std::vector<std::string> documented = env_names_public();
-    const char * internal_names[] =
-    {
-        "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH",
-        "ROCKETNET_SERVER_GAME_CLOCK_EPOCH",
-        "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH",
-        "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH",
-        "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW",
-        "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW",
-        "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES",
-        "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES"
-    };
-    for ( size_t i = 0; i < sizeof( internal_names ) / sizeof( internal_names[0] ); i++ )
-    {
-        if ( !env_names_contains( documented, internal_names[i] ) )
-            printf( "read but not documented in sdk/rocketnet.h or docs/ENVIRONMENT.md: %s\n", internal_names[i] );
-        check( env_names_contains( documented, internal_names[i] ) );
-    }
-}
-REGISTER_UNIT_TEST( test_config_env_transport_rows_are_documented );

@@ -137,7 +137,7 @@ static std::set<std::string> counters_named_by_tests()
     check( !files.empty() );
     for ( size_t i = 0; i < files.size(); i++ )
     {
-        if ( files[i] == "tests/source_audit_counter_classes.cpp" || files[i] == "tests/test_unit_counter_classes.cpp" )
+        if ( files[i] == "tests/test_unit_counter_classes.cpp" )
             continue;
         std::string text;
         check( counters_read_file( files[i], text ) );
