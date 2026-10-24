@@ -9532,7 +9532,8 @@ void rocketnet_test_portable_client_pin_selects_portable_pump()
 // the first sendmsg_x with ENOTSUP (not weather), which pauses the pump
 // (ROCKETNET_MSGX_RETRY_SECONDS); the refused chunk finishes per-packet and
 // the second chunk goes the portable loop, so every datagram of the batch is
-// sent and none is counted as a failed send.
+// sent. the refused chunk counts once as a failed send (its delivered prefix
+// is indeterminate) and its replay, which sent everything, counts nothing.
 void rocketnet_test_msgx_client_degrades_without_loss()
 {
     struct msgx_client_env_t env;
@@ -9549,7 +9550,7 @@ void rocketnet_test_msgx_client_degrades_without_loss()
     msgx_client_send_and_collect( &pair, 48 );
     rocketnet_platform_socket_fail_next_sends( pair.client_socket, 0, 0 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before );
+    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before + 1 );
 
     // the paused socket keeps carrying both ways on the portable loop
     msgx_client_send_and_collect( &pair, 48 );
