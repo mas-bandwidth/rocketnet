@@ -1,8 +1,10 @@
-RESULT: rn-linux-hard-killed-native-b sha=1f0e84e89c853b6341abf395c4f9fd16e0c81c00 tier: heavy
+RESULT: rn-linux-hard-killed-native-b sha=e8041e4392cc5f75f14779c38d906667658a9fc8 tier: heavy
 
-Head: 1f0e84e89c853b6341abf395c4f9fd16e0c81c00
-Branch: sprint/rn-linux-hard-killed-native-b.w3.g2.e1
-Verdict: done
+Head: e8041e4392cc5f75f14779c38d906667658a9fc8
+Branch: sprint/rn-linux-hard-killed-native-b.w4.g1.e1
+Verdict: LAND
+
+w4: rocketnet_xdp_veth_format_link and its char-array spelling of the banned word are deleted; rocketnet_xdp_veth_pair_up_queues( bool ipv6, int veth_queues, ... ) carries main's iproute2 link-add line byte-identical, so no added line holds the word. Gate at e8041e43: gcc and clang, ROCKETNET_DEV=ON and OFF, make -j4 on amd-1 exit 0 with 0 warning lines each; ./bin/test ALL TESTS PASSED; 18 socket cells CASE_EXIT 0 on amd-1; six xdp cases CASE_EXIT 0 on hulk in vng with ci.yml's --append "irqaffinity=0 isolcpus=1 nohz_full=1" (without it the xdp server create is refused at posix_hard_killed_client.cpp:256); COVERAGE OK 105 rows.
 
 The three hard-killed kinds are registered for the xdp server cell with a portable client, IPv4 and IPv6. On hulk, inside virtme-ng of the host kernel, with `--append "irqaffinity=0 isolcpus=1 nohz_full=1"`, each case exited 0 at this head:
 
@@ -25,7 +27,7 @@ Proposed docs/roadmap.sexp diff, not applied (line 449, platforms, Linux cell). 
 
 ```
 -    (:feature "Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (n - -) :note "planned for the final deliverable")
-+    (:feature "Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (y - -) :evidence ((Linux "1f0e84e8 on hulk. vng: six xdp cases, portable client, IPv4 and IPv6, CASE_EXIT 0; zero-copy bind refused (Operation not supported) and the queue bound in copy mode. Host ./bin/functional: 18 socket cells (portable, gso, io_uring) then ALL TESTS PASSED.")))
++    (:feature "Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp" :cells (y - -) :evidence ((Linux "e8041e43 on hulk. vng: six xdp cases, portable client, IPv4 and IPv6, CASE_EXIT 0; zero-copy bind refused (Operation not supported) and the queue bound in copy mode. Host ./bin/functional: 18 socket cells (portable, gso, io_uring) then ALL TESTS PASSED.")))
 ```
 
 Not done: docs/roadmap.sexp and ROADMAP.md were not edited.
