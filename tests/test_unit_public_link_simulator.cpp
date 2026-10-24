@@ -304,6 +304,12 @@ REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_duplicate );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
+// The revision 1 config buffers keep the public config's 16-byte alignment.
+// Their intentional struct padding triggers MSVC C4324.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:4324)
+#endif
 static void test_public_link_simulator_revision_1_prefixes()
 {
     struct alignas(16) client_revision_1_t
@@ -357,5 +363,8 @@ static void test_public_link_simulator_revision_1_prefixes()
     for ( size_t i = 0; i < sizeof(server.guard); i++ )
         check( server.guard[i] == 0x5a );
 }
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 REGISTER_UNIT_TEST( test_public_link_simulator_revision_1_prefixes );
