@@ -324,6 +324,7 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
     {
         fclose( file );
+        rocketnet_error( "could not parse mac address of network interface %s from %s (xx:xx:xx:xx:xx:xx)", interface_name, path );
         return false;
     }
 
