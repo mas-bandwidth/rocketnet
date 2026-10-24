@@ -1150,6 +1150,13 @@ static uint64_t iocp_send_failures( void * transport )
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) transport, counters );
     return counters[ROCKETNET_IOCP_SEND_FAILED];
 }
+static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+{
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) transport, counters );
+    *too_short = counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+}
 static const rocketnet_server_transport_io_operations_t iocp_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
@@ -1179,6 +1186,13 @@ static uint64_t rio_send_failures( void * transport )
     uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t*) transport, counters );
     return counters[ROCKETNET_RIO_COUNTER_SEND_FAILED];
+}
+static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+{
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( (rocketnet_server_rio_t*) transport, counters );
+    *too_short = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE];
 }
 static const rocketnet_server_transport_io_operations_t rio_operations =
 {
@@ -1280,11 +1294,17 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
     else
         return false;
     return true;
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    // Match the transport-counter promise in rocketnet_server_transport.cpp.
+    if ( operations == &iocp_operations )
+        iocp_receive_drops( transport, too_short, too_large );
+    else if ( operations == &rio_operations )
+        rio_receive_drops( transport, too_short, too_large );
+    else
+        return false;
+    return true;
 #else
-    (void) operations;
-    (void) transport;
-    (void) too_short;
-    (void) too_large;
+    (void) operations; (void) transport; (void) too_short; (void) too_large;
     return false;
 #endif
 }

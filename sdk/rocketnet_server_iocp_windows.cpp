@@ -353,6 +353,10 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
          !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
     {
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+        if ( success && bytes == 0 )
+            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+        else if ( op->message.dwFlags & MSG_TRUNC )
+            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     const DWORD stride = rocketnet_iocp_coalesced_stride( &op->message );
@@ -382,7 +386,13 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
             }
             else
+            {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                if ( length <= 0 )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                else if ( length > ROCKETNET_RECEIVE_CEILING )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            }
         }
         base += window;
     }
@@ -511,7 +521,13 @@ static void rocketnet_iocp_worker( void * argument )
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
             }
             else if ( running )
+            {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                if ( success && bytes == 0 )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                else if ( success && bytes > ROCKETNET_RECEIVE_CEILING )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            }
 
             iocp->pending.fetch_sub( 1, std::memory_order_release );
             rocketnet_iocp_post_receive( iocp, op );
