@@ -9556,7 +9556,12 @@ void rocketnet_test_msgx_client_degrades_without_loss()
     msgx_client_send_and_collect( &pair, 48 );
     msgx_client_receive_from_server( &pair, 48 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    msgx_client_pair_destroy( &pair );
+
+    // the refused chunk's one count is the client's only refusal
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( pair.client, ROCKETNET_COUNTER_SEND_FAILED );
+    rocketnet_server_transport_stop( pair.server );
+    rocketnet_server_transport_update( pair.server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair.server );
     msgx_client_env_restore( &env );
 }
 
