@@ -3,8 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 
     The DST layer-1 core's unit cases (docs/DST.md section 2): determinism of
-    the seeded run, seed sensitivity, substream independence, and the fail
-    line naming the seed and the replay command. Time is an argument starting
+    the seeded run, seed sensitivity, substream independence, the fail line
+    naming the seed and the replay command, and the fault schedules firing
+    and replaying. Time is an argument starting
     at 1000.0; the core never reads the wall clock.
 */
 
@@ -143,7 +144,124 @@ static void test_dst_duplicate_server_ack_explained()
     rocketnet_unit_check( result.passed );
 }
 
+// Every fault schedule (docs/DST.md, "Fault schedules") replays: the same
+// seed gives the same trace twice, and the schedule's trace differs from the
+// run with no schedule, which stays the run it was. Each schedule but the
+// seq-wrap pair fires in this run; those two need the process's
+// ROCKETNET_DEV_SESSION_SEQUENCE_START, which ./bin/dst sets and the unit
+// suite does not, so here they fire only when the seam holds their start.
+static void test_dst_schedule_same_seed_same_trace()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 900 );
+    options.fault_steps = 600;
+    struct rocketnet_dst_result_t plain;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &plain ) );
+    rocketnet_unit_check( plain.schedule_fired == 0 );
+    rocketnet_unit_check( plain.clock_back_seen == 0 );
+    for ( int schedule = ROCKETNET_DST_SCHEDULE_NONE + 1; schedule < ROCKETNET_DST_NUM_SCHEDULES; schedule++ )
+    {
+        options.schedule = schedule;
+        struct rocketnet_dst_result_t a;
+        struct rocketnet_dst_result_t b;
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &a ) );
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &b ) );
+        rocketnet_unit_check( a.trace_hash == b.trace_hash );
+        rocketnet_unit_check( a.schedule_fired == b.schedule_fired );
+        rocketnet_unit_check( a.passed == b.passed );
+        rocketnet_unit_check( a.step == b.step );
+        const uint64_t start = rocketnet_dst_schedule_sequence_start( schedule );
+        if ( start == 0 )
+        {
+            rocketnet_unit_check( a.schedule_fired > 0 );
+            rocketnet_unit_check( a.trace_hash != plain.trace_hash );
+        }
+        else if ( rocketnet_dev_session_sequence_start() != start )
+            rocketnet_unit_check( a.schedule_fired == 0 );
+    }
+}
+
+// clock-back steps one endpoint's clock back by a drawn 10 ms .. 5 s: the
+// transport's update is handed a time below the one it had the step before,
+// and only that once.
+static void test_dst_clock_back_reaches_endpoints()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+    options.fault_steps = 400;
+    options.schedule = ROCKETNET_DST_SCHEDULE_CLOCK_BACK;
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 5, &options, &result ) );
+    rocketnet_unit_check( result.schedule_fired == 1 );
+    rocketnet_unit_check( result.clock_back_seen == 1 );
+
+    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 5, &options, &result ) );
+    rocketnet_unit_check( result.clock_back_seen == 0 );
+}
+
+// seq-gap advances one end's send sequence past the 1024-packet replay
+// history in one step: the receiver's highest opened sequence rises by more
+// than 1024 at once, which no run without the schedule does.
+static void test_dst_seq_gap_exceeds_history()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+    options.fault_steps = 400;
+    options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
+    rocketnet_unit_check( result.schedule_fired == 1 );
+    rocketnet_unit_check( result.max_sequence_jump > 1024 );
+
+    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
+    rocketnet_unit_check( result.max_sequence_jump <= 1024 );
+}
+
+// The burst schedule releases its window in one step: the drawn client takes
+// its whole backlog at once and the server takes every held packet at once.
+// Seed 3 releases a hundred packets in that one step; a run without the
+// schedule releases none.
+static void test_dst_burst_releases_a_batch_in_one_step()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+    options.fault_steps = 400;
+    options.schedule = ROCKETNET_DST_SCHEDULE_BURST;
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.schedule_fired == 1 );
+    rocketnet_unit_check( result.burst_packets >= 100 );
+
+    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.burst_packets == 0 );
+}
+
+// The dup-storm schedule delivers every packet of its window more than once,
+// each copy at its own time, so the receivers take the payload twice. With
+// the duplicate fault off, only the storm makes duplicates.
+static void test_dst_dup_storm_duplicates_payloads()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+    options.fault_steps = 400;
+    options.faults = ROCKETNET_DST_FAULT_LOSS;
+    options.schedule = ROCKETNET_DST_SCHEDULE_DUP_STORM;
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.schedule_fired > 0 );
+    rocketnet_unit_check( result.duplicate_payloads > 0 );
+
+    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.duplicate_payloads == 0 );
+}
+
 REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
+REGISTER_UNIT_TEST( test_dst_schedule_same_seed_same_trace );
+REGISTER_UNIT_TEST( test_dst_clock_back_reaches_endpoints );
+REGISTER_UNIT_TEST( test_dst_seq_gap_exceeds_history );
+REGISTER_UNIT_TEST( test_dst_burst_releases_a_batch_in_one_step );
+REGISTER_UNIT_TEST( test_dst_dup_storm_duplicates_payloads );
 REGISTER_UNIT_TEST( test_dst_seeds_differ );
 REGISTER_UNIT_TEST( test_dst_substreams_independent );
 REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
