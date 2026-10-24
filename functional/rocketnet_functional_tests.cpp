@@ -6142,13 +6142,23 @@ void rocketnet_test_server_uring_probe()
 // tagged packets back, including equal-size same-destination runs, and the
 // peer must receive each byte-exact
 
-static void rocketnet_test_server_uring_wire_exchange( const char * bind_string, const char * peer_string, const char * server_host, int expect_ipv4_from )
+// expect_segment: 1, the transport must use UDP_SEGMENT and send at least
+// one segmented SENDMSG; 0, it must send none (created with
+// ROCKETNET_SERVER_URING_DISABLE_SEGMENT); -1, whatever this kernel's probe
+// says
+
+static void rocketnet_test_server_uring_wire_exchange_flags( const char * bind_string, const char * peer_string, const char * server_host, int expect_ipv4_from,
+                                                             int create_flags, int expect_segment )
 {
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, create_flags );
     rocketnet_check( uring );
+    if ( expect_segment == 1 )
+        rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
+    if ( expect_segment == 0 )
+        rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 );
 
     rocketnet_address_t peer_address;
     rocketnet_check( rocketnet_address_parse( &peer_address, peer_string ) );
@@ -6279,6 +6289,11 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == ROCKETNET_URING_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS] > 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 0 );
+    if ( expect_segment == 1 )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] > 0 );
+    if ( expect_segment == 0 )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] == 0 );
 
     // a runt and an oversize packet die at the transport's size pass, counted,
     // never surfaced
@@ -6308,9 +6323,37 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
+static void rocketnet_test_server_uring_wire_exchange( const char * bind_string, const char * peer_string, const char * server_host, int expect_ipv4_from )
+{
+    rocketnet_test_server_uring_wire_exchange_flags( bind_string, peer_string, server_host, expect_ipv4_from, 0, -1 );
+}
+
 void rocketnet_test_server_uring_wire_ipv4()
 {
     rocketnet_test_server_uring_wire_exchange( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1 );
+}
+
+// the send runs as segmented SENDMSGs (UDP_SEGMENT): the 400-byte half of the
+// exchange is consecutive equal-size slots to one destination, so the
+// transport must send it in segmented sends, and the peer must still receive
+// every packet byte-exact, one datagram each
+
+void rocketnet_test_server_uring_wire_gso_ipv4()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1, 0, 1 );
+}
+
+void rocketnet_test_server_uring_wire_gso_ipv6()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "[::1]", "[::1]", "[::1]", 0, 0, 1 );
+}
+
+// the plain tier, forced: the same exchange with segmentation disabled at
+// create sends one SENDMSG per packet and no segmented send
+
+void rocketnet_test_server_uring_wire_plain()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1, ROCKETNET_SERVER_URING_DISABLE_SEGMENT, 0 );
 }
 
 void rocketnet_test_server_uring_wire_ipv6()
@@ -9539,6 +9582,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_dual_stack", rocketnet_test_server_uring_wire_dual_stack, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gso_ipv4", rocketnet_test_server_uring_wire_gso_ipv4, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gso_ipv6", rocketnet_test_server_uring_wire_gso_ipv6, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_plain", rocketnet_test_server_uring_wire_plain, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif
