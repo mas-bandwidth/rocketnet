@@ -367,10 +367,10 @@ payload, one 1,500-byte MTU packet, per 100 ms to each client at 10 Hz: a
 256-kbps per-client send budget, a 128-message reliable window, 141,600-byte
 receive and send buffers, a 128-message send queue, 128 packets in flight, 64
 sequenced messages held and 128 receipts. At `max_clients` 1000,
-`rocketnet_server_required_memory` reports 867,750,336 bytes (about 0.87 GB,
-867,750 bytes per slot on average). The matching
+`rocketnet_server_required_memory` reports 868,782,336 bytes (about 0.87 GB,
+868,782 bytes per slot on average). The matching
 `rocketnet_client_light_config` makes `rocketnet_client_required_memory` report
-2,975,168 bytes.
+2,976,192 bytes.
 
 Both figures are the SDK's create block only. They exclude the transport
 allocations made at connect and start (the client's socket, wake object and I/O

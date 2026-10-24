@@ -174,8 +174,8 @@ sequenced messages held, 128 receipts, and one 1416-byte transport fragment
 slot. Its 256-kbps per-client send budget is 2.13 times the roughly 120-kbps
 wire rate of one 1,500-byte packet per 100 ms in each direction. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-867,750,336 bytes (867,750 bytes per slot on average), and
-`rocketnet_client_required_memory` for the client profile is 2,975,168 bytes.
+868,782,336 bytes (868,782 bytes per slot on average), and
+`rocketnet_client_required_memory` for the client profile is 2,976,192 bytes.
 These are configuration calculations and measured create-block sizes, not
 measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` public block size. Those figures exclude the
