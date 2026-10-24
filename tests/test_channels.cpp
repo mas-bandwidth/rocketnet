@@ -1349,8 +1349,8 @@ static void test_channels_allocator_send_store()
 
 // The store's accessors answer the checked free's rule
 // (rocketnet_allocator.cpp, rn_send_store_free_checked): a handle the store did
-// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index at or past
-// the class's chunk count -- reads nothing. A handle the store did issue still
+// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index the store
+// has not issued -- reads nothing. A handle the store did issue still
 // answers its data and its next exactly as before.
 
 static void test_channels_send_store_refuses_bad_handle()
@@ -1375,6 +1375,12 @@ static void test_channels_send_store_refuses_bad_handle()
     memset( valid_data, 0xA5, 100 );
     check( valid_data[0] == 0xA5 && valid_data[99] == 0xA5 );
     check( rn_send_store_chunk_next( &store, valid ) == RN_CHUNK_NONE );
+
+    // an in-range chunk the lazy store has not issued reads nothing
+
+    const uint32_t never_issued = ( (uint32_t) RN_STORE_SMALL << 30 ) | ( rn_send_store_total_chunks( &store, RN_STORE_SMALL ) - 1 );
+    check( rn_send_store_chunk_data( &store, never_issued ) == NULL );
+    check( rn_send_store_chunk_next( &store, never_issued ) == RN_CHUNK_NONE );
 
     // a real chain still walks whole
 
@@ -1682,7 +1688,9 @@ static void rn_soak_check_accounting( const rn_region_t * region )
 
     uint32_t used[RN_STORE_NUM_CLASSES] = { 0, 0, 0 };
     uint32_t descriptors_used = 0;
-    for ( uint32_t d = 0; d < region->queue; d++ )
+    // a descriptor at or past the lazy pool's watermark was never taken
+    // (tla/RNLazyPool.tla): not in use, and its bytes are not state
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !descriptor->in_use )

@@ -241,8 +241,6 @@ void * rocketnet_malloc( void * context, size_t bytes );
 /** @brief Releases storage returned by rocketnet_malloc. @param context Ignored; the allocation's original context and deallocator are retained. @param p Pointer to release; NULL is a no-op. Do not use p after this call. */
 void rocketnet_free( void * context, void * p );
 
-/** @brief Clears a buffer before releasing it through rocketnet_free. @param context Opaque allocator context; allocation metadata selects the original deallocator. @param p Pointer to release; NULL is a no-op. @param p_size Number of bytes to clear. The caller ensures p_size does not exceed the allocation. */
-void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
 
 // -----------------------------------------
 //                   transport config

@@ -457,7 +457,6 @@ struct rocketnet_client_t
     int owns_block;                                     // 1: this struct and the block are one rocketnet_malloc
     uint8_t * block;                                    // the connection's memory, ROCKETNET_ALLOCATION_ALIGNMENT aligned
     uint64_t block_bytes;
-    int block_used;                                     // 1 once a connect handed the block to a connection
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
@@ -745,7 +744,8 @@ static void rn_client_end_connection( struct rocketnet_client_t * client )
     rn_client_connection_counts( client->retiring, counts, NULL );
     for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
         client->lifetime[i] += counts[i];
-    rocketnet_client_connection_reset( &client->retiring->object );
+    // no connection reset: the object goes, and the next connect creates its
+    // connection fresh in the same block
     rocketnet_message_client_destroy( client->retiring );
     client->retiring = NULL;
 }
@@ -824,7 +824,6 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     // DISCONNECTED, while invalid/expired token failures set their own state.
     client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
     int status = ROCKETNET_STATUS_OK;
-    client->block_used = 1;
     client->connection = rocketnet_message_client_create_resolved( client->context, connect_token, &client->transport, &client->message,
                                                                     client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0,
                                                                     client->memory_budget_bytes );
@@ -846,16 +845,13 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     if ( !rocketnet_client_disconnected( client ) )
         return;
     rn_client_end_connection( client );
-    // the header and the connection block after it hold the last
-    // connection's message bytes: all of it is wiped, then freed or given
-    // back (an adopted client is the header alone). A block no connect ever
-    // used holds nothing, and wiping it would touch every page it plans.
-    void * context = client->context;
-    const int owns_block = client->owns_block;
-    const size_t bytes = client->block ? (size_t) ( rn_client_header_bytes + ( client->block_used ? client->block_bytes : 0 ) ) : sizeof( *client );
-    sodium_memzero( client, bytes );
-    if ( owns_block )
-        rocketnet_free( context, client );
+    // the connection's keys were wiped by its transport's destroy; the header
+    // and the block hold config and message bytes, no secret, so they are
+    // freed or given back as they are. The OS zero-fills a page before
+    // another process gets it, and wiping the block would touch every page
+    // of its plan.
+    if ( client->owns_block )
+        rocketnet_free( client->context, client );
 }
 
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -1203,7 +1199,6 @@ struct rocketnet_server_t
     int owns_block;
     uint8_t * block;
     uint64_t block_bytes;
-    int block_used;                                         // 1 once a start handed the block to a message server
     struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
@@ -1630,7 +1625,6 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
         return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
     }
     int status = ROCKETNET_STATUS_OK;
-    server->block_used = 1;
     server->running = rocketnet_message_server_create_resolved( server->context, server->address, &server->transport, &server->message,
                                                                 server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0,
                                                                 server->memory_budget_bytes );
@@ -1711,8 +1705,8 @@ static void rn_server_finish_stop( struct rocketnet_server_t * server )
     rn_server_running_counts( server, counts, NULL );
     for ( int i = 0; i < RN_SERVER_COUNT; i++ )
         server->lifetime[i] += counts[i];
-    for ( int i = 0; i < server->max_clients; i++ )
-        rocketnet_server_connection_reset( &server->running->object, i );
+    // no per-slot reset: the object goes, and the next start creates every
+    // slot fresh in the same block
     rocketnet_message_server_destroy( server->running );
     server->running = NULL;
     server->retiring = NULL;
@@ -1725,6 +1719,17 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
     return server->running != NULL;
 }
 
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+{
+    if ( max < 1 )
+        return 0;
+    offsets[0] = offsetof( struct rocketnet_server_t, transport ) + offsetof( struct rocketnet_server_transport_config_t, server_secret_key );
+    bytes[0] = sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->server_secret_key );
+    return 1;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
+
 void rocketnet_server_destroy( struct rocketnet_server_t * server )
 {
     if ( !server )
@@ -1733,17 +1738,15 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !rocketnet_server_stopped( server ) )
         return;
     rn_server_finish_stop( server );
-    // the header, keys included, and the running block after it, which held
-    // every connection's message bytes: all of it is wiped, then freed or
-    // given back (an adopted server is the header alone). A block no start
-    // ever used holds nothing, and wiping it would touch every page of a plan
-    // that can reach 13 GB.
-    void * context = server->context;
-    const int owns_block = server->owns_block;
-    const size_t bytes = server->block ? (size_t) ( rn_server_header_bytes + ( server->block_used ? server->block_bytes : 0 ) ) : sizeof( *server );
-    sodium_memzero( server, bytes );
-    if ( owns_block )
-        rocketnet_free( context, server );
+    // the server's secret key is the header's one secret: it is wiped, and
+    // the rest of the header and the block, config and message bytes, are
+    // freed or given back as they are. The session keys went with the
+    // transport. Wiping the block would touch every page of a plan that can
+    // reach gigabytes, most of it never used; the OS zero-fills a page
+    // before another process gets it (tla/RNDestroyWipe.tla Destroy).
+    sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+    if ( server->owns_block )
+        rocketnet_free( server->context, server );
 }
 
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
