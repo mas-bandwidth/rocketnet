@@ -170,3 +170,56 @@ static void test_dst_check_whole_message_over_65535_bytes()
     rocketnet_unit_check( strcmp( st2.check, "whole_message" ) == 0 );
 }
 REGISTER_UNIT_TEST( test_dst_check_whole_message_over_65535_bytes );
+
+// Types 1 and 4 share one sequenced_write and one sequenced_watermark per
+// channel (rn_channels_send_sequenced in sdk/rocketnet_channel.cpp;
+// SequencedNewestWins in tla/RNChannelTypes.tla), so the end-of-run sequenced
+// liveness check judges type 4 across both types on the channel. Session 17
+// is client 1; channel 8 is the mixed channel.
+static void sequenced_end( struct rocketnet_dst_check_state_t * st )
+{
+    int live[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    uint64_t identity[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    memset( live, 0, sizeof(live) );
+    memset( identity, 0, sizeof(identity) );
+    live[17] = 1;
+    identity[17] = 1;
+    rocketnet_dst_check_end( st, 1000.0, live, identity );
+}
+
+static void test_dst_check_sequenced_superseded_type4_passes()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 448, 4000 );
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 4, 120, 1, 1, 0, 64 );
+    rocketnet_dst_check_delivery( &st, 1000.0, 17, 8, 4, 120, 1, 1, 1, 0, 64, 1, 1 );
+    rocketnet_dst_check_settle( &st );
+    // The type 4 is sent after the quiet start, a newer type 1 follows on the
+    // channel and is delivered, and the type 4 is superseded and dropped.
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 4, 129, 1, 1, 0, 64 );
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 1, 142, 1, 1, 0, 64 );
+    rocketnet_dst_check_delivery( &st, 1000.0, 17, 8, 1, 142, 1, 1, 1, 0, 64, 1, 1 );
+    rocketnet_unit_check( st.failed == 0 );
+    sequenced_end( &st );
+    rocketnet_unit_check( st.failed == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_sequenced_superseded_type4_passes );
+
+static void test_dst_check_sequenced_older_type1_does_not_serve_type4()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 448, 4001 );
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 4, 120, 1, 1, 0, 64 );
+    rocketnet_dst_check_delivery( &st, 1000.0, 17, 8, 4, 120, 1, 1, 1, 0, 64, 1, 1 );
+    rocketnet_dst_check_settle( &st );
+    // Only a type 1 sent before the type 4 is delivered: it does not
+    // supersede the later type 4, which is still owed.
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 1, 141, 1, 1, 0, 64 );
+    rocketnet_dst_check_sent( &st, 1000.0, 17, 8, 4, 129, 1, 1, 0, 64 );
+    rocketnet_dst_check_delivery( &st, 1000.0, 17, 8, 1, 141, 1, 1, 1, 0, 64, 1, 1 );
+    rocketnet_unit_check( st.failed == 0 );
+    sequenced_end( &st );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_sequenced_older_type1_does_not_serve_type4 );
