@@ -8,7 +8,8 @@
     difficult problems. Run ./bin/soak and leave it; pass --seconds S or a
     number of iterations to bound it: ./bin/soak --seconds 60 or ./bin/soak 10000
 
-    usage: soak [--seconds S] [positive iteration count]
+    usage: soak [--seconds S] [--one-connection] [--rate N] [--assert-every S]
+                [positive iteration count]
 
     --seconds S ends the run after S seconds of wall clock (S a positive
     integer); beside an iteration count the run ends at whichever bound comes
@@ -16,11 +17,42 @@
     second positional argument are each refused with a one-line reason on
     stderr and exit 2, before any run starts.
 
+    --one-connection holds one connection for the whole run: no planned
+    reconnect, so any disconnect at all fails the run. With --rate it is the
+    multi-day shape (scripts/soak-multiday): one connection past 2^32 packets,
+    so the wire's 32-bit sequence field wraps (standard/TRANSPORT.md t4).
+
+    --rate N sends N packets per second each way (N a positive integer, at
+    most 1000000), paced against the wall clock from each connect, at most
+    ROCKETNET_SOAK_RATE_BURST each way per iteration; the transport layer has
+    no send budget, so the rate is the only limit. Without it soak sends one
+    packet each way per iteration.
+
+    --assert-every S runs the counter discipline below (conservation, and
+    every REFUSAL counter 0) on the client and the server every S seconds
+    while the run goes (S a positive integer), not only at the end, together
+    with the resource check: the process's peak resident memory may not grow
+    by more than ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES past its value at the
+    first check (not on Windows). Each check prints one "soak assert:" line
+    with the packets each way and the highest session sequence each way. The
+    first violation ends the run, exit 1. A malformed --rate or --assert-every
+    argument, a missing one or a repeated flag is refused like --seconds.
+
+    ROCKETNET_DEV_SESSION_SEQUENCE_START (development builds only,
+    sdk/rocketnet_test_seams.h) starts every session's sequence at its value
+    instead of one, so a bounded run wraps the field in seconds:
+    ROCKETNET_DEV_SESSION_SEQUENCE_START=4294966296 ./bin/soak --one-connection
+    --rate 25000 --assert-every 10 --seconds 120.
+
     At the end of every run, an interrupted (SIGINT) one included, soak prints
     its "soak finished:" line and then one "soak summary: <name> <value>" line
     each for: sent, client_sent, server_sent; received, client_received,
     server_received; verified, client_verified, server_verified; reconnects
-    (the planned reconnect cycles); one line per disconnect reason seen, named
+    (the planned reconnect cycles); client_highest_sent_sequence,
+    server_highest_sent_sequence, client_highest_received_sequence and
+    server_highest_received_sequence (the highest session sequences seen on a
+    connected client, read through the delivery capture); one line per
+    disconnect reason seen, named
     by its ROCKETNET_CLIENT_STATE_* value from rocketnet.h; and
     client_<COUNTER> and server_<COUNTER> for every non-zero client and server
     transport counter, named by rocketnet_counter_name.
@@ -49,6 +81,9 @@
 #include <time.h>
 #include <stdlib.h>
 #include <signal.h>
+#if !defined( _WIN32 )
+#include <sys/resource.h>
+#endif
 
 // Internal transport tools mint the binary development token directly.
 static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
@@ -57,6 +92,10 @@ static int dev_token_binary( const char * address, uint64_t client_id, uint64_t 
 }
 
 #define ROCKETNET_SOAK_MAX_COUNTERS 256
+#define ROCKETNET_SOAK_RATE_MAX 1000000ULL
+#define ROCKETNET_SOAK_RATE_BURST 128
+#define ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES ( 64ULL * 1024 * 1024 )
+#define ROCKETNET_SOAK_USAGE "usage: soak [--seconds S] [--one-connection] [--rate N] [--assert-every S] [positive iteration count]"
 #define ROCKETNET_SOAK_DISCONNECT_REASONS ( ROCKETNET_CLIENT_STATE_DISCONNECTED - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED + 1 )
 
 static volatile sig_atomic_t quit;
@@ -193,12 +232,99 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     return violations;
 }
 
+// The highest session sequences each way, read through the delivery capture
+// while the client is connected; the running maxima survive the end of the
+// connection.
+
+struct soak_sequences_t
+{
+    uint64_t client_highest_sent;
+    uint64_t server_highest_sent;
+    uint64_t client_highest_received;
+    uint64_t server_highest_received;
+};
+
+static void soak_capture_sequences( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, struct soak_sequences_t * sequences )
+{
+    if ( !client || rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        return;
+    struct rocketnet_delivery_capture_t capture;
+    memset( &capture, 0, sizeof( capture ) );
+    rocketnet_client_transport_delivery_capture( client, &capture );
+    if ( capture.connected )
+    {
+        if ( capture.highest_sent_sequence > sequences->client_highest_sent )
+            sequences->client_highest_sent = capture.highest_sent_sequence;
+        if ( capture.highest_received_sequence > sequences->client_highest_received )
+            sequences->client_highest_received = capture.highest_received_sequence;
+    }
+    memset( &capture, 0, sizeof( capture ) );
+    rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &capture );
+    if ( capture.connected )
+    {
+        if ( capture.highest_sent_sequence > sequences->server_highest_sent )
+            sequences->server_highest_sent = capture.highest_sent_sequence;
+        if ( capture.highest_received_sequence > sequences->server_highest_received )
+            sequences->server_highest_received = capture.highest_received_sequence;
+    }
+}
+
+// the process's peak resident memory in bytes, 0 where it is not read
+static uint64_t soak_peak_resident_bytes( void )
+{
+#if !defined( _WIN32 )
+    struct rusage usage;
+    if ( getrusage( RUSAGE_SELF, &usage ) != 0 )
+        return 0;
+#if defined( __APPLE__ )
+    return (uint64_t) usage.ru_maxrss;                  // bytes on macOS
+#else // #if defined( __APPLE__ )
+    return (uint64_t) usage.ru_maxrss * 1024;           // kilobytes elsewhere
+#endif // #if defined( __APPLE__ )
+#else // #if !defined( _WIN32 )
+    return 0;
+#endif // #if !defined( _WIN32 )
+}
+
+// one optional flag's positive integer argument: exit 2 with a one-line
+// reason when it is repeated, missing or malformed
+static int soak_flag_value( int argc, char ** argv, int * i, int * have, uint64_t max_value, uint64_t * value )
+{
+    const char * flag = argv[*i];
+    if ( *have )
+    {
+        fprintf( stderr, "soak: duplicate %s flag (" ROCKETNET_SOAK_USAGE ")\n", flag );
+        return 0;
+    }
+    if ( *i + 1 >= argc )
+    {
+        fprintf( stderr, "soak: missing argument for %s (" ROCKETNET_SOAK_USAGE ")\n", flag );
+        return 0;
+    }
+    ( *i )++;
+    if ( !parse_positive_uint64( argv[*i], value ) || ( max_value && *value > max_value ) )
+    {
+        if ( max_value )
+            fprintf( stderr, "soak: %s must be a positive integer at most %llu (" ROCKETNET_SOAK_USAGE ")\n", flag, (unsigned long long) max_value );
+        else
+            fprintf( stderr, "soak: %s must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n", flag );
+        return 0;
+    }
+    *have = 1;
+    return 1;
+}
+
 int main( int argc, char ** argv )
 {
     uint64_t max_iterations = 0;
     uint64_t max_seconds = 0;
     int have_iterations = 0;
     int have_seconds = 0;
+    int one_connection = 0;
+    uint64_t rate = 0;
+    int have_rate = 0;
+    uint64_t assert_every = 0;
+    int have_assert_every = 0;
 
     for ( int i = 1; i < argc; i++ )
     {
@@ -206,37 +332,56 @@ int main( int argc, char ** argv )
         {
             if ( have_seconds )
             {
-                fprintf( stderr, "soak: duplicate --seconds flag (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: duplicate --seconds flag (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
             if ( i + 1 >= argc )
             {
-                fprintf( stderr, "soak: missing argument for --seconds (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: missing argument for --seconds (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
             i++;
             if ( !parse_positive_uint64( argv[i], &max_seconds ) )
             {
-                fprintf( stderr, "soak: --seconds S must be a positive integer (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: --seconds S must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
             have_seconds = 1;
         }
+        else if ( strcmp( argv[i], "--one-connection" ) == 0 )
+        {
+            if ( one_connection )
+            {
+                fprintf( stderr, "soak: duplicate --one-connection flag (" ROCKETNET_SOAK_USAGE ")\n" );
+                return 2;
+            }
+            one_connection = 1;
+        }
+        else if ( strcmp( argv[i], "--rate" ) == 0 )
+        {
+            if ( !soak_flag_value( argc, argv, &i, &have_rate, ROCKETNET_SOAK_RATE_MAX, &rate ) )
+                return 2;
+        }
+        else if ( strcmp( argv[i], "--assert-every" ) == 0 )
+        {
+            if ( !soak_flag_value( argc, argv, &i, &have_assert_every, 0, &assert_every ) )
+                return 2;
+        }
         else if ( argv[i][0] == '-' && ( argv[i][1] < '0' || argv[i][1] > '9' ) )
         {
-            fprintf( stderr, "soak: unknown flag '%s' (usage: soak [--seconds S] [positive iteration count])\n", argv[i] );
+            fprintf( stderr, "soak: unknown flag '%s' (" ROCKETNET_SOAK_USAGE ")\n", argv[i] );
             return 2;
         }
         else
         {
             if ( have_iterations )
             {
-                fprintf( stderr, "soak: unexpected second positional argument '%s' (usage: soak [--seconds S] [positive iteration count])\n", argv[i] );
+                fprintf( stderr, "soak: unexpected second positional argument '%s' (" ROCKETNET_SOAK_USAGE ")\n", argv[i] );
                 return 2;
             }
             if ( !parse_positive_uint64( argv[i], &max_iterations ) )
             {
-                fprintf( stderr, "soak: iteration count must be a positive integer (usage: soak [--seconds S] [positive iteration count])\n" );
+                fprintf( stderr, "soak: iteration count must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
             have_iterations = 1;
@@ -299,9 +444,16 @@ int main( int argc, char ** argv )
     int unplanned_disconnect_recorded = 0;
     int deadline_reached = 0;
     int payload_size = 1;
+    struct soak_sequences_t sequences;
+    memset( &sequences, 0, sizeof( sequences ) );
+    uint64_t resident_baseline = 0;
+    uint64_t asserts = 0;
+    uint64_t rate_sent = 0;                 // packets sent each way on this connection, for the pacing
     const double start_time = rocketnet_time();
     double last_report_time = start_time;
+    double last_assert_time = start_time;
     double reconnect_time = start_time;
+    double connect_time = start_time;
 
     while ( !quit && ( !max_iterations || iteration < max_iterations ) )
     {
@@ -315,10 +467,11 @@ int main( int argc, char ** argv )
 
         // reconnect on a cycle: the connect path is never a rare path
 
-        if ( !client || rocketnet_time() - reconnect_time > 30.0 )
+        if ( !client || ( !one_connection && rocketnet_time() - reconnect_time > 30.0 ) )
         {
             if ( client )
             {
+                soak_capture_sequences( client, server, &sequences );
                 reconnects++;
                 rocketnet_client_transport_disconnect( client );
                 soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
@@ -375,17 +528,37 @@ int main( int argc, char ** argv )
             {
                 connected = 1;
                 connects++;
+                connect_time = rocketnet_time();
+                rate_sent = 0;
             }
+
+            // one packet each way per iteration, or with --rate as many as
+            // the wall clock owes since the connect, a burst at most
+
+            uint64_t send_count = 1;
+            if ( rate )
+            {
+                const uint64_t owed = (uint64_t) ( ( rocketnet_time() - connect_time ) * (double) rate );
+                send_count = owed > rate_sent ? owed - rate_sent : 0;
+                if ( send_count > ROCKETNET_SOAK_RATE_BURST )
+                    send_count = ROCKETNET_SOAK_RATE_BURST;
+            }
+
             // every size cycles through, both directions, every byte checked
 
-            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-            generate_payload( payload, payload_size );
-            rocketnet_client_transport_send_packet( client, payload, payload_size );
-            client_sent++;
-            rocketnet_server_transport_send_packet( server, rocketnet_client_transport_client_index( client ), payload, payload_size );
+            const int client_index = rocketnet_client_transport_client_index( client );
+            for ( uint64_t n = 0; n < send_count; n++ )
+            {
+                uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+                generate_payload( payload, payload_size );
+                rocketnet_client_transport_send_packet( client, payload, payload_size );
+                client_sent++;
+                rocketnet_server_transport_send_packet( server, client_index, payload, payload_size );
+                server_sent++;
+                payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
+            }
+            rate_sent += send_count;
             rocketnet_server_transport_send_packets( server );
-            server_sent++;
-            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; i++ )
@@ -423,6 +596,39 @@ int main( int argc, char ** argv )
                     { payloads_verified++; client_verified++; }
                 else
                     { printf( "PAYLOAD VERIFY FAILED at client (%d bytes)\n", received_bytes ); failures++; }
+            }
+        }
+
+        // the discipline while running: counters conserved and refusing
+        // nothing on both ends, and peak resident memory flat
+
+        if ( assert_every && rocketnet_time() - last_assert_time >= (double) assert_every )
+        {
+            last_assert_time = rocketnet_time();
+            asserts++;
+            soak_capture_sequences( client, server, &sequences );
+            int violations = soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
+            violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
+            const uint64_t resident = soak_peak_resident_bytes();
+            if ( asserts == 1 )
+                resident_baseline = resident;
+            else if ( resident > resident_baseline + ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES )
+            {
+                printf( "soak: RESOURCE CHECK FAILED: peak resident %llu bytes, %llu at the first check\n",
+                        (unsigned long long) resident, (unsigned long long) resident_baseline );
+                violations++;
+            }
+            printf( "soak assert: %.0f s, client_sent %llu, server_sent %llu, client_verified %llu, server_verified %llu, "
+                    "client_highest_sent_sequence 0x%llx, server_highest_sent_sequence 0x%llx, peak_resident %llu, %s\n",
+                    last_assert_time - start_time, (unsigned long long) client_sent, (unsigned long long) server_sent,
+                    (unsigned long long) client_verified, (unsigned long long) server_verified,
+                    (unsigned long long) sequences.client_highest_sent, (unsigned long long) sequences.server_highest_sent,
+                    (unsigned long long) resident, violations ? "FAILED" : "ok" );
+            fflush( stdout );
+            if ( violations )
+            {
+                counter_violations += violations;
+                break;
             }
         }
 
@@ -489,6 +695,8 @@ int main( int argc, char ** argv )
     // processed everything it was handed and the client is idle, so every
     // arrival has taken its outcome
 
+    soak_capture_sequences( client, server, &sequences );
+
     if ( client )
     {
         if ( !unplanned_disconnect_recorded )
@@ -521,6 +729,12 @@ int main( int argc, char ** argv )
     printf( "soak summary: client_verified %llu\n", (unsigned long long) client_verified );
     printf( "soak summary: server_verified %llu\n", (unsigned long long) server_verified );
     printf( "soak summary: reconnects %llu\n", (unsigned long long) reconnects );
+    printf( "soak summary: client_highest_sent_sequence %llu\n", (unsigned long long) sequences.client_highest_sent );
+    printf( "soak summary: server_highest_sent_sequence %llu\n", (unsigned long long) sequences.server_highest_sent );
+    printf( "soak summary: client_highest_received_sequence %llu\n", (unsigned long long) sequences.client_highest_received );
+    printf( "soak summary: server_highest_received_sequence %llu\n", (unsigned long long) sequences.server_highest_received );
+    if ( assert_every )
+        printf( "soak summary: asserts %llu\n", (unsigned long long) asserts );
 
     for ( int s = ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED; s <= ROCKETNET_CLIENT_STATE_DISCONNECTED; s++ )
     {

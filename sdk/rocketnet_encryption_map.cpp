@@ -6,10 +6,14 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
+#include <stdlib.h>
 
 struct rocketnet_encryption_map_t
 {
@@ -28,6 +32,34 @@ struct rocketnet_encryption_map_t
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
 };
+
+#if ROCKETNET_TEST_SEAMS
+static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
+{
+    char text[64];
+    const int found = rocketnet_platform_getenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
+    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+        return 1;
+    char * end = NULL;
+    errno = 0;
+    const unsigned long long parsed = found == 1 ? strtoull( text, &end, 0 ) : 0;
+    if ( found != 1 || end == text || *end != '\0' || errno != 0 || text[0] == '-' ||
+         parsed == 0 || parsed > ROCKETNET_DEV_SESSION_SEQUENCE_START_MAX )
+    {
+        rocketnet_error( "ROCKETNET_DEV_SESSION_SEQUENCE_START=\"%s\" refused: expected 1 .. 2^62; using 1", text );
+        return 1;
+    }
+    return (uint64_t) parsed;
+}
+
+// one read per process, at the first caller; a function-local static is
+// initialized once even when two threads create at once
+uint64_t rocketnet_dev_session_sequence_start( void )
+{
+    static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
+    return start;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
 
 uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
 {
@@ -58,6 +90,9 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     map->capacity = capacity;
     map->num_buckets = capacity * 2;
     randombytes_buf( map->hash_key, sizeof(map->hash_key) );
+#if ROCKETNET_TEST_SEAMS
+    (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
+#endif // #if ROCKETNET_TEST_SEAMS
 
     map->bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) map->num_buckets );
     map->next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
@@ -179,7 +214,11 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     mapping->control->client_index = -1;
     mapping->control->handshake_deadline = handshake_deadline;
     mapping->send_sequence_handshake = 1;
+#if ROCKETNET_TEST_SEAMS
+    mapping->send_sequence_session = rocketnet_dev_session_sequence_start();    // 1 unless the DEV seam moves it
+#else // #if ROCKETNET_TEST_SEAMS
     mapping->send_sequence_session = 1;
+#endif // #if ROCKETNET_TEST_SEAMS
     mapping->send_fragment_payload_id = 1;
 
     int bucket = rocketnet_encryption_map_bucket( map, address );
