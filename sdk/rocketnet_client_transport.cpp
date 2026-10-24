@@ -659,6 +659,8 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
                                       to, packet_data, packet_bytes, transport->time );
 }
 
+// tla/RNClientLinkStop.tla Drain: a running update sends every copy the link
+// simulator holds that has come due.
 static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -835,7 +837,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !transport ) return false;
     rocketnet_client_transport_config_t defaults;
     if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
-    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
@@ -1048,7 +1050,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
-    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
     {
@@ -1065,7 +1067,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
@@ -1138,7 +1140,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
 
-    client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    client_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
@@ -1217,6 +1219,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 *status = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
             return NULL;
         }
+    }
+
+    // A token naming port 0 can never reach a server: macOS refuses the
+    // connect, and Linux and Windows accept it and the packets reach no
+    // server. Every flagged address is checked, so the refusal does not
+    // depend on the host's IPv6.
+    if ( rocketnet_signed_connect_data_names_port_zero( &client_transport->protocol.signed_fields ) )
+    {
+        rocketnet_error( "connect token names a server address with port 0; refusing to connect" );
+        rocketnet_client_transport_abort_create( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO;
+        return NULL;
     }
 
     // the socket binds after the token parse so the bind family can follow
@@ -1611,6 +1626,16 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    // tla/RNClientIoShutdown.tla Start: create starts the worker generation
+    // below, the I/O thread or the legacy receive thread.
+    // tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
+    // created here runs every core action.
+    // tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
+    // IoWait, IoWake, IoClearWake and IoExit: the I/O thread's step sends each
+    // handed-off ring, drains datagrams into its buffer and publishes it, waits
+    // and wakes, and exits once quit is stored.
+    // tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
+    // handed-off ring and marks it sent when every slot left.
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
         rocketnet_client_io_ring_view_t views[ROCKETNET_CLIENT_IO_NUM_RINGS];
@@ -1698,6 +1723,15 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 // Requests never join, call a backend send, or wait for a ring. The final
 // filling ring is published without reopening the other ring: no producer may
 // touch either ring after stop, and the worker can drain both independently.
+// tla/RNClientIoShutdown.tla RequestStop, RepeatStop and RequestReturn: the
+// first call publishes the final filling ring with quit, a repeat returns at
+// once, and neither waits on the worker.
+// tla/RNClientIo.tla Stop: stores quit and wakes the I/O thread
+// (rocketnet_client_io_stop).
+// tla/RNBufferHandoff.tla MainStop: hands the Filling ring to the worker with
+// the quit store.
+// tla/RNClientLinkStop.tla Stop: publishes quit without draining the link
+// simulator or calling the backend.
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
@@ -1723,6 +1757,8 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
 }
 
+// tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
+// completion flag and returns without waiting.
 bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1744,6 +1780,8 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
     client_transport->stop_burst_pending.store( false, std::memory_order_release );
 }
 
+// tla/RNClientIoShutdown.tla WorkerQuiesce: the legacy worker sends what it
+// still holds, then stores stopped.
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_transport_flush_disconnect( client_transport );
@@ -1774,6 +1812,19 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
+// transport is freed.
+
+// tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
+// transport not yet stopped, joins the worker thread, then frees.
+// tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
+// Done: destroy makes its last hand-off, waits at the deadline for the other
+// ring to reach Sent, drops the committed slots it cannot hand off, joins,
+// frees and ends.
+// tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
+// generation before the next one runs, as the synchronous destroy and the
+// next connect do here.
+// tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1934,6 +1985,11 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // yield, no retry; a ring the I/O thread holds is never reused
 // (HandOffNeverWaits, NoReuseBeforeSent).
 
+// tla/RNClientIo.tla HandOffTo, DeferTo and Reopen: hands the Filling ring to
+// the I/O thread, or counts the deferral when the other ring is busy; after a
+// hand-off it empties the reopened ring send_fill now names.
+// tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
+// the other ring is Sent; the fixed main never waits for the I/O thread.
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
 {
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
@@ -2006,6 +2062,12 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 
 // Try once at each caller handoff. Unit tests can refuse either phase without
 // starting a competing thread or depending on scheduler timing.
+// tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
+// exchange, never waiting.
+// tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
+// waits for a held mutex; the fixed main only try-acquires and never waits.
+// tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
+// return phases.
 static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
 {
 #if ROCKETNET_TEST_SEAMS
@@ -2029,6 +2091,10 @@ static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_rec
 // Take the oldest READY buffers that fit the packet budget. If the worker
 // owns the mutex, leave everything in place and continue this update without
 // receiving. Returning previously processed buffers precedes taking new ones.
+// tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
+// takes the oldest READY prefix within the packet budget.
+// tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
+// index exchange under the mutex, then the release.
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
 {
     if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
@@ -2051,6 +2117,8 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
 
 // Keep processed buffers caller-owned if the worker has the mutex. They are
 // neither READY nor FREE, so neither side can process or overwrite them again.
+// tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
+// outside the mutex and returns them without taking any.
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
 {
     if ( num_exposed == 0 )
@@ -2148,6 +2216,13 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 
 }
 
+// tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
+// buffer at its start and returns it at its end, on the main thread.
+// tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
+// I/O step runs on the caller's thread inside update, never blocking.
+// tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
+// tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
+// buffer outside the mutex, and its end begins the next expose.
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2329,6 +2404,10 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
+// tla/RNClientIo.tla Write and OnGame: a game thread takes a free slot of the
+// Filling ring.
+// tla/RNBufferHandoff.tla Produce: on send the producer writes its ring outside
+// the mutex.
 uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2571,6 +2650,7 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
     return total_wire_bytes;
 }
 
+// tla/RNClientIo.tla Commit: seals the slot in place and commits it.
 static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( client_transport );
@@ -2811,6 +2891,10 @@ int rocketnet_client_transport_client_index( rocketnet_client_transport_t * clie
     return client_transport->protocol.client_index;
 }
 
+// tla/RNClientIo.tla Disconnect: seals the burst into the Filling ring and
+// hands it off to the address saved before the protocol reset.
+// tla/RNClientLinkStop.tla Disconnect: with the link simulator the burst takes
+// the loss policy and its surviving copies are staged in the simulator queue.
 void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2998,6 +3082,10 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 // buffer that cannot publish leaves datagrams in the transport until a later
 // update frees one. No buffer another side owns is ever written.
 
+// tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
+// worker locks, publishes its buffer index and takes a free one, then unlocks.
+// tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
+// with MaxReady N-1.
 static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
@@ -3011,6 +3099,11 @@ static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * clie
     }
 }
 
+// tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
+// its buffer outside the mutex.
+// tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
+// writes into a buffer it already published, which update now holds.
+// tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
     rocketnet_assert( client_transport );
@@ -3103,6 +3196,13 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
+// seen.
+// tla/RNBufferHandoff.tla WorkerWait, WorkerWakes and Terminated: the worker
+// sleeps when nothing was done and wakes on the wake or readable, and the
+// behaviour ends with both threads done.
+// tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
+// stop is complete.
 static void rocketnet_client_thread_function( void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;

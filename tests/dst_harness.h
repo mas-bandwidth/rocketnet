@@ -175,7 +175,7 @@ typedef struct rocketnet_dst_endpoint_t
     int outgoing_count;
     uint8_t frame[ROCKETNET_DST_MAX_PACKETS][ROCKETNET_FRAME_STRIDE];
     int frame_bytes[ROCKETNET_DST_MAX_PACKETS];
-    int frame_peer[ROCKETNET_DST_MAX_PACKETS];
+    int frame_receiver[ROCKETNET_DST_MAX_PACKETS];
     uint8_t (* payload)[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint8_t * payload_ptr[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_bytes[ROCKETNET_DST_MAX_PAYLOADS];
@@ -299,7 +299,7 @@ static inline int rocketnet_dst_world_client_for_address( rocketnet_dst_world_t 
     return -1;
 }
 
-static inline void rocketnet_dst_endpoint_send_control( rocketnet_dst_endpoint_t * endpoint, int peer,
+static inline void rocketnet_dst_endpoint_send_control( rocketnet_dst_endpoint_t * endpoint, int receiver,
                                                         const uint8_t * data, int bytes,
                                                         const struct rocketnet_address_t * to )
 {
@@ -310,7 +310,7 @@ static inline void rocketnet_dst_endpoint_send_control( rocketnet_dst_endpoint_t
                                                                   : &w->client[endpoint->client_index].address;
     if ( !to )
         to = &w->server_address;
-    rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, peer, data, bytes );
+    rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, receiver, data, bytes );
     rocketnet_network_simulator_send( w->sim, from, to, data, bytes, w->now );
 }
 
@@ -422,13 +422,13 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     const int slot = endpoint->outgoing_count;
     uint8_t * wire_start = endpoint->frame[slot] + ROCKETNET_FRAME_WIRE_OFFSET;
     uint64_t sequence = 0;
-    int peer = 0;
+    int receiver = 0;
     if ( endpoint->is_server )
     {
         struct rocketnet_address_t to;
         if ( !rocketnet_server_protocol_start_payload( &w->server, client_index, &to, &sequence ) )
             return NULL;
-        peer = rocketnet_dst_world_client_for_address( w, &to ) + 1;
+        receiver = rocketnet_dst_world_client_for_address( w, &to ) + 1;
     }
     else
     {
@@ -444,7 +444,7 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     context->sequence = sequence;
     context->client_index = client_index;
     endpoint->pending_frame = slot;
-    endpoint->frame_peer[slot] = peer;
+    endpoint->frame_receiver[slot] = receiver;
     return wire_start;
 }
 
@@ -492,18 +492,18 @@ static inline void rocketnet_dst_endpoint_send_packets( void * transport )
     for ( int i = 0; i < endpoint->outgoing_count; i++ )
     {
         const int bytes = endpoint->frame_bytes[i];
-        const int peer = endpoint->frame_peer[i];
+        const int receiver = endpoint->frame_receiver[i];
         const struct rocketnet_address_t * to;
         if ( endpoint->is_server )
         {
-            const int client_index = peer - 1;
+            const int client_index = receiver - 1;
             if ( client_index < 0 || client_index >= w->num_clients )
                 continue;
             to = &w->client[client_index].address;
         }
         else
             to = &w->server_address;
-        rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, peer,
+        rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, receiver,
                                         endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes );
         rocketnet_network_simulator_send( w->sim, from, to,
                                           endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes, w->now );
@@ -544,7 +544,7 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     int packet_bytes = 0;
     // the server's client_index is a slot, not a DST client: the burst goes
     // to the client holding the slot, looked up before the disconnect
-    // releases it, as the payload path resolves its peer by address
+    // releases it, as the payload path resolves its receiver by address
     const int target = endpoint->is_server ? rocketnet_dst_world_client_for_slot( w, client_index ) : -1;
     if ( endpoint->is_server )
         rocketnet_server_protocol_disconnect_client( &w->server, client_index, packets, &packet_count, &packet_bytes );
@@ -555,11 +555,11 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     const struct rocketnet_address_t * from = endpoint->is_server ? &w->server_address
                                                                   : &w->client[endpoint->client_index].address;
     const struct rocketnet_address_t * to = endpoint->is_server ? &w->client[target].address : &w->server_address;
-    const int peer = endpoint->is_server ? target + 1 : 0;
+    const int receiver = endpoint->is_server ? target + 1 : 0;
     for ( int i = 0; i < packet_count; i++ )
     {
         const uint8_t * packet = packets + (size_t) i * (size_t) ROCKETNET_SEND_BUDGET;
-        rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, peer, packet, packet_bytes );
+        rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, receiver, packet, packet_bytes );
         rocketnet_network_simulator_send( w->sim, from, to, packet, packet_bytes, w->now );
     }
 }

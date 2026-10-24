@@ -54,7 +54,7 @@
 // packet builders (a NULL budget) and skips the bucket on its large
 // sequenced path, so nothing is dropped or delayed by the budget. Uncapping
 // is NOT RECOMMENDED (RFC 2119): without a budget there is no defined
-// behaviour when a sender outruns its path or its peer. The struct below and
+// behaviour when a sender outruns its path or its receiver. The struct below and
 // its functions keep their rules for a capped connection: a budget of 1 kbps
 // to ROCKETNET_SEND_BUDGET_MAX_KBPS, and 0 is not a valid capped rate.
 //

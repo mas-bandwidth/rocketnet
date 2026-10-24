@@ -18,15 +18,15 @@ static void reliable_receipt_check( int condition, const char * what, int line )
 
 #define check_receipt( condition ) reliable_receipt_check( !!(condition), #condition, __LINE__ )
 
-// RNReceipts BlockAckedOnlyWhenAllFragmentsAcked, seen from the peer: a receipt
-// is read only after the peer holds the whole message. Each collect runs
+// RNReceipts BlockAckedOnlyWhenAllFragmentsAcked, seen from the receiver: a receipt
+// is read only after the receiver holds the whole message. Each collect runs
 // before the receipts of the same update, and the ACK of a message's last
-// fragment reaches the sender at least one update after the peer took that
+// fragment reaches the sender at least one update after the receiver took that
 // fragment, so a type-6 message is already collected when its receipt is
 // read. A type-7 message is collected by then too, unless the ordered message
-// before it is still missing (the peer holds it in order). An early receipt
+// before it is still missing (the receiver holds it in order). An early receipt
 // (one sent on the ACK of a first fragment) breaks this.
-static int receipt_peer_has_whole( int matched, const uint8_t * seen )
+static int receipt_receiver_has_whole( int matched, const uint8_t * seen )
 {
     if ( matched < 3 )
         return seen[matched];
@@ -106,7 +106,7 @@ void reliable_receipts_over_lossy_link()
             for ( int i = 0; i < messages; i++ )
                 if ( events[j].serial == client_serial[i] ) matched = i;
             check_receipt( matched >= 0 && !client_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
-            check_receipt( receipt_peer_has_whole( matched, server_seen ) );
+            check_receipt( receipt_receiver_has_whole( matched, server_seen ) );
             client_receipt[matched] = 1;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
@@ -117,7 +117,7 @@ void reliable_receipts_over_lossy_link()
             for ( int i = 0; i < messages; i++ )
                 if ( events[j].serial == server_serial[i] ) matched = i;
             check_receipt( matched >= 0 && !server_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
-            check_receipt( receipt_peer_has_whole( matched, client_seen ) );
+            check_receipt( receipt_receiver_has_whole( matched, client_seen ) );
             server_receipt[matched] = 1;
         }
 

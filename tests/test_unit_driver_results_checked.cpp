@@ -342,6 +342,8 @@ struct transport_results_server_lie_t
     int mode;
     int calls;
     int asked;
+    int workers_exited;
+    int send_calls;
 };
 
 static void transport_results_server_destroy( void * ) {}
@@ -465,6 +467,111 @@ static void test_transport_results_server_receive_checks_counts()
     printf( "test_transport_results_server_receive_checks_counts\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
+
+// tla/ServerSession.tla: NoReceiveUnlessRunning and NoAdmitUnlessRunning.
+// A stopping or stopped server reads no packet and admits no client.
+// rocketnet_server_update returns while !server->running
+// (sdk/rocketnet_api.cpp:1797). rocketnet_server_transport_update returns
+// while the transport is not RUNNING (sdk/rocketnet_server_transport.cpp:2388).
+
+static bool transport_results_stopping_stopped( void * transport )
+{
+    transport_results_server_lie_t * lie = (transport_results_server_lie_t *) transport;
+    return lie->workers_exited != 0;
+}
+
+static int transport_results_stopping_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int )
+{
+    transport_results_server_lie_t * lie = (transport_results_server_lie_t *) transport;
+    lie->calls++;
+    memset( &from[0], 0, sizeof( from[0] ) );
+    from[0].type = ROCKETNET_ADDRESS_IPV4;
+    from[0].port = 9;
+    bytes[0] = 4;
+    if ( stride >= 4 )
+        memset( data, 0x33, 4 );
+    return 1;
+}
+
+static void transport_results_stopping_send( void * transport, const rocketnet_platform_send_t *, int )
+{
+    transport_results_server_lie_t * lie = (transport_results_server_lie_t *) transport;
+    lie->send_calls++;
+}
+
+static rocketnet_server_transport_t * transport_results_stopping_server( transport_results_server_lie_t * lie, rocketnet_server_transport_io_operations_t * operations )
+{
+    rocketnet_server_transport_t * server = transport_results_make_server( lie, operations );
+    operations->stopped = transport_results_stopping_stopped;
+    operations->receive_batch = transport_results_stopping_receive;
+    operations->send_batch = transport_results_stopping_send;
+    lie->workers_exited = 0;
+    lie->calls = 0;
+    lie->send_calls = 0;
+    return server;
+}
+
+static void transport_results_stopping_release( rocketnet_server_transport_t * server, transport_results_server_lie_t * lie )
+{
+    lie->workers_exited = 1;
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
+static void test_server_stopping_reads_no_packet()
+{
+    transport_results_server_lie_t lie = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_stopping_server( &lie, &operations );
+    const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_RUNNING );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_server_transport_update( server, 1001.0 );
+    rocketnet_unit_check( lie.calls == 0 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
+    rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPING );
+    transport_results_stopping_release( server, &lie );
+    printf( "test_server_stopping_reads_no_packet\n" );
+}
+REGISTER_UNIT_TEST( test_server_stopping_reads_no_packet );
+
+static void test_server_stopped_reads_no_packet()
+{
+    transport_results_server_lie_t lie = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_stopping_server( &lie, &operations );
+    const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( lie.calls == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPING );
+    lie.workers_exited = 1;
+    rocketnet_server_transport_update( server, 1002.0 );
+    rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
+    rocketnet_server_transport_update( server, 1003.0 );
+    rocketnet_unit_check( lie.calls == 0 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
+    rn_test_server_transport_stop_and_destroy( server );
+    printf( "test_server_stopped_reads_no_packet\n" );
+}
+REGISTER_UNIT_TEST( test_server_stopped_reads_no_packet );
+
+static void test_server_stopping_admits_no_client()
+{
+    transport_results_server_lie_t lie = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_stopping_server( &lie, &operations );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_server_transport_update( server, 1001.0 );
+    rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPING );
+    rocketnet_unit_check( rocketnet_server_transport_is_client_connected( server, 0 ) == 0 );
+    rocketnet_unit_check( lie.send_calls == 0 );
+    rocketnet_unit_check( lie.calls == 0 );
+    transport_results_stopping_release( server, &lie );
+    printf( "test_server_stopping_admits_no_client\n" );
+}
+REGISTER_UNIT_TEST( test_server_stopping_admits_no_client );
 
 static void test_transport_results_server_truncated_datagram_refused()
 {

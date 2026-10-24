@@ -12,6 +12,7 @@
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -42,6 +43,8 @@ const char * rocketnet_client_transport_state_name( int state )
     }
 }
 
+// tla/RNClientIoDecrypt.tla RetireKeys: a terminal state runs the connection
+// reset, whose retire_keys hook retires the I/O thread's open copy.
 static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * client, int state )
 {
     if ( client->state == state )
@@ -166,7 +169,11 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// tla/ClientConnection.tla AppConnect
+// tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
+// from any failure state carries nothing of the earlier attempt
+// tla/ClientConnection.tla ClientCommitEarly: the reversed witness's commit to
+// a family of its own choosing before any answer; the fixed client commits only
+// on the first accepted answer.
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
@@ -221,7 +228,11 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     rocketnet_crypto_tally.keypair++;
     crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key );
     client->send_sequence_handshake = 1;
+#if ROCKETNET_TEST_SEAMS
+    client->send_sequence_session = rocketnet_dev_session_sequence_start();     // 1 unless the DEV seam moves it
+#else // #if ROCKETNET_TEST_SEAMS
     client->send_sequence_session = 1;
+#endif // #if ROCKETNET_TEST_SEAMS
 
     client->attempt_start_time = current_time;
     client->last_receive_time = current_time;
@@ -529,7 +540,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     // the full derivation, refusing a degenerate server ephemeral outright.
-    // the attempt then ends at its deadline, the correct outcome for a peer
+    // the attempt then ends at its deadline, the correct outcome for a server
     // offering a small order point.
 
     if ( !rocketnet_derive_connection_keys( &client->keys,
@@ -705,6 +716,30 @@ typedef int ( * rocketnet_client_type_data_validator_t )( struct rocketnet_clien
 // offset into opened lands in out_type_data_offset and its length is
 // returned; -1 means refused, the reason counted.
 
+// the ack block read against this end's highest sent session sequence. A
+// seam build whose sessions start at ROCKETNET_DEV_SESSION_SEQUENCE_START
+// (sdk/rocketnet_test_seams.h) reads the empty block -- largest 0, first
+// range length 0, no ranges, which no block naming a sequence can be -- as
+// empty, as every real session does: its reader's highest sent sequence is
+// below 2^31 whenever the other end has opened nothing, and a session started
+// near the wrap is not. Every other block, and every block with the seam
+// unset, is read exactly as production reads it.
+static int rocketnet_client_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_t * opened, int opened_bytes, uint64_t highest_sent )
+{
+#if ROCKETNET_TEST_SEAMS
+    if ( rocketnet_dev_session_sequence_start() != 1 && opened_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES )
+    {
+        const uint8_t * p = opened;
+        const uint32_t wire_largest = rocketnet_read_uint32( &p );
+        const uint8_t num_ranges = rocketnet_read_uint8( &p );
+        const uint16_t first_range_length = rocketnet_read_uint16( &p );
+        if ( wire_largest == 0 && num_ranges == 0 && first_range_length == 0 )
+            highest_sent = 0;
+    }
+#endif // #if ROCKETNET_TEST_SEAMS
+    return rocketnet_ack_block_read( block, opened, opened_bytes, highest_sent );
+}
+
 static int rocketnet_client_session_after_open( struct rocketnet_client_protocol_t * client,
                                                 uint8_t packet_type,
                                                 const struct rocketnet_client_session_counters_t * type_counters,
@@ -838,7 +873,7 @@ static int rocketnet_client_session_after_open( struct rocketnet_client_protocol
     // the type data behind it is never examined
 
     struct rocketnet_ack_block_t block;
-    int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
+    int block_bytes = rocketnet_client_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
     if ( block_bytes == 0 )
     {
         rocketnet_spam( "client ignored session packet. bad ack block" );
@@ -1176,6 +1211,8 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     return 1;
 }
 
+// tla/ClientConnection.tla ClientFragmentReceive: a fragment is accepted only
+// in connected, the one step that creates client reassembly state.
 static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t * client,
                                               const uint8_t * packet_data,
                                               int packet_bytes,
@@ -1368,6 +1405,19 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // shared words a sequence add and a timestamp store.
 
 // tla/RNClientIoDecrypt.tla UpdateConsume
+// tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys: the I/O
+// thread reads the epoch at the top of a drain and takes, zeroes or keeps its
+// open key copy.
+// tla/RNClientIoDecrypt.tla IoReceive, IoCheck and IoOpen: the I/O thread
+// drains datagrams into its buffer, runs the cheap replay check and the AEAD,
+// tagging each record opened, replay, forged or raw.
+// tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
+// the I/O thread publishes its filled buffer or records the owed publish, waits
+// on the wake, and burns a wake it does not need.
+// tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
+// buffer at its start, returns it at its end, and the behaviour ends drained.
+// tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
+// which the SingleWriter invariant reads.
 int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
                                               const uint8_t * packet_data,
                                               int packet_bytes,
@@ -1406,6 +1456,8 @@ int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t 
     return 1;
 }
 
+// tla/RNClientIoDecrypt.tla FillAckBuild: a fill thread builds the ack block
+// from a receive window only update writes, and writes nothing shared.
 int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
                                                   uint64_t sequence,
                                                   uint64_t packet_id,
@@ -1633,6 +1685,8 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
 }
 
 // tla/ClientConnection.tla AppDisconnect
+// tla/ClientConnection.tla ClientDiscCopy: seals each copy of the disconnect
+// burst once; the burst is never retransmitted.
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
                                   int * out_packet_count,
