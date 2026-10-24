@@ -1285,6 +1285,14 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MAX_CLIENTS sets the client limit. Range is 1 ..
     /// ROCKETNET_MAX_CLIENTS. Default is 1000.
+    ///
+    /// It also sizes the server socket's receive buffer request to hold one
+    /// update's inbound packets: ceil( max_clients x 1000 kbps x 125 x 2 /
+    /// 10 Hz ) bytes, at least 1,000,000 and at most INT_MAX (25,000,000 at
+    /// 1000 clients). Linux silently clamps it to net.core.rmem_max (about
+    /// 208 KB by default) and macOS to kern.ipc.maxsockbuf; the server logs
+    /// one warning naming the limit when the grant is below the request
+    /// (USAGE.md, "Receive buffer sizing").
 
     int max_clients;
 
