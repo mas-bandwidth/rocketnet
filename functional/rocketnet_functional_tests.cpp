@@ -8994,7 +8994,7 @@ extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv6();
 // Windows lifecycle stress: 1000 cycles per case with handles, threads and
 // private bytes counted (functional/windows_lifecycle_stress.cpp). The portable
-// server cell is registered here; rn-win-lifecycle-1000x-native registers iocp and rio.
+// server cell is registered here; iocp and rio are registered separately.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 extern void rocketnet_test_windows_init_term_1000_portable();
 extern void rocketnet_test_windows_server_create_destroy_1000_portable();

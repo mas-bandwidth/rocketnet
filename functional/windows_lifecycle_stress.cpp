@@ -13,7 +13,7 @@
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
     These are the Windows counters of tests/process_resources.h
-    (rn-linux-soak-30min-per-transport-a) and load.c, read the same way, and
+    and load.c, read the same way, and
     the comparison is that header's flat rule: the counts are taken after one
     warm cycle, so every path the case repeats has run once; at the end the
     handle count must equal its warm count exactly and the thread count must
@@ -34,7 +34,7 @@
     with the portable client, and each case is one function per cell:
     rocketnet_test_windows_<case>_<cell>. The portable cells are registered in
     functional/rocketnet_functional_tests.cpp; the iocp and rio cells are
-    defined here and registered by rn-win-lifecycle-1000x-native.
+    defined here and registered by a follow-up change.
 
     A connect waits on the client's send rate (10 sends a second,
     sdk/rocketnet_client_protocol.cpp), so the client runs on its own clock,

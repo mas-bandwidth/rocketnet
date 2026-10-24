@@ -23,7 +23,7 @@ of its user, so every CI runner of the user on a host shares the budget:
 Linux legs, checks the limit covers the runners' io_uring cases. See
 [`docs/LINUX.md`](docs/LINUX.md) sections 5 and 8 and `tests/suite_runner.h`.
 
-<!-- The next section is hand-written for the Windows lifecycle stress (rn-win-lifecycle-1000x); its source of truth is functional/windows_lifecycle_stress.cpp. -->
+<!-- The next section is hand-written for the Windows lifecycle stress; its source of truth is functional/windows_lifecycle_stress.cpp. -->
 
 ## Windows lifecycle stress
 
@@ -50,9 +50,9 @@ host is correctness only: run times are printed, never judged.
 
 The portable cells (`test_portable_transport_windows_*_1000`) are registered
 in `./bin/Release/functional.exe`; the iocp and rio cells are in the table and
-registered by rn-win-lifecycle-1000x-native. On other platforms the file
-builds empty. Run one with `./bin/Release/functional.exe --run <name>` under
-`winlock --exclusive` on the Windows bench.
+registered by a follow-up change. On other platforms the file builds empty.
+Run one with `./bin/Release/functional.exe --run <name>`, one at a time on
+an otherwise idle Windows machine.
 
 ## Preview-2 exact-head qualification
 
