@@ -160,9 +160,11 @@ int main( int argc, char ** argv )
         else if ( strcmp( arg, "--steps" ) == 0 && i + 1 < argc )
         {
             const unsigned long long steps = strtoull( argv[++i], NULL, 10 );
-            if ( steps == 0 )
+            // The window plus its quiet tail (up to 2000) must stay inside ROCKETNET_DST_MAX_STEPS.
+            if ( steps == 0 || steps > ROCKETNET_DST_MAX_STEPS - 2000 )
             {
-                fprintf( stderr, "dst: --steps must be a positive integer\n" );
+                fprintf( stderr, "dst: --steps must be in 1..%llu\n",
+                         (unsigned long long) ( ROCKETNET_DST_MAX_STEPS - 2000 ) );
                 return 2;
             }
             options.fault_steps = steps;
