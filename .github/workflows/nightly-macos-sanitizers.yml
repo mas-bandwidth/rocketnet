@@ -1,0 +1,217 @@
+# THE NIGHTLY macOS SANITIZERS AND LEAK CHECK (rows 245 and 451).
+#
+# ci.yml's sanitizers and tsan jobs, msan.yml and nightly-leaks.yml all run on
+# the Linux fleet with gcc. This workflow runs the same suites on the fleet's
+# darwin member (mini-m5-1, label rocketnet-macos) with Apple clang, the
+# system toolchain (/usr/bin/clang, not ~/sdk/llvm), in three legs, each in
+# its own build directory and its own job:
+#
+#   asan+ubsan  Debug, the C and C++ flags of ci.yml's sanitizers job
+#               (-fsanitize=address,undefined -fno-sanitize-recover=all
+#               -fno-omit-frame-pointer). Apple silicon ASan has no
+#               detect_leaks, so ASAN_OPTIONS=detect_leaks=0 and the leaks leg
+#               is the leak check here.
+#   tsan        Debug, -fsanitize=thread.
+#   leaks       an unsanitized Debug build. The suites run each case in a child
+#               process, and `leaks --atExit` inspects only the process it
+#               launched and does not pass its exit status through, so the
+#               suite first runs plainly with MallocStackLogging=1 (its exit
+#               status is the suite verdict), then every case it named runs
+#               alone, in process, under `leaks --atExit --`, and each exec
+#               binary of the functional suite runs under it too. Red on any
+#               leak.
+#
+# Each leg runs ./bin/test and ./bin/functional once per transport pin:
+# ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT both msgx, then
+# both portable (the macOS transports of ci.yml's TRANSPORT_MATRIX_MACOS). Every
+# run step runs even when an earlier one is red, so a night shows all four.
+# No suppression file, no skipped case and no changed bound: a finding is a
+# defect with its own card. The step timeouts are about twice the wall time
+# measured by hand on the member (docs/MACOS.md, "Sanitizers and leaks");
+# nightlies are exempt from the two-minute rule.
+
+name: nightly-macos-sanitizers
+
+on:
+  schedule:
+    - cron: "40 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sanitizers-macos:
+    name: macOS ${{ matrix.leg }}
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: ${{ matrix.leg == 'leaks' && 260 || 90 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg: [asan+ubsan, tsan, leaks]
+    concurrency:
+      group: nightly-macos-sanitizers-${{ matrix.ref }}-${{ matrix.leg }}
+      cancel-in-progress: true
+    env:
+      CC: /usr/bin/clang
+      CXX: /usr/bin/clang++
+      ASAN_OPTIONS: detect_leaks=0
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the member's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd /usr/bin/clang /usr/bin/clang++ /usr/bin/leaks; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          /usr/bin/clang --version | head -1
+          exit "$missing"
+
+      - name: Configure
+        shell: bash
+        env:
+          LEG: ${{ matrix.leg }}
+        run: |
+          set -euo pipefail
+          case "$LEG" in
+            asan+ubsan) flags="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"; dir=build-asan-ubsan ;;
+            tsan)       flags="-fsanitize=thread -fno-omit-frame-pointer"; dir=build-tsan ;;
+            leaks)      flags=""; dir=build-leaks ;;
+          esac
+          echo "LEG_BUILD_DIR=$dir" >> "$GITHUB_ENV"
+          cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags"
+
+      - name: Build the suites and the functional suite's exec binaries
+        id: build
+        run: cmake --build "$LEG_BUILD_DIR" --target test functional test_serialize test_transport_control test_msgx --parallel 4
+
+      # the leaks leg's per-case runner, written once and called by the four run steps below
+      - name: Write the leaks runner
+        if: matrix.leg == 'leaks'
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/leaks_cases.sh" <<'EOF'
+          # leaks_cases.sh <suite binary> <log dir>
+          set -u
+          bin=$1; logs=$2; mkdir -p "$logs"
+          export ROCKETNET_TEST_SUITE_CAPTURE=1
+          MallocStackLogging=1 "$bin" > "$logs/suite.log" 2>&1; rc=$?
+          echo "SUITE $bin exit $rc"
+          [ "$rc" = 0 ] || { tail -40 "$logs/suite.log"; exit 1; }
+          # the functional suite runs one case at a time (functional/main.cpp), the unit suite in parallel
+          case "$bin" in *functional) jobs=1; run="--run" ;; *) jobs=4; run="" ;; esac
+          grep -E '^test_[a-z0-9_]+$' "$logs/suite.log" | sort -u > "$logs/names.txt"
+          # a case past the suite's own 120 s case limit plus a minute is killed with its process
+          # group and named red: test_channels_allocator_trap_witness's forked child hung under
+          # leaks --atExit on the member (docs/MACOS.md, "Sanitizers and leaks")
+          limit=180
+          one() {
+            out="$logs/case.$1.log"
+            MallocStackLogging=1 perl -e 'setpgrp(0, 0); exec @ARGV' leaks --atExit -- "$bin" $run "$1" > "$out" 2>&1 &
+            pid=$!; waited=0
+            while kill -0 "$pid" 2>/dev/null; do
+              sleep 1; waited=$((waited + 1))
+              if [ "$waited" -ge "$limit" ]; then kill -KILL -- "-$pid" 2>/dev/null; echo "TIMEOUT $1 after ${limit}s"; wait "$pid"; return 1; fi
+            done
+            wait "$pid"
+            # an exec binary's own lines name no registered case: the suite answers "unknown ... test"
+            if grep -q "^unknown .* test $1\$" "$out"; then rm -f "$out"; return 0; fi
+            if grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$out"; then rm -f "$out"; return 0; fi
+            echo "LEAKS $1"; grep -E 'Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1
+          }
+          export -f one; export bin logs run limit
+          xargs -P "$jobs" -I{} bash -c 'one "$@"' _ {} < "$logs/names.txt"; bad=$?
+          if [ "$(basename "$bin")" = functional ]; then
+            for x in test_serialize test_transport_control test_msgx; do
+              MallocStackLogging=1 leaks --atExit -- "$(dirname "$bin")/$x" > "$logs/exec.$x.log" 2>&1
+              grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$logs/exec.$x.log" || { echo "LEAKS $x"; bad=1; }
+            done
+          fi
+          echo "LEAKS-CHECKED $(wc -l < "$logs/names.txt") cases, $(ls "$logs" | grep -c '^case\.') red"
+          [ "$bad" = 0 ]
+          EOF
+
+      - name: Unit suite, msgx
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 50 || 10 }}
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: msgx
+          ROCKETNET_CLIENT_TRANSPORT: msgx
+        run: |
+          set -o pipefail
+          if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/test logs/unit-msgx 2>&1 | tee unit-msgx.log
+          else ./bin/test 2>&1 | tee unit-msgx.log; fi
+
+      - name: Unit suite, portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 50 || 10 }}
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/test logs/unit-portable 2>&1 | tee unit-portable.log
+          else ./bin/test 2>&1 | tee unit-portable.log; fi
+
+      - name: Functional suite, msgx
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 30 || 25) }}
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: msgx
+          ROCKETNET_CLIENT_TRANSPORT: msgx
+        run: |
+          set -o pipefail
+          if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-msgx 2>&1 | tee functional-msgx.log
+          else ./bin/functional 2>&1 | tee functional-msgx.log; fi
+
+      - name: Functional suite, portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 30 || 25) }}
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-portable 2>&1 | tee functional-portable.log
+          else ./bin/functional 2>&1 | tee functional-portable.log; fi
+
+      # GitHub expressions have no replace(): the artifact name's ref and leg slug is made here
+      - name: Artifact name for the ref and leg
+        id: slug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+          LEG: ${{ matrix.leg }}
+        run: |
+          s="$REF-$LEG"; s=${s//\//-}; s=${s//+/-}
+          echo "slug=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-macos-sanitizers-logs-${{ steps.slug.outputs.slug }}
+          path: |
+            unit-msgx.log
+            unit-portable.log
+            functional-msgx.log
+            functional-portable.log
+            logs/
+          if-no-files-found: ignore

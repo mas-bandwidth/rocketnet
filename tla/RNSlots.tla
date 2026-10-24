@@ -117,6 +117,11 @@ CancelsPending(owner) ==
 
 \* Observe the final owner, reset on identity change, then admit each entry
 \* against this binding. The transport cannot churn during the apply phase.
+\* The reset is lazy (RN_SLOTS_DROP releases the slot in O(1)): a slot going
+\* free releases its views only, and its region is emptied when the slot is
+\* bound to its next connection (RN_SLOTS_RESET, rn_region_carve).
+Unbinds(s) == SeenChange(s) /\ "noreset" \notin Broken
+Carves(s) == Unbinds(s) /\ st.owner[s] # 0
 Observe ==
     /\ st.phase = "transport"
     /\ \A s \in Slots : st.state[s] # "Disconnected"
@@ -126,9 +131,9 @@ Observe ==
           !.state = [s \in Slots |-> IF st.owner[s] = 0 THEN "Free" ELSE "Connected"],
           !.reason = [s \in Slots |-> "NONE"],
           !.badLifetime = @ \/ (\E s \in Slots : st.held[s] # {}),
-          !.received = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.received[s]],
-          !.region = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.region[s]],
-          !.held = [s \in Slots |-> IF SeenChange(s) /\ "noreset" \notin Broken THEN {} ELSE st.held[s]],
+          !.received = [s \in Slots |-> IF Carves(s) THEN {} ELSE st.received[s]],
+          !.region = [s \in Slots |-> IF Carves(s) THEN {} ELSE st.region[s]],
+          !.held = [s \in Slots |-> IF Unbinds(s) THEN {} ELSE st.held[s]],
           !.packetMap = {p \in st.packetMap : p.conn = st.owner[p.slot]},
           !.changed = [s \in Slots |-> "clientid" \in Broken /\ SeenChange(s)],
           !.pending = IF CancelsPending(st.owner) THEN 0 ELSE @,
@@ -200,10 +205,16 @@ CarryOn(s) ==
     /\ st' = [st EXCEPT !.state[s] = "Connected", !.badKick = TRUE]
     /\ UNCHANGED <<wire, sent, pulse>>
 
+\* The lazy reset (rn_message_connection_release,
+\* sdk/rocketnet_message_server.cpp): the ended slot is freed in O(1) -- its
+\* views released, the start pending on it cancelled -- and its region and
+\* received records stay as they were, unreachable: a Free slot is bound to
+\* no connection, so Admits discards every entry for it, and the region is
+\* emptied by the Observe that binds the slot to its next connection.
 ResetFree(s) ==
     /\ st.state[s] = "Disconnected"
     /\ LET cancel == st.pending = s /\ "pendingacrossreset" \notin Broken
-       IN st' = [st EXCEPT !.state[s] = "Free", !.region[s] = {}, !.held[s] = {}, !.received[s] = {},
+       IN st' = [st EXCEPT !.state[s] = "Free", !.held[s] = {},
                  !.pending = IF cancel THEN 0 ELSE @,
                  !.pendingConn = IF cancel THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
@@ -305,8 +316,11 @@ TypeOK ==
 
 NoCrossConnectionApply == \A a \in st.applied : a.from = a.to
 NoOwnEntryDropped == \A d \in st.dropped : d.from # d.to
+\* A Free slot is bound to no connection and holds no view, so what its
+\* region still holds (the lazy reset) is reachable by nothing; a Connected
+\* slot holds records of its bound connection only.
 ReusedSlotStartsClean == \A s \in Slots :
-    /\ (st.state[s] = "Free" => st.region[s] = {} /\ st.received[s] = {})
+    /\ (st.state[s] = "Free" => st.bound[s] = 0 /\ st.held[s] = {})
     /\ (st.state[s] = "Connected" => \A r \in st.region[s] \cup st.received[s] : r.conn = st.bound[s])
 ReleasedRecordsReusable == \A s \in Slots :
     /\ st.held[s] \subseteq st.region[s]

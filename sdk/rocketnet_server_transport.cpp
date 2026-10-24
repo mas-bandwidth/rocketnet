@@ -205,6 +205,20 @@ struct rocketnet_server_payloads_t
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
 
+// One server disconnect burst waiting to be sealed: everything the sealed
+// packets need once the mapping that held it is gone. Its key lives beside
+// it in disconnect_burst_keys, so the secret span is one array.
+struct rocketnet_server_disconnect_burst_t
+{
+    rocketnet_address_t to;
+    uint64_t first_sequence;
+    int client_index;
+    int plaintext_bytes;
+    int sealed;
+    uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+};
+
 struct rocketnet_server_transport_t
 {
     // the cache-line-aligned members lead, each a whole number of cache
@@ -290,12 +304,34 @@ struct rocketnet_server_transport_t
     rocketnet_address_t link_simulator_from;
     rocketnet_platform_mutex_t link_simulator_mutex;
 
+    // The disconnect bursts waiting to leave (tla/ServerSession.tla
+    // DrainDisconnectBurst). A disconnect ends the slot at once; when this
+    // update's allowance cannot seal its whole burst, the burst's plaintext
+    // (the ack block of the receive state at the disconnect), its first
+    // sequence, salt and session key wait here in a ring, and each update
+    // seals at most ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE of them, one
+    // packet per waiting burst per pass, so every client's first disconnect
+    // packet leaves before any burst's redundant copies. The keys are wiped
+    // as each burst completes and at destroy.
+    struct rocketnet_server_disconnect_burst_t disconnect_bursts[ROCKETNET_MAX_CLIENTS];
+    uint8_t disconnect_burst_keys[ROCKETNET_MAX_CLIENTS][ROCKETNET_KEY_BYTES];
+    int disconnect_burst_head;
+    int disconnect_burst_count;
+    int disconnect_burst_cursor;                        // ring offset from the head of this pass's next burst
+    int disconnect_seals_left;                          // this update's allowance, reset by each update
+    uint64_t disconnect_seals;                          // disconnect packets sealed, for the unit work bound
+
     struct rocketnet_server_payloads_t payloads;
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
     uint8_t payload_storage[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
+
+static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown );
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE >= ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS,
+                         "one update's disconnect allowance holds at least one whole burst" );
 
 // The server transport's state zeroed in its raw storage, then default
 // initialization, then the buffers' counts. The buffers (the payload ring's
@@ -317,11 +353,12 @@ static void rocketnet_server_transport_construct( rocketnet_server_transport_t *
         { ring + offsetof( R, num_packets ) + sizeof( uint64_t ), sizeof( R ) - offsetof( R, num_packets ) - sizeof( uint64_t ) },
         { send + offsetof( B, to ), sizeof( B ) - offsetof( B, to ) },
         { offsetof( T, receive_buffer ), sizeof( rocketnet_server_receive_buffer_t ) },
+        { offsetof( T, disconnect_bursts ), sizeof( ( (T *) 0 )->disconnect_bursts ) },
         { payloads + offsetof( P, client_index ), sizeof( P ) - offsetof( P, client_index ) },
         { offsetof( T, payload_storage ), sizeof( ( (T *) 0 )->payload_storage ) },
     };
     static_assert( offsetof( T, payload_ring ) < offsetof( T, send_buffer ) && offsetof( T, send_buffer ) < offsetof( T, receive_buffer ) &&
-                   offsetof( T, receive_buffer ) < offsetof( T, payloads ) && offsetof( T, payloads ) < offsetof( T, payload_storage ),
+                   offsetof( T, receive_buffer ) < offsetof( T, disconnect_bursts ) && offsetof( T, disconnect_bursts ) < offsetof( T, payloads ) && offsetof( T, payloads ) < offsetof( T, payload_storage ),
                    "the skipped buffers are listed in their order in the struct" );
     rocketnet_zero_except( server_transport, sizeof( T ), skip, (int) ( sizeof( skip ) / sizeof( skip[0] ) ) );
     new ( server_transport ) rocketnet_server_transport_t;
@@ -1284,6 +1321,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         config->max_clients : ROCKETNET_SERVER_MIN_SEND_PACKETS;
     server_transport->send_capacity = rocketnet_server_test_create_send_capacity > 0 ?
         rocketnet_server_test_create_send_capacity : default_send_capacity;
+    server_transport->disconnect_seals_left = ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE;
 #if ROCKETNET_TEST_SEAMS
     rocketnet_server_test_create_send_capacity = 0;
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -1692,14 +1730,15 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     const size_t protocol = offsetof( rocketnet_server_transport_t, protocol );
-    const size_t spans[3][2] =
+    const size_t spans[4][2] =
     {
         { protocol + offsetof( rocketnet_server_protocol_t, server_secret_key ), ROCKETNET_KEY_BYTES },
         { protocol + offsetof( rocketnet_server_protocol_t, cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
         { protocol + offsetof( rocketnet_server_protocol_t, previous_cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
+        { offsetof( rocketnet_server_transport_t, disconnect_burst_keys ), sizeof( ( (rocketnet_server_transport_t *) 0 )->disconnect_burst_keys ) },
     };
     int count = 0;
-    for ( ; count < 3 && count < max; count++ )
+    for ( ; count < 4 && count < max; count++ )
     {
         offsets[count] = spans[count][0];
         bytes[count] = spans[count][1];
@@ -1724,6 +1763,7 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     sodium_memzero( server_transport->protocol.server_secret_key, sizeof(server_transport->protocol.server_secret_key) );
     sodium_memzero( server_transport->protocol.cookie_key, sizeof(server_transport->protocol.cookie_key) );
     sodium_memzero( server_transport->protocol.previous_cookie_key, sizeof(server_transport->protocol.previous_cookie_key) );
+    sodium_memzero( server_transport->disconnect_burst_keys, sizeof(server_transport->disconnect_burst_keys) );
 
     if ( server_transport->protocol.encryption_map )
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
@@ -2220,6 +2260,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     }
 
+    // tla/RNChannel.tla FixBatch and tla/RNWindow.tla FixBatch: the received
+    // batch is fixed here, before this update builds any reply or ack, so no
+    // packet opened later can join it.
+
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
     // standalone ack, into send frames. The per-slot ACK statistics need no
@@ -2265,6 +2309,17 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         else
             rocketnet_server_abort_send_frame( server_transport, &frame );
         server_transport->maintenance_next_client = (i + 1) % max_clients;
+    }
+
+    // tla/ServerSession.tla DrainDisconnectBurst: the bursts of the slots
+    // ended since the last update leave within this update's allowance; what
+    // the allowance leaves after the drain seals the next disconnects whole
+    server_transport->disconnect_seals_left = ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE;
+    if ( server_transport->disconnect_burst_count > 0 )
+    {
+        const uint64_t before = server_transport->disconnect_seals;
+        rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE, false );
+        server_transport->disconnect_seals_left -= (int) ( server_transport->disconnect_seals - before );
     }
 
     acks->update_count++;
@@ -2660,6 +2715,8 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
     frame->data = NULL;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a small payload whose seal fails after its sequence was taken leaves that sequence unsent.
+// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate withdraws the frames and sends nothing.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -2790,6 +2847,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     return total_wire_bytes;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
 static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
@@ -2880,6 +2938,7 @@ static bool rocketnet_server_transport_reflushes( int transport )
     return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
 }
 
+// tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -2973,6 +3032,10 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 // for a loopback receive worker that holds the endpoint-table mutex.
 void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * server_transport )
 {
+    // the stop path seals every waiting burst: nothing is left for an update
+    // that will not come
+    if ( server_transport && server_transport->disconnect_burst_count > 0 )
+        rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_MAX_CLIENTS, true );
     rocketnet_server_transport_send_packets_impl( server_transport, true );
 }
 
@@ -3003,6 +3066,102 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
+// tla/ServerSession.tla DisconnectAll: the slot ends in this step. What the
+// burst needs from the mapping is copied into the ring first -- the ack block
+// built once from the receive state, as every packet of the immediate burst
+// opens with the same block -- then the slot is released exactly as
+// rocketnet_server_protocol_disconnect_client releases it. O(1) per slot: no
+// seal and no send here.
+static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_server_transport_t * server_transport, int client_index,
+                                                               int mapping_index, const rocketnet_address_t * client_address )
+{
+    rocketnet_assert( server_transport->disconnect_burst_count < ROCKETNET_MAX_CLIENTS );
+    struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
+    const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_count ) % ROCKETNET_MAX_CLIENTS;
+    struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[index];
+
+    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    burst->plaintext_bytes = rocketnet_ack_block_build( burst->plaintext, block_capacity, &mapping->accepted_session );
+    burst->to = *client_address;
+    burst->first_sequence = mapping->send_sequence_session;
+    burst->client_index = client_index;
+    burst->sealed = 0;
+    memcpy( burst->connection_salt, mapping->connection_salt, sizeof( burst->connection_salt ) );
+    memcpy( server_transport->disconnect_burst_keys[index], mapping->keys.session_server_to_client, ROCKETNET_KEY_BYTES );
+    server_transport->disconnect_burst_count++;
+
+    rocketnet_debug( "server disconnected client %d", client_index );
+    protocol->counters->values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
+    protocol->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
+    rocketnet_server_connection_reset( protocol, client_index );
+}
+
+// tla/ServerSession.tla DrainDisconnectBurst: at most max_seals waiting
+// disconnect packets are sealed into send frames, one per waiting burst per
+// pass in ring order, so a burst's packets leave at consecutive sequences as
+// the immediate burst's do. A burst whose last packet is sealed leaves the
+// ring and its key is wiped. A full staging ends the drain; what is left
+// waits for the next update.
+static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown )
+{
+    struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    int committed = 0;
+    while ( server_transport->disconnect_burst_count > 0 && committed < max_seals )
+    {
+        if ( server_transport->disconnect_burst_cursor >= server_transport->disconnect_burst_count )
+            server_transport->disconnect_burst_cursor = 0;
+        const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_cursor ) % ROCKETNET_MAX_CLIENTS;
+        struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[index];
+
+        struct rocketnet_server_frame_t frame;
+        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
+        if ( !frame_data )
+            break;
+        frame.client_index = burst->client_index;
+        const int bytes = rocketnet_write_sealed_packet( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+                                                         protocol->packet_filter, burst->first_sequence + (uint64_t) burst->sealed,
+                                                         NULL, burst->plaintext, burst->plaintext_bytes,
+                                                         protocol->protocol_id, burst->connection_salt,
+                                                         NULL, server_transport->disconnect_burst_keys[index] );
+        rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
+        if ( bytes <= 0 )
+        {
+            rocketnet_server_abort_send_frame( server_transport, &frame );
+            break;
+        }
+        rocketnet_server_commit_send_frame( server_transport, &frame, bytes );
+        committed++;
+        server_transport->disconnect_seals++;
+        burst->sealed++;
+        server_transport->disconnect_burst_cursor++;
+
+        // sealed counts fall from the head to the tail, so the head's burst
+        // is the first to complete
+        while ( server_transport->disconnect_burst_count > 0 &&
+                server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
+        {
+            sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
+            server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % ROCKETNET_MAX_CLIENTS;
+            server_transport->disconnect_burst_count--;
+            if ( server_transport->disconnect_burst_cursor > 0 )
+                server_transport->disconnect_burst_cursor--;
+        }
+    }
+    if ( committed && rocketnet_server_transport_staged( server_transport ) )
+        server_transport->send_staged++;
+}
+
+#if ROCKETNET_TEST_SEAMS
+uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->disconnect_seals;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
+
 // tla/RNDriverSendStaging.tla DisconnectClient
 static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_server_transport_t * server_transport, int client_index, bool shutdown )
 {
@@ -3019,10 +3178,24 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, client_index );
     rocketnet_address_t client_address = *rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
 
+    // tla/ServerSession.tla DisconnectAll and DrainDisconnectBurst: the slot
+    // ends now; its burst is sealed now only while this update's allowance
+    // holds the whole burst and no earlier burst waits, else it waits in the
+    // ring for the following updates. The stop path seals at once.
+    if ( !shutdown && ( server_transport->disconnect_burst_count > 0 ||
+                        server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) &&
+         server_transport->disconnect_burst_count < ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_server_transport_defer_disconnect_burst( server_transport, client_index, mapping_index, &client_address );
+        return;
+    }
+
     uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_server_protocol_disconnect_client( &server_transport->protocol, client_index, burst, &burst_count, &burst_bytes );
+    server_transport->disconnect_seals += (uint64_t) burst_count;
+    server_transport->disconnect_seals_left -= burst_count < server_transport->disconnect_seals_left ? burst_count : server_transport->disconnect_seals_left;
 
     int committed = 0;
     for ( int i = 0; i < burst_count; i++ )
