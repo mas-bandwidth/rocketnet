@@ -453,10 +453,10 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 }
 
 // RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
-// tla/RNConnectionMemory.tla Reuse, Connect): a server slot whose connection
-// ended is freed here in O(1) -- its views, cursors and held count cleared,
-// its one open unreliable packet already discarded by
-// rn_message_connection_cancel_at_reset -- and its region is carved only when
+// tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
+// a server slot whose connection ended is freed here in O(1) -- its views,
+// cursors and held count cleared, its open unreliable build already
+// discarded by rn_message_connection_cancel_at_reset -- and its region is carved only when
 // Observe binds the slot to its next connection (RN_SLOTS_RESET calls
 // rocketnet_server_connection_reset). A free slot is never offered, written
 // or admitted to (every path checks CONNECTED, rn_slots_admit discards for a
