@@ -7152,7 +7152,8 @@ void rocketnet_test_packet_loss_tracker()
 
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+    // When most_recent jumps to an extreme value, lost is bounded by HISTORY.
+    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
 }
 
 void rocketnet_test_out_of_order_tracker()

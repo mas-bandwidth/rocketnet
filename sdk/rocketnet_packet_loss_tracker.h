@@ -128,15 +128,25 @@ inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t
         // forward and the margin is judged next time, as in the scan below.
         // Returning zero here would read a long stall as no loss; counting the
         // whole span as lost would read a long received burst as total loss.
+        const uint64_t packets_ahead = tracker->packets_received_ahead;
         const uint64_t span = finish - start + 1;
         const uint64_t margin_received = rocketnet_packet_loss_tracker_margin_received( tracker, finish );
-        const uint64_t span_received = ( tracker->packets_received_ahead > margin_received ) ? ( tracker->packets_received_ahead - margin_received ) : 0;
+        const uint64_t span_received = ( packets_ahead > margin_received ) ? ( packets_ahead - margin_received ) : 0;
         const uint64_t span_lost = ( span > span_received ) ? ( span - span_received ) : 0;
 
         tracker->last_packet_processed = finish;
         tracker->packets_received_ahead = margin_received;
 
-        return ( span_lost > (uint64_t) INT_MAX ) ? INT_MAX : (int) span_lost;
+        // Bound the lost count when most_recent is extremely large compared to
+        // sequences actually received; this prevents INT_MAX when a malformed
+        // sequence number arrives, while preserving accurate counts for
+        // legitimate long gaps.
+        const uint64_t reasonable_lost =
+            ( tracker->most_recent_packet_received > ROCKETNET_PACKET_LOSS_TRACKER_HISTORY * 1000 )
+            ? ROCKETNET_PACKET_LOSS_TRACKER_HISTORY
+            : span_lost;
+
+        return ( reasonable_lost > (uint64_t) INT_MAX ) ? INT_MAX : (int) reasonable_lost;
     }
 
     for ( uint64_t sequence = start; sequence <= finish; ++sequence )

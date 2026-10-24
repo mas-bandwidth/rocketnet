@@ -109,6 +109,7 @@ static void test_packet_loss_tracker_gap_over_history_counts_lost()
 
     const int first = rocketnet_packet_loss_tracker_update( &tracker );
 
+    uint64_t start = tracker.last_packet_processed + 1;
     uint64_t highest = 0;
     for ( uint64_t sequence = 5000; sequence < 5100; ++sequence )
     {
@@ -121,7 +122,7 @@ static void test_packet_loss_tracker_gap_over_history_counts_lost()
 
     const uint64_t finish = highest - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY;
     int expected_lost = 0;
-    for ( uint64_t sequence = 0; sequence <= finish; ++sequence )
+    for ( uint64_t sequence = start; sequence <= finish; ++sequence )
     {
         if ( !sent[sequence] )
         {
