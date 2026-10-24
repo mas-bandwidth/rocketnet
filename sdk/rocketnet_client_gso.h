@@ -36,6 +36,7 @@
 
 #include "rocketnet_address.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -62,11 +63,11 @@ struct rocketnet_client_gso_syscalls_t
 // the kernel's: sendmmsg(2) and setsockopt(UDP_SEGMENT, 0)
 extern const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls;
 
-// One message's control block: room for the UDP_SEGMENT cmsg, cmsghdr-aligned.
-union rocketnet_client_gso_control_t
+// One message's control block: room for the UDP_SEGMENT cmsg, aligned as a
+// cmsghdr is (its first member is a size_t)
+struct rocketnet_client_gso_control_t
 {
-    char bytes[CMSG_SPACE( sizeof( uint16_t ) )];
-    struct cmsghdr align;
+    alignas( size_t ) char bytes[CMSG_SPACE( sizeof( uint16_t ) )];
 };
 
 // The send path's state. Everything is sized here and lives in the transport's
@@ -88,7 +89,7 @@ struct rocketnet_client_gso_t
     // per call scratch, one entry per message or per packet
     struct mmsghdr messages[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     struct iovec packet_iovecs[ROCKETNET_CLIENT_GSO_SEND_BATCH];
-    union rocketnet_client_gso_control_t controls[ROCKETNET_CLIENT_GSO_SEND_BATCH];
+    struct rocketnet_client_gso_control_t controls[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     int message_first_packet[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     int message_num_packets[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     int run_packet_bytes[ROCKETNET_CLIENT_GSO_SEND_BATCH];
