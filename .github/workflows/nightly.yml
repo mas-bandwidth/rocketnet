@@ -38,6 +38,12 @@
 #   transport)              halt_on_error=1 and no suppressions, lifted from
 #                           ci.yml's tsan job on 2026-10-22 step for step:
 #                           345-454s on the fleet's 16-core runner hosts.
+#
+#   linux / transport       every cell of ci.yml's Linux transport family
+#   cells x50 and ASan      matrix fifty times in a row, then the same cells
+#                           and the whole functional suite once per cell on
+#                           an AddressSanitizer build: the matrix runs each
+#                           cell once, and a one-in-fifty flake needs fifty.
 
 name: nightly
 
@@ -161,6 +167,57 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: setarch "$(uname -m)" -R ./bin/functional
+
+  # THE LINUX TRANSPORT CELLS, FIFTY TIMES IN A ROW, AND UNDER ASAN.
+  # scripts/transport-cells-repeat reads the cells and cases from ci.yml's
+  # TRANSPORT_MATRIX_LINUX step (never a copy), runs each cell's cases fifty
+  # times in a row with the matrix's pins and pass rule (exit 0, the case's
+  # own name printed, no [SKIPPED), the cells in parallel as the matrix runs
+  # them and the xdp cell as root inside a virtme-ng guest of the runner's own
+  # kernel, and prints one CELL <server>/<client> <case> runs=N pass=P fail=F
+  # line per case, keeping the first failing log. A failure is reported with
+  # its log, never retried. The ASan step builds into build-asan (./bin is
+  # untouched), runs the same cells once, then the whole functional suite once
+  # per cell with that cell's server and client transports pinned (SUITE
+  # lines; the xdp cell runs its cases in the guest instead). The logs are
+  # uploaded when a step fails.
+
+  linux-transport-cells-repeat:
+    name: linux / transport cells x50 and ASan
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 150
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-linux-transport-cells-repeat-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build Release
+        run: make -j4
+
+      - name: Every Linux transport cell, fifty times in a row
+        timeout-minutes: 60
+        shell: bash
+        run: scripts/transport-cells-repeat --runs 50
+
+      - name: The Linux transport cells and the functional suite per cell, under ASan
+        timeout-minutes: 75
+        shell: bash
+        run: scripts/transport-cells-repeat --asan --runs 1 --jobs 4
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transport-cells-repeat-${{ matrix.ref }}
+          path: build/transport-cells-repeat
+          if-no-files-found: ignore
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
