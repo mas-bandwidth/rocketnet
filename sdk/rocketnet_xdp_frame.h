@@ -449,6 +449,18 @@ static inline const uint8_t * rocketnet_xdp_receive_descriptor(
     return (const uint8_t*) umem + addr;
 }
 
+// RECEIVE DRAIN: the queue a receive call visits at this step. start is the
+// first queue of the call and step is how far around the ring it has walked.
+
+static inline int rocketnet_xdp_drain_queue( int start, int step, int num_queues )
+{
+    if ( num_queues <= 0 )
+        return 0;
+    const int sum = start + step;
+    const int mod = sum % num_queues;
+    return mod < 0 ? mod + num_queues : mod;
+}
+
 // PIN CPU: a cpu is set in a cpu_set_t of set_size bits (CPU_SETSIZE on
 // Linux) only when it lies in 0 .. set_size - 1.
 
