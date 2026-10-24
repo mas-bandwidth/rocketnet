@@ -355,5 +355,5 @@ MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoff
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenDeferred.cfg	MCRNBufferHandoffBase.tla	invariant	OneOwner	check	rnbufferhandoffbase	required	-
-MCRNClientIocp.cfg	RNClientIocp.tla	pass	-	check	rnclientiocp	required	-
-MCRNClientIocpBrokenFreeBeforeDrain.cfg	RNClientIocp.tla	invariant	FreedOnlyWhenDrained	check	rnclientiocp	required	-
+MCRNClientIocp.cfg	MCRNClientIocp.tla	pass	-	check	rnclientiocp	required	-
+MCRNClientIocpBrokenFreeBeforeDrain.cfg	MCRNClientIocp.tla	invariant	FreedOnlyWhenDrained	check	rnclientiocp	required	-
