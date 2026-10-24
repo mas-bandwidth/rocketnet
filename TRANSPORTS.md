@@ -127,7 +127,7 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 | msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
 | loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
 | gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
-| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:52`,`sdk/rocketnet_server_uring.h:73`) | 4096 receive buffers per queue;16000 bank (`sdk/rocketnet_server_uring.h:58`,`sdk/rocketnet_server_uring.h:72`) |
+| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:54`,`sdk/rocketnet_server_uring.h:79`) | 4096 receive buffers of 66 KiB per queue;16000 bank (`sdk/rocketnet_server_uring.h:64`,`sdk/rocketnet_server_uring.h:78`) |
 | xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
 | iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
 | rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
@@ -265,7 +265,15 @@ prove those sends never stall or degrade the other clients, the dead slot
 times out and frees, and a fifth client connects. The client socket is
 connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
 `test_posix_client_server_gone_*` proves the portable client's receive takes
-each ECONNREFUSED as weather. The xdp cell is a separate case.
+each ECONNREFUSED as weather. The three hard-killed kinds also have an xdp
+server cell with the portable client, IPv4 and IPv6
+(`test_posix_hard_killed_client_xdp_ipv4_client_portable`,
+`test_posix_hard_killed_client_xdp_ipv6_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv4_client_portable`,
+`test_posix_send_to_closed_port_xdp_ipv6_client_portable`,
+`test_posix_client_server_gone_xdp_ipv4_client_portable`,
+`test_posix_client_server_gone_xdp_ipv6_client_portable`). That cell runs only
+as root inside a virtme-ng guest.
 
 ## Server network threads and their priority
 
@@ -402,7 +410,30 @@ counts that run's packets as `SEND_DROPPED`: unlike the GSO transport's
 `sendmmsg`, the run cannot be resent after its completion has handed the slots
 back, so the degradation is to plain sends from the next flush, not lossless.
 `rocketnet_server_uring_features` reports `ROCKETNET_SERVER_URING_FEATURE_SEGMENT`
-while it is in use. Each `send_packets` and `receive_packets` call reaps at most a
+while it is in use.
+
+Receive coalescing is the GSO transport's tier too, probed at create: every
+socket of the group must accept `UDP_GRO` (set to 1), all or nothing, the
+sockets that accepted rolled back otherwise, and the create info line names
+the result (`UDP_GRO yes`, or `no (one datagram per receive buffer)`). With
+it each queue's multishot msghdr reserves a control area for the `UDP_GRO`
+cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
+a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
+returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
+segment is size-checked and copied into the fill bank before the buffer goes
+back to the ring (`tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
+bank that fills mid-split drops and counts the rest as
+`RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
+taken as one datagram (the GSO transport's fault). Created with
+`ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a
+buffer is one datagram; `rocketnet_server_uring_features` reports
+`ROCKETNET_SERVER_URING_FEATURE_GRO` while it is on. A coalesced receive is
+up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES`):
+4096 buffers are 264 MiB of address space per queue, allocated at create
+(8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
+create, so a page is resident only once the kernel writes it: small datagrams
+keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
 fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
 `ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
 update returns under sustained traffic; completions past a budget stay queued
