@@ -150,6 +150,7 @@ input: the value is refused by the table's range and never clamped.
 `rocketnet_fuzz_server_transport`, `rocketnet_fuzz_client_transport`,
 `rocketnet_fuzz_session`, `rocketnet_fuzz_round_trip`,
 `rocketnet_fuzz_token_private`, `rocketnet_fuzz_config`,
+`rocketnet_fuzz_connect_token`, `rocketnet_fuzz_receive_structured`,
 `rocketnet_fuzz` and `rocketnet_fuzz_message` each contain a
 deterministic seed generator. Set `ROCKETNET_FUZZ_SEED_DIR` and run the
 binary (the libFuzzer build or the replay driver) to use it:
@@ -165,7 +166,13 @@ seeds. The two stateless generators turn the types their own parsers read
 into seeds: `rocketnet_fuzz` writes one seed per packet type the prefilter
 returns, per outcome the reassembly engine reaches, and per base64 and
 config shape, and `rocketnet_fuzz_message` writes one seed per violation
-the decoder names and per code a record carries. Each seed is replayed through the target before it is written. The
+the decoder names and per code a record carries. `rocketnet_fuzz_connect_token`
+writes one seed per branch the connect-token ladder and the client's
+pre-send checks take (raw and structured halves, the signature verdicts, the
+client's flags, window, version, expiry and address-family refusals), and
+`rocketnet_fuzz_receive_structured` writes one seed per packet type the stateful
+receive path dispatches on, from a completed handshake and the real send
+paths. Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
