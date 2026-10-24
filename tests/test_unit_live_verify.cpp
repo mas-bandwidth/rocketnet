@@ -21,7 +21,6 @@ static rocketnet_live_config_t live_verify_default_config( uint32_t seed )
     rocketnet_live_config_t config;
     config.seed = seed;
     config.max_message_bytes = 262144;
-    config.max_payload_bytes = 16384;
     return config;
 }
 

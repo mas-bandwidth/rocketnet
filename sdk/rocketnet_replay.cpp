@@ -43,6 +43,7 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
 }
 
 // tla/ReplayWindow.tla Advance
+// tla/ReplayWindow.tla Receive: advances highest_opened, clears the skipped bits and sets the received sequence's bit
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );

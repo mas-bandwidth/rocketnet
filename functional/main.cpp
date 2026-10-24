@@ -75,7 +75,7 @@ static int rocketnet_functional_worker( const char * name )
 }
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
-int rocketnet_posix_hard_killed_peer_test_group( const char * name );
+int rocketnet_posix_hard_killed_client_test_group( const char * name );
 
 #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
@@ -110,7 +110,7 @@ static int rocketnet_functional_test_group( const char * name )
 #if defined(_WIN32)
     return 0;
 #else
-    return rocketnet_posix_hard_killed_peer_test_group( name );
+    return rocketnet_posix_hard_killed_client_test_group( name );
 #endif
 }
 
@@ -120,8 +120,8 @@ static int rocketnet_functional_test_group( const char * name )
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
 // clients, one process: each builds a loopback server from the development
 // config with the default packet payload limit and one reassembly slot, and
-// seeds a real ACK observation into every slot, so the stats worker's
-// per-slot delta buffers and history become resident by design. Its
+// seeds a real ACK observation into every slot, so the per-slot ACK
+// history becomes resident by design. Its
 // footprint is those servers' memory plans, not the suite-wide bound. The
 // 300-client server is destroyed before the full-capacity one is created,
 // but an allocator may keep its freed pages resident: macOS does (a 994 MiB
@@ -140,7 +140,6 @@ static long rocketnet_transport_control_rss_bound_mb()
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
         config.max_clients = clients;
-        config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         config.max_fragmented_messages = 1;
         rocketnet_server_memory_plan_t plan;
         if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
@@ -161,8 +160,8 @@ SUITE_CASE_RSS_BOUND( test_transport_control, rocketnet_transport_control_rss_bo
 
 int main( int argc, char ** argv )
 {
-    // the child client of the hard-killed peer cases
-    // (functional/posix_hard_killed_peer.cpp), started by posix_spawn and
+    // the child client of the hard-killed client cases
+    // (functional/posix_hard_killed_client.cpp), started by posix_spawn and
     // ended by the case with SIGKILL
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
@@ -189,7 +188,10 @@ int main( int argc, char ** argv )
         { "test_xdp", "test_xdp" },
 #endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    // io_uring cases are bounded by RLIMIT_MEMLOCK as well as by the one job:
+    // a limit under one case's need fails the suite before it starts, naming
+    // the limit (tests/suite_runner.h, tools/check_memlock.sh)
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },

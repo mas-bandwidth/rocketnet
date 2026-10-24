@@ -56,6 +56,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <sys/resource.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -73,8 +74,8 @@ extern char **environ;
 // clients") carries larger per-server tables whatever the case's max_clients:
 // the receive arrays and payload batches hold 16 packets for every client
 // the build holds. There the bound is 1.5 times the largest case measured at
-// 10000 clients on a macOS Release build (811 MiB,
-// test_server_stats_worker_late_batch_keeps_modulo_fairness, 2026-10-23),
+// 10000 clients on a macOS Release build (811 MiB, 2026-10-23, a server
+// statistics case since deleted with the background recompute it pinned),
 // so 1217; a build for more than 10000 sets the environment variable.
 #if ROCKETNET_MAX_CLIENTS <= 1000
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
@@ -365,6 +366,85 @@ inline int suite_job_count()
     return (int) jobs;
 }
 
+// io_uring cases and RLIMIT_MEMLOCK (docs/LINUX.md sections 5 and 8). The
+// io_uring transport never raises RLIMIT_MEMLOCK, and on kernel 7.0 the kernel
+// charges every ring's locked pages to the user, across all of that user's
+// processes, against the creating process's limit: io_uring cases running at
+// once can refuse at create with ENOMEM though each passes alone. A suite that
+// bounds them (the functional suite on Linux) runs at most
+//
+//     io_uring slots = floor( RLIMIT_MEMLOCK soft limit / per-case need )
+//
+// io_uring cases at once, capped at the job count (an unlimited limit is the
+// job count); the other cases are not bounded. The per-case need is
+// ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB on kernels after 6.8: twice the
+// largest case measured on 7.0.0-38 (2026-10-23, the smallest `ulimit -l`
+// that passes alone), test_io_uring_transport_posix_server_create_destroy_1000
+// at 2064 KiB: a destroyed ring's pages are released by kernel work after
+// the case has moved on, so a create and destroy loop holds several rings'
+// charge, where one default 4-queue server creates at 656 KiB. On 6.8 and
+// older it is ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB_6_8: a 4-queue server
+// creates at 16 KiB on 6.8.0-139. The environment variable of the same name
+// as the first overrides both. Zero slots with an io_uring case in the suite
+// fails the suite before any case runs, naming the limit. A case is an
+// io_uring case when its name says uring, or every case is when
+// ROCKETNET_SERVER_TRANSPORT names io_uring. Other suites of the same user
+// (other CI runners of the host) share the kernel's count, which this process
+// cannot see: tools/check_memlock.sh checks the limit covers them.
+#define ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB 4096
+#define ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB_6_8 128
+
+// Whether the case holds io_uring rings while it runs.
+inline bool suite_case_is_io_uring( const std::string & name )
+{
+    char transport[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", transport, sizeof( transport ) ) && std::strstr( transport, "io_uring" ) != NULL )
+        return true;
+    return name.find( "uring" ) != std::string::npos;
+}
+
+// The per-case need in KiB on this kernel.
+inline long suite_uring_case_memlock_kib()
+{
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB", env, sizeof( env ) ) )
+    {
+        const long requested = std::atol( env );
+        if ( requested > 0 )
+            return requested;
+    }
+#if defined(__linux__)
+    struct utsname host;
+    int major = 0;
+    int minor = 0;
+    if ( uname( &host ) == 0 && sscanf( host.release, "%d.%d", &major, &minor ) == 2 && ( major < 6 || ( major == 6 && minor <= 8 ) ) )
+        return ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB_6_8;
+#endif
+    return ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB;
+}
+
+// The soft RLIMIT_MEMLOCK in KiB, or -1 when unlimited (or not POSIX).
+inline long suite_memlock_limit_kib()
+{
+#if defined(_WIN32)
+    return -1;
+#else
+    struct rlimit limit;
+    if ( getrlimit( RLIMIT_MEMLOCK, &limit ) != 0 || limit.rlim_cur == RLIM_INFINITY )
+        return -1;
+    return (long) ( limit.rlim_cur / 1024 );
+#endif
+}
+
+// How many io_uring cases may run at once: the formula above, capped at jobs.
+inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
+{
+    if ( limit_kib < 0 || case_kib <= 0 )
+        return jobs;
+    const long slots = limit_kib / case_kib;
+    return slots < (long) jobs ? (int) slots : jobs;
+}
+
 inline int suite_usage( char ** argv )
 {
     fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
@@ -643,7 +723,8 @@ inline int suite_main( int argc, char ** argv,
     const suite_exec * execs, int nexecs,
     int ( *group_of )( const char * name ) = NULL,
     double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
-    int max_jobs = 0 )
+    int max_jobs = 0,
+    bool bound_io_uring = false )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -682,6 +763,23 @@ inline int suite_main( int argc, char ** argv,
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
+    int uring_slots = jobs;
+    if ( bound_io_uring )
+    {
+        const long limit_kib = suite_memlock_limit_kib();
+        const long case_kib = suite_uring_case_memlock_kib();
+        uring_slots = suite_uring_slots( limit_kib, case_kib, jobs );
+        for ( size_t i = 0; uring_slots == 0 && i < pending.size(); i++ )
+        {
+            if ( suite_case_is_io_uring( pending[i].name ) )
+            {
+                printf( "check failed: RLIMIT_MEMLOCK %ld KiB is under one io_uring case's %ld KiB (%s); raise the limit (tools/check_memlock.sh, docs/LINUX.md section 8)\n",
+                        limit_kib, case_kib, pending[i].name.c_str() );
+                return 1;
+            }
+        }
+    }
+    int uring_running = 0;
     struct running_t
     {
         size_t index;
@@ -690,6 +788,7 @@ inline int suite_main( int argc, char ** argv,
         bool killed;
         int group;
         int out_fd;
+        bool uring;
     };
     const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
     if ( capture )
@@ -701,7 +800,8 @@ inline int suite_main( int argc, char ** argv,
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) &&
+                !( bound_io_uring && uring_running >= uring_slots && suite_case_is_io_uring( pending[next].name ) ) )
         {
             const size_t index = next++;
             const suite_case & item = pending[index];
@@ -781,6 +881,8 @@ inline int suite_main( int argc, char ** argv,
             child.killed = false;
             child.group = item.group;
             child.out_fd = pipefd[0];
+            child.uring = bound_io_uring && suite_case_is_io_uring( item.name );
+            uring_running += child.uring ? 1 : 0;
             running.push_back( child );
         }
 
@@ -842,6 +944,7 @@ inline int suite_main( int argc, char ** argv,
             result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
             suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ) );
             result.done = true;
+            uring_running -= running[i].uring ? 1 : 0;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
@@ -889,7 +992,8 @@ inline int suite_main( int argc, char ** argv,
     const suite_exec * execs, int nexecs,
     int ( *group_of )( const char * name ) = NULL,
     double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
-    int max_jobs = 0 )
+    int max_jobs = 0,
+    bool bound_io_uring = false )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -918,6 +1022,7 @@ inline int suite_main( int argc, char ** argv,
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     const double limit_s = case_limit_s;
+    (void) bound_io_uring; // no io_uring on Windows
     struct running_t
     {
         size_t index;

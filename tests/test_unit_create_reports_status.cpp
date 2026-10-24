@@ -255,6 +255,42 @@ static void test_create_reports_status_invalid_address()
 }
 REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 
+// ---- the sent-packet map against the window ---------------------------------
+
+// A packets_in_flight below reliable_messages_in_flight is refused at create
+// with CONFIG_OUT_OF_RANGE, client and server (docs/CHANNELS.md 14,
+// standard/MESSAGES.md m9.1; tla/RNSentMap.tla, the reversed witness
+// MCRNSentMapBrokenSmallMap.cfg): one entry short of the window is refused,
+// and a map equal to the window creates. Red before the rule: both create.
+static void test_create_refuses_sent_map_below_window()
+{
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.reliable_messages_in_flight = 1024;
+    client_config.packets_in_flight = 1023;
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    struct rocketnet_server_config_t server_config;
+    create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+    server_config.reliable_messages_in_flight = 1024;
+    server_config.packets_in_flight = 1023;
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    // the map equal to the window creates
+    client_config.packets_in_flight = 1024;
+    status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+}
+REGISTER_UNIT_TEST( test_create_refuses_sent_map_below_window );
+
 // ---- config refusals --------------------------------------------------------
 
 static void test_create_reports_status_config_refusals()
@@ -361,7 +397,6 @@ static void test_create_reports_status_config_refusals()
     // geometry creates.
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.max_fragmented_messages = 256;
-    client_config.max_payload_bytes = 305408;
     status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );
     check( budget_client != NULL );

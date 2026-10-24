@@ -165,19 +165,19 @@ static void test_client_transport_create_ex_reports_every_status()
 
     // C2: an invalid environment overlay refuses at the env apply
     char prior[4096];
-    const bool had_prior = rocketnet_test_getenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", prior, sizeof( prior ) ) != 0;
-    setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "not-a-number", 1 );
+    const bool had_prior = rocketnet_test_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
+    setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number", 1 );
     check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
     if ( had_prior )
-        setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", prior, 1 );
+        setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, 1 );
     else
-        unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+        unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // C3: a config field out of range refuses at validation
     {
         struct rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
-        config.max_payload_bytes = 2000000000;
+        config.max_fragmented_messages = 2000000000;
         check_create_status( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, token, &config, &state, &status );
     }
 

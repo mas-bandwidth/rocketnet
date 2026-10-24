@@ -177,6 +177,7 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
     return -1;
 }
 
+// tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -265,6 +266,7 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
     slots->confirmed[client_index] = 1;
 }
 
+// tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );

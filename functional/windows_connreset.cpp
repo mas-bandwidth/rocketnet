@@ -181,7 +181,7 @@ static void windows_connreset_client_tick( struct rocketnet_client_transport_t *
     }
 }
 
-// the hard-killed peer: a client in its own process, ended by TerminateProcess
+// the hard-killed client: a client in its own process, ended by TerminateProcess
 // with no disconnect packet. A job object ends it with this process if the
 // case fails first.
 

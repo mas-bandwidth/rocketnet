@@ -291,7 +291,7 @@ TLC: `Invariant WireNumberReconstructs is violated`, 8 states.
 
 A duplicate after a resend is the normal case (6.5), so an unsigned reading misreads one
 on every lossless resend. With `W` at most `2^20` and `2^24` on the wire, the unsigned
-reading puts the duplicate about `2^24` ahead, outside the window: a correct peer would be
+reading puts the duplicate about `2^24` ahead, outside the window: a correct sender would be
 disconnected for `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
 
 ### Witness 4: ordered numbers delivered on arrival (`MCRNWindowBrokenHoldOrdered.cfg`)
@@ -382,8 +382,10 @@ ack lands and the ack is ignored, as 6.4 says. Every ack in the lasso names an e
 This is the model's resend delay outpacing the ack path, which the real resend delay (above the RTT, RFC
 6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code
 card: `P` must exceed the packets a connection writes in one RTT, resends included, or a
-sender under back-off can evict its own acks and stall until `reliable_timeout`; section
-14 now says so (sizing `P`).
+sender under back-off can evict its own acks and stall until `reliable_timeout`. The rule
+that bounds it is `P >= W` with a resend delay above the RTT: `tla/RNSentMap.tla` checks it
+(README-RNSentMap.md), and config validation refuses `packets_in_flight` below
+`reliable_messages_in_flight` (standard/MESSAGES.md m9.1).
 
 ### A model error the DeliveredOnce witness found
 

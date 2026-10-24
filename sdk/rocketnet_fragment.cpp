@@ -12,6 +12,12 @@
 
 #include <string.h>
 
+// The transport's reassembled payload maximum lies between one packet's
+// payload and the wire's fragmented payload maximum.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
+    ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+    "the transport's payload maximum is within the fragment limits" );
+
 void rocketnet_write_fragment_header( uint8_t * output, uint32_t payload_id, int fragment_index, int fragment_count )
 {
     rocketnet_assert( output );
@@ -261,6 +267,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
     set->newest_completed[connection_index] = 0;
 }
 
+// tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set )
 {
     rocketnet_assert( set );

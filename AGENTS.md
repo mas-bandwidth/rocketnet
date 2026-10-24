@@ -307,7 +307,7 @@ configured families refuses start with
 Other key defaults are `num_channels = 32`, `reliable_messages_in_flight = 1024`,
 `receive_message_buffer_bytes = 1048576`, `max_message_bytes = 1048576`,
 `send_message_buffer_bytes = 4194304`, `send_queue_messages = 1024`,
-`packets_in_flight = 256`, `unreliable_messages_per_update = 1024`,
+`packets_in_flight = 1024`, `unreliable_messages_per_update = 1024`,
 `sequenced_messages_held = 16`, `max_message_receipts = 256`,
 `reliable_message_timeout_ms = 10000`, client `send_kbps = 1000`, server
 `per_client_send_kbps = 10000`, and server `max_clients = 1000`. A send rate of
@@ -393,6 +393,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration refusals, written to the status out-parameter of `rocketnet_client_create` and `rocketnet_server_create` (create is the one check of a config) or returned by the call that refuses.
   - `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` (`-27`): a config whose `config_bytes` is `0` or too small, one that skipped `rocketnet_client_default_config` or `rocketnet_server_default_config`.
   - `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`, `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`: client connect-token pre-send checks.
+  - `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`): client connect refuses a token that names a server address with port 0, on every platform; mint tokens with the server's bound port (`rocketnet_server_port`).
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
   - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or an AF_XDP provider.
@@ -490,7 +491,7 @@ In practice: no per-message copy or allocation for unreliable traffic that takes
 - **What a `NULL` return from `start` means:**
   - **Caller misuse:** another `start` is already pending, `channel` is outside `0 .. num_channels - 1`, `reliability` is not one of the eight channel types, `bytes` is outside `1 .. max_message_bytes`, or the server's `destination_id` is outside `0 .. max_clients - 1` or has `ROCKETNET_FLOW_ID_BIT` set. `start` returns `NULL` and the connection stays up.
   - **No connection yet, or no longer:** a send before the connection is `ROCKETNET_CLIENT_STATE_CONNECTED` is dropped: start returns NULL, finish returns 0, nothing is queued. This holds on the client and the server alike, handshake states included; nothing is held for the end of the handshake, and a stopped server drops the same way for an index below `max_clients`. It is a normal drop, never API misuse: each dropped start adds 1 to the client's or the server's `messages_dropped_not_connected` stat. Send only once `rocketnet_client_state` returns `ROCKETNET_CLIENT_STATE_CONNECTED` on the client, or `rocketnet_server_client_connected` returns true for the slot on the server.
-  - **Connection send memory exhausted:** a connected peer's region has no room for the reservation. `start` returns `NULL` and ends that connection: the server disconnects that client slot with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`, and a client ends its own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`.
+  - **Connection send memory exhausted:** a connection's region has no room for the reservation. `start` returns `NULL` and ends that connection: the server disconnects that client slot with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`, and a client ends its own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`.
 
 ### Writing a message in place
 

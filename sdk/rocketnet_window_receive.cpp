@@ -8,7 +8,6 @@
 
 // CHANNELS 6.5 (R8), RNWindow Accept: one duplicate record, one owner's
 // counter. Regions can share that owner across connection threads (16.1).
-// tla/RNWindow.tla OpenPacket
 static int rn_window_duplicate( rn_window_receive_t * receive )
 {
     if ( receive->region->counters )
