@@ -755,3 +755,57 @@ static void test_config_env_transport_passes_exercise_all_rows()
 
 }
 REGISTER_UNIT_TEST( test_config_env_transport_passes_exercise_all_rows );
+
+// ---------------------------------------------------------------------------
+// the development simulator variables (rn_dev_env_int, sdk/rocketnet_api.cpp)
+// take the config system's strict charset: ASCII digits only, so " 5" and
+// "+5" are refused as every other numeric override refuses them
+// (rocketnet_config_numeric_charset, sdk/rocketnet_config.cpp). A production
+// library does not read them, and every spelling resolves.
+// ---------------------------------------------------------------------------
+
+static bool env_names_dev_latency_resolves( bool server, const char * value, int * latency_ms )
+{
+    const char * name = server ? "ROCKETNET_DEV_SERVER_LATENCY_MS" : "ROCKETNET_DEV_CLIENT_LATENCY_MS";
+    env_names_setenv( name, value );
+    env_names_capture_t capture;
+    env_names_capture_begin( &capture );
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps = 0;
+    bool resolved;
+    if ( server )
+    {
+        resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps );
+        *latency_ms = server_transport.simulated_latency_ms;
+    }
+    else
+    {
+        resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps );
+        *latency_ms = client_transport.simulated_latency_ms;
+    }
+    env_names_capture_end( &capture );
+    env_names_unsetenv( name );
+    return resolved;
+}
+
+static void test_config_env_dev_simulator_numbers_are_strict()
+{
+    for ( int side = 0; side < 2; side++ )
+    {
+        const bool server = side == 1;
+        int latency_ms = -1;
+#if ROCKETNET_DEV
+        check( !env_names_dev_latency_resolves( server, " 5", &latency_ms ) );
+        check( !env_names_dev_latency_resolves( server, "+5", &latency_ms ) );
+        check( env_names_dev_latency_resolves( server, "5", &latency_ms ) );
+        check( latency_ms == 5 );
+#else // #if ROCKETNET_DEV
+        check( env_names_dev_latency_resolves( server, " 5", &latency_ms ) );
+        check( env_names_dev_latency_resolves( server, "+5", &latency_ms ) );
+        check( env_names_dev_latency_resolves( server, "5", &latency_ms ) );
+#endif // #if ROCKETNET_DEV
+    }
+}
+REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );

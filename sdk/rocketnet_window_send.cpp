@@ -30,14 +30,18 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     const uint64_t W = send->region->window;
     const uint64_t B = send->region->ring_bytes;
     rocketnet_assert( send->next >= send->U_prime && count > 0 && count <= W );
-    int fits = send->next - send->U_prime <= W - count;
+    // tla/RNWindow.tla NumberRecord and ASSUME W \in Nat \ {0}: a block's
+    // numbers fit in W. The assert compiles out in Release (NDEBUG), so a
+    // count of 0 or above W, or a window of 0, stalls here before W - count
+    // can wrap or any % W is taken.
+    int fits = count > 0 && count <= W && send->next - send->U_prime <= W - count;
     uint64_t p = send->ring_next;
     // tla/RNRing.tla ASSUME B > 0 /\ B % 16 = 0: the init assert compiles out
     // in Release, so a zero-byte ring stalls here rather than reaching the
     // modulo in rn_window_send_position.
     if ( holdable && B == 0 )
         fits = 0;
-    else if ( holdable )
+    else if ( fits && holdable )
     {
         p = rn_window_send_position( send, span );
         const uint64_t floor = send->U_prime < send->next ?
