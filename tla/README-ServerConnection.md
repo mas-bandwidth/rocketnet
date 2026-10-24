@@ -107,7 +107,7 @@ Liveness, under the fairness described below:
 
 ### The hang the request named
 
-The class: a peer moves to a new state, sends the packet announcing it once, the packet is
+The class: one side moves to a new state, sends the packet announcing it once, the packet is
 lost, and nobody ever sends it again. On the server the packets that announce a state are
 the cookie, the challenge, the denied and the establishing keep-alive. The first three are
 re-provoked by the client's own retransmission (S:2693-2705: every valid request is answered

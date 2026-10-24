@@ -216,17 +216,16 @@ field's default.
 | server max_clients limit | `1000` | integer | none: a limit of this revision | |
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
-| server max_payload_bytes | `16384` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
-| client max_payload_bytes | `16384` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
 | client max_fragmented_messages | `8` | integer | `ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES` | as the server field |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
+| reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
 The server's X25519 keypair has no configuration field and no environment
 variable. The server generates it at create.
@@ -1061,8 +1060,8 @@ Rules:
    connection challenge. Both keys are X25519 public keys of
    [t3 Constants and registries](#t3).
 5. Each endpoint MUST compute the shared secret with X25519 from its own
-   ephemeral secret key and the peer's ephemeral public key. When the scalar
-   multiplication reports a small-order peer public key, the endpoint MUST
+   ephemeral secret key and the remote endpoint's ephemeral public key. When the scalar
+   multiplication reports a small-order public key, the endpoint MUST
    abandon the attempt, MUST NOT derive a session key, and MUST NOT create a
    mapping.
 6. An endpoint MUST derive the handshake client-to-server key by keyed BLAKE2b
@@ -1230,7 +1229,7 @@ input: key derivation label = "RKTNSESS"
 a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0
 ```
 
-```vector t7.small-order-peer-refused
+```vector t7.small-order-key-refused
 input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
 input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
 input: connection salt = 53414c5430303031
@@ -2421,7 +2420,7 @@ The client is in exactly one of the states of the table below. A state number is
 
 1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
 2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
-3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it.
+3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it. When the token names both families and the host can use both, the selected address is the IPv6 address and the client MUST also dial the IPv4 address, from a socket of its own opened with the connect, and send each requesting cookie (1) packet to both addresses until the first valid connection cookie arrives. Only this stateless stage races: that first cookie commits the attempt to the family it arrived on, the committed family's address is the server address for the rest of the attempt, the client MUST send its connection request only to that family, and it MUST close the other family's socket. A packet from the other family's address after the commit, a late cookie included, MUST be dropped and counted as from a foreign source. The token's lifetime and timeout bound the attempt as for one address. With one family named, or one family usable, the choice is the single address exactly as above.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
@@ -2886,7 +2885,7 @@ by either endpoint's timeout, or by the server's stop.
    [t13.1 Keep-alive generation](#t13.1) says, paced by elapsed time at the
    `send rate` row of [t3 Constants and registries](#t3).
 2. An endpoint MUST refresh the connection's idle clock when it accepts an
-   opened session packet from the peer, whatever the packet type.
+   opened session packet from the remote endpoint, whatever the packet type.
 3. Every path that ends a connection MUST run exactly one reset on each side
    ([t13.4 Slot reset](#t13.4)).
 4. An endpoint MUST ignore a session event in a state whose row of the state
@@ -2900,7 +2899,7 @@ state; a server holds a slot from the first keep-alive it sends.
 | connected | keep-alive interval elapsed | this endpoint is a server, and no keep-alive it sent has been acknowledged | send a keep-alive and stamp the keep-alive clock | connected |
 | connected | keep-alive interval elapsed | the interval has elapsed since the last send of anything, and this endpoint is a client or a keep-alive has been acknowledged | send a keep-alive | connected |
 | connected | any session packet sent | | stamp the send clock | connected |
-| connected | any session packet accepted from the peer | | refresh the idle clock | connected |
+| connected | any session packet accepted from the remote endpoint | | refresh the idle clock | connected |
 | connected | idle timeout elapsed | the timeout is positive, and no packet has been accepted for the timeout | reset | disconnected |
 | connected | local disconnect | | send the redundant disconnect burst ([t13.3 Disconnect](#t13.3)) and reset | disconnected |
 | connected | disconnect opened | | reset | disconnected |
@@ -2916,15 +2915,15 @@ A keep-alive is a sealed session packet of type `connection keep-alive packet` (
 index and the client slot count.
 
 1. A server MUST send a keep-alive whenever the send rate interval has
-   elapsed since it last sent that peer a keep-alive, until a keep-alive it
-   sent to that peer has been acknowledged. Ordinary traffic MUST NOT
+   elapsed since it last sent that client a keep-alive, until a keep-alive it
+   sent to that client has been acknowledged. Ordinary traffic MUST NOT
    suppress this keep-alive.
 2. A server MUST send a keep-alive whenever the send rate interval has
-   elapsed since it last sent that peer anything, once a keep-alive it sent
-   to that peer has been acknowledged. Ordinary traffic suppresses this
+   elapsed since it last sent that client anything, once a keep-alive it sent
+   to that client has been acknowledged. Ordinary traffic suppresses this
    keep-alive, which appears only while the connection is otherwise idle.
 3. A client in `connected` MUST send a keep-alive whenever the send rate
-   interval has elapsed since it last sent that peer anything. It keeps no
+   interval has elapsed since it last sent the server anything. It keeps no
    acknowledgement latch, so its own traffic always suppresses its
    keep-alives. A client MUST NOT send a keep-alive in any other state.
 
@@ -2933,7 +2932,7 @@ store the client index and the client slot count and MUST enter `connected`.
 A client that receives a keep-alive in `connected` MUST refresh its idle
 clock, as it does for any other accepted packet.
 
-An acknowledgement of a keep-alive is the peer's claim to have received it.
+An acknowledgement of a keep-alive is the client's claim to have received it.
 A server MUST take the claim at face value and MUST NOT wait for any other
 evidence before entering the regime of rule 2.
 
@@ -2978,7 +2977,7 @@ input: one byte per due check, 01 sent and 00 suppressed
 ### t13.2. Timeout
 
 An established connection times out at either end when no packet has been
-accepted from the peer for the connection timeout interval.
+accepted from the remote endpoint for the connection timeout interval.
 
 The interval is the token's `timeout seconds` field ([t6 Connect token](#t6)).
 The server MUST refuse a connection request whose timeout is zero or
@@ -2992,7 +2991,7 @@ A server whose connection times out MUST reset its slot
 ([t13.4 Slot reset](#t13.4)) and MUST destroy the connection's encryption
 mapping. A client whose connection times out MUST enter `connection timed out` and MUST release its connection state.
 
-The timeout stands behind every lost disconnect: a peer that receives no
+The timeout stands behind every lost disconnect: an endpoint that receives no
 disconnect still ends the connection when the interval has elapsed.
 
 <a id="t13.3"></a>
@@ -3170,7 +3169,7 @@ The block length is the [t3 Constants and registries](#t3) (ack block minimum ro
 data, when present. The range count maximum is pinned below.
 
 A sender MUST construct ranges from the acknowledgement-eligible session-sequence state it
-maintains for the peer. The first range ends at largest received, inclusive.
+maintains for the remote endpoint. The first range ends at largest received, inclusive.
 Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
@@ -3263,7 +3262,7 @@ When a valid block newly acknowledges a sent sequence, the sender MUST take
 one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
 elapsed value produces no sample. The sample measures local elapsed time and
-does not subtract peer processing or acknowledgement aggregation delay.
+does not subtract the receiver's processing or acknowledgement aggregation delay.
 The reported RTT MUST be the minimum strictly positive retained first-ack
 sample, in milliseconds. If no strictly positive first-ack sample is retained,
 the reported RTT MUST be zero.
@@ -3570,7 +3569,7 @@ an input ([t1.4 Conventions](#t1.4)).
    timestamp, has elapsed on the client's clock since the attempt began. The
    check does not apply in connected (4).
 6. An endpoint MUST end an established connection when the connection timeout
-   has elapsed with no packet received from the peer. The connection timeout is
+   has elapsed with no packet received from the remote endpoint. The connection timeout is
    the timeout seconds field of the connect token
    ([t6 Connect token](#t6)); a token whose timeout is zero or negative is
    refused at both ends, so every connection times out
@@ -4108,7 +4107,7 @@ at most; a change to any packet size MUST be re-checked against every row.
 | connection cookie | nothing |
 
 The sizes that keep every row true are the pinned rows below. The keep-alive row
-uses its minimum fresh-block size; a keep-alive grows only when the peer's own
+uses its minimum fresh-block size; a keep-alive grows only when the client's own
 session packets added ranges for it to report, so a larger keep-alive is always
 answered traffic, never an amplifier.
 

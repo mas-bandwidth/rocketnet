@@ -129,7 +129,7 @@ window refuses.
   each index so aliasing is observable, without the bytes themselves.
 - **The reverse direction's data.** B sends only blocks (a standalone ack's content);
   the blocks A's own packets carry about B's sequences are the same machine mirrored.
-  The ack debt threshold is not modelled: the standard lets a peer send a block
+  The ack debt threshold is not modelled: the standard lets an endpoint send a block
   whenever it likes, and `SendAck` may.
 - **Many fill threads.** One sender stages one payload at a time; the sequence block a
   fragmented payload reserves is therefore contiguous, as the code's comment says it

@@ -82,6 +82,7 @@ Safety, checked under every loss pattern with no fairness:
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
 | `NoSendOnArrival` | no receive sends (S:2178-2182) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
+| `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index, reassembly or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -99,9 +100,9 @@ is still an observation and its run is expected to fail (see below).
 
 ### The hang the request named
 
-The class: a peer moves to a new state, sends the packet announcing it once, the packet
+The class: one side moves to a new state, sends the packet announcing it once, the packet
 is lost, and nobody ever sends it again. `Connects` and `ServerNotStranded` together
-say neither peer is left waiting for a packet nobody will send again. They are checked
+say neither side is left waiting for a packet nobody will send again. They are checked
 with every deadline and timeout off, so that only the protocol's own re-sending can get
 the client to 4; a deadline would otherwise turn a hang into a tidy -3 or -4.
 
@@ -186,7 +187,7 @@ value arriving. Liveness runs use a FIFO link without latency or duplication
 three on. With reordering or latency on, `Reorder` or `Delay` can hold a copy from the
 head forever, which only the per-value `EventualDelivery` excludes (README-Link.md,
 "What TLC found" 2). With duplication on, TLC found a second artefact: the path keeps a
-wire at `Capacity` with duplicated copies exactly when the peer must send, and Link
+wire at `Capacity` with duplicated copies exactly when the sender must send, and Link
 disables `Send` at `Capacity` rather than dropping, so the protocol's send is blocked
 rather than lost, forever. That is the model-size knob acting as a hidden blocker, not
 the protocol; see "What TLC found".
@@ -381,8 +382,8 @@ The one packet either end sends without re-sending is the disconnect: ten copies
 (`DisconnectCopies` here), then the sender's state is gone
 (`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp:1309-1336`;
 `rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1656-1676`).
-If every copy is lost the peer waits for its idle timeout, which S:2918-2924 states as
-the design ("losing all ten costs only a peer that waits for the timeout"). In this
+If every copy is lost the receiver waits for its idle timeout, which S:2918-2924 states as
+the design ("losing all ten costs only a receiver that waits for the timeout"). In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
 
@@ -451,3 +452,53 @@ case, `mode = bounded`, 110 s) when the branch was brought onto main 0f44ecd8,
 and joined with `tlacheck merge --keep tla/RUNS.tsv`: every required case
 reaches its declared result, `CookieTrust` passes and
 `BrokenCookieRefreshes` reaches `OnlyAuthenticatedRefreshes`.
+
+### 2026-10-24: a connect from a failure state is a fresh attempt (FreshAttemptFromFailure)
+
+`AppConnect` already ran from any `cstate <= 0` and reset the attempt by
+construction (commit 9095b711 lets `rocketnet_client_connect` start over
+from every negative state; `rocketnet_client_protocol_connect` runs
+`rocketnet_client_connection_reset` and takes a fresh salt, a fresh
+ephemeral keypair and sequences at one). No property said so. The action
+property `FreshAttemptFromFailure` does: a step from `cstate < 0` to 1
+takes `cAttempt + 1` and leaves no keys, no cookie, no client index, no
+reassembly, an empty replay window (`cSeen`), the ephemeral live and both
+timers at zero.
+
+`MCClientConnectionRetryFromFailure.cfg` is the control: a responsive
+server of one slot that another client may take (`OthersMayJoin`), the idle
+timeout 3 and the total deadline 5, two attempts, with `SafetyInvariants`,
+`FreshAttemptFromFailure`, `DisconnectIsTerminal`, `TerminalAbsorbing` and
+`StepsForwardOrFails`: pass, 224,362 distinct states. The instance reaches
+-1 (denied, a slot taken), -2, -3, -4, -5 (the four timeouts) and -7 (the
+deadline) and connects again from each; each was checked on the bench with
+a scratch action property `[][~(cstate = k /\ cstate' = 1)]_vars`, which
+TLC violates for every k in {-1, -2, -3, -4, -5, -7}. The cookie restarts
+no clock, so -4 needs the deadline past the timeout and -7 needs it inside
+the timeout of a late challenge: Timeout 2 with Deadline 3 misses -4, with
+Deadline 4 misses -7. -6 (invalid token) is decided before anything is sent
+and is not modelled (the module header); `rocketnet_client_protocol_connect`
+resets before its token checks, so a connect from -6 is the same path, and
+`test_connection_reset_connect_from_each_failure_state` covers it.
+
+`MCClientConnectionBrokenRetryKeepsAttempt.cfg` is the reversed witness:
+the pre-fix retry `AppConnectKeepsAttempt` (only in `SpecRetryKeepsAttempt`)
+keeps `cHasCookie` and `cSeen` from the failed attempt. TLC exits 13 with
+`FreshAttemptFromFailure` violated (62 distinct states explored by the
+recorded run), a trace of 10 states: connect, the request, the
+server's cookie (`cHasCookie` TRUE, state 2), a tick, the request with the
+cookie, the server's denied at request (its one slot is held), state -1,
+then `AppConnectKeepsAttempt` to state 1 at attempt 2 still holding the
+cookie. Checked against the code by hand: `rocketnet_client_process_denied`
+sets CONNECTION_DENIED through `rocketnet_client_set_state`, which runs
+`rocketnet_client_connection_reset` at any state at or below DISCONNECTED,
+and `rocketnet_client_protocol_connect` runs it again before anything else,
+so `has_cookie` and `return_cookie` are zero at the new attempt; only the
+pre-fix action carries them.
+
+The whole `clientconnection` group (28 cases) was re-measured on vision
+(Linux, pinned jar, `/opt/tla/tlacheck`, which prints `groups --stale` `[]`
+at main, one shard per case, 110 s each) and joined with `tlacheck merge --keep tla/RUNS.tsv`. Every declared outcome holds: `RetryFromFailure`
+passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`;
+the six bench debt cases (`LArbitrary`, `LCrash`, `SNone`, `SAlternate`,
+`SBurst`, `SArbitrary`) still exit 124.

@@ -36,10 +36,10 @@ for transport in transports:
         assert observed['peak_allocator_bytes'] <= plan['planned_bytes'], (
             transport, profile, 'planned_bytes', plan['planned_bytes'],
             'peak_allocator_bytes', observed['peak_allocator_bytes'])
-        # Every server owns one stats worker. Portable/msgx have separate RX
-        # and TX workers; one-queue GSO/IOCP add a TX worker to their RX worker.
-        # Wakes add no socket. The native planner must include every worker.
-        assert plan['worker_threads'] == 3
+        # Portable/msgx have separate RX and TX workers; one-queue GSO/IOCP
+        # add a TX worker to their RX worker. Statistics run no thread. The
+        # native planner must include every worker.
+        assert plan['worker_threads'] == 2
         assert plan['sockets'] == 1
         # Startup shims can be freed before this observation, even for
         # portable. The native probe bounds that difference by its planned
@@ -70,7 +70,9 @@ for transport in transports:
             assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
             assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
         assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
-        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 3
+        # portable, msgx, one-queue gso and iocp each plan two workers;
+        # statistics run no thread
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
@@ -79,7 +81,7 @@ if sys.platform.startswith('linux'):
     xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
     assert xdp['umem_bytes'] > 0
-    assert xdp['worker_threads'] == 8  # seven queue workers plus one stats worker
+    assert xdp['worker_threads'] == 7  # seven queue workers
     assert xdp['sockets'] == 7
     assert xdp['os_bytes'] >= xdp['umem_bytes'] + xdp['thread_stack_bytes'] and xdp['thread_stack_bytes'] > 0
     # the provided buffer rings are kernel-mapped memory outside the allocator;
@@ -93,7 +95,7 @@ if sys.platform.startswith('linux'):
         assert 'memory plan unavailable' in uring.stderr, (uring.returncode, uring.stdout, uring.stderr)
 if sys.platform == 'win32':
     rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
-    assert rio_plan['worker_threads'] == 2  # one RIO I/O worker plus one stats worker
+    assert rio_plan['worker_threads'] == 1  # one RIO I/O worker
     # the RIO registered region comes from the allocator; nothing but stacks is OS-owned
     assert rio_plan['allocator_bytes'] == rio_plan['planned_bytes']
     assert rio_plan['os_bytes'] == rio_plan['thread_stack_bytes']

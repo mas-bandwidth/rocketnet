@@ -293,6 +293,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_address.cpp
     sdk/rocketnet_base64.cpp
     sdk/rocketnet_client_protocol.cpp
+    sdk/rocketnet_client_gso_linux.cpp
     sdk/rocketnet_client_slots.cpp
     sdk/rocketnet_client_transport.cpp
     sdk/rocketnet_config.cpp
@@ -370,11 +371,6 @@ add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-# The development library with the server's ack stats worker stepped inline
-# by the caller instead of on its own thread (ROCKETNET_STATS_MANUAL_TEST_HOOKS),
-# for bench/instruction_count only: a thread inside the counted window makes
-# the count depend on the host's load. Built only when a tool links it.
-add_library(rocketnet_dev_stats_manual STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The test hook library: the same source with the unit suite's seams compiled
 # in (the message layer's payload copy count, the ack walk's visit count, the public link simulator's
 # development switch, and the io_uring transport's fake completion source). Only
@@ -395,8 +391,6 @@ add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
 # It is compiled into the development libraries only, never a production
 # archive or a shared library, so no shipped symbol carries it.
 target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
-target_compile_definitions(rocketnet_dev_stats_manual PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
-target_compile_definitions(rocketnet_dev_stats_manual PUBLIC ROCKETNET_STATS_MANUAL_TEST_HOOKS=1)
 target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
@@ -444,15 +438,14 @@ endforeach()
 
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
 target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
-foreach(target rocketnet rocketnet_dev rocketnet_dev_stats_manual rocketnet_shared rocketnet_shared_dev ${rocketnet_test_hook_targets})
+foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${rocketnet_test_hook_targets})
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
     rocketnet_warning_floor(${target})
     # PUBLIC: a consumer's rocketnet.h must see the value its library was
     # built with, and the header's default is 1.
-    if(ROCKETNET_DEV OR target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev" OR
-       target STREQUAL "rocketnet_dev_stats_manual")
+    if(ROCKETNET_DEV OR target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=1)
     else()
         target_compile_definitions(${target} PUBLIC ROCKETNET_DEV=0)
@@ -649,7 +642,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1
-        ROCKETNET_STATS_MANUAL_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1
+        ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
@@ -794,7 +787,7 @@ if(ROCKETNET_BUILD_TESTS)
             set(ROCKETNET_XDP_FILTER_OBJECT "${ROCKETNET_XDP_OBJECT}")
             add_executable(test_xdp_filter tests/test_xdp_filter.cpp)
             add_dependencies(test_xdp_filter rocketnet_xdp_header)
-            # xdp_on_link_reply_reaches_the_peer runs bin/server and bin/client
+            # xdp_on_link_reply_reaches_the_client runs bin/server and bin/client
             if(TARGET server AND TARGET client)
                 add_dependencies(test_xdp_filter server client)
             endif()
@@ -840,7 +833,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/live_matrix.cpp
         functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
-        functional/posix_hard_killed_peer.cpp
+        functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
@@ -878,11 +871,21 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
+    # The worst-case receive update (bench/server_receive_cost.cpp): the bench
+    # compiles sdk/rocketnet_server_transport.cpp into itself, as the unit
+    # suite's loopback case does, to put a capture receive in front of the
+    # loopback transport, so it takes the library's definitions and goes first
+    # on the link line.
+    add_executable(server_receive_cost bench/server_receive_cost.cpp)
+    target_link_libraries(server_receive_cost PRIVATE rocketnet_dev)
+    target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+    target_compile_features(server_receive_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
     foreach(tool soak load load_split soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
-    target_link_libraries(instruction_count PRIVATE rocketnet_dev_stats_manual)
+    target_link_libraries(instruction_count PRIVATE rocketnet_dev)
     target_compile_features(instruction_count PRIVATE cxx_std_11)
     if(CMAKE_BUILD_TYPE)
         target_compile_definitions(instruction_count PRIVATE "ROCKETNET_BUILD_TYPE=\"${CMAKE_BUILD_TYPE}\"")

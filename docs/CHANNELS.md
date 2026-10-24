@@ -46,6 +46,14 @@ records are retransmitted until acknowledged or the reliable timeout ends the
 connection. Large messages use bounded fragmentation and reassembly sized at
 create.
 
+A sequenced message in its ordered turn follows one rule whether it is one
+record or a reliable-sequenced block of fragments: it is delivered as soon as
+it is complete and newer than the channel's sequenced watermark; a newer
+in-turn message supersedes an in-turn block still collecting fragments, and
+one no newer is discarded; a held future state never touches it. Only a
+message ahead of its turn is held, at most one per channel, newest wins
+(`tla/RNChannelTypes.tla`, `InTurnOneRule`).
+
 The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
 estimator, and remains within `message_resend_delay_min_ms` and
 `message_resend_delay_max_ms`. `reliable_message_timeout_ms` bounds the complete reliable
@@ -56,6 +64,12 @@ operation. `packets_per_update` bounds packet work per connection per update.
 Receipt-bearing sends report `ROCKETNET_RECEIPT_STATUS_ACKED` or
 `ROCKETNET_RECEIPT_STATUS_LOSS` through `rocketnet_client_receipts` or
 `rocketnet_server_receipts`. Receipt serials are scoped to their endpoint.
+A type-5 receipt reports LOSS only after its receipt deadline, the packet's
+send time plus `message_resend_delay_max_ms`; an acknowledgement that arrives
+after the adaptive resend delay but inside that deadline reports ACKED. A send
+refused by the send budget or the transport reports LOSS at once, and an
+entry evicted from the sent-packet map reports LOSS at the eviction, the one
+exception (standard/MESSAGES.md m12).
 The stats structs filled by `rocketnet_client_stats`, `rocketnet_server_stats`
 and `rocketnet_server_client_stats` distinguish ordinary connection-state drops
 (`messages_dropped_not_connected`), budget drops (`messages_dropped_over_budget`) and API misuse

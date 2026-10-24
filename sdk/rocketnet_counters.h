@@ -591,14 +591,14 @@
     X( RECEIVE_CURSOR_TOO_SMALL, REFUSAL, NONE ) \
     \
     /* History was overwritten before its ACK with no later ACK to say what */ \
-    /* became of the packet (a silent peer, or a window too small for the */ \
+    /* became of the packet (a silent receiver, or a window too small for the */ \
     /* path), or a writer fell behind the retained sequence window. A */ \
     /* refusal of history: it reads zero on a healthy path. Advisory: the */ \
-    /* packet is still transmitted. An eviction the peer's later ACKs mark */ \
+    /* packet is still transmitted. An eviction the receiver's later ACKs mark */ \
     /* as lost is SEND_HISTORY_LOST instead (tla/RNSentHistory.tla). */ \
     /* REFUSAL: a resource exhaustion. soak_sim moves it only when its wire */ \
     /* loses packets, and says so. */ \
-    /** @brief ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW: Counts unacknowledged send records overwritten before the peer acknowledges them. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW: Counts unacknowledged send records overwritten before the receiver acknowledges them. Unit: occurrences. Class: refusal; family: none. */ \
     X( SEND_HISTORY_OVERFLOW, REFUSAL, NONE ) \
     /* Private packet metadata budget exhausted during a fill phase. */ \
     /** @brief ROCKETNET_COUNTER_SEND_LEASE_FULL: Counts packet leases refused because the private metadata table is full. Unit: occurrences. Class: refusal; family: none. */ \
@@ -715,7 +715,7 @@
     X( MESSAGE_SEQUENCED_HOLD_FULL, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL: Counts receipts dropped because the receipt ring is full (the ring drops the oldest). Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_RECEIPT_RING_FULL, REFUSAL, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED: Counts message receipts acknowledged by the peer. Unit: occurrences. Class: expected; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED: Counts message receipts acknowledged by the receiver. Unit: occurrences. Class: expected; family: none. */ \
     X( MESSAGE_RECEIPT_ACKED, EXPECTED, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS: Counts message receipts whose packet was lost on the path. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RECEIPT_LOSS, PATH_LOSS, NONE ) \
@@ -729,7 +729,7 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR: Counts connection responses whose follow-up packet could not be written. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
     X( CONNECTION_RESPONSE_INTERNAL_ERROR, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
-    /* History was overwritten before its ACK, and the peer had acknowledged */ \
+    /* History was overwritten before its ACK, and the receiver had acknowledged */ \
     /* a sequence at least ROCKETNET_LOSS_PACKET_THRESHOLD above it: the */ \
     /* packet was lost on the path. An outcome, not a refusal. Together with */ \
     /* SEND_HISTORY_OVERFLOW this is the count of overwritten unacknowledged */ \
@@ -748,7 +748,7 @@
     /* (or 1 to F for the last); a record whose span lies outside the */ \
     /* receive ring; an ordering index a window or more ahead of the */ \
     /* channel's read index; and the total of every violation that ended a */ \
-    /* connection. REFUSAL: a clean peer never sends one. appended: indices */ \
+    /* connection. REFUSAL: a clean sender never sends one. appended: indices */ \
     /* are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL: Counts records refused because their channel index is outside the configured range. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_BAD_CHANNEL, REFUSAL, NONE ) \
@@ -906,7 +906,7 @@
     /* SLOT_COLLISION (check 10), and a second ordered record with one channel's */ \
     /* ordering index (DUPLICATE_ORDERING). Every violation also moves */ \
     /* MESSAGE_PROTOCOL_VIOLATION once for the connection it ends. REFUSAL: a */ \
-    /* clean peer never sends any. appended: indices are the contract. */ \
+    /* clean sender never sends any. appended: indices are the contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_FORM: Counts records refused because their payload has no valid form byte. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_BAD_FORM, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_TRUNCATED: Counts records refused because a record is shorter than its header. Unit: occurrences. Class: refusal; family: none. */ \

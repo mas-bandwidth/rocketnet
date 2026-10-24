@@ -284,7 +284,7 @@ static void sequence_burn_pair_teardown( struct sequence_burn_pair_t * pair )
 }
 
 // the measures of one run, read on the burning side (the sender) and on its
-// peer (the receiver)
+// receiving side
 struct sequence_burn_measures_t
 {
     int real_sent;                  // real packets the sender finished
@@ -406,7 +406,6 @@ static void sequence_burn_round( struct sequence_burn_pair_t * pair, int side, i
 
     rocketnet_server_transport_send_packets( pair->server );
     rocketnet_client_transport_send_packets( pair->client );
-    rocketnet_unit_check( rocketnet_server_transport_stats_worker_step_for_test( pair->server ) );
 }
 
 static void sequence_burn_run( int side, int kind, bool burn, const int * control_counts, struct sequence_burn_measures_t * m )
@@ -700,7 +699,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_unreserved_fragment_finish_does_no
 // (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1100) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
 // on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
-// the ordered window's srtt, rttvar and resend_delay; on the peer: every reliable
+// the ordered window's srtt, rttvar and resend_delay; on the receiving side: every reliable
 // message received, in order, and no duplicate.
 
 #define BURN_MESSAGE_ROUNDS 40

@@ -1,7 +1,7 @@
 # Ack Receipts
 
 A game sends state updates unreliably because a lost update is superseded by the next frame's update, never retransmitted.
-Delta compression still needs to know the newest update the peer actually received so the next frame can encode against that baseline.
+Delta compression still needs to know the newest update the client actually received so the next frame can encode against that baseline.
 Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each update one receipt (`ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`) without retransmitting lost ones.
 
 ## What it shows

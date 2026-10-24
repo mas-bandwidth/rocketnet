@@ -501,6 +501,53 @@ static void test_client_error_state_retries_after_completion()
 }
 REGISTER_UNIT_TEST( test_client_error_state_retries_after_completion );
 
+// A connect from a failure state, with no rocketnet_client_disconnect between,
+// carries nothing of the failed attempt: the retry is a fresh handshake into
+// a fresh connection whose sequences and channels count from zero, so the
+// exchange after it delivers its values from 0 in order and nothing else.
+// Once from CONNECTION_DENIED, once from COOKIE_REQUEST_TIMED_OUT, each in its
+// own world. tla/ClientConnection.tla FreshAttemptFromFailure.
+static void test_client_connect_from_failure_carries_nothing()
+{
+    // denied: the server's one slot is held by client 0
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 2 );
+    lifecycle_connect( &world, 0, 0x1501 );
+    rocketnet_client_t * denied = world.clients[1];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1502, 300, token );
+    check( rocketnet_client_connect( denied, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && rocketnet_client_state( denied ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+        lifecycle_pump( &world );
+    check( rocketnet_client_state( denied ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    check( rocketnet_client_index( denied ) == -1 );
+    lifecycle_disconnect( &world, 0 );
+    check( rocketnet_client_state( denied ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+
+    // a new token, connect straight from the denied state
+    lifecycle_connect( &world, 1, 0x1503 );
+    lifecycle_exchange( &world, 1, 0xC3, 3 );
+    check( rn_server_stats_of( world.server ).connections_accepted == 2 );
+    lifecycle_world_destroy( &world );
+
+    // timed out: the first token names an address no server holds
+    lifecycle_world_create( &world, 1, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    lifecycle_token( world.server, 1, &world.identity, 0x1504, 1, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+        lifecycle_pump( &world, 0.1 );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT );
+    check( rocketnet_client_index( client ) == -1 );
+
+    // a new token for the real server, connect straight from the timed out state
+    lifecycle_connect( &world, 0, 0x1505 );
+    lifecycle_exchange( &world, 0, 0xC5, 3 );
+    check( rn_server_stats_of( world.server ).connections_accepted == 1 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_connect_from_failure_carries_nothing );
+
 // Explicit disconnect remains a distinct operation: it clears a negative
 // connection-backed state, even when the client did not ask to retry.
 static void test_client_disconnect_clears_denied_state()
@@ -871,6 +918,33 @@ static void test_server_start_stop_start_again()
     lifecycle_world_destroy( &world );      // destroys a running server
 }
 REGISTER_UNIT_TEST( test_server_start_stop_start_again );
+
+// tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
+// client. rocketnet_server_update returns while !server->running
+// (sdk/rocketnet_api.cpp:1797), and the transport reads only while RUNNING
+// (sdk/rocketnet_server_transport.cpp:2388).
+static void test_server_stopped_admits_no_client()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1610, 1, token );
+    const uint64_t accepted = rn_server_stats_of( world.server ).connections_accepted;
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_running( world.server ) == 0 );
+    check( rocketnet_client_connect( world.clients[0], token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( world.clients[0] ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+    {
+        check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+        lifecycle_pump( &world, 0.1 );
+    }
+    check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+    check( rn_server_stats_of( world.server ).connections_accepted == accepted );
+    check( rocketnet_client_state( world.clients[0] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_stopped_admits_no_client );
 
 static void test_server_stop_disconnects_every_client()
 {

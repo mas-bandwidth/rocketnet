@@ -152,7 +152,25 @@ PickFamily(c) ==
     IF "ipv6" \in TokenFamilies /\ ("ipv6" \in ClientHost(c) \/ "ipv4" \notin TokenFamilies)
       THEN "ipv6" ELSE "ipv4"
 CreateSucceeds(c) == PickFamily(c) \in ClientHost(c)
-ReachesServer(c)  == PickFamily(c) \in ServedFamilies
+
+(***************************************************************************)
+(* The family race (TRANSPORT.md t11 rule 3; RocketnetClientRace in        *)
+(* sdk/rocketnet_client_transport.cpp).  When the token names both         *)
+(* families and the client's host has both, PickFamily is no longer the    *)
+(* whole answer: both families are in flight (RaceFamilies) until the      *)
+(* first cookie answer, which commits the attempt to the family that       *)
+(* answered (cFam); from then on the client sends only there.  Any other   *)
+(* token or host races nothing: RaceFamilies is {PickFamily(c)} and cFam   *)
+(* stays "none", exactly the one-address client.  A cookie carries no      *)
+(* family here, so the commit chooses any served family in flight: the     *)
+(* server's answer is stateless, and either answer may arrive first.       *)
+(* CommitBeforeAnswer is the reversed witness: the client commits on its   *)
+(* own send, before anything answered (ClientCommitEarly).                 *)
+(***************************************************************************)
+BothFamilies == {"ipv4", "ipv6"}
+CommitBeforeAnswer == FALSE
+Races(c) == BothFamilies \subseteq TokenFamilies /\ BothFamilies \subseteq ClientHost(c)
+RaceFamilies(c) == IF Races(c) THEN BothFamilies ELSE {PickFamily(c)}
 TokenAddressAdvertised(arrival, tokFams) ==
     CASE AddressMatch = "either" -> arrival \in tokFams /\ arrival \in ServedFamilies
       [] "ipv6" \in tokFams     -> ServedFamilies = {"ipv6"}
@@ -210,6 +228,7 @@ VARIABLES
     cDiscPending,  \* disconnect copies still to send after an application disconnect
     cDiscPkt,      \* the copy being sent
     cLostKinds,    \* KindLoss bookkeeping
+    cFam,          \* the family the race committed to ("none" before the first cookie, or no race)
     \* the server (struct rocketnet_server_protocol_t and its tables)
     smap,          \* [Addrs -> Mapping]: the encryption map
     slot,          \* [Slots -> SlotRec]: the client slots
@@ -223,7 +242,7 @@ VARIABLES
     s2cWire, s2cSent, s2cPulse
 
 clientVars == <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cSinceSend,
-                cDiscPending, cDiscPkt, cLostKinds>>
+                cDiscPending, cDiscPkt, cLostKinds, cFam>>
 serverVars == <<smap, slot, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
 c2sVars    == <<c2sWire, c2sSent, c2sPulse>>
 s2cVars    == <<s2cWire, s2cSent, s2cPulse>>
@@ -284,9 +303,21 @@ MapAddr(p) ==
 
 \* the family a request arrived on: the sending client's selected family.
 \* Addresses are unique (init and ClientMove), so the sender is one client.
+\* the families the client's requests go to (both until the race commits,
+\* then the committed one; one family when nothing races), and whether any
+\* of them reaches the server
+InFlight(c) == IF cFam[c] = "none" THEN RaceFamilies(c) ELSE {cFam[c]}
+ReachesServer(c)  == InFlight(c) \cap ServedFamilies # {}
+
+\* During the race a copy arrives on each served family in flight; the
+\* server's verdict is the same on either (the stateless cookie), so the
+\* model takes one.
 ArrivalFamily(a) ==
     IF \E c \in Clients : cAddr[c] = a
-      THEN PickFamily(CHOOSE c \in Clients : cAddr[c] = a)
+      THEN LET c == CHOOSE c \in Clients : cAddr[c] = a IN
+           IF InFlight(c) \cap ServedFamilies # {}
+             THEN CHOOSE f \in InFlight(c) \cap ServedFamilies : TRUE
+             ELSE PickFamily(c)
       ELSE "ipv4"
 
 (***************************************************************************)
@@ -326,7 +357,7 @@ Init ==
     /\ cCookieAddr = [c \in Clients |-> 0] /\ cKeys = [c \in Clients |-> 0]
     /\ cMoves = [c \in Clients |-> 0] /\ cSinceSend = [c \in Clients |-> 0]
     /\ cDiscPending = [c \in Clients |-> 0] /\ cDiscPkt = [c \in Clients |-> NoPkt]
-    /\ cLostKinds = [c \in Clients |-> {}]
+    /\ cLostKinds = [c \in Clients |-> {}] /\ cFam = [c \in Clients |-> "none"]
     /\ smap = [a \in Addrs |-> NoMap] /\ slot = [i \in Slots |-> FreeSlot]
     /\ bound = [t \in Tokens |-> 0] /\ churnDenied = FALSE
     /\ sDiscPending = 0 /\ sDiscPkt = NoPkt /\ sLostKinds = {}
@@ -345,6 +376,7 @@ ClientConnect(c) ==
         /\ cstate' = [cstate EXCEPT ![c] = 1] /\ cAtt' = [cAtt EXCEPT ![c] = @ + 1]
         /\ cCookieAddr' = [cCookieAddr EXCEPT ![c] = 0] /\ cKeys' = [cKeys EXCEPT ![c] = 0]
         /\ cSinceSend' = [cSinceSend EXCEPT ![c] = SendInterval]   \* the first update sends at once
+        /\ cFam' = [cFam EXCEPT ![c] = "none"]                      \* both families in flight again
     /\ UNCHANGED <<cAddr, cMoves, cDiscPending, cDiscPkt, cLostKinds, serverVars, c2sVars, s2cVars>>
 
 \* rocketnet_client_protocol_disconnect: in 3 or 4 a burst of sealed
@@ -357,7 +389,7 @@ ClientAppDisconnect(c) ==
                                                        salt |-> SaltOf(c), nonce |-> cKeys[c]]]
          ELSE UNCHANGED <<cDiscPending, cDiscPkt>>
     /\ cstate' = [cstate EXCEPT ![c] = 0] /\ cKeys' = [cKeys EXCEPT ![c] = 0]
-    /\ UNCHANGED <<cAtt, cTok, cAddr, cCookieAddr, cMoves, cSinceSend, cLostKinds,
+    /\ UNCHANGED <<cAtt, cTok, cAddr, cCookieAddr, cMoves, cSinceSend, cLostKinds, cFam,
                    serverVars, c2sVars, s2cVars>>
 
 \* the host vanishes (power, a cable): nothing is sent, ever again
@@ -365,7 +397,7 @@ ClientVanish(c) ==
     /\ Disconnects /\ cstate[c] # 0
     /\ cstate' = [cstate EXCEPT ![c] = 0] /\ cKeys' = [cKeys EXCEPT ![c] = 0]
     /\ UNCHANGED <<cAtt, cTok, cAddr, cCookieAddr, cMoves, cSinceSend, cDiscPending, cDiscPkt,
-                   cLostKinds, serverVars, c2sVars, s2cVars>>
+                   cLostKinds, cFam, serverVars, c2sVars, s2cVars>>
 
 \* the client's address changes (NAT rebinding, a handover) to an address
 \* no client holds; the old address keeps whatever mapping it had, and a
@@ -376,7 +408,7 @@ ClientMove(c) ==
                         /\ cAddr' = [cAddr EXCEPT ![c] = a]
     /\ cMoves' = [cMoves EXCEPT ![c] = @ + 1]
     /\ UNCHANGED <<cstate, cAtt, cTok, cCookieAddr, cKeys, cSinceSend, cDiscPending, cDiscPkt,
-                   cLostKinds, serverVars, c2sVars, s2cVars>>
+                   cLostKinds, cFam, serverVars, c2sVars, s2cVars>>
 
 \* the scheduled send, rocketnet_client_protocol_update: nothing is sent
 \* because a packet arrived
@@ -386,15 +418,25 @@ ClientPacket(c) ==
       [] cstate[c] = 3        -> [type |-> "response", from |-> cAddr[c], salt |-> SaltOf(c), nonce |-> cKeys[c]]
       [] cstate[c] = 4        -> [type |-> "keepalive", from |-> cAddr[c], salt |-> SaltOf(c), nonce |-> cKeys[c]]
 
-\* a client whose selected family the server does not serve sends to an
-\* address nobody serves
+\* a client none of whose families in flight the server serves sends to
+\* addresses nobody serves; during the race the one request goes to both
+\* families, and the server hears it on a family it serves
 ClientSend(c) ==
     /\ cstate[c] \in 1..4 /\ cSinceSend[c] = SendInterval
     /\ IF ReachesServer(c) THEN ClientSendPacket(c, ClientPacket(c))
                         ELSE UNCHANGED <<c2sVars, cLostKinds>>
     /\ cSinceSend' = [cSinceSend EXCEPT ![c] = 0]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
-                   serverVars, s2cVars>>
+                   cFam, serverVars, s2cVars>>
+
+\* the reversed witness only (CommitBeforeAnswer): the client commits to a
+\* family of its own choosing while still requesting a cookie, before any
+\* answer arrived
+ClientCommitEarly(c) ==
+    /\ CommitBeforeAnswer /\ cstate[c] = 1 /\ cFam[c] = "none" /\ Races(c)
+    /\ \E f \in RaceFamilies(c) : cFam' = [cFam EXCEPT ![c] = f]
+    /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cSinceSend,
+                   cDiscPending, cDiscPkt, cLostKinds, serverVars, c2sVars, s2cVars>>
 
 \* one copy of the disconnect burst; the burst is never retransmitted
 ClientDiscCopy(c) ==
@@ -403,7 +445,7 @@ ClientDiscCopy(c) ==
     /\ cDiscPending' = [cDiscPending EXCEPT ![c] = @ - 1]
     /\ cDiscPkt' = IF cDiscPending[c] = 1 THEN [cDiscPkt EXCEPT ![c] = NoPkt] ELSE cDiscPkt
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cSinceSend,
-                   serverVars, s2cVars>>
+                   cFam, serverVars, s2cVars>>
 
 (***************************************************************************)
 (* A client receives what is addressed to the address it holds; the state  *)
@@ -413,8 +455,20 @@ ClientDiscCopy(c) ==
 clientRecvUnchanged == <<cAtt, cTok, cAddr, cMoves, cSinceSend, cDiscPending, cDiscPkt, cLostKinds,
                          serverVars, c2sVars>>
 
+\* the families a cookie may commit the attempt to: in the race, the first
+\* valid cookie in requesting cookie commits to a served family in flight
+\* (the one whose answer came first); any other packet, state or client
+\* leaves cFam as it is.  After the commit the other family's late cookie
+\* reaches a closed socket and is dropped (the code counts it as a foreign
+\* source), so it never changes cFam.
+CommitChoices(c, p) ==
+    IF p.type = "cookie" /\ cstate[c] = 1 /\ p.salt = SaltOf(c) /\ cFam[c] = "none" /\ Races(c)
+      THEN RaceFamilies(c) \cap ServedFamilies
+      ELSE {cFam[c]}
+
 ClientRecvAt(c, p) ==
     /\ S2C!Deliver(p)
+    /\ \E f \in CommitChoices(c, p) : cFam' = [cFam EXCEPT ![c] = f]
     /\ CASE p.type = "cookie" ->
                 /\ IF cstate[c] \in {1, 2} /\ p.salt = SaltOf(c)
                      THEN cCookieAddr' = [cCookieAddr EXCEPT ![c] = cAddr[c]]
@@ -642,7 +696,7 @@ Tick ==
                                           !.sinceKA = Sat(m.sinceKA, SendInterval)]]
     /\ slot' = [i \in Slots |-> IF slot[i].used /\ TimedOut(smap[slot[i].addr]) THEN FreeSlot ELSE slot[i]]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
-                   cLostKinds, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
+                   cLostKinds, cFam, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
@@ -650,6 +704,7 @@ S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars
 Next ==
     \/ \E c \in Clients : ClientConnect(c) \/ ClientAppDisconnect(c) \/ ClientVanish(c)
                           \/ ClientMove(c) \/ ClientSend(c) \/ ClientDiscCopy(c)
+                          \/ ClientCommitEarly(c)
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
     \/ \E i \in Slots : ServerKeepAlive(i) \/ ServerAppDisconnect(i)
@@ -712,6 +767,7 @@ TypeOK ==
     /\ cMoves \in [Clients -> 0..MaxMoves] /\ cSinceSend \in [Clients -> 0..SendInterval]
     /\ cDiscPending \in [Clients -> 0..DisconnectCopies]
     /\ cDiscPkt \in [Clients -> ClientSealed \cup {NoPkt}]
+    /\ cFam \in [Clients -> BothFamilies \cup {"none"}]
     /\ smap \in [Addrs -> Mapping] /\ slot \in [Slots -> SlotRec]
     /\ bound \in [Tokens -> Addrs \cup {0}] /\ churnDenied \in BOOLEAN
     /\ sDiscPending \in 0..DisconnectCopies /\ sDiscPkt \in ServerPackets \cup {NoPkt}
@@ -802,6 +858,17 @@ ResponseNeverRefreshesConnected ==
     [][(\E p \in ClientPackets : p.type = "response" /\ C2S!Deliver(p))
          => \A i \in UsedSlots : smap'[slot[i].addr].sinceRecv = smap[slot[i].addr].sinceRecv]_vars
 
+\* the family race: past requesting cookie a racing client has committed
+\* to one family, so every request carrying a cookie goes to one family
+\* only and never to two in one attempt
+OneFamilyPerAttempt ==
+    \A c \in Clients : (Races(c) /\ cstate[c] \in {2, 3, 4}) => cFam[c] \in BothFamilies
+
+\* the commit follows an answer: only a family the server serves (one that
+\* can have answered) is ever committed to.  CommitBeforeAnswer breaks it.
+CommitsOnAnswer ==
+    \A c \in Clients : cFam[c] # "none" => cFam[c] \in ServedFamilies
+
 (***************************************************************************)
 (* Liveness.                                                               *)
 (***************************************************************************)
@@ -827,7 +894,7 @@ BothFamiliesConnect ==
      /\ ConfiguredFamilies = {"ipv4", "ipv6"})
       => (\A c \in Clients : <>(cstate[c] = 4))
 
-\* neither peer is left waiting for a packet nobody will send again: a
+\* neither side is left waiting for a packet nobody will send again: a
 \* half-open mapping is established or dies, and an unacknowledged slot is
 \* acknowledged or released
 ServerNotStranded ==
