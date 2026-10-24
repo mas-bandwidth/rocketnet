@@ -659,6 +659,30 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
 }
 
+// The send half of the caller step, for a client stepped on its caller's
+// thread by its transport (built-in loopback): every ready ring goes to the
+// transport and nothing is received, so arriving datagrams wait for the step
+// at the start of the next update, which exposes them in the same call. A
+// receive here would publish a buffer that update's own step then could not
+// add to (MaxReady 1), and the datagrams after it would wait an update more.
+inline void rocketnet_client_io_send_step( rocketnet_client_io_t * io )
+{
+    rocketnet_assert( io );
+    if ( io->stopped.load( std::memory_order_acquire ) || io->quit.load( std::memory_order_acquire ) )
+        return;
+    for ( ;; )
+    {
+        rocketnet_platform_mutex_acquire( io->mutex );
+        if ( io->send_ring >= 0 )
+            rocketnet_buffer_handoff_release( &io->send, io->send_ring );
+        io->send_ring = rocketnet_buffer_handoff_take( &io->send );
+        rocketnet_platform_mutex_release( io->mutex );
+        if ( io->send_ring < 0 )
+            return;
+        rocketnet_client_io_send_ring( io, io->send_ring );
+    }
+}
+
 // RNClientIo IoExit; the I/O thread's body. Calls the step in a loop until it
 // returns EXITED (docs/CLIENT-IO.md _Stop and destroy order_). The transport
 // creates the thread with this function and joins it before closing the transport.

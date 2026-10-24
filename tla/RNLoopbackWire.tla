@@ -204,10 +204,12 @@ Copy ==
     /\ taken' = IF ReleaseBeforeCopy THEN << >> ELSE taken
     /\ UNCHANGED << spc, sslot, sent, ready, free, filled, content, dropped, lost, live, pins, freed, touchedFreed >>
 
-(* the flags are cleared before the exchange that frees the slots       *)
+(* the flags are cleared before the exchange that frees the slots, to   *)
+(* the front of the free queue: the next reserve reuses the slot freed  *)
+(* last                                                                 *)
 Release ==
     /\ rpc = "release"
-    /\ free' = free \o taken
+    /\ free' = taken \o free
     /\ filled' = [ s \in Slots |-> IF s \in Range( taken ) THEN FALSE ELSE filled[s] ]
     /\ taken' = IF ReleaseBeforeCopy THEN taken ELSE << >>
     /\ rpc' = IF ReleaseBeforeCopy THEN "copied" ELSE "take"

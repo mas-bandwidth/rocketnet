@@ -133,6 +133,20 @@ template<int NumBuffers> inline int rocketnet_buffer_handoff_reserve( rocketnet_
     return index;
 }
 
+// tla/RNLoopbackWire.tla Release, for an inbox of one-datagram buffers: the
+// consumer returns a buffer to the front of the free queue, so the next
+// reserve reuses the buffer freed last and an inbox touches only the slots
+// its traffic needs at once. Mutex held.
+
+template<int NumBuffers> inline void rocketnet_buffer_handoff_release_front( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int index )
+{
+    rocketnet_assert( index >= 0 && index < NumBuffers );
+    rocketnet_assert( handoff->free_count < NumBuffers );
+    handoff->free_head = ( handoff->free_head + NumBuffers - 1 ) % NumBuffers;
+    handoff->free_index[handoff->free_head] = index;
+    handoff->free_count++;
+}
+
 // The oldest ready buffer without taking it, or -1 when none is ready. Mutex held.
 
 template<int NumBuffers> inline int rocketnet_buffer_handoff_ready_head( const rocketnet_buffer_handoff_t<NumBuffers> * handoff )

@@ -531,8 +531,8 @@ static int loopback_take( rocketnet_loopback_endpoint_t * receiver, rocketnet_ad
     if ( num_taken > 0 )
     {
         rocketnet_platform_mutex_acquire( &inbox->mutex );
-        for ( int i = 0; i < num_taken; ++i )
-            rocketnet_buffer_handoff_release( &inbox->handoff, indices[i] );
+        for ( int i = num_taken - 1; i >= 0; --i )
+            rocketnet_buffer_handoff_release_front( &inbox->handoff, indices[i] );
         rocketnet_platform_mutex_release( &inbox->mutex );
     }
     *taken = num_taken;

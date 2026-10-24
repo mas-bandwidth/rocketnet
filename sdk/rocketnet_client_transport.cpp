@@ -2374,7 +2374,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         rocketnet_client_io_return( &client_transport->client_io );
 
         rocketnet_client_transport_io_hand_off( client_transport );
-        if ( client_transport->step_in_update )
+        if ( client_transport->transport_stepped )
+            rocketnet_client_io_send_step( &client_transport->client_io ); // RNClientIo CallerStep, send half
+        else if ( client_transport->step_in_update )
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
     }
     else if ( packet_bytes > 0 )
@@ -2745,7 +2747,9 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
         // write into ring slots, so the I/O thread never reads the arena.
         rocketnet_client_transport_io_hand_off( client_transport );
         rocketnet_send_arena_reset( client_transport->send_arena );
-        if ( client_transport->step_in_update )
+        if ( client_transport->transport_stepped )
+            rocketnet_client_io_send_step( &client_transport->client_io ); // RNClientIo CallerStep, send half
+        else if ( client_transport->step_in_update )
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
         return;
     }
