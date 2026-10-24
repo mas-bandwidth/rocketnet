@@ -237,22 +237,6 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 
-// Test-only: the product's walk is rn_ordered_write (sdk/rocketnet_channel.cpp).
-// Walks the small-record FIFO from its head while
-// now >= last_send + rn_window_ack_resend_delay( ack ), then the chunk FIFO
-// while now >= last_send + rn_window_ack_chunk_resend_delay( ack )
-// (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla WriteOldest,
-// tla/RNResendTiming.tla Walk). Each walk stops at the first entry that is not
-// yet due, so the work is O(due) and O(1) when nothing is due, and a chunk
-// that is not due never holds back a small record that is. Each due number is committed in a new sent-packet entry
-// with packet_id = (*io_next_packet_id)++, its last_send is set to `now`, it is
-// moved to the tail of the resend FIFO, its number is written to `out_numbers`,
-// and MESSAGE_RESENT is incremented. The delay is the same for every pass;
-// nothing backs off.
-// Returns the number of resent message numbers written to `out_numbers` (0 if
-// none are due or if reliable_timeout has fired).
-uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers );
-
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the
 // update's time, after its acks have moved the resend delay. It keeps this update's and

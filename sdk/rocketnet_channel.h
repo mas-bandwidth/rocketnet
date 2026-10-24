@@ -276,6 +276,20 @@ void rn_channels_block_settle( struct rn_channels_t * channels, uint32_t held, s
 
 int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
 
+// The dispatch half of m4 checks 7 and 8: a block's shape bounds (count at
+// least two, inside W and max_message_bytes, index inside the count, every
+// fragment but the last exactly F) and its base units, uniform across the three
+// reliable codes. False on a breach; the caller counts BAD_BLOCK. The caller
+// checks the block's span and the fragment's own ring span against the ring and
+// counts its own counter. The layer 2 reader works on wire limits before a
+// region exists, so it checks the same bounds apart.
+bool rn_block_shape_valid( const struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, int64_t * out_base_units );
+
+// The receiver's descriptor of a record's number: NULL when the slot is live
+// under a different number (check 10, SLOT_COLLISION); fills a not-live slot
+// from the record so dispatch stands alone.
+struct rn_receive_descriptor_t * rn_channels_descriptor( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot );
+
 #if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
 // Present only in the unit-test library: the receive descriptors a code-2
 // block's chunks visit on their way to one delivery, counted as work done.

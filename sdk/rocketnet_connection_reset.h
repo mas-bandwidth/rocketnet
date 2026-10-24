@@ -58,12 +58,12 @@ struct rn_message_object_t;
     X( KEEP, stop_requested ) X( KEEP, stopped ) X( KEEP, stop_burst ) \
     X( KEEP, stop_burst_count ) X( KEEP, stop_burst_pending ) X( KEEP, stop_burst_bytes ) X( KEEP, stop_address ) \
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
-    X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
+    X( KEEP, time ) X( KEEP, raw_time ) X( KEEP, time_offset ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
     X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
-    X( KEEP, client_stats ) X( KEEP, stats_frame_time ) X( KEEP, stats_frame_number ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
+    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
     X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
