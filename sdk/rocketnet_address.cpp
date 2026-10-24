@@ -128,30 +128,44 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
     {
         if ( address->port != 0 )
         {
-            snprintf( buffer,
-                      ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
-                      "%d.%d.%d.%d:%d",
-                      address->data.ipv4[0],
-                      address->data.ipv4[1],
-                      address->data.ipv4[2],
-                      address->data.ipv4[3],
-                      address->port );
+            const int result = snprintf( buffer,
+                                         ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
+                                         "%d.%d.%d.%d:%d",
+                                         address->data.ipv4[0],
+                                         address->data.ipv4[1],
+                                         address->data.ipv4[2],
+                                         address->data.ipv4[3],
+                                         address->port );
+            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+            {
+                rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d:%d",
+                                 address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3], address->port );
+            }
         }
         else
         {
-            snprintf( buffer,
-                      ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
-                      "%d.%d.%d.%d",
-                      address->data.ipv4[0],
-                      address->data.ipv4[1],
-                      address->data.ipv4[2],
-                      address->data.ipv4[3] );
+            const int result = snprintf( buffer,
+                                         ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
+                                         "%d.%d.%d.%d",
+                                         address->data.ipv4[0],
+                                         address->data.ipv4[1],
+                                         address->data.ipv4[2],
+                                         address->data.ipv4[3] );
+            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+            {
+                rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d",
+                                 address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3] );
+            }
         }
         return buffer;
     }
     else
     {
-        snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
+        const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
+        if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+        {
+            rocketnet_error( "address formatting failed or string truncated: NONE" );
+        }
         return buffer;
     }
 }
@@ -172,18 +186,27 @@ const char * rocketnet_address_to_string_without_port( const rocketnet_address_t
     }
     else if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
-        snprintf( buffer,
-                  ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
-                  "%d.%d.%d.%d",
-                  address->data.ipv4[0],
-                  address->data.ipv4[1],
-                  address->data.ipv4[2],
-                  address->data.ipv4[3] );
+        const int result = snprintf( buffer,
+                                     ROCKETNET_MAX_ADDRESS_STRING_LENGTH,
+                                     "%d.%d.%d.%d",
+                                     address->data.ipv4[0],
+                                     address->data.ipv4[1],
+                                     address->data.ipv4[2],
+                                     address->data.ipv4[3] );
+        if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+        {
+            rocketnet_error( "address formatting failed or string truncated: %d.%d.%d.%d",
+                             address->data.ipv4[0], address->data.ipv4[1], address->data.ipv4[2], address->data.ipv4[3] );
+        }
         return buffer;
     }
     else
     {
-        snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
+        const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s", "NONE" );
+        if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
+        {
+            rocketnet_error( "address formatting failed or string truncated: NONE" );
+        }
         return buffer;
     }
 }
@@ -232,7 +255,7 @@ void rocketnet_address_anonymize( rocketnet_address_t * address )
     {
         address->data.ipv4[3] = 0;
     }
-    else
+    else if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         if ( rocketnet_address_is_ipv4_in_ipv6( address ) )
         {
