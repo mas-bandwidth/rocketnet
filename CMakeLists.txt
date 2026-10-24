@@ -825,6 +825,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/rocketnet_functional_tests.cpp
         functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
+        functional/server_receive_low_tick.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp

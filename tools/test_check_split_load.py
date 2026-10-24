@@ -4,13 +4,20 @@
 import hashlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.check_split_load import main, strict_object, validate
+# Run as `python3 tools/test_check_split_load.py` from the repository root,
+# or as a module.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.check_split_load import (PROOF_FRAGMENTED_MODES, PROOF_MODES, PROOF_RECEIPT,  # noqa: E402
+                                    PROOF_RELIABLE, main, proof_cell_line, proof_expected_sent,
+                                    proof_streams, strict_object, validate)
 
 RUN = "0123456789abcdef"
 
@@ -464,6 +471,276 @@ class SplitReceiptTests(unittest.TestCase):
         self.assertEqual(data["non_timing_verdict"], "PASS")
         self.assertEqual(data["timing_verdict"], "PASS")
         self.assertEqual(stderr, "")
+
+
+# The proof load: two clients, one per shard, 60 s at 10 offers per second.
+# Unreliable streams lose their last message (counted, never failed); the
+# RELIABLE_SEQUENCED streams skip their first (counted, never failed).
+PROOF_WIRE_BYTES = 2000000  # 266.7 kbps over 60 s, above the 256 kbps floor
+
+
+def proof_map_hex(sequences):
+    value = 0
+    for sequence in sequences:
+        value |= 1 << sequence
+    return value.to_bytes(max(1, value.bit_length() // 8 + 1), "little").hex()
+
+
+def proof_verify_lines(role, client):
+    send = "c2s" if role == "client-shard" else "s2c"
+    lines = []
+    for direction, mode, size in proof_streams():
+        sent = proof_expected_sent(client, mode, size, 600)
+        fields = dict(role=role, run_id=RUN, client=client, direction=direction, mode=mode, size=size)
+        if mode in PROOF_RELIABLE:
+            got = list(range(1, sent + 1)) if mode != 4 else list(range(2, sent + 1))
+        else:
+            got = list(range(1, sent))
+        if direction == send:
+            fields.update(side="send", sent=sent)
+            if mode in PROOF_RECEIPT:
+                fields.update(receipt_sends=sent, acked=len(got), lost=sent - len(got), without_outcome=0,
+                              ledger_errors=0, acked_map=proof_map_hex(got))
+        else:
+            fields.update(side="receive", delivered=len(got), newest=max(got), duplicates=0, order_errors=0,
+                          stale=0, identity_errors=0)
+            if mode in PROOF_RECEIPT:
+                fields.update(delivered_map=proof_map_hex(got))
+        lines.append(line("split_verify", fields))
+    return lines
+
+
+def proof_delivered(role, clients):
+    receive = "s2c" if role == "client-shard" else "c2s"
+    total = 0
+    for client in clients:
+        for direction, mode, size in proof_streams():
+            if direction != receive:
+                continue
+            sent = proof_expected_sent(client, mode, size, 600)
+            total += sent - 1 if mode == 4 or mode not in PROOF_RELIABLE else sent
+    return total
+
+
+def proof_receipt(role, first, count):
+    fields = receipt(role, first, count, rate=10)
+    rate = PROOF_WIRE_BYTES * 8 / (60.0 * 1000)
+    fields.update(load="proof", payload_bytes="proof", wire_up=PROOF_WIRE_BYTES * count,
+                  wire_down=PROOF_WIRE_BYTES * count, max_client_up_kbps=f"{rate:.6f}",
+                  max_client_down_kbps=f"{rate:.6f}", aggregate_up_kbps=f"{rate * count:.6f}",
+                  aggregate_down_kbps=f"{rate * count:.6f}",
+                  transport_pin="portable" if role == "server" else "none")
+    if role == "server":
+        fields.update(c2s_received=proof_delivered("server", range(first, first + count)))
+    else:
+        fields.update(s2c_received=proof_delivered("client-shard", range(first, first + count)))
+    return fields
+
+
+def proof_role_line(role, transport_pin):
+    return line("split_proof", dict(role=role, run_id=RUN, transport="portable", transport_pin=transport_pin,
+                small_bytes=1200, fragmented_bytes=2000, target_kbps=256,
+                min_client_up_kbps="266.666667", min_client_down_kbps="266.666667", checksum_errors=0,
+                receipt_errors=0, receipts_dropped=0, disconnects=0, verdict="PASS"))
+
+
+def proof_wire_lines(role, clients):
+    return [line("split_wire", dict(role=role, run_id=RUN, client=client, sent_bytes=PROOF_WIRE_BYTES,
+                 received_bytes=PROOF_WIRE_BYTES)) for client in clients]
+
+
+def proof_fixture():
+    ready = line("split_ready", dict(schema="split_v1", role="server", run_id=RUN, total=2, duration_s=60,
+                 profile="default", payload_bytes="proof", rate_target_hz=10, load="proof",
+                 address="192.0.2.1:40000", key="ab" * 32, transport="portable",
+                 startup_utc_s=1000, transport_pin="portable"))
+    timing = line("split_server_timing", dict(run_id=RUN, scope="traffic_plus_drain",
+                  server_update_count=100, server_update_p50_upper_us=20,
+                  server_update_p99_upper_us=80, server_update_max_us="89.3",
+                  server_send_count=100, server_send_p99_upper_us=80, clock_pair_count=10000))
+    server = "\n".join([ready, *proof_verify_lines("server", 0), *proof_verify_lines("server", 1),
+                        *proof_wire_lines("server", range(2)), timing,
+                        line("split_receipt", proof_receipt("server", 0, 2)), proof_role_line("server", "portable")])
+    shards = []
+    for client in range(2):
+        shard_ready = line("split_shard_ready", dict(schema="split_v1", role="client-shard", run_id=RUN,
+                           total=2, first=client, count=1, duration_s=60, profile="default",
+                           payload_bytes="proof", rate_target_hz=10, load="proof"))
+        shards.append("\n".join([shard_ready, *proof_verify_lines("client-shard", client),
+                                 *proof_wire_lines("client-shard", [client]),
+                                 line("split_receipt", proof_receipt("client-shard", client, 1)),
+                                 proof_role_line("client-shard", "none")]))
+    return server, shards
+
+
+def proof_replace(text, prefix, old, new):
+    """Replaces old with new in the first line that starts with prefix."""
+    lines = text.split("\n")
+    for index, current in enumerate(lines):
+        if current.startswith(prefix):
+            if old not in current:
+                raise AssertionError(f"{old} not in {current}")
+            lines[index] = current.replace(old, new, 1)
+            return "\n".join(lines)
+    raise AssertionError(f"no line starts with {prefix}")
+
+
+class SplitProofTests(unittest.TestCase):
+    def test_proof_rotation_matches_the_simulation(self):
+        # The merger's count per stream must be the rotation the harness
+        # sends: offer k of client c carries the small message in mode
+        # (c + k) % 8 and the fragmented message in the reliable mode
+        # (c + k) % 5 (tools/load_split_verify.h, split_verify_small_mode).
+        for offers in (600, 601, 750):
+            for client in (0, 1, 7, 13, 999):
+                small = {mode: 0 for mode in range(PROOF_MODES)}
+                fragmented = {mode: 0 for mode in range(PROOF_MODES)}
+                for offer in range(offers):
+                    small[(client + offer) % PROOF_MODES] += 1
+                    fragmented[PROOF_FRAGMENTED_MODES[(client + offer) % len(PROOF_FRAGMENTED_MODES)]] += 1
+                for mode in range(PROOF_MODES):
+                    self.assertEqual(proof_expected_sent(client, mode, "small", offers), small[mode])
+                    if mode in PROOF_FRAGMENTED_MODES:
+                        self.assertEqual(proof_expected_sent(client, mode, "fragmented", offers),
+                                         fragmented[mode])
+                    else:
+                        self.assertEqual(fragmented[mode], 0)
+
+    def check(self, server, shards):
+        return validate(server, shards, RUN, 2, 60, 1000.0, server_transport="portable",
+                        client_transport="portable", allocation_manifest=allocation(server, shards), load="proof")
+
+    def test_proof_passes(self):
+        result = self.check(*proof_fixture())
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["streams"], 2 * 26)
+        self.assertGreater(result["unreliable_lost"], 0)
+        self.assertGreater(result["sequenced_skipped"], 0)
+        self.assertTrue(proof_cell_line(result).startswith("split_proof_cell: verdict=PASS transport=portable"))
+
+    def test_proof_logs_refused_as_full_load(self):
+        server, shards = proof_fixture()
+        with self.assertRaisesRegex(ValueError, "payload_bytes|load"):
+            validate(server, shards, RUN, 2, 60, 1000.0, allocation_manifest=allocation(server, shards), load="full")
+
+    def test_proof_duplicate_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_verify: role=server run_id=" + RUN + " client=1 direction=c2s mode=0 size=small",
+                               "duplicates=0", "duplicates=1")
+        with self.assertRaisesRegex(ValueError, "duplicate delivery"):
+            self.check(server, shards)
+
+    def test_proof_gap_fails(self):
+        server, shards = proof_fixture()
+        prefix = "split_verify: role=client-shard run_id=" + RUN + " client=0 direction=s2c mode=2 size=fragmented"
+        sent = proof_expected_sent(0, 2, "fragmented", 600)
+        shards[0] = proof_replace(shards[0], prefix, f"delivered={sent}", f"delivered={sent - 1}")
+        received = proof_delivered("client-shard", [0])
+        shards[0] = proof_replace(shards[0], "split_receipt:", f"s2c_received={received}",
+                                  f"s2c_received={received - 1}")
+        with self.assertRaisesRegex(ValueError, "gap"):
+            self.check(server, shards)
+
+    def test_proof_older_sequenced_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_verify: role=server run_id=" + RUN + " client=0 direction=c2s mode=1 size=small",
+                               "stale=0", "stale=1")
+        with self.assertRaisesRegex(ValueError, "older message"):
+            self.check(server, shards)
+
+    def test_proof_receipt_mismatch_fails(self):
+        # the sender says ACKED for the last unreliable message, which the receiver never recorded
+        server, shards = proof_fixture()
+        prefix = "split_verify: role=client-shard run_id=" + RUN + " client=1 direction=c2s mode=5 size=small"
+        sent = proof_expected_sent(1, 5, "small", 600)
+        shards[1] = proof_replace(shards[1], prefix, f"acked={sent - 1} lost=1", f"acked={sent} lost=0")
+        shards[1] = proof_replace(shards[1], prefix, "acked_map=" + proof_map_hex(range(1, sent)),
+                                  "acked_map=" + proof_map_hex(range(1, sent + 1)))
+        with self.assertRaisesRegex(ValueError, "receipt mismatch"):
+            self.check(server, shards)
+
+    def test_proof_reliable_receipt_loss_fails(self):
+        server, shards = proof_fixture()
+        prefix = "split_verify: role=server run_id=" + RUN + " client=0 direction=s2c mode=6 size=small"
+        sent = proof_expected_sent(0, 6, "small", 600)
+        server = proof_replace(server, prefix, f"acked={sent} lost=0", f"acked={sent - 1} lost=1")
+        with self.assertRaisesRegex(ValueError, "receipt mismatch"):
+            self.check(server, shards)
+
+    def test_proof_bad_checksum_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_proof:", "checksum_errors=0", "checksum_errors=1")
+        with self.assertRaisesRegex(ValueError, "checksum_errors"):
+            self.check(server, shards)
+
+    def test_proof_disconnect_fails(self):
+        server, shards = proof_fixture()
+        disconnect = line("split_disconnect", dict(role="client-shard", run_id=RUN, client=1, phase="traffic",
+                                                   reason="timed_out"))
+        shards[1] = shards[1] + "\n" + disconnect
+        with self.assertRaisesRegex(ValueError, "disconnect: client 1 phase traffic reason timed_out"):
+            self.check(server, shards)
+
+    def test_proof_client_under_floor_fails(self):
+        server, shards = proof_fixture()
+        low = 1900000  # 253.3 kbps
+        shards[0] = proof_replace(shards[0], "split_wire:", f"sent_bytes={PROOF_WIRE_BYTES}", f"sent_bytes={low}")
+        shards[0] = proof_replace(shards[0], "split_receipt:", f"wire_up={PROOF_WIRE_BYTES}", f"wire_up={low}")
+        shards[0] = proof_replace(shards[0], "split_receipt:", "aggregate_up_kbps=266.666667",
+                                  f"aggregate_up_kbps={low * 8 / 60000:.6f}")
+        shards[0] = proof_replace(shards[0], "split_receipt:", "max_client_up_kbps=266.666667",
+                                  f"max_client_up_kbps={low * 8 / 60000:.6f}")
+        with self.assertRaisesRegex(ValueError, "under 256 kbps"):
+            self.check(server, shards)
+
+    def test_proof_transport_fallback_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_ready:", "transport_pin=portable", "transport_pin=xdp")
+        with self.assertRaisesRegex(ValueError, "transport fallback"):
+            self.check(server, shards)
+
+    def test_proof_receipt_transport_pin_fails(self):
+        # the receipt's pin must be the granted transport too: the pin at
+        # readiness and the pin at the end are the same one
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_receipt:", "transport_pin=portable", "transport_pin=xdp")
+        with self.assertRaisesRegex(ValueError, "transport fallback"):
+            self.check(server, shards)
+
+    def test_proof_proof_line_transport_pin_fails(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_proof:", "transport_pin=portable", "transport_pin=xdp")
+        with self.assertRaisesRegex(ValueError, "transport fallback"):
+            self.check(server, shards)
+
+    def test_proof_missing_stream_fails(self):
+        server, shards = proof_fixture()
+        lines = [current for current in shards[0].split("\n")
+                 if not current.startswith("split_verify: role=client-shard run_id=" + RUN + " client=0 direction=c2s mode=7 size=fragmented")]
+        with self.assertRaisesRegex(ValueError, "stream coverage"):
+            self.check(server, ["\n".join(lines), shards[1]])
+
+    def test_proof_cli_prints_cell_verdict(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_proof:", "checksum_errors=0", "checksum_errors=1")
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "server.log").write_text(server)
+            for index, text in enumerate(shards):
+                (folder / f"shard{index}.log").write_text(text)
+            (folder / "allocation.json").write_text(json.dumps(allocation(server, shards)))
+            argv = ["check_split_load.py", "--server", str(folder / "server.log"),
+                    "--shard", str(folder / "shard0.log"), "--shard", str(folder / "shard1.log"),
+                    "--run-id", RUN, "--total", "2", "--duration", "60",
+                    "--aggregate-limit-kbps", "1000", "--server-transport", "portable",
+                    "--client-transport", "portable", "--allocation-manifest",
+                    str(folder / "allocation.json"), "--load", "proof"]
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch("sys.argv", argv), redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main()
+        self.assertEqual(code, 1)
+        self.assertIn("split_proof_cell: verdict=FAIL reason=split_proof_server:_checksum_errors_nonzero",
+                      stdout.getvalue())
 
 
 if __name__ == "__main__":
