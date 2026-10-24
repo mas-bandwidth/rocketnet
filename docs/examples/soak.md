@@ -21,7 +21,7 @@ a demo and a profiling instrument, not a load claim.
    Every message carries client id, sequence, and FNV-1a body checksum; any gap,
    backward sequence, or checksum mismatch prints `FAIL` naming client and sequence
    (`--self-test-corrupt` flips one byte before send to prove the check bites).
-4. Record server tick and client per-peer update latency (`p50`, `p99`, `max`
+4. Record server tick and client update latency per client (`p50`, `p99`, `max`
    against the 100 µs per-client budget), packet/byte rates from public counters,
    and write `--out <file>` (default `soak-results.tsv`, one TSV row per metric
    with `clients`, `seconds`, `seed`, `transport`, `build`, `metric`, `value`).
@@ -35,7 +35,7 @@ a demo and a profiling instrument, not a load claim.
 
 10-second sweep across 1, 10, 100, and 1000 clients (`--seconds 10 --seed 1`):
 
-| clients | rel (rx/tx) | seq (rx/tx) | srv p50 (µs) | srv p99 (µs) | cli/peer p50 (µs) | cli/peer p99 (µs) | allocs/tick | peak_bytes |
+| clients | rel (rx/tx) | seq (rx/tx) | srv p50 (µs) | srv p99 (µs) | cli/client p50 (µs) | cli/client p99 (µs) | allocs/tick | peak_bytes |
 |--------:|------------:|------------:|-------------:|-------------:|------------------:|------------------:|------------:|-----------:|
 | 1 | 200/200 | 1194/1200 | 7.3 | 14.7 | 5.23 | 11.44 | 0.00 | 107,317,768 |
 | 10 | 2000/2000 | 11941/12000 | 50.1 | 89.2 | 4.29 | 7.01 | 0.00 | 281,810,458 |

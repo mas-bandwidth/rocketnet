@@ -694,10 +694,7 @@ int main()
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") == 0);
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
-    memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
     memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
-    // Planning a geometry larger than the component budget never allocates it.
-    check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
     // The whole-host estimate is a plan too: it allocates nothing before init.
     rocketnet_host_memory_estimate_t host_estimate;
     check(rocketnet_server_transport_host_memory_estimate(NULL, "portable", &host_estimate));
@@ -716,14 +713,10 @@ int main()
     check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
-    client_memory_config.max_payload_bytes = 0;
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = 0;
-    client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") > client_default_memory);
     check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {

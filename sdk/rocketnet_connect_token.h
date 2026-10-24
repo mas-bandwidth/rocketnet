@@ -144,6 +144,13 @@ void rocketnet_write_signed_connect_data( const struct rocketnet_signed_connect_
  */
 void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t * output, const uint8_t * buffer );
 
+/** @brief Whether any address the signed fields flag names port 0.
+ * @param signed_fields [in] Non-NULL fields read from a connect token.
+ * @return True when the flagged IPv4 or IPv6 server address has port 0, where
+ *         no server can be reached; the client refuses such a token.
+ */
+bool rocketnet_signed_connect_data_names_port_zero( const struct rocketnet_signed_connect_data_t * signed_fields );
+
 // Minting, the backend's job. Seals the private block to the server public
 // key, fills and signs the signed connect data, appends the clear token keys,
 // and pads to the fixed token size. The private fields' protocol id and

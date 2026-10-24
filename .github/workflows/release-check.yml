@@ -23,6 +23,10 @@
 #                           the integrating application vendors another
 #                           commit than the one being released, or vendors it
 #                           with different bytes
+#   space-builds-and-soaks-on-the-release
+#                           the integrating application, built against the
+#                           release, drops a frame, hitches, loses its server
+#                           or its bots under a bounded real-time swarm
 #
 # The second is DORMANT TODAY and says so in its own output: rocketnet has no
 # v* tags yet, so there is no newest release to compare against and the job
@@ -41,9 +45,16 @@ on:
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      space_ref:
+        description: the robotgamedevelopers/space branch or commit the soak builds (space builds and soaks on the release)
+        required: false
+        default: main
 
 concurrency:
-  group: release-check-${{ github.workflow }}-${{ github.ref }}
+  # each main commit queues in its own group: pending runs on main are
+  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  group: release-check-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # main never cancels a run in progress: every merge gets a verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -244,3 +255,41 @@ jobs:
 
       - name: Prove the application vendors this commit byte for byte
         run: python3 tools/check_space_vendor.py --release "$GITHUB_SHA"
+
+  # Vendoring the release byte for byte is not the same as running on it. This
+  # job clones the integrating application, builds its dedicated server and
+  # happy_path with its own Makefile, and holds eight headless bots on the
+  # server for 90 seconds with scripts/bot_swarm.sh. The server pegs its loop
+  # to real time and logs every dropped frame; tools/check_space_soak_log.py
+  # fails the run on any dropped frame from the first frame on, any large
+  # hitch, a server exit before the bound, a BOTS FAIL line or no client
+  # connected. tools/space_release_soak.sh is the whole of it and runs the
+  # same way on a bench.
+  #
+  # A release gate like the vendor job: a v* tag push and a manual dispatch,
+  # never a pull request. It needs the vendor job, so a release that does not
+  # vendor byte for byte stops there. It needs a fleet Linux runner with four
+  # or more CPUs (space's dedicated server dies below four), passwordless sudo
+  # (the swarm's veth pair and network namespace), Go, cmake and libcurl
+  # headers. The timeout fits space's cold build plus the hold and
+  # bot_swarm.sh's own ten-minute bound on happy_path. The multi-hour soak is
+  # not this job.
+
+  space-builds-and-soaks-on-the-release:
+    name: space builds and soaks on the release
+    needs: space-vendors-the-release
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 60
+    env:
+      SPACE_READ_TOKEN: ${{ secrets.SPACE_READ_TOKEN }}
+      SPACE_REF: ${{ inputs.space_ref || 'main' }}
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Check the log check's own cases
+        run: python3 tools/test_check_space_soak_log.py
+
+      - name: Build space against this commit and hold eight bots for 90 seconds
+        run: ROCKETNET_RELEASE="$GITHUB_SHA" tools/space_release_soak.sh "$SPACE_REF" 90

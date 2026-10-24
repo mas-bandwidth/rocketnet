@@ -177,8 +177,7 @@ The degradation is inside the transport, below the ladder (`BUILDING.md:350-353`
 
 `io_uring` (`sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`)
 uses one ring per server, touched only by the main thread, and no I/O worker
-threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). The server separately
-runs one background stats worker. It binds the same
+threads (`sdk/rocketnet_server_uring_linux.cpp:19-20`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h:33-37`,
 `sdk/rocketnet_server_uring_linux.cpp:667-668`,
@@ -428,7 +427,7 @@ vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)" --memory 1536M --cpus 3 --appen
 `test_xdp_filter` judges the BPF program with the kernel's verifier and
 `BPF_PROG_TEST_RUN` (`TRANSPORTS.md:256-261`), on the same `server_xdp.o` the
 library embeds. In a 1536M guest with two isolated CPUs and no clang on
-`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
+`PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_client`
 and `xdp_create_fails_part_way_tears_down`.
 
 The nightly 1,000-client xdp load cell needs a far larger guest: the server
@@ -449,7 +448,7 @@ set `IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp:310`,
 `sdk/rocketnet_server_gso_linux.cpp:276` and
 `sdk/rocketnet_server_uring_linux.cpp:203`, and send with `sendto`,
 `sendmmsg` or `SENDMSG` to an address per packet. So a dead or unreachable
-peer produces no error on a server's receive path on `portable`, `gso` or
+client produces no error on a server's receive path on `portable`, `gso` or
 `io_uring`. A client's portable socket is connected to its one server
 (`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
 the server), so the kernel drops datagrams from any other source and does
@@ -498,8 +497,8 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp:623-624`).
 
-`functional/posix_hard_killed_peer.cpp` and `functional/posix_socket_errors.cpp`
-cover a hard-killed peer and the socket error paths per transport cell.
+`functional/posix_hard_killed_client.cpp` and `functional/posix_socket_errors.cpp`
+cover a hard-killed client and the socket error paths per transport cell.
 
 ## 8. Limits for 1000 clients
 

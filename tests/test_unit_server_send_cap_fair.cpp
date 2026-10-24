@@ -409,7 +409,7 @@ static void test_server_send_cap_two_three_clients()
     fair_run_case( 3, 2 );
 }
 
-// More than one payload frame is due at each peer. Tiny messages can share a
+// More than one payload frame is due at each client. Tiny messages can share a
 // frame, so the service assertion here observes packets rather than delivery
 // of a whole message that itself needs several turns to finish.
 static void test_server_send_cap_two_multi_packet_service()
@@ -458,9 +458,9 @@ REGISTER_UNIT_TEST( test_server_send_cap_two_multi_packet_service );
 static void test_server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
-    // Keep fewer connected peers than configured peers: surplus is measured
-    // against the one connected peer, not the four configured slots. Four
-    // send slots preserve that distinction without reserving 256 peers.
+    // Keep fewer connected clients than configured clients: surplus is measured
+    // against the one connected client, not the four configured slots. Four
+    // send slots preserve that distinction without reserving 256 clients.
     fair_world_create( &world, 1, 4, 4 );
     fair_connect( &world, 0, 0x9100 );
     fair_update_clients( &world );

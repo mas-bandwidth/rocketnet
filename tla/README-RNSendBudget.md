@@ -40,7 +40,7 @@ records in `tla/RUNS.tsv`.
   positive value caps it again with a fresh full bucket; a value above the
   maximum is refused and changes nothing. Disabling the budget is not
   recommended: without one there is no defined behaviour when a sender
-  outruns its path or its peer.
+  outruns its path or its receiver.
 
 ## What the module covers
 
