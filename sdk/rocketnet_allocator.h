@@ -63,7 +63,7 @@ struct rn_channel_receive_t             // 16 bytes (7.1)
     uint32_t ordered_read;              // next ordering index to deliver
     uint32_t sequenced_watermark;       // lowest sequencing index still deliverable in this epoch
     uint32_t held_sequenced;            // descriptor of the newest held sequenced message, or RN_DESCRIPTOR_NONE
-    uint32_t pad;
+    uint32_t held_sequenced_first;      // the first number of the held code 4 record
 };
 
 struct rn_send_number_t                 // 32 bytes: the sender's per-number table, indexed number % W (6.1)

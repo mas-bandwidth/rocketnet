@@ -51,7 +51,7 @@ static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_rece
         const rn_receive_descriptor_t * descriptor = &region->receive_descriptors[hold & ~RN_SEQUENCED_RELIABLE_HOLD];
         const uint32_t count = descriptor->block_count ? descriptor->block_count : 1;
         for ( uint32_t i = 0; i < count; i++ )
-            rn_sequenced_release_number( channels, (uint64_t) rx->pad + i );
+            rn_sequenced_release_number( channels, (uint64_t) rx->held_sequenced_first + i );
     }
     else
         region->sequenced_holds[hold].used = 0;
@@ -95,7 +95,8 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
 }
 
 // RNChannelTypes!Dispatch for a code-4 block. The first fragment to arrive is
-// the anchor; rx->pad holds its first number, and only one block per channel
+// the anchor; rx->held_sequenced_first holds its first number, and only one
+// block per channel
 // can be the newest sequenced state. Each fragment is copied once to its own
 // offset because its receive batch expires before the block can complete.
 static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message_record_t * record,
@@ -124,7 +125,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     if ( current == RN_DESCRIPTOR_NONE )
     {
         rx->held_sequenced = slot | RN_SEQUENCED_RELIABLE_HOLD;
-        rx->pad = first_number;
+        rx->held_sequenced_first = first_number;
         anchor = &region->receive_descriptors[slot];
         anchor->block_count = (uint16_t) count;
         anchor->block_have = 0;
@@ -139,7 +140,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
         }
         anchor = &region->receive_descriptors[current & ~RN_SEQUENCED_RELIABLE_HOLD];
         if ( !anchor->live || anchor->block_count != count || anchor->block_have >= count ||
-             rx->pad != first_number || anchor->ring != (uint32_t) base ||
+             rx->held_sequenced_first != first_number || anchor->ring != (uint32_t) base ||
              anchor->ordering != record->ordering || anchor->sequencing != record->sequencing )
         {
             rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
@@ -333,7 +334,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         // THE COPIES (b): this future state outlives the receive batch.
         memcpy( region->receive_ring + offset, record->data, (size_t) record->bytes );
         rx->held_sequenced = number_slot | RN_SEQUENCED_RELIABLE_HOLD;
-        rx->pad = (uint32_t) region->receive_descriptors[number_slot].number;
+        rx->held_sequenced_first = (uint32_t) region->receive_descriptors[number_slot].number;
         return ROCKETNET_CHANNEL_DISPATCH_HELD;
     }
 

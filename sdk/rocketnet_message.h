@@ -56,15 +56,6 @@
 
 #define ROCKETNET_MESSAGE_MAX_RECORD_BYTES                  65535
 
-// the largest message the SINGLE form carries in one wire frame: the payload
-// capacity less the one form byte (CHANNELS.md 12)
-
-#define ROCKETNET_MESSAGE_SINGLE_BYTES                      ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
-
-// the block stride F, a wire constant and a multiple of 16 (CHANNELS.md 8)
-
-#define ROCKETNET_MESSAGE_FRAGMENT_BYTES                    1152
-
 // the 24-bit wire counters: number, sequencing and ordering (STANDARD.md _Messages_)
 
 #define ROCKETNET_MESSAGE_U24_MASK                          0xFFFFFF
