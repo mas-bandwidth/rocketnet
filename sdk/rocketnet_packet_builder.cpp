@@ -440,6 +440,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         if ( decision != ROCKETNET_SEND_BUDGET_SEND )
         {
+            // tla/RNChannel.tla DropUnreliableForBudget: an unreliable packet that does not fit the budget is dropped and counted.
             // The packet is not written. Its items stay as they were: a
             // reliable one waits for the next update and is never dropped, an
             // unreliable one is dropped and counted. Either way nothing after
