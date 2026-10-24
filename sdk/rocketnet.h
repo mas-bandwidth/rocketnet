@@ -1091,13 +1091,6 @@ struct rocketnet_client_config_t
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
-    /// ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// client fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
-
     /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets the limit. Range is 1 ..
     /// 256. Zero selects the default, 8.
 
@@ -1132,7 +1125,10 @@ struct rocketnet_client_config_t
     /// ROCKETNET_CLIENT_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 1048576.
+    /// Default is 1048576. It is the one size limit for every reliability
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1236,7 +1232,9 @@ struct rocketnet_server_config_t
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp and gso. Zero selects
-    /// the transport default. Range is 1 .. 1024.
+    /// the transport default. Range is 1 .. 1024. The Windows iocp transport
+    /// ignores it and always runs one completion worker plus one send worker;
+    /// the Windows rio transport ignores it and runs one I/O worker.
 
     int num_xdp_queues;
 
@@ -1245,13 +1243,6 @@ struct rocketnet_server_config_t
     /// .. 256.
 
     int num_os_cpus;
-
-    /// ROCKETNET_SERVER_MAX_PAYLOAD_BYTES sets the largest payload this
-    /// server fragments and reassembles. Losing one fragment loses the whole
-    /// payload. Range is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES .. 361728. Zero
-    /// selects the default, 16384.
-
-    int max_payload_bytes;
 
     /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets the limit per client.
     /// Range is 1 .. 256. Zero selects the default, 8.
@@ -1302,7 +1293,10 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_MAX_MESSAGE_BYTES sets the largest message. Both ends
     /// must match. It cannot exceed receive_message_buffer_bytes. Range is
     /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 .. ROCKETNET_MAX_MESSAGE_BYTES.
-    /// Default is 1048576.
+    /// Default is 1048576. It is the one size limit for every reliability
+    /// type: an unreliable message larger than
+    /// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is sent as its reliable twin,
+    /// so it is held to max_message_bytes too.
 
     int max_message_bytes;
 
@@ -1415,7 +1409,11 @@ struct rocketnet_receipt_t
 
 /// Each connection starts fresh.
 /// The last failure state remains until disconnect or the next connect.
-/// Connect opens a socket for the address family in the token.
+/// Connect opens a socket for the address family in the token. When the token
+/// names both families and the host can use both, connect opens a socket for
+/// each, the cookie request goes to both servers, and the first cookie commits
+/// the connection to the family that answered; the other socket is closed
+/// then. The token's lifetime and timeout bound the attempt as before.
 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.

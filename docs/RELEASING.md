@@ -60,6 +60,49 @@ version bump that will make `main` truthful after merge. The tag may follow in
 the release, but the version in `sdk/rocketnet.h` must no longer name the newest
 release once a wire change is on `main`.
 
+## The space vendor gate
+
+The integrating application (`robotgamedevelopers/space`, private) vendors
+rocketnet into `game/ThirdParty/rocketnet/` with its own re-vendor script,
+which archives five paths at a pinned commit -- `sdk`, `sodium`,
+`server_xdp/server_xdp.c`, `cmake/EmbedXdp.cmake` and
+`cmake/XdpSources.cmake` -- and records the pin in
+`game/ThirdParty/rocketnet/VENDOR.md` as `| commit | **<sha40>** |`. A
+release of rocketnet is only real if the application that ships it vendors
+exactly the commit being released: a release built against another copy of the
+library is a release nobody tested, and the difference is invisible in the
+release notes.
+
+The `space vendors the release` job in
+[release-check.yml](../.github/workflows/release-check.yml) proves it. It is a
+release gate, not a per-commit check: it runs on a `v*` tag push and on a
+manual dispatch, never on a pull request, so the one-minute CI budget is
+untouched. The commit it checks is the one the run is on: the tag's commit on
+a tag push, the dispatched ref's head on a dispatch.
+
+The gate reads the pin from the application's vendored record and requires it
+to be the release commit. It then compares git blob ids, which is byte
+identity without moving any content, so every vendored file is present, none
+is extra, and every file's bytes are the released bytes. It prints one verdict
+line naming the application commit, the pin it records and the number of
+files compared.
+
+The application is read through the GitHub API with the `SPACE_READ_TOKEN`
+secret. The token is read from the environment, is never an argument and is
+never printed. A missing token is a failure that says the secret is not set,
+never a skip and never a pass: an unproven release is not a release. The
+owner adds the secret to the repository; until then the gate fails loudly,
+which is the correct answer and not a reason to skip it.
+
+The same gate runs locally against a clone of the application, which is how
+the owner reproduces a failure:
+
+    python3 tools/check_space_vendor.py --release <release commit> --space-dir <clone>
+
+Its own cases live in `tools/test_check_space_vendor.py` and run with
+`python3 tools/test_check_space_vendor.py`. They build temporary git
+repositories and read canned answers; no case opens a socket.
+
 ## Preview-2 qualification
 
 For `v1.0.0-preview-2`, fully recorded manual qualification is the release
@@ -120,6 +163,8 @@ whose required runs are green. Those runs are:
   change touches `sdk/**` or `proofs/cbmc/**`.
 - **Release Check**'s `version-consistency` job on the pull request that carries
   the release version, and on the tag push itself.
+- **Release Check**'s `space vendors the release` job, dispatched on the
+  release commit before the tag is cut, and again on the tag push itself.
 
 The nightly discovery and soak workflows are watches, not release gates, except
 for the bounded `nightly.yml` threaded-transport TSAN run listed above, which is
@@ -144,14 +189,22 @@ also be the commit the tag points at, not a later merge.
 5. Open the release pull request against `main` with the version change and
    qualification record. Merge after the applicable qualification is complete,
    then reconcile the merged source with the tested inputs.
-6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
+6. Re-vendor the integrating application at the release commit: run its
+   re-vendor script so that `game/ThirdParty/rocketnet/` holds that commit,
+   and commit the result with the pin in `game/ThirdParty/rocketnet/VENDOR.md`
+   naming it. Then dispatch the `space vendors the release` gate on that
+   commit and let it pass before the tag is cut. The gate fails when the
+   application pins another commit, when a vendored file is missing or extra,
+   or when a vendored file's bytes differ from the released ones.
+7. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-2`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it, except for the authorized preview-2 recut
    above. Verify its consistency with the header before
-   pushing it. Release Check also performs this check on the tag push.
-7. Publish the GitHub release for that tag.
+   pushing it. Release Check also performs this check on the tag push, and
+   the space vendor gate runs there too.
+8. Publish the GitHub release for that tag.
 
 ## Release notes
 
