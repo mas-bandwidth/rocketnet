@@ -1560,7 +1560,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 /// @param latency_ms Added one-way latency in milliseconds, 0 to 60000.
 /// @param jitter_ms Random latency variation in milliseconds, 0 to 60000.
 /// @param packet_loss_percent Percent of outgoing packets dropped, 0 to 100.
-/// @param duplicate_percent Percent of outgoing packets sent twice, 0 to 100.
+/// @param duplicate_percent Percent of outgoing datagrams sent twice, 0 to 100.
 
 ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
@@ -1582,7 +1582,7 @@ ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_clien
 /// @param latency_ms Added one-way latency in milliseconds, 0 to 60000.
 /// @param jitter_ms Random latency variation in milliseconds, 0 to 60000.
 /// @param packet_loss_percent Percent of outgoing packets dropped, 0 to 100.
-/// @param duplicate_percent Percent of outgoing packets sent twice, 0 to 100.
+/// @param duplicate_percent Percent of outgoing datagrams sent twice, 0 to 100.
 
 ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
