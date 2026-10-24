@@ -316,22 +316,31 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_address_t to_client = client_address;
     set_ipv4_loopback( to_server );
     set_ipv4_loopback( to_client );
+    // each queue filled past its capacity: the server's sized from the plan,
+    // the client's ROCKETNET_LOOPBACK_QUEUE_PACKETS; five more each drop
+    const int server_queue = rocketnet_loopback_server_queue_packets( server_config.max_clients );
+    const int client_queue = ROCKETNET_LOOPBACK_QUEUE_PACKETS;
     for ( int round = 0; round < 2; ++round )
     {
-        for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS + 5; ++i )
+        for ( int i = 0; i < server_queue + 5; ++i )
         {
-            const uint32_t sequence = (uint32_t) ( round * ROCKETNET_LOOPBACK_QUEUE_PACKETS + i );
+            const uint32_t sequence = (uint32_t) ( round * server_queue + i );
             memcpy( data, &sequence, sizeof( sequence ) );
             client.operations->send( client.instance, &to_server, data, sizeof( data ) );
+        }
+        for ( int i = 0; i < client_queue + 5; ++i )
+        {
+            const uint32_t sequence = (uint32_t) ( round * client_queue + i );
+            memcpy( data, &sequence, sizeof( sequence ) );
             rocketnet_platform_send_t packet = { &to_client, data, sizeof( data ) };
             server.operations->send_batch( server.instance, &packet, 1 );
         }
         rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
         rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == (uint64_t) ( round + 1 ) * 5 );
         rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( client.instance ) == (uint64_t) ( round + 1 ) * 5 );
-        for ( int i = 0; i < ROCKETNET_LOOPBACK_QUEUE_PACKETS; ++i )
+        for ( int i = 0; i < server_queue; ++i )
         {
-            const uint32_t sequence = (uint32_t) ( round * ROCKETNET_LOOPBACK_QUEUE_PACKETS + i );
+            const uint32_t sequence = (uint32_t) ( round * server_queue + i );
             memcpy( data, &sequence, sizeof( sequence ) );
             uint8_t received[ROCKETNET_RECEIVE_CEILING];
             int bytes = 0;
@@ -340,6 +349,13 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
             rocketnet_unit_check( bytes == (int) sizeof( data ) );
             rocketnet_unit_check( memcmp( data, received, sizeof( data ) ) == 0 );
             rocketnet_unit_check( from.port == client_address.port );
+        }
+        for ( int i = 0; i < client_queue; ++i )
+        {
+            const uint32_t sequence = (uint32_t) ( round * client_queue + i );
+            memcpy( data, &sequence, sizeof( sequence ) );
+            uint8_t received[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_address_t from;
             rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == (int) sizeof( data ) );
             rocketnet_unit_check( memcmp( data, received, sizeof( data ) ) == 0 );
             rocketnet_unit_check( from.port == server_address.port );
