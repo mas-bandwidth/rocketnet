@@ -48,6 +48,8 @@
 #   --log-dir DIR    keep each cell's output as DIR/<cell>.log (default: a
 #                    temporary directory, removed at exit)
 #   --xdp-memory M   the xdp guest's memory, as vng --memory takes it (default 4G)
+#   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r),
+#                    the runners' path; hulk's kit is /opt/vm-kernels/<version>/vmlinuz)
 #
 # Exit status: 0 when every cell run passed, 1 when any failed or was skipped,
 # 2 on a malformed option.
@@ -61,6 +63,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SOAK="$SCRIPT_DIR/../bin/soak"
 LOG_DIR=
 XDP_MEMORY=4G
+VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
 
 usage()
 {
@@ -80,6 +83,7 @@ while [ $# -gt 0 ]; do
         --soak)       [ $# -ge 2 ] || refuse "--soak needs a value"; SOAK=$2; shift 2 ;;
         --log-dir)    [ $# -ge 2 ] || refuse "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
         --xdp-memory) [ $# -ge 2 ] || refuse "--xdp-memory needs a value"; XDP_MEMORY=$2; shift 2 ;;
+        --vm-kernel)  [ $# -ge 2 ] || refuse "--vm-kernel needs a value"; VM_KERNEL=$2; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            refuse "unknown option $1" ;;
     esac
@@ -166,7 +170,7 @@ run_host_cell()
 run_xdp_cell()
 {
     local log="$LOG_DIR/xdp.log"
-    local vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+    local vm_kernel="$VM_KERNEL"
     if ! command -v vng > /dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
         echo "SOAK cell=xdp FAIL no VM tier on this machine: needs vng, a readable $vm_kernel and a writable /dev/kvm"
         failures=$(( failures + 1 ))
@@ -193,8 +197,12 @@ run_xdp_cell()
         printf ' > %q 2>&1\n' "$log"
         printf 'echo "guest soak exit=$?" >> %q\n' "$guest/status"
     } > "$guest/run.sh"
-    timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 4 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
-        sudo sh "$guest/run.sh" > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
+    # vng from a short directory: its virtiofs socket path must stay under 108 bytes
+    local short
+    short=$(mktemp -d /tmp/rnsoak.XXXXXX)
+    ( cd "$short" && timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 4 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
+        sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
+    rmdir "$short" 2>/dev/null
     local status
     status=$(sed -nE 's/^guest soak exit=([0-9]+)$/\1/p' "$guest/status" 2>/dev/null | tail -n 1)
     if [ -z "$status" ]; then
