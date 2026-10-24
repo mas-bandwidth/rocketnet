@@ -162,11 +162,13 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 */
 // One open outgoing packet per connection. Only headers are written when a
 // message finishes; its bytes already occupy their final position in the frame.
+#define RN_MESSAGE_RECEIPT_SERIALS_MAX 16 // same bound as the endpoint's receipt_serials
+
 struct rn_message_packet_build_t
 {
     rocketnet_packet_context_t context;
     rocketnet_message_writer_t writer;
-    uint32_t receipt_serials[16]; // bounded by the existing sent-reference map
+    uint32_t receipt_serials[RN_MESSAGE_RECEIPT_SERIALS_MAX]; // same bound as the endpoint's receipt_serials
     uint32_t receipt_count;
 };
 
