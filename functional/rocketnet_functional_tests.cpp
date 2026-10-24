@@ -6356,6 +6356,154 @@ void rocketnet_test_server_uring_wire_plain()
     rocketnet_test_server_uring_wire_exchange_flags( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1, ROCKETNET_SERVER_URING_DISABLE_SEGMENT, 0 );
 }
 
+// UDP_GRO on the io_uring receive: the client sends a burst of UDP_SEGMENT
+// super-datagrams, which loopback keeps whole and the transport's UDP_GRO
+// sockets receive coalesced, one provided buffer and one CQE each: the
+// receive splits each buffer by its stride (rocketnet_coalesce_split) into
+// the bank, so every datagram surfaces byte-exact, in arrival order, and the
+// GRO_BATCHES counter proves the split ran. the bursts are a short-tail run,
+// an exact multiple and one near the 64 KiB a buffer holds. the counter is
+// asserted where the host probe observed real coalescing (the gso
+// transport's rule: tx-udp-segmentation off on loopback is a legitimate
+// host, delivering the same bytes uncoalesced)
+
+static void rocketnet_test_server_uring_wire_gro( const char * address_string, bool ipv6 )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, address_string ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, 0 );
+    rocketnet_check( uring );
+    rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) != 0 );
+
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, address_string ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                         ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+
+    struct sockaddr_storage to;
+    memset( &to, 0, sizeof(to) );
+    socklen_t to_bytes = 0;
+    if ( ipv6 )
+    {
+        struct sockaddr_in6 * to6 = (struct sockaddr_in6*) &to;
+        to6->sin6_family = AF_INET6;
+        to6->sin6_port = htons( bind_address.port );
+        to6->sin6_addr = in6addr_loopback;
+        to_bytes = sizeof(struct sockaddr_in6);
+    }
+    else
+    {
+        struct sockaddr_in * to4 = (struct sockaddr_in*) &to;
+        to4->sin_family = AF_INET;
+        to4->sin_port = htons( bind_address.port );
+        to4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        to_bytes = sizeof(struct sockaddr_in);
+    }
+
+    // the bursts: { segments, stride, tail } with tail 0 for an exact multiple
+
+    const int bursts[3][3] = { { 8, 100, 0 }, { 5, 300, 150 }, { 50, 1200, 600 } };
+    const int num_bursts = 3;
+
+    int expected_bytes[128];
+    int num_expected = 0;
+
+    static uint8_t super[65000];
+    for ( int b = 0; b < num_bursts; b++ )
+    {
+        const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+        int bytes = 0;
+        for ( int i = 0; i < segments; i++ )
+        {
+            const int segment_bytes = i < bursts[b][0] ? bursts[b][1] : bursts[b][2];
+            const int tag = num_expected;
+            super[bytes] = (uint8_t) tag;
+            for ( int j = 1; j < segment_bytes; j++ )
+                super[bytes + j] = (uint8_t) ( tag * 13 + j );
+            expected_bytes[num_expected++] = segment_bytes;
+            bytes += segment_bytes;
+        }
+        rocketnet_check( bytes <= (int) sizeof(super) );
+
+        struct iovec iov = { super, (size_t) bytes };
+        alignas(8) char control[CMSG_SPACE(sizeof(uint16_t))];
+        memset( control, 0, sizeof(control) );
+        struct msghdr msg;
+        memset( &msg, 0, sizeof(msg) );
+        msg.msg_name = &to;
+        msg.msg_namelen = to_bytes;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_SEGMENT;
+        cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+        const uint16_t stride = (uint16_t) bursts[b][1];
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+        rocketnet_check( sendmsg( client_socket->handle, &msg, 0 ) == (ssize_t) bytes );
+    }
+
+    // every datagram byte-exact and in arrival order: the bursts are one flow
+    // into one queue, so the bank holds them in the order they were sent
+
+    int num_seen = 0;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < num_expected )
+    {
+        rocketnet_server_uring_receive_packets( uring );
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            const int tag = received->packet_data[i][0];
+            rocketnet_check( tag == num_seen );
+            rocketnet_check( received->packet_bytes[i] == expected_bytes[tag] );
+            for ( int j = 1; j < expected_bytes[tag]; j++ )
+                rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 13 + j ) );
+            rocketnet_check( received->from[i].type == ( ipv6 ? ROCKETNET_ADDRESS_IPV6 : ROCKETNET_ADDRESS_IPV4 ) );
+            rocketnet_check( received->from[i].port == client_address.port );
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == num_expected );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == (uint64_t) num_expected );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] == 0 );
+    if ( rocketnet_test_gso_host_coalesces() )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES] > 0 );
+
+    // the plain tier on the same kernel: DISABLE_GRO reserves no control
+    // area and reports no GRO
+
+    rocketnet_platform_socket_destroy( client_socket );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+
+    rocketnet_address_t plain_address;
+    rocketnet_check( rocketnet_address_parse( &plain_address, address_string ) );
+    struct rocketnet_server_uring_t * plain = rocketnet_server_uring_create_flags( NULL, &plain_address, 1, ROCKETNET_SERVER_URING_DISABLE_GRO );
+    rocketnet_check( plain );
+    rocketnet_check( ( rocketnet_server_uring_features( plain ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) == 0 );
+    rn_native_backend_stop_and_destroy( plain, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
+void rocketnet_test_server_uring_wire_gro_ipv4()
+{
+    rocketnet_test_server_uring_wire_gro( "127.0.0.1", false );
+}
+
+void rocketnet_test_server_uring_wire_gro_ipv6()
+{
+    rocketnet_test_server_uring_wire_gro( "[::1]", true );
+}
+
 void rocketnet_test_server_uring_wire_ipv6()
 {
     rocketnet_test_server_uring_wire_exchange( "[::1]", "[::1]", "[::1]", 0 );
@@ -9585,6 +9733,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_io_uring_transport_server_wire_gso_ipv4", rocketnet_test_server_uring_wire_gso_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_gso_ipv6", rocketnet_test_server_uring_wire_gso_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_plain", rocketnet_test_server_uring_wire_plain, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gro_ipv4", rocketnet_test_server_uring_wire_gro_ipv4, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gro_ipv6", rocketnet_test_server_uring_wire_gro_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif
