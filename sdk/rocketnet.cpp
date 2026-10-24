@@ -207,7 +207,11 @@ static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
 // "UNKNOWN", never NULL and without asserting, for a value that is not a code.
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
-    switch ( status )
+    // read as the int a C caller passed, as rocketnet_log_level does: a load
+    // of an enum outside its range of values is undefined in C++
+    int value;
+    memcpy( &value, &status, sizeof( value ) );
+    switch ( value )
     {
         case ROCKETNET_STATUS_OK:                              return "OK";
         case ROCKETNET_STATUS_ALREADY_INITIALIZED:             return "ALREADY_INITIALIZED";
