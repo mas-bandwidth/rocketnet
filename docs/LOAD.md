@@ -73,6 +73,27 @@ was measured correctly or that the host can supply that capacity. The plan and
 reserve are planning inputs, not machine-verifiable proof of total runtime
 memory or link capacity.
 
+### The nightly AF_XDP cell's guest memory
+
+The nightly many-client step (`.github/workflows/nightly-soak.yml`) runs the
+xdp cell as root inside a virtme-ng guest, with the server and all 1,000
+default-profile clients in one `bin/load` process. That guest must hold the
+whole run, not just the create-only plan. At `830c5437` the plan reports
+`total_public_required_bytes=18214470336` (16.96 GiB: 13.32 GB server, 4.90 MB
+per client), and the xdp server's start adds about 1.87 GB of allocator memory
+and 1.88 GB of UMEM on top. A fixed 16G guest is OOM-killed (exit 137,
+anon-rss 15.9 GB) and a 24G guest is killed at the shutdown wipe. The step now
+runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first,
+sizes the guest as `plan * 3 / 2 + 2 GiB` rounded up to whole GiB (28G for the
+default profile), and prints `LOAD cell=xdp FAIL runner has ... MiB available`
+when the runner's `MemAvailable` is below that. The guest's load exit status,
+peak RSS, `/proc/meminfo` totals and `dmesg | tail -n 50` go into `vm.log` on
+every run, so an early end names its cause. Measured on a 121 GB runner at
+`e2753486`: the 16G guest's dmesg shows `Out of memory: Killed process ...
+(load) ... anon-rss:15978008kB`; the 28G guest (27.4 GiB `MemTotal`) passed
+three runs in a row at 2:09-2:17 wall with peak RSS 26.1 GiB each, so the
+sizing leaves about 1.3 GiB of headroom and a profile change must be re-measured.
+
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
 per second in each direction while keeping the same client update schedule.
