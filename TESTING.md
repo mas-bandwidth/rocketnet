@@ -55,11 +55,11 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 |---|:---:|:---:|
 | UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | ✅ |
 | Application Verifier | Windows | ✅ |
-| App Nap and timer coalescing keep client timing | macOS | ✅ |
+| App Nap and timer coalescing keep client timing | macOS | planned for the final deliverable |
 | MemorySanitizer (msan.yml) | Linux | ✅ |
 | Big-endian system build and suites | Linux | planned for the final deliverable |
 | Live XDP test (an XDP server, a client on every test machine) | Linux | planned for the final deliverable |
-| complete | 4 of 6 | 67% |
+| complete | 3 of 6 | 50% |
 
 ## Historical preview-1 baseline: tests per transport
 
