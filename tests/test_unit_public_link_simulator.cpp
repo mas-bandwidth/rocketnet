@@ -306,11 +306,10 @@ REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {
-    // Each guard runs to a 16-byte multiple, so alignas(16) adds no padding (MSVC C4324 under /WX).
-    struct alignas(16) client_revision_1_t
+    struct alignas(alignof(rocketnet_client_transport_config_t)) client_revision_1_t
     {
         uint8_t bytes[ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR];
-        uint8_t guard[16 + ( 16 - ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR % 16 ) % 16];
+        uint8_t guard[16];
     } client;
     memset( &client, 0xa5, sizeof(client) );
     check( rocketnet_client_transport_default_config_sized(
@@ -331,10 +330,10 @@ static void test_public_link_simulator_revision_1_prefixes()
     for ( size_t i = 0; i < sizeof(client.guard); i++ )
         check( client.guard[i] == 0xa5 );
 
-    struct alignas(16) server_revision_1_t
+    struct alignas(alignof(rocketnet_server_transport_config_t)) server_revision_1_t
     {
         uint8_t bytes[ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1];
-        uint8_t guard[16 + ( 16 - ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 % 16 ) % 16];
+        uint8_t guard[16];
     } server;
     memset( &server, 0x5a, sizeof(server) );
     check( rocketnet_server_transport_default_config_sized(
