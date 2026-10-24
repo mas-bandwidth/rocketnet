@@ -51,6 +51,15 @@ struct rocketnet_fake_client_transport_io_t
     rocketnet_address_t connected_to;
     int calls_before_connect;
     bool refuse_connect;
+    // the overlapped send (rocketnet_fake_client_overlapped): posts wait in
+    // posted, oldest first, until the test completes them; a completed post
+    // moves to sent, a cancelled one is dropped and counted
+    rocketnet_fake_client_datagram_t posted[ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
+    int posted_head;
+    int num_posted;                 // posts outstanding
+    int num_completed;              // of the oldest outstanding posts, how many the kernel has completed
+    int num_cancelled_pending;      // of those completed, how many end with an error (cancelled)
+    int post_calls, reap_calls, cancel_calls, cancelled_sends;
 };
 
 // create returns its context argument (the test passes the fake as the
@@ -196,6 +205,70 @@ static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_op
     rocketnet_fake_client_wait, rocketnet_fake_client_wake,
     NULL, NULL
 };
+
+// The overlapped send of docs/CLIENT-IO.md "The overlapped send", on the
+// fake: post_send copies the datagram into posted and returns at once;
+// nothing reaches sent until rocketnet_fake_client_complete says the kernel
+// completed it. reap_sends returns the completed oldest posts, in post order,
+// moving each ok one to sent; cancel_sends completes every pending post with
+// an error. A test sets io->overlapped to it after create.
+
+static bool rocketnet_fake_client_post_send( void * transport, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    fake->post_calls++;
+    assert( fake->num_posted < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    rocketnet_fake_client_datagram_t * dg = &fake->posted[( fake->posted_head + fake->num_posted ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
+    dg->address = *to;
+    dg->bytes = packet_bytes;
+    memcpy( dg->data, packet_data, (size_t) packet_bytes );
+    fake->num_posted++;
+    return true;
+}
+
+static int rocketnet_fake_client_reap_sends( void * transport )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    fake->reap_calls++;
+    const int completed = fake->num_completed;
+    for ( int i = 0; i < completed; i++ )
+    {
+        const rocketnet_fake_client_datagram_t * dg = &fake->posted[fake->posted_head];
+        fake->posted_head = ( fake->posted_head + 1 ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS;
+        fake->num_posted--;
+        if ( i >= completed - fake->num_cancelled_pending )
+        {
+            fake->cancelled_sends++;
+            continue;
+        }
+        assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+        fake->sent[fake->num_sent++] = *dg;
+    }
+    fake->num_completed = 0;
+    fake->num_cancelled_pending = 0;
+    return completed;
+}
+
+static void rocketnet_fake_client_cancel_sends( void * transport )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    fake->cancel_calls++;
+    fake->num_cancelled_pending += fake->num_posted - fake->num_completed;
+    fake->num_completed = fake->num_posted;
+}
+
+static const rocketnet_client_transport_overlapped_t rocketnet_fake_client_overlapped =
+{
+    rocketnet_fake_client_post_send, rocketnet_fake_client_reap_sends, rocketnet_fake_client_cancel_sends
+};
+
+// the kernel completes the next num_sends outstanding posts, oldest first, ok
+inline void rocketnet_fake_client_complete( rocketnet_fake_client_transport_io_t * fake, int num_sends )
+{
+    assert( fake->num_completed + num_sends <= fake->num_posted );
+    assert( fake->num_cancelled_pending == 0 );
+    fake->num_completed += num_sends;
+}
 
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past
 // ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS assert.

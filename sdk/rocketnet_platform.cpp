@@ -5062,12 +5062,30 @@ static int get_connection_type()
 // signalled, so the next wait returns at once. FD_READ is re-armed by the
 // drain the I/O step runs to a would-block, so no readable datagram is missed.
 
+// One overlapped send (docs/CLIENT-IO.md "The overlapped send"): the
+// WSASendTo record, its buffer descriptor and destination, kept until the
+// send completes and is reaped.
+struct rocketnet_platform_wake_send_t
+{
+    WSAOVERLAPPED overlapped;
+    WSABUF buffer;
+    sockaddr_in6 to;
+};
+
 struct rocketnet_platform_wake_t
 {
     void * context;
     rocketnet_platform_socket_handle_t socket_handle;
     WSAEVENT read_event;
     HANDLE wake_event;
+    // the overlapped send: a ring of max_sends records in post order, the
+    // oldest outstanding at send_head; one manual-reset event is every
+    // record's hEvent and joins the wait while a send is outstanding
+    rocketnet_platform_wake_send_t * sends;
+    int max_sends;
+    int send_head;
+    int num_sends;
+    HANDLE send_event;
 };
 
 // docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
@@ -5080,6 +5098,11 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->context = context;
     wake->socket_handle = socket ? socket->handle : INVALID_SOCKET;
     wake->read_event = WSA_INVALID_EVENT;
+    wake->sends = NULL;
+    wake->max_sends = 0;
+    wake->send_head = 0;
+    wake->num_sends = 0;
+    wake->send_event = NULL;
     if ( socket )
     {
         wake->read_event = WSACreateEvent();
@@ -5116,6 +5139,24 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
+    // tla/RNClientIo.tla NoFreeBeforeComplete: the kernel may still read a
+    // posted send's bytes and record, so every outstanding send is cancelled
+    // and waited for before the records, and then the socket, go
+    if ( wake->num_sends > 0 )
+    {
+        CancelIoEx( (HANDLE) wake->socket_handle, NULL );
+        for ( int i = 0; i < wake->num_sends; i++ )
+        {
+            rocketnet_platform_wake_send_t * send = &wake->sends[( wake->send_head + i ) % wake->max_sends];
+            while ( !HasOverlappedIoCompleted( &send->overlapped ) )
+                WaitForSingleObject( wake->send_event, 1 );
+        }
+        wake->num_sends = 0;
+    }
+    if ( wake->send_event )
+        CloseHandle( wake->send_event );
+    if ( wake->sends )
+        rocketnet_free( wake->context, wake->sends );
     if ( wake->read_event != WSA_INVALID_EVENT )
     {
         WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
@@ -5142,28 +5183,161 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
         const double ms = ceil( timeout_seconds * 1000.0 );
         timeout_ms = ms < 2147483647.0 ? (DWORD) ms : (DWORD) 2147483647;
     }
-    DWORD result;
+    // while an overlapped send is outstanding its event joins the set last
+    // (tla/RNClientIo.tla IoWake on a completion); reap resets it, not here
+    HANDLE handles[3];
+    DWORD num_handles = 0;
+    handles[num_handles++] = wake->wake_event;
+    const DWORD read_index = readable ? num_handles : MAXDWORD;
     if ( readable )
-    {
-        HANDLE handles[2] = { wake->wake_event, wake->read_event };
-        result = WaitForMultipleObjects( 2, handles, FALSE, timeout_ms );
-    }
-    else
-    {
-        result = WaitForSingleObject( wake->wake_event, timeout_ms );
-    }
+        handles[num_handles++] = wake->read_event;
+    const DWORD send_index = wake->num_sends > 0 ? num_handles : MAXDWORD;
+    if ( wake->num_sends > 0 )
+        handles[num_handles++] = wake->send_event;
+    const DWORD result = num_handles == 1 ? WaitForSingleObject( wake->wake_event, timeout_ms )
+                                          : WaitForMultipleObjects( num_handles, handles, FALSE, timeout_ms );
     if ( result == WAIT_OBJECT_0 )
     {
         if ( wake->read_event != WSA_INVALID_EVENT )
             ResetEvent( wake->wake_event );
         return true;
     }
-    if ( readable && result == WAIT_OBJECT_0 + 1 )
+    if ( read_index != MAXDWORD && result == WAIT_OBJECT_0 + read_index )
     {
         WSAResetEvent( wake->read_event );
         return true;
     }
+    if ( send_index != MAXDWORD && result == WAIT_OBJECT_0 + send_index )
+        return true;
     return false;
+}
+
+// docs/CLIENT-IO.md "The overlapped send": the records and their event,
+// allocated once at create, before the first post
+bool rocketnet_platform_wake_reserve_sends( rocketnet_platform_wake_t * wake, int max_sends )
+{
+    rocketnet_assert( wake );
+    rocketnet_assert( max_sends > 0 );
+    rocketnet_assert( wake->sends == NULL );
+    if ( wake->read_event == WSA_INVALID_EVENT )
+        return false;
+    wake->sends = (rocketnet_platform_wake_send_t*) rocketnet_malloc( wake->context, sizeof( rocketnet_platform_wake_send_t ) * (size_t) max_sends );
+    if ( !wake->sends )
+        return false;
+    wake->send_event = CreateEvent( NULL, TRUE, FALSE, NULL );
+    if ( wake->send_event == NULL )
+    {
+        rocketnet_free( wake->context, wake->sends );
+        wake->sends = NULL;
+        return false;
+    }
+    memset( wake->sends, 0, sizeof( rocketnet_platform_wake_send_t ) * (size_t) max_sends );
+    wake->max_sends = max_sends;
+    wake->send_head = 0;
+    wake->num_sends = 0;
+    return true;
+}
+
+// tla/RNClientIo.tla IoSend, overlapped: post one WSASendTo (WSASend on a
+// connected socket) with the next record and return without waiting for the
+// kernel; the record keeps the destination, and packet_data is borrowed
+// until the completion is reaped. The destination is converted as
+// rocketnet_platform_socket_send_packet converts it. A send refused at once
+// is counted on the socket and not outstanding.
+bool rocketnet_platform_wake_post_send( rocketnet_platform_wake_t * wake, rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
+{
+    rocketnet_assert( wake && socket );
+    rocketnet_assert( input_to );
+    rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_bytes > 0 );
+    if ( wake->num_sends >= wake->max_sends )
+    {
+        rocketnet_platform_note_send_failure( socket );
+        return false;
+    }
+    rocketnet_platform_wake_send_t * send = &wake->sends[( wake->send_head + wake->num_sends ) % wake->max_sends];
+    int to_bytes = 0;
+    if ( !socket->connected )
+    {
+        rocketnet_address_t to = *input_to;
+        memset( &send->to, 0, sizeof( send->to ) );
+        if ( socket->ipv6 )
+        {
+            if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+                rocketnet_address_convert_ipv4_to_ipv6( &to );
+            send->to.sin6_family = AF_INET6;
+            for ( int i = 0; i < 8; i++ )
+                ( (uint16_t*) &send->to.sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
+            send->to.sin6_port = rocketnet_platform_htons( to.port );
+            to_bytes = (int) sizeof( sockaddr_in6 );
+        }
+        else
+        {
+            if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+            {
+                rocketnet_error( "invalid address type. could not send packet" );
+                return false;
+            }
+            rocketnet_platform_address_to_sockaddr_in( &to, (sockaddr_in*) &send->to );
+            to_bytes = (int) sizeof( sockaddr_in );
+        }
+    }
+    memset( &send->overlapped, 0, sizeof( send->overlapped ) );
+    send->overlapped.hEvent = wake->send_event;
+    send->buffer.buf = (char*) packet_data;
+    send->buffer.len = (ULONG) packet_bytes;
+    DWORD sent_bytes = 0;
+    const int result = socket->connected ?
+        WSASend( (SOCKET) socket->handle, &send->buffer, 1, &sent_bytes, 0, &send->overlapped, NULL ) :
+        WSASendTo( (SOCKET) socket->handle, &send->buffer, 1, &sent_bytes, 0, (const sockaddr*) &send->to, to_bytes, &send->overlapped, NULL );
+    if ( result != 0 )
+    {
+        const int error = WSAGetLastError();
+        if ( error != WSA_IO_PENDING )
+        {
+            rocketnet_platform_windows_send_failed( socket, input_to, error );
+            return false;
+        }
+    }
+    wake->num_sends++;
+    return true;
+}
+
+// tla/RNClientIo.tla Complete, as the I/O thread reads it: reset the shared
+// event first, so a completion after the scan signals the next wait, then
+// take completed records from the oldest and stop at the first still
+// pending, so completions are reported in post order. An error completion
+// (a cancel among them) is counted on the socket. Never blocks.
+int rocketnet_platform_wake_reap_sends( rocketnet_platform_wake_t * wake, rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( wake && socket );
+    if ( wake->num_sends == 0 )
+        return 0;
+    ResetEvent( wake->send_event );
+    int count = 0;
+    while ( wake->num_sends > 0 )
+    {
+        rocketnet_platform_wake_send_t * send = &wake->sends[wake->send_head];
+        if ( !HasOverlappedIoCompleted( &send->overlapped ) )
+            break;
+        DWORD bytes = 0, flags = 0;
+        if ( !WSAGetOverlappedResult( (SOCKET) socket->handle, &send->overlapped, &bytes, FALSE, &flags ) )
+            rocketnet_platform_note_send_failure( socket );
+        wake->send_head = ( wake->send_head + 1 ) % wake->max_sends;
+        wake->num_sends--;
+        count++;
+    }
+    return count;
+}
+
+// docs/CLIENT-IO.md "The overlapped send", at stop: every pending post is
+// cancelled, so each completes (with an error) and is reaped as any other
+void rocketnet_platform_wake_cancel_sends( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    if ( wake->num_sends > 0 )
+        CancelIoEx( (HANDLE) wake->socket_handle, NULL );
 }
 
 // tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread

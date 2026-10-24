@@ -303,6 +303,79 @@ static void test_client_io_handoff_never_waits()
 
 REGISTER_UNIT_TEST( test_client_io_handoff_never_waits );
 
+// docs/CLIENT-IO.md "The overlapped send" on the fake transport's overlapped
+// send (tests/fake_client_driver.h): a posted ring is not Sent until its
+// completion is reaped (tla/RNClientIo.tla Complete, IoFinishRing,
+// NoFreeBeforeComplete); the I/O step goes on posting the next ready ring
+// while one is outstanding, so a slow completion does not stall the ring
+// behind it; completions are reaped in post order, so ring 0 is released
+// before ring 1; and stop cancels the post still pending and the step exits
+// only once its completion is reaped.
+static void test_client_io_overlapped_ring_sent_on_completion()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_batch, &clock );
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    check( io != NULL );
+    check( io->overlapped == NULL );
+    io->overlapped = &rocketnet_fake_client_overlapped;
+
+    // ring 0 is handed off and posted: nothing is sent, and the ring is
+    // still the I/O thread's (only ring 2 is free)
+    rocketnet_client_transport_update( transport, 1000.0 );
+    check( io->send.ready_count == 1 && io->send_fill == 1 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->post_calls == 1 );
+    check( fake->num_posted == 1 );
+    check( fake->num_sent == 0 );
+    check( fake->send_batch_calls == 0 && fake->send_calls == 0 );
+    check( io->send.free_count == 1 );
+
+    // no completion: a step reaps nothing and ring 0 stays unsent
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_IDLE );
+    check( fake->num_sent == 0 && io->send.free_count == 1 );
+
+    // ring 1 is posted behind ring 0 while ring 0's post is outstanding
+    rocketnet_client_transport_update( transport, 1000.2 );
+    check( io->send.ready_count == 1 && io->send_fill == 2 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->post_calls == 2 && fake->num_posted == 2 );
+    check( io->send.free_count == 0 );
+
+    // both rings are the I/O thread's: the next hand-off is deferred
+    rocketnet_client_transport_update( transport, 1000.4 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+
+    // the kernel completes the oldest post: ring 0, and only ring 0, is Sent
+    rocketnet_fake_client_complete( fake, 1 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->num_sent == 1 && fake->num_posted == 1 );
+    check( io->send.free_count == 1 );
+    check( io->send.free_index[io->send.free_head] == 0 );
+
+    // the deferred packet leaves with the next hand-off, in ring 2
+    rocketnet_client_transport_update( transport, 1000.6 );
+    check( io->send.ready_count == 1 && io->committed[2] == 2 );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    check( fake->post_calls == 4 && fake->num_posted == 3 );
+
+    // stop: the pending posts are cancelled, their completions reaped, and
+    // only then does the step exit; nothing more reaches the wire
+    rocketnet_client_transport_stop( transport );
+    check( !rocketnet_client_transport_stopped( transport ) );
+    check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    check( fake->cancel_calls == 1 );
+    check( fake->num_posted == 0 && fake->cancelled_sends == 3 );
+    check( fake->num_sent == 1 );
+    check( rocketnet_client_transport_stopped( transport ) );
+    rocketnet_client_transport_destroy( transport );
+    check( fake->destroy_calls == 1 );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( test_client_io_overlapped_ring_sent_on_completion );
+
 // Stop with a deferred hand-off: the third update's packet waits in the
 // Filling ring behind rings 0 and 1, both queued. Stop hands the Filling ring
 // to the core with the quit store; the core sends rings 0 and 1, then it,

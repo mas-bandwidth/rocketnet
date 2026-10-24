@@ -849,6 +849,17 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
         rocketnet_free( context, client );
         return NULL;
     }
+#if defined( ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND )
+    // docs/CLIENT-IO.md "The overlapped send": every post the three rings
+    // can hold, allocated here and never at runtime
+    if ( !rocketnet_platform_wake_reserve_sends( client->wake, ROCKETNET_CLIENT_TRANSPORT_MAX_POSTED_SENDS ) )
+    {
+        rocketnet_platform_wake_destroy( client->wake );
+        rocketnet_platform_socket_destroy( client->socket );
+        rocketnet_free( context, client );
+        return NULL;
+    }
+#endif
     client->context = context;
     return client;
 }
@@ -909,6 +920,24 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
     portable_io_client_send_failures, portable_io_client_connect
 };
+#if defined( ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND )
+// docs/CLIENT-IO.md "The overlapped send" (tla/RNClientIo.tla IoSend and
+// Complete): on Windows the I/O step posts each datagram with WSASendTo and
+// reaps the completions in post order, so the kernel never holds the I/O
+// thread inside a send. The posts live in the wake, preallocated at create;
+// portable_io_client_destroy destroys the wake first, which cancels and waits
+// for any post still outstanding before the socket closes.
+static bool portable_io_client_post_send( void * transport, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) transport; return rocketnet_platform_wake_post_send( client->wake, client->socket, to, packet_data, packet_bytes ); }
+static int portable_io_client_reap_sends( void * transport )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) transport; return rocketnet_platform_wake_reap_sends( client->wake, client->socket ); }
+static void portable_io_client_cancel_sends( void * transport )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) transport; rocketnet_platform_wake_cancel_sends( client->wake ); }
+static const rocketnet_client_transport_overlapped_t portable_client_overlapped =
+{
+    portable_io_client_post_send, portable_io_client_reap_sends, portable_io_client_cancel_sends
+};
+#endif
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 { return portable_socket_create( context, config->name, bind ); }
@@ -936,6 +965,20 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
   NULL, NULL, portable_socket_send_failures, portable_client_connect
 };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+
+// docs/CLIENT-IO.md "The overlapped send": only the portable client on a
+// platform with the overlapped send (Windows) posts its sends; every other
+// backend, custom ones included, keeps the synchronous send.
+const rocketnet_client_transport_overlapped_t * rocketnet_client_transport_io_overlapped( const rocketnet_client_transport_io_operations_t * operations )
+{
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE ) && defined( ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND )
+    if ( operations == &portable_client_operations )
+        return &portable_client_overlapped;
+#else
+    (void) operations;
+#endif
+    return NULL;
+}
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };
 extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_server_operations, &portable_client_operations };
 

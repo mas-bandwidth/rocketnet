@@ -625,6 +625,21 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 #if defined(ROCKETNET_PLATFORM_HAS_WAKE) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 #define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
 #endif
+// The Windows client's overlapped send (docs/CLIENT-IO.md "The overlapped
+// send", tla/RNClientIo.tla IoSend and Complete): a socket wake reserves
+// max_sends WSASendTo records once, at create, sharing one manual-reset event
+// that joins the wake's wait while a send is outstanding, so a completion
+// ends rocketnet_platform_wake_wait. post_send posts one datagram and never
+// waits for the kernel; it borrows packet_data until the send completes and
+// returns false when it was refused at once (counted on the socket).
+// reap_sends resets the event, then returns how many of the oldest posts have
+// completed, in post order, stopping at the first one pending; an error
+// completion is counted on the socket; it never blocks. cancel_sends cancels
+// every pending post (CancelIoEx). wake_destroy cancels and waits for every
+// post still outstanding before it frees the records. Windows only.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#define ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND 1
+#endif
 /**
  * @brief Opaque reusable level-triggered wake object, optionally associated with a socket.
  *
@@ -676,6 +691,13 @@ bool rocketnet_platform_wake_wait( struct rocketnet_platform_wake_t * wake, bool
  * @return None.
  */
 void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
+
+#if defined( ROCKETNET_PLATFORM_HAS_OVERLAPPED_SEND )
+bool rocketnet_platform_wake_reserve_sends( struct rocketnet_platform_wake_t * wake, int max_sends );
+bool rocketnet_platform_wake_post_send( struct rocketnet_platform_wake_t * wake, struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
+int rocketnet_platform_wake_reap_sends( struct rocketnet_platform_wake_t * wake, struct rocketnet_platform_socket_t * socket );
+void rocketnet_platform_wake_cancel_sends( struct rocketnet_platform_wake_t * wake );
+#endif
 
 // ----------------------------------------------------------------
 

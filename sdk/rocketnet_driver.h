@@ -169,6 +169,37 @@ struct rocketnet_client_transport_io_operations_t
     bool (*connect)( void * transport, const rocketnet_address_t * server_address );
 };
 
+// The overlapped send (docs/CLIENT-IO.md "The overlapped send",
+// tla/RNClientIo.tla IoSend and Complete). Optional, all three or none, for a
+// backend with wait and wake; I/O thread only. It is not a member of the
+// operations table, so every table keeps its shape: a built-in backend that
+// has it returns it from rocketnet_client_transport_io_overlapped.
+//
+// post_send posts one datagram and returns without waiting for the kernel;
+// it borrows to and packet_data until that send completes, and returns false
+// when the send could not be posted (the datagram is then dropped and counted
+// in send_failures). reap_sends never blocks: it returns how many of the
+// oldest posts have completed since the last reap, in post order, and stops
+// at the first one still pending; an error completion counts in
+// send_failures. cancel_sends asks the kernel to end every pending post; each
+// then completes, with an error, and is reaped as any other. A completion
+// ends the backend's wait. destroy cancels every pending post and waits for
+// each to complete before it frees. At most
+// ROCKETNET_CLIENT_TRANSPORT_MAX_POSTED_SENDS posts are outstanding: the
+// client's three send rings of 256 slots, preallocated at create.
+#define ROCKETNET_CLIENT_TRANSPORT_MAX_POSTED_SENDS ( 3 * 256 )
+
+struct rocketnet_client_transport_overlapped_t
+{
+    bool (*post_send)( void * transport, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes );
+    int (*reap_sends)( void * transport );
+    void (*cancel_sends)( void * transport );
+};
+
+// The overlapped send of a built-in client backend, or NULL when its sends
+// are synchronous (every backend but the portable one on Windows).
+const rocketnet_client_transport_overlapped_t * rocketnet_client_transport_io_overlapped( const rocketnet_client_transport_io_operations_t * operations );
+
 struct rocketnet_transport_backend_t
 {
     const rocketnet_server_transport_io_operations_t * server;

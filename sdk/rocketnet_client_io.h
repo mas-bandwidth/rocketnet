@@ -147,6 +147,20 @@ struct rocketnet_client_io_t
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
     uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
+
+    // the overlapped send (docs/CLIENT-IO.md "The overlapped send";
+    // tla/RNClientIo.tla IoSend, Complete, IoFinishRing); I/O thread only.
+    // NULL keeps the synchronous send. A ring whose sends are posted waits in
+    // posted_ring, oldest first, with its posts not yet reaped in
+    // posted_sends, and goes back to the main thread only once they are.
+    const rocketnet_client_transport_overlapped_t * overlapped;
+    int posted_ring[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    uint32_t posted_sends[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    int posted_head;
+    int posted_count;
+    uint32_t outstanding_sends;                 // every posted ring's posts not yet reaped
+    bool final_posted;                          // stop's final ring is posted
+    bool sends_cancelled;                       // stop has cancelled the pending posts
 };
 
 // RNBufferHandoff Init; main thread. Takes the ring views and the receive
@@ -193,6 +207,17 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
     io->transport_faults = 0;
     io->prefilter_too_large = NULL;
+    io->overlapped = NULL;
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
+    {
+        io->posted_ring[i] = -1;
+        io->posted_sends[i] = 0;
+    }
+    io->posted_head = 0;
+    io->posted_count = 0;
+    io->outstanding_sends = 0;
+    io->final_posted = false;
+    io->sends_cancelled = false;
 }
 
 // tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -477,6 +502,125 @@ inline void rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring 
     }
 }
 
+// tla/RNClientIo.tla IoSend, overlapped: post every live slot of a ring and
+// return without waiting for the kernel. The ring joins posted_ring behind
+// every ring posted before it, with the posts it made; a post the transport
+// refuses is dropped and counted there (send_failures), so it is not
+// outstanding. A ring with no post outstanding is finished at the next reap.
+inline void rocketnet_client_io_post_ring( rocketnet_client_io_t * io, int ring )
+{
+    rocketnet_assert( io->posted_count < ROCKETNET_CLIENT_IO_NUM_RINGS );
+    const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
+    const uint64_t committed = io->committed[ring];
+    uint32_t posts = 0;
+    for ( uint64_t slot = 0; slot < committed; slot++ )
+    {
+        int bytes = 0;
+        memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+        if ( bytes == 0 )
+            continue;
+        const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+        if ( io->overlapped->post_send( io->transport->instance, &io->to[ring], packet_data, bytes ) )
+            posts++;
+    }
+    const int entry = ( io->posted_head + io->posted_count ) % ROCKETNET_CLIENT_IO_NUM_RINGS;
+    io->posted_ring[entry] = ring;
+    io->posted_sends[entry] = posts;
+    io->posted_count++;
+    io->outstanding_sends += posts;
+}
+
+// tla/RNClientIo.tla Complete, as the I/O step reads it, then IoFinishRing:
+// the transport reports how many of the oldest posts completed, in post
+// order, and they are taken from the oldest posted ring first. A ring is
+// finished (written to finished, for the caller to release) only once none
+// of its posts is outstanding, never before (NoFreeBeforeComplete;
+// MCRNClientIoBrokenSentBeforeComplete.cfg). Returns the rings finished.
+inline int rocketnet_client_io_reap( rocketnet_client_io_t * io, int * finished )
+{
+    uint32_t completed = 0;
+    if ( io->outstanding_sends > 0 )
+    {
+        const int reaped = io->overlapped->reap_sends( io->transport->instance );
+        rocketnet_assert( reaped >= 0 && (uint32_t) reaped <= io->outstanding_sends );
+        completed = reaped > 0 ? (uint32_t) reaped : 0;
+        if ( completed > io->outstanding_sends )
+            completed = io->outstanding_sends;
+        io->outstanding_sends -= completed;
+    }
+    int num_finished = 0;
+    while ( io->posted_count > 0 )
+    {
+        const int entry = io->posted_head;
+        if ( io->posted_sends[entry] > completed )
+        {
+            io->posted_sends[entry] -= completed;
+            break;
+        }
+        completed -= io->posted_sends[entry];
+        io->posted_sends[entry] = 0;
+        finished[num_finished++] = io->posted_ring[entry];
+        io->posted_ring[entry] = -1;
+        io->posted_head = ( io->posted_head + 1 ) % ROCKETNET_CLIENT_IO_NUM_RINGS;
+        io->posted_count--;
+    }
+    return num_finished;
+}
+
+// The overlapped send phase of the I/O step (docs/CLIENT-IO.md "The
+// overlapped send"). Reap, then in one exchange give back every finished
+// ring and take the oldest ready one, and post it outside the mutex; repeat
+// while a ring was taken, so a ring whose posts are outstanding never holds
+// back the ring behind it. Once quit is stored, stop's final ring is posted
+// last, the posts still pending are cancelled once, and the step reports
+// done only when every completion is reaped (no buffer is released while
+// the kernel may read it). Returns true when it reaped or posted.
+inline bool rocketnet_client_io_send_overlapped( rocketnet_client_io_t * io, bool quitting, bool * done )
+{
+    bool worked = false;
+    int finished[ROCKETNET_CLIENT_IO_NUM_RINGS];
+    int num_finished = rocketnet_client_io_reap( io, finished );
+    int ring = -1;
+    do
+    {
+        rocketnet_platform_mutex_acquire( io->mutex );
+        for ( int i = 0; i < num_finished; i++ )
+        {
+            if ( finished[i] != io->send_final )
+                rocketnet_buffer_handoff_release( &io->send, finished[i] );
+        }
+        ring = io->posted_count < ROCKETNET_CLIENT_IO_NUM_RINGS ? rocketnet_buffer_handoff_take( &io->send ) : -1;
+        rocketnet_platform_mutex_release( io->mutex );
+        if ( num_finished > 0 )
+            worked = true;
+        num_finished = 0;
+        if ( ring >= 0 )
+        {
+            rocketnet_client_io_post_ring( io, ring );
+            worked = true;
+        }
+    }
+    while ( ring >= 0 );
+
+    *done = false;
+    if ( !quitting )
+        return worked;
+    if ( io->send_final >= 0 && !io->final_posted )
+    {
+        rocketnet_client_io_post_ring( io, io->send_final );
+        worked = true;
+    }
+    io->final_posted = true;
+    if ( io->outstanding_sends > 0 && !io->sends_cancelled )
+    {
+        io->overlapped->cancel_sends( io->transport->instance );
+        io->sends_cancelled = true;
+    }
+    (void) rocketnet_client_io_reap( io, finished );
+    *done = io->outstanding_sends == 0;
+    return worked;
+}
+
 // The I/O thread's loop body (RNClientIo IoSend, IoReceive, IoPublish, IoWait,
 // IoExit; RNBufferHandoff on both handoffs; docs/CLIENT-IO.md _The I/O step_
 // and _The wake_).
@@ -495,10 +639,28 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     bool worked = false;
 
-    // 1. RNBufferHandoff ConsumerExchange (send): give back the ring sent last
-    // step and take the oldest ready ring, then send it outside the mutex.
-    // Once quit is stored this repeats until no ring is ready.
-    do
+    // 1o. The overlapped send (docs/CLIENT-IO.md "The overlapped send"):
+    // rings are posted and given back only once their completions are
+    // reaped. Once quit is stored the step exits only when no post is
+    // outstanding; until then it waits for completions, not the socket.
+    if ( io->overlapped )
+    {
+        bool done = false;
+        worked = rocketnet_client_io_send_overlapped( io, quitting, &done );
+        if ( quitting )
+        {
+            if ( !done )
+            {
+                if ( block && !worked && io->transport->operations->wait )
+                    io->transport->operations->wait( io->transport->instance, false, io->guard_timeout_seconds );
+                return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
+            }
+            rocketnet_client_io_drop_keys( io );
+            io->stopped.store( true, std::memory_order_release );
+            return ROCKETNET_CLIENT_IO_EXITED;
+        }
+    }
+    else do
     {
         rocketnet_platform_mutex_acquire( io->mutex );
         if ( io->send_ring >= 0 )
@@ -514,7 +676,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     }
     while ( quitting && io->send_ring >= 0 );
 
-    if ( quitting )
+    if ( quitting && !io->overlapped )
     {
         // RNBufferHandoff WorkerExit: no ready ring is left, so the ring stop
         // handed over goes last; then no receive, no publish, no wait.
