@@ -51,6 +51,7 @@ static void test_client_slots_binding_epoch_changes_only_on_binding()
 
 struct wc_transport_t
 {
+    alignas( 16 ) uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 64];
     uint64_t connection[WC_SLOTS];
     uint64_t epoch;
     long connection_calls;
@@ -59,7 +60,6 @@ struct wc_transport_t
     int refuse_start;                   // start_packet gives no frame while set
     int finished_frames;
     int finished_slot[64];
-    alignas( 16 ) uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 64];
 };
 
 static void wc_update( void *, double ) {}
