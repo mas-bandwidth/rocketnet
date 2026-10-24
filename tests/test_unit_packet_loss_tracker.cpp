@@ -85,6 +85,50 @@ static void test_packet_loss_tracker_reorder_does_not_recount()
     rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
 }
 
+// A packet that arrives after update has already judged its sequence must not
+// stamp the history ring. Its slot is shared with the sequence HISTORY above it,
+// and when that newer sequence was received but sits in the safety margin (not
+// yet judged), the late stamp overwrites it and the next update counts it lost:
+// one late packet counted lost twice. Deliver 0..1100 except 50 with an update
+// every 10 sequences (50 is judged lost once), then deliver 50 late, then
+// 1101..1200 with an update every 10: the second phase counts nothing lost.
+static void test_packet_loss_tracker_late_packet_does_not_clobber()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    const uint64_t late_sequence = 50;
+
+    int first_phase_lost_packets = 0;
+    for ( uint64_t sequence = 0; sequence <= 1100; ++sequence )
+    {
+        if ( sequence != late_sequence )
+        {
+            rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        }
+        if ( sequence % 10 == 9 )
+        {
+            first_phase_lost_packets += rocketnet_packet_loss_tracker_update( &tracker );
+        }
+    }
+
+    rocketnet_unit_check( first_phase_lost_packets == 1 );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, late_sequence );
+
+    int second_phase_lost_packets = 0;
+    for ( uint64_t sequence = 1101; sequence <= 1200; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        if ( sequence % 10 == 9 )
+        {
+            second_phase_lost_packets += rocketnet_packet_loss_tracker_update( &tracker );
+        }
+    }
+
+    rocketnet_unit_check( second_phase_lost_packets == 0 );
+}
+
 // A send record is written only for a sequence newer than the one its slot
 // holds and within one buffer of the highest sent, at a finite time; anything
 // else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
@@ -207,4 +251,5 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
 
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_late_packet_does_not_clobber );
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
