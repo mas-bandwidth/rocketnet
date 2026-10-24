@@ -7727,11 +7727,11 @@ bool rocketnet_test_xdp_veth_runs_here()
 
 static bool rocketnet_xdp_veth_capture_present = false;
 
-// the link, the addresses, the bpf mount and the napi sysfs. No capture and
-// no server: the hard-killed xdp cell brings its own server up afterwards,
-// and the capture cases add the capture and the server on top.
-static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int veth_queues, char * server_address, size_t server_address_bytes )
+// the pair, the capture and the xdp server on its near end, shared by the
+// veth cases; server_address receives the address the client dials
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
+
     atexit( rocketnet_xdp_veth_teardown );
 
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
@@ -7753,6 +7753,12 @@ static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int veth_queues, char 
 
     rocketnet_xdp_veth_made = true;
     rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_NETNS );
+    int veth_queues = 1;
+    {
+        char text[32];
+        if ( rocketnet_test_getenv( "ROCKETNET_TEST_XDP_VETH_QUEUES", text, sizeof( text ) ) && atoi( text ) > 1 )
+            veth_queues = atoi( text );
+    }
     {
         char command[256];
         snprintf( command, sizeof(command), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", veth_queues, veth_queues, veth_queues, veth_queues );
@@ -7792,62 +7798,6 @@ static void rocketnet_xdp_veth_pair_up_queues( bool ipv6, int veth_queues, char 
         snprintf( server_address, server_address_bytes, "[%s]:%d", server_host, ROCKETNET_XDP_VETH_PORT );
     else
         snprintf( server_address, server_address_bytes, "%s:%d", server_host, ROCKETNET_XDP_VETH_PORT );
-}
-
-// the hard-killed xdp cell: one queue, no capture
-void rocketnet_xdp_veth_pair_up( bool ipv6, char * server_address, size_t server_address_bytes )
-{
-    rocketnet_xdp_veth_pair_up_queues( ipv6, 1, server_address, server_address_bytes );
-}
-
-void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server )
-{
-    rocketnet_xdp_veth_server = server;
-}
-
-// If destroyed is the recorded server, drop that record first. Then remove
-// the pair, and free a recorded server that is still set. The hard-killed
-// cell records NULL before it frees its own server and passes NULL here.
-void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed )
-{
-    if ( rocketnet_xdp_veth_server == destroyed )
-        rocketnet_xdp_veth_server = NULL;
-    rocketnet_xdp_veth_teardown();
-}
-
-const char * rocketnet_xdp_veth_netns_path()
-{
-    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
-}
-
-void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
-{
-    // setns does not switch the mounted sysfs, so the far end's address file
-    // is not visible that way. ip netns exec mounts a sysfs for that namespace.
-    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
-        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
-    rocketnet_check( lines.size() == 1 );
-    unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
-    const int got = sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
-    rocketnet_check( got == 6 );
-    for ( int i = 0; i < 6; i++ )
-    {
-        rocketnet_check( octet[i] <= 0xffu );
-        mac[i] = (uint8_t) octet[i];
-    }
-}
-
-// the pair, the capture and the xdp server on its near end, shared by the
-// veth cases; server_address receives the address the client dials
-static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
-{
-    int veth_queues = 1;
-    {
-        char text[32];
-        if ( rocketnet_test_getenv( "ROCKETNET_TEST_XDP_VETH_QUEUES", text, sizeof( text ) ) && atoi( text ) > 1 )
-            veth_queues = atoi( text );
-    }
-    rocketnet_xdp_veth_pair_up_queues( ipv6, veth_queues, server_address, server_address_bytes );
 
     // the capture: every UDP datagram on the server's port, written to a file
     // and read back when the case ends
@@ -7938,6 +7888,43 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) == 0 );
 
     return server;
+}
+
+void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server )
+{
+    rocketnet_xdp_veth_server = server;
+}
+
+// If destroyed is the recorded server, drop that record first. Then remove
+// the pair, and free a recorded server that is still set. The hard-killed
+// cell records NULL before it frees its own server and passes NULL here.
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed )
+{
+    if ( rocketnet_xdp_veth_server == destroyed )
+        rocketnet_xdp_veth_server = NULL;
+    rocketnet_xdp_veth_teardown();
+}
+
+const char * rocketnet_xdp_veth_netns_path()
+{
+    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
+}
+
+void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
+{
+    // setns does not switch the mounted sysfs, so the far end's address file
+    // is not visible that way. ip netns exec mounts a sysfs for that namespace.
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
+        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    rocketnet_check( lines.size() == 1 );
+    unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
+    const int got = sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
+    rocketnet_check( got == 6 );
+    for ( int i = 0; i < 6; i++ )
+    {
+        rocketnet_check( octet[i] <= 0xffu );
+        mac[i] = (uint8_t) octet[i];
+    }
 }
 
 // the portable client, its socket opened inside the far end's namespace

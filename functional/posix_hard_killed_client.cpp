@@ -135,16 +135,21 @@ static bool posix_hk_is_xdp( const posix_hk_cell_t & cell )
 static char posix_hk_xdp_address[128];
 static uint8_t posix_hk_xdp_far_mac[6];
 
-void rocketnet_xdp_veth_pair_up( bool ipv6, char * server_address, size_t server_address_bytes );
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes );
 void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server );
 void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac );
 const char * rocketnet_xdp_veth_netns_path();
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 
+static struct rocketnet_server_transport_t * posix_hk_xdp_server = NULL;
+
+// the veth cases' setup brings up the pair, the capture and the xdp server;
+// the cell takes that server as its own
 static void posix_hk_xdp_up( const posix_hk_cell_t & cell )
 {
-    rocketnet_xdp_veth_pair_up( cell.ipv6, posix_hk_xdp_address, sizeof( posix_hk_xdp_address ) );
+    setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
+    posix_hk_xdp_server = rocketnet_xdp_veth_start( cell.ipv6, "posix_hard_killed_xdp", posix_hk_xdp_address, sizeof( posix_hk_xdp_address ) );
 }
 
 static void posix_hk_xdp_down( struct rocketnet_server_transport_t * destroyed )
@@ -241,6 +246,15 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
 #if defined(__linux__) && ROCKETNET_XDP
     if ( posix_hk_is_xdp( cell ) )
     {
+        // the server the veth setup brought up, or, once the cell has
+        // taken that one, a fresh one on the same address
+        struct rocketnet_server_transport_t * xdp_server = posix_hk_xdp_server;
+        posix_hk_xdp_server = NULL;
+        if ( xdp_server )
+        {
+            posix_hk_require_server_io( xdp_server, cell );
+            return xdp_server;
+        }
         if ( config.max_clients < 4 )
             config.max_clients = 4;
         config.num_xdp_queues = 1;
@@ -251,7 +265,7 @@ static struct rocketnet_server_transport_t * posix_hk_server_create( const posix
         rocketnet_server_socket_allow_commit();
         const enum rocketnet_log_level_t log_level = rocketnet_log_level_current();
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
-        struct rocketnet_server_transport_t * xdp_server = rocketnet_server_transport_create( NULL, address, &config );
+        xdp_server = rocketnet_server_transport_create( NULL, address, &config );
         rocketnet_log_level( log_level );
         posix_hard_killed_require( xdp_server );
         rocketnet_xdp_veth_note_server( xdp_server );
@@ -964,8 +978,13 @@ static void posix_client_server_gone( const posix_hk_cell_t & cell )
 #if defined(__linux__) && ROCKETNET_XDP
     if ( posix_hk_is_xdp( cell ) )
     {
+        // the veth setup brings a server up; this case starts with none, so
+        // that one goes at once and a fresh one comes up below
         posix_hk_xdp_up( cell );
         snprintf( server_address, sizeof(server_address), "%s", posix_hk_xdp_address );
+        struct rocketnet_server_transport_t * first = posix_hk_server_create( cell, 0, 4 );
+        rocketnet_xdp_veth_note_server( NULL );
+        posix_hk_server_stop_and_destroy( first );
     }
     else
 #endif
