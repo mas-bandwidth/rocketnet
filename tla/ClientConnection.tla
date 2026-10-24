@@ -266,6 +266,7 @@ AppConnectKeepsAttempt ==
     /\ cKeys' = NoKeys /\ cEph' = TRUE /\ cIndex' = FALSE /\ cReasm' = FALSE
     /\ cSinceSend' = SendInterval
     /\ cSinceRecv' = 0 /\ cAge' = 0
+    /\ cFam' = "none" /\ cReqFams' = {}
     /\ UNCHANGED <<cHasCookie, cSeen, cDiscPending, cDiscKeys, cLostKinds,
                    serverVars, c2sVars, s2cVars>>
 
@@ -830,7 +831,8 @@ TerminalAbsorbing ==
 FreshAttemptFromFailure ==
     [][(cstate < 0 /\ cstate' = 1) =>
          /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ ~cHasCookie' /\ cEph'
-         /\ ~cIndex' /\ ~cReasm' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0]_vars
+         /\ ~cIndex' /\ ~cReasm' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0
+         /\ cFam' = "none" /\ cReqFams' = {}]_vars
 
 \* a timeout from waiting state N lands in -(N+1) (S:2074-2077)
 TimeoutPairing ==
