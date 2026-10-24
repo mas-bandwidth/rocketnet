@@ -35,6 +35,14 @@ OS thread count from `/proc/self/task`, so they are functional cases in
 `functional/process_thread_counts.cpp`. On platforms without that file the
 count is -1 and the thread assertion pins nothing, so it is never unit logic.
 
+The shared-library export cases `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant` and
+`test_dev_token_minting_absent_in_release` load a separately built shared
+library through the OS loader (`dlopen`, or `LoadLibraryA` on Windows) and look
+a symbol up in it, an outside dependency, so they are functional cases in
+`./bin/functional`, not unit cases. Their bodies are in
+`functional/shared_library_tokens.cpp`.
+
 ## Peak memory per case
 
 Both runners record each case process's peak resident set (`wait4`

@@ -45,12 +45,6 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
 // ---------------------------------------------------------------------------
 // the vector inputs. integers are values; addresses are their wire bytes
 // (ipv4: four octets then the port little-endian; ipv6: eight uint16 groups
@@ -633,64 +627,11 @@ static void test_tampered_vector_refused()
     }
 }
 
-// The unit suite links the release archive, whose development minter is
-// compiled out; the development shared library built beside it carries
-// rocketnet_create_dev_connect_token, so load that library and mint through
-// its own symbol.
-typedef enum rocketnet_status_t ( *ctv_dev_token_minter_t )( const char * server_address_ipv4, const char * server_address_ipv6,
-                                                             const uint8_t * server_public_key, int expire_seconds,
-                                                             int timeout_seconds, uint64_t client_id, uint64_t protocol_id,
-                                                             uint64_t unix_timestamp, const uint8_t * user_data,
-                                                             char * connect_token );
-
-static ctv_dev_token_minter_t ctv_dev_token_minter()
-{
-    ctv_dev_token_minter_t minter = NULL;
-#if defined(_WIN32)
-    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
-    rocketnet_unit_check( library != NULL );
-    minter = (ctv_dev_token_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
-#else
-    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    rocketnet_unit_check( library != NULL );
-    minter = (ctv_dev_token_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
-#endif
-    rocketnet_unit_check( minter != NULL );
-    return minter;
-}
-
-// The dev connect token carries the lifetime and connection timeout it is
-// given. Mint one with the development minter at timestamp 1000 using the
-// typical values (the named constants), decode the string and read its signed
-// fields back with the development backend key, pinning both values.
-static void test_dev_connect_token_timeout_is_the_named_constant()
-{
-    const uint64_t now = 1000;
-    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-
-    ctv_dev_token_minter_t create_dev = ctv_dev_token_minter();
-    rocketnet_unit_check( create_dev( "127.0.0.1:40000", NULL, rocketnet_test_server_public_key,
-                                      ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
-                                      1, ROCKETNET_DEV_PROTOCOL_ID, now, NULL, token_string ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( strlen( token_string ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-    rocketnet_unit_check( rocketnet_base64_decode_data( token_string, token, sizeof( token ) ) == ROCKETNET_CONNECT_TOKEN_BYTES );
-
-    struct rocketnet_connect_token_t read_token;
-    rocketnet_read_connect_token( &read_token, token );
-    rocketnet_unit_check( rocketnet_verify_signed_connect_data( read_token.signed_connect_data, read_token.signature,
-                                                                rocketnet_dev_backend_public_key ) );
-
-    struct rocketnet_signed_connect_data_t parsed;
-    rocketnet_read_signed_connect_data( &parsed, read_token.signed_connect_data );
-    rocketnet_unit_check( parsed.create_timestamp == now );
-    rocketnet_unit_check( parsed.protocol_id == ROCKETNET_DEV_PROTOCOL_ID );
-    rocketnet_unit_check( parsed.timeout_seconds == ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS );
-    rocketnet_unit_check( parsed.expire_timestamp - parsed.create_timestamp == ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS );
-}
+// test_dev_connect_token_timeout_is_the_named_constant loads the development
+// shared library, so it runs in the functional suite
+// (functional/shared_library_tokens.cpp).
 
 REGISTER_UNIT_TEST( test_vectors_regenerate_byte_identical );
-REGISTER_UNIT_TEST( test_dev_connect_token_timeout_is_the_named_constant );
 REGISTER_UNIT_TEST( test_each_vector_verifies_and_opens );
 REGISTER_UNIT_TEST( test_deterministic_seal_matches_libsodium_open );
 REGISTER_UNIT_TEST( test_tampered_vector_refused );

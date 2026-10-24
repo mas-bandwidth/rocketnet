@@ -179,6 +179,9 @@ named functional, never as a unit step.
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+| `test_api_polish_dev_token_string` | functional | loads the development shared library through `dlopen` or `LoadLibraryA` and mints through its `rocketnet_create_dev_connect_token` (shared_library_tokens.cpp) | `./bin/functional` |
+| `test_dev_connect_token_timeout_is_the_named_constant` | functional | loads the development shared library through `dlopen` or `LoadLibraryA` and mints through its `rocketnet_create_dev_connect_token` (shared_library_tokens.cpp) | `./bin/functional` |
+| `test_dev_token_minting_absent_in_release` | functional | loads the release shared library through `dlopen` or `LoadLibraryA` and checks it carries no `rocketnet_create_dev_connect_token` (shared_library_tokens.cpp) | `./bin/functional` |
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
@@ -188,6 +191,11 @@ The two process thread-count cases live in `functional/process_thread_counts.cpp
 and count the process's threads from `/proc/self/task`, which Linux has and
 the other platforms do not: off Linux the count reads -1 and the case pins
 nothing, so neither case is unit logic.
+
+The three shared-library export cases live in `functional/shared_library_tokens.cpp`.
+Each loads a separately built shared library through the OS loader, which is an
+outside dependency rather than unit logic. The functional target builds both
+shared libraries and takes their paths from CMakeLists.txt.
 
 Dependencies, per platform, as CI installs them:
 

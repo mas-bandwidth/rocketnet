@@ -33,12 +33,6 @@
 #include <string.h>
 #include <type_traits>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
 #define check rocketnet_unit_check
 
 // --- the removed names stay removed ----------------------------------------
@@ -141,80 +135,8 @@ REGISTER_UNIT_TEST( test_api_polish_status_returns );
 
 // --- the dev token minter writes the public token string ---------------------
 
-// The unit suite links the release archive, where the development minter is
-// compiled out; the development shared library built beside it carries it, so
-// the minter is loaded from there (as test_unit_connect_token_vectors.cpp
-// does) and called through the public signature: it writes exactly the
-// NUL-terminated string into ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES and
-// names every refusal.
-typedef rocketnet_status_t ( *api_polish_dev_minter_t )( const char *, const char *, const uint8_t *, int, int, uint64_t, uint64_t, uint64_t, const uint8_t *, char * );
-
-#if ROCKETNET_DEV
-static_assert( rn_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
-#endif // #if ROCKETNET_DEV
-
-// the development library keeps its own log state, apart from the sink the
-// suite installs in the archive it links, so the test captures the refusal
-// line in that library
-typedef void ( *api_polish_dev_set_log_t )( rocketnet_log_function_t, void * );
-static api_polish_dev_set_log_t api_polish_dev_set_log = NULL;
-static int api_polish_dev_error_lines = 0;
-
-static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char *, size_t )
-{
-    if ( level == ROCKETNET_LOG_LEVEL_ERROR )
-        api_polish_dev_error_lines++;
-}
-
-static api_polish_dev_minter_t api_polish_dev_minter()
-{
-    api_polish_dev_minter_t minter = NULL;
-#if defined(_WIN32)
-    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
-    check( library != NULL );
-    minter = (api_polish_dev_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
-    api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_log_function" );
-#else
-    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    check( library != NULL );
-    minter = (api_polish_dev_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
-    api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_log_function" );
-#endif
-    check( minter != NULL );
-    check( api_polish_dev_set_log != NULL );
-    return minter;
-}
-
-static void test_api_polish_dev_token_string()
-{
-    api_polish_dev_minter_t create_dev = api_polish_dev_minter();
-    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    memset( server_key, 0x42, sizeof( server_key ) );
-    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES + 1];
-    memset( token, 0x5A, sizeof( token ) );
-    api_polish_dev_error_lines = 0;
-    api_polish_dev_set_log( api_polish_dev_log_capture, NULL );
-
-    // no address at all: refused and named, nothing written
-    check( create_dev( NULL, NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( api_polish_dev_error_lines == 1 );
-    check( token[0] == 0x5A && token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1] == 0x5A );
-
-    // an address that does not parse
-    check( create_dev( "not an address", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
-    check( token[0] == 0x5A );
-
-    // a dead lifetime is refused
-    check( create_dev( "127.0.0.1:40000", NULL, server_key, 0, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( token[0] == 0x5A );
-
-    // the string fills the public buffer exactly, NUL-terminated, nothing past it
-    check( create_dev( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
-    check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-    check( token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] == 0x5A );
-    api_polish_dev_set_log( NULL, NULL );
-}
-REGISTER_UNIT_TEST( test_api_polish_dev_token_string );
+// test_api_polish_dev_token_string loads the development shared library, so it
+// runs in the functional suite (functional/shared_library_tokens.cpp).
 
 // --- ruling 3: typed enums, values unchanged ----------------------------------
 

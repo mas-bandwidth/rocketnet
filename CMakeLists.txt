@@ -710,25 +710,6 @@ if(ROCKETNET_BUILD_TESTS)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
-    # Two probes load a shared library at run time, so the test target must
-    # build both: CI legs build `test` alone, and without this the library is
-    # missing and the probe goes red. test_dev_token_minting_absent_in_release
-    # probes the release library; the connect-token vectors load the dev
-    # library's token writer through test_dev_connect_token_timeout_is_the_named_constant.
-    add_dependencies(test rocketnet_shared rocketnet_shared_dev)
-    add_dependencies(test_wide rocketnet_shared)
-    # Probe the exact shared targets built for this configuration, so the unit
-    # suite passes when the output directory or working directory changes.
-    # sdk/rocketnet_tests.cpp is compiled by these two targets, not by test.
-    target_compile_definitions(rocketnet_test_support PRIVATE
-        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
-    target_compile_definitions(test_wide PRIVATE
-        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\"")
-    target_compile_definitions(test PRIVATE
-        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\"")
-    # Keep the shared target directory in the executable's RUNPATH for other
-    # runtime loads that use a bare soname.
-    set_property(TARGET test APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_transport, test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
@@ -834,9 +815,32 @@ if(ROCKETNET_BUILD_TESTS)
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
         functional/process_thread_counts.cpp
+        functional/shared_library_tokens.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
+    # Three cases load a shared library at run time (functional/shared_library_tokens.cpp),
+    # so the functional target must build both: CI legs build `functional` alone, and
+    # without this the library is missing and the probe goes red. The cases probe the
+    # exact shared targets built for this configuration, so they pass when the output
+    # directory or working directory changes. The functional target links rocketnet_dev,
+    # which is ROCKETNET_DEV=1 in every build, so the release probe takes its branch from
+    # ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV, set from the ROCKETNET_DEV option:
+    # 1 asserts the development minter is callable, 0 asserts the release library
+    # carries no rocketnet_create_dev_connect_token.
+    add_dependencies(functional rocketnet_shared rocketnet_shared_dev)
+    if(ROCKETNET_DEV)
+        set(rocketnet_functional_release_library_is_dev 1)
+    else()
+        set(rocketnet_functional_release_library_is_dev 0)
+    endif()
+    target_compile_definitions(functional PRIVATE
+        "ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV=${rocketnet_functional_release_library_is_dev}"
+        "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\""
+        "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\"")
+    # Keep the shared target directory in the executable's RUNPATH for other
+    # runtime loads that use a bare soname.
+    set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     target_compile_definitions(functional PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
