@@ -59,4 +59,8 @@ int rocketnet_loopback_server_queue_packets( int max_clients );
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
 // Deterministic send-lock contention seam; test library only.
 void rocketnet_loopback_test_send_contention( bool busy );
+
+// Read-only queue-index seam; test library only. Writes the endpoint's
+// free-running head and tail and its fixed capacity.
+void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
 #endif
