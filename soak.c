@@ -117,7 +117,12 @@
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
     and the memory count grows by at most one page per ten minutes of run
-    since the post-warmup sample (at least one page). A count that is not
+    since the post-warmup sample (at least one page). On Windows the memory
+    count held to that rule is library_bytes, the library's own allocations
+    (also printed as "soak resources: library_bytes start=<n> end=<n>
+    peak=<n>" on every platform), because private_bytes is the whole
+    process's commit charge and the OS's share of it is not the library's
+    (soak_memory_count_is_os). A count that is not
     flat prints "soak: --assert-flat FAILED: <name> start=<n> end=<n>" and
     the run exits 1; so does a run that ends inside the warm cycle. A second
     --assert-flat, or one given a value (--assert-flat=...), is refused with
@@ -515,6 +520,25 @@ static void soak_library_free( void * context, void * p )
     free( block );
 }
 
+// Windows only, the memory count is not compared: PrivateUsage is the whole
+// process's commit charge, and the OS's share of it moves on its own (a 60 s
+// run measured private_bytes +8192 with library_bytes exactly flat: growth
+// outside every allocation the library made, in memory the OS and the C
+// runtime own). The
+// library's own bytes (library_bytes) are held to the same flat rule in its
+// place; the process's count still prints. On Linux and macOS the memory
+// count is compared as it is.
+
+static int soak_memory_count_is_os( int index )
+{
+#if defined(_WIN32)
+    return index == PROCESS_RESOURCES_MEMORY;
+#else
+    (void) index;
+    return 0;
+#endif
+}
+
 // one "soak memory:" line: the memory count of *sample, the library's own
 // allocated bytes, on Linux the smaps_rollup Rss and Private_Dirty read now,
 // and on Windows how many of the process's threads are the OS's own (never
@@ -733,6 +757,9 @@ int main( int argc, char ** argv )
     struct process_resources_t resources_start;
     struct process_resources_t resources_end;
     struct process_resources_t resources_peak;
+    int64_t library_bytes_start = 0;
+    int64_t library_bytes_end = 0;
+    int64_t library_bytes_peak = 0;
     memset( &resources_start, 0, sizeof( resources_start ) );
     memset( &resources_end, 0, sizeof( resources_end ) );
     memset( &resources_peak, 0, sizeof( resources_peak ) );
@@ -821,8 +848,12 @@ int main( int argc, char ** argv )
                     resources_start = sample;
                     resources_peak = sample;
                     resources_start_time = rocketnet_time();
+                    library_bytes_start = soak_library_bytes_read();
+                    library_bytes_peak = library_bytes_start;
                 }
                 process_resources_peak( &resources_peak, &sample );
+                if ( soak_library_bytes_read() > library_bytes_peak )
+                    library_bytes_peak = soak_library_bytes_read();
                 soak_print_memory( "between", rocketnet_time() - start_time, &sample );
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -1057,6 +1088,8 @@ int main( int argc, char ** argv )
                 if ( process_resources_read( &sample ) )
                 {
                     process_resources_peak( &resources_peak, &sample );
+                    if ( resources_started && soak_library_bytes_read() > library_bytes_peak )
+                        library_bytes_peak = soak_library_bytes_read();
                     soak_print_memory( client ? "live" : "between", rocketnet_time() - start_time, &sample );
                 }
             }
@@ -1151,6 +1184,9 @@ int main( int argc, char ** argv )
     {
         resources_ended = 1;
         process_resources_peak( &resources_peak, &resources_end );
+        library_bytes_end = soak_library_bytes_read();
+        if ( library_bytes_end > library_bytes_peak )
+            library_bytes_peak = library_bytes_end;
         soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
@@ -1161,7 +1197,7 @@ int main( int argc, char ** argv )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
-            if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
+            if ( assert_flat && !soak_memory_count_is_os( i ) && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
                 printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
@@ -1170,6 +1206,15 @@ int main( int argc, char ** argv )
                 printf( "\n" );
                 failures++;
             }
+        }
+        printf( "soak resources: library_bytes start=%lld end=%lld peak=%lld\n",
+                (long long) library_bytes_start, (long long) library_bytes_end, (long long) library_bytes_peak );
+        if ( assert_flat && soak_memory_count_is_os( PROCESS_RESOURCES_MEMORY ) && !process_resources_flat( PROCESS_RESOURCES_MEMORY, library_bytes_start, library_bytes_end, seconds_since_start ) )
+        {
+            printf( "soak: --assert-flat FAILED: library_bytes start=%lld end=%lld (allowed growth %lld bytes over %.0f s)\n",
+                    (long long) library_bytes_start, (long long) library_bytes_end,
+                    (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+            failures++;
         }
     }
     else
