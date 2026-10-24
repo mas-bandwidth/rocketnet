@@ -66,5 +66,13 @@ ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
 Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 then sweeps a longer range sized to about twenty minutes on that OS (Linux
-51-11000, macOS 51-14000, Windows WINDOWS_SWEEP). A FAIL line or a trace
+51-11000, macOS 51-14000, Windows 51-6000). A FAIL line or a trace
 mismatch fails the leg; the log holds the replay line.
+
+The ranges come from Release measurements on each OS's fleet member: Linux
+(amd-2) ran seeds 1-500 in 55 s and 51-11000 in 1297 s; macOS (mini-m5-1) ran
+1-500 in 43 s and 51-14000 in 1261 s; Windows (captain) ran 1-50 in 10 s, or
+0.2 s a seed, so about 1200 s is 6000 seeds, 51-6000. The Windows figure is the
+1-50 measurement alone; the first nightly's sweep time line (`seeds=... took
+<n>s`) is the check on it. Each leg's `timeout-minutes: 50` is about twice the
+sweep plus the build.

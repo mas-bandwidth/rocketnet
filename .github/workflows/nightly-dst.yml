@@ -17,10 +17,14 @@
 # a run does; a change that moves it updates DST_REFERENCE_TRACE and docs/DST.md
 # in the same commit, from three equal PASS lines (Linux, macOS, Windows).
 #
-# Nightlies are exempt from the two-minute rule. Measured at 010c8167 (Release):
-# seeds 1-500 took 55 s on amd-2 (Linux), 43 s on mini-m5-1 (macOS) and
-# WINDOWS_MEASURED on captain (Windows). timeout-minutes is the sweep plus the
-# build, doubled.
+# Nightlies are exempt from the two-minute rule. Each sweep is sized to about
+# 1200 s from a Release measurement on that OS's fleet member:
+#   Linux   amd-2      seeds 1-500 in 55 s (0.11 s/seed); 51-11000 ran in 1297 s
+#   macOS   mini-m5-1  seeds 1-500 in 43 s (0.086 s/seed); 51-14000 ran in 1261 s
+#   Windows captain    seeds 1-50 in 10 s (0.2 s/seed), so 1200 s / 0.2 = 6000
+#                      seeds: 51-6000 (measured from 1-50 alone; captain's
+#                      exclusive lock is shared by the sprint)
+# timeout-minutes 50 is about twice the sweep plus the build.
 
 name: nightly-dst
 
@@ -158,7 +162,7 @@ jobs:
     env:
       DST_BIN: ./bin/Release
       DST_EXE: .exe
-      DST_SWEEP: 51-11000
+      DST_SWEEP: 51-6000
     steps:
 
       - uses: actions/checkout@v4
