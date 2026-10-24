@@ -608,8 +608,7 @@ this allocator plan before opening them.
 
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
-including two background stats job banks, per-slot delta buffers and worker-owned
-history, and the socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
 socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
@@ -638,23 +637,21 @@ twice the receive frames it keeps on the ring, and for
 submission, completion and provided buffer rings, thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
-resident pages. Every server adds one background stats worker to its transport's
-I/O workers. Its wake uses a native event or pipe, so it adds no UDP socket or
-socket-buffer reservation. The current default Linux worker topology is:
+resident pages. Statistics run on the ack path and add no thread. The current
+default Linux worker topology is:
 
-| transport | sockets | I/O workers | stats workers | total stacks |
-| --- | --- | --- | --- | --- |
-| portable server | 1 | 2 | 1 | 3 |
-| gso | 4 | 5 | 1 | 6 |
-| io_uring | 4 | 0 | 1 | 1 |
-| xdp | 7 | 7 | 1 | 8 |
+| transport | sockets | I/O workers | total stacks |
+| --- | --- | --- | --- |
+| portable server | 1 | 2 | 2 |
+| gso | 4 | 5 | 5 |
+| io_uring | 4 | 0 | 0 |
+| xdp | 7 | 7 | 7 |
 
-The default Windows server topology is one socket and two I/O workers plus the
-stats worker for IOCP (one completion worker and one transmit worker), or one
-socket and one I/O worker plus the stats worker for RIO. A portable
-server has the same two I/O workers as the Linux row. On macOS, msgx and the
-portable server also have one receive worker, one transmit worker
-and the stats worker. These server counts do not include client objects; each
+The default Windows server topology is one socket and two I/O workers for IOCP
+(one completion worker and one transmit worker), or one socket and one I/O
+worker for RIO. A portable server has the same two I/O workers as the Linux
+row. On macOS, msgx and the portable server also have one receive worker and
+one transmit worker. These server counts do not include client objects; each
 normal client adds its own one background network thread.
 
 Multiply the total stacks by the host's default stack reserve. Use the probe

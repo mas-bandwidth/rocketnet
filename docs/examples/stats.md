@@ -73,26 +73,14 @@ Jitter is the mean excess of retained positive first-ACK round-trip samples over
 their minimum, in milliseconds. It includes peer ACK scheduling and caller
 update cadence. Zero-time samples are excluded from both the minimum and mean.
 These histories do not expire with elapsed time; reconnect resets them. Client
-stats recompute on read. Each server update first applies at most 20 results
-from one previously completed batch, then submits a batch that visits at most
-20 configured slots in one modulo phase and hands off delta buffers for
-connected slots. Results from a newly submitted batch can be published no
-earlier than a later update. A background worker folds the deltas into its
-rolling ACK history and computes the server-slot statistics; the caller's
-server-slot stats call only copies the most recently published values. If the
-worker is busy, update does not wait. Submission requires a free job bank, a
-spare delta buffer for every selected connected slot, and an immediately
-available exchange mutex. Otherwise update defers the phase without advancing
-the submitted-job ordinal; deltas keep coalescing in producer buffers and the
-same phase is retried later. The ordinal cycles through
-`ceil(max_clients / 20)` phases, so every phase is revisited without starvation.
-At 1,000 configured slots, a full set of phases takes 50 successfully submitted
-batches, and worker lag can make published values older still. Results carry
-the connection ID and are applied only while the slot still has that
-connection; a reset clears the published values and rejects stale results from
-a prior connection. Preallocated delta buffers keep the rolling ACK history
-with the worker without a full-history copy on the update path. This makes no
-100-us update-time guarantee.
+stats recompute on read. Server-slot stats are always current: each slot keeps
+running aggregates that every send, receive and ack updates in O(1) (the rtt
+minimum in O(log n)), equal at every read to a full recompute over the retained
+history, so the caller's server-slot stats call copies values that already
+include the latest ack, and an idle slot costs nothing. Server update does no
+statistics pass and runs no statistics thread. A reset clears the slot's values
+with the rest of its connection state (sdk/rocketnet_ack.cpp,
+tla/RNServerStats.tla).
 
 The final API changes the client's previous receive-direction, one-second loss
 estimate and smoothed arrival-gap jitter to these shared definitions. Existing

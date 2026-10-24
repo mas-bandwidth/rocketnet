@@ -5061,9 +5061,8 @@ void rocketnet_test_server_transport_io_pin_msgx()
 // test_server_transport_io_ladder_fall, create the development config's
 // full-capacity server (ROCKETNET_MAX_CLIENTS slots) on "127.0.0.1:0" and
 // accept whichever rung the ladder grants, so their footprint is the server
-// memory plan, not the suite-wide bound: the stats worker's two delta buffers
-// and history per slot and the transport's owned receive buffers are
-// allocated up front by design. The rungs that can grant a port-zero address
+// memory plan, not the suite-wide bound: the per-slot ACK history and the
+// transport's owned receive buffers are allocated up front by design. The rungs that can grant a port-zero address
 // are the auto-order transports that are not pin-only and that discover
 // their bound port (the #109 rule refuses the rest before create); the
 // ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
