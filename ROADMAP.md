@@ -465,7 +465,10 @@ Current limits accepted for the preview-2 cut. These rows describe preview-2; th
 | Mac fuzz, Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
 | The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
 | Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |
-| Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified. io_uring suite-concurrency and runner memlock provisioning work is deferred. | ❌ | — | — |
+| Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified: the test NIC's driver refuses the AF_XDP zero-copy bind on every queue (docs/runs/xdp-zero-copy.md), so no zero-copy server exists to load. io_uring suite-concurrency and runner memlock provisioning work is deferred. | ❌ | — | — |
+| The RIO transport: UDP send offload (USO) is proven but not wired, and UDP receive offload (URO) is unproven; on loopback it showed no coalescing. | — | — | ❌ |
+| The 72-hour one-connection soak that carries session sequences past 2^32 has not been run. Unit and DEV-seam tests cover the wrap edge. | ❌ | ❌ | ❌ |
+| Some internal message-layer identifiers still use payload, ring and slot names rather than message or packet names. The public API is not affected. | ❌ | ❌ | ❌ |
 | complete | 0% | 0% | 0% |
 
 [Source data](docs/roadmap.sexp)
