@@ -594,7 +594,8 @@ def validate_proof(server_text, shard_texts, run_id, total, duration, limit, rea
     # The proof cell is the delivery proof. The server API timing budget is
     # still validated as evidence and reported beside it, not folded in.
     timing_pass = validate_timing(server_text, server, run_id)
-    return {"schema": "split_merge_v2", "verdict": "PASS", "overall_verdict": "PASS",
+    return {"schema": "split_merge_v2", "verdict": "PASS",
+            "overall_verdict": "PASS" if timing_pass else "FAIL",
             "non_timing_verdict": "PASS", "timing_verdict": "PASS" if timing_pass else "FAIL",
             "reason": "none", "load": "proof", "run_id": run_id, "total": total,
             "transport": granted, "streams": len(server_streams), "messages_sent": sent,

@@ -354,6 +354,7 @@ the cell verdict:
 split_proof_cell: verdict=PASS transport=portable total=1000 streams=26000 messages_sent=... messages_delivered=... unreliable_lost=... sequenced_skipped=... timing_verdict=...
 ```
 
-The cell verdict is the delivery proof. The server API timing evidence is
-still validated and its verdict printed beside it; the timing budget is
-judged at full load, not here.
+The cell verdict is the delivery proof, and the merger exits 0 when it
+passes. The server API timing evidence is still validated and its verdict
+printed beside it (`timing_verdict`, and `overall_verdict` in the JSON line
+is FAIL when it fails); the timing budget is judged at full load, not here.
