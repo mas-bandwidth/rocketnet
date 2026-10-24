@@ -988,6 +988,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
     // PacketFailed (refused). tla/RNOutgoingBuild.tla SendReliable and
     // SendUnreliable: the ordered packet of the reliable phase, then the
     // queued unreliable records copied from their region records.
+    // tla/RNEndpoint.tla WriteAck: the transport seals the packet written
+    // here with its pending acks of opened peer packets (P2); a keepalive is
+    // that send with no message record riding along.
     (void) capacity;
     (void) packet_id;
     if ( endpoint->packet_written || !payload )
