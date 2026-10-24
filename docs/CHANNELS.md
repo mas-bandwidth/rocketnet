@@ -56,6 +56,12 @@ operation. `packets_per_update` bounds packet work per connection per update.
 Receipt-bearing sends report `ROCKETNET_RECEIPT_STATUS_ACKED` or
 `ROCKETNET_RECEIPT_STATUS_LOSS` through `rocketnet_client_receipts` or
 `rocketnet_server_receipts`. Receipt serials are scoped to their endpoint.
+A type-5 receipt reports LOSS only after its receipt deadline, the packet's
+send time plus `message_resend_delay_max_ms`; an acknowledgement that arrives
+after the adaptive resend delay but inside that deadline reports ACKED. A send
+refused by the send budget or the transport reports LOSS at once, and an
+entry evicted from the sent-packet map reports LOSS at the eviction, the one
+exception (standard/MESSAGES.md m12).
 The stats structs filled by `rocketnet_client_stats`, `rocketnet_server_stats`
 and `rocketnet_server_client_stats` distinguish ordinary connection-state drops
 (`messages_dropped_not_connected`), budget drops (`messages_dropped_over_budget`) and API misuse

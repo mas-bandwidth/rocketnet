@@ -94,6 +94,7 @@ MCRNReceiptsMid.cfg	MCRNReceipts.tla	pass	-	ignore-terminal	rnreceipts	required	
 MCRNReceiptsBrokenLastIndexAck.cfg	MCRNReceipts.tla	invariant	BlockAckedOnlyWhenAllFragmentsAcked	ignore-terminal	rnreceipts	required	-
 MCRNReceiptsBrokenTwoOutcomes.cfg	MCRNReceipts.tla	invariant	ExactlyOneOutcomePerReceiptSerial	ignore-terminal	rnreceipts	required	-
 MCRNReceiptsBrokenReliableLoss.cfg	MCRNReceipts.tla	invariant	LossOnlyForUnreliableReceipt	ignore-terminal	rnreceipts	required	-
+MCRNReceiptsBrokenEarlyLoss.cfg	MCRNReceipts.tla	invariant	LossOnlyAfterDeadline	ignore-terminal	rnreceipts	required	-
 MCRNChannel.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
 MCRNChannelSafety.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
 MCRNChannelMid.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
