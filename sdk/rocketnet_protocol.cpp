@@ -416,10 +416,7 @@ uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
         uint64_t above = ( base + 0x100000000ULL ) | wire_value;
         uint64_t distance = above > expected ? above - expected : expected - above;
         if ( distance < best_distance || ( distance == best_distance && above > best ) )
-        {
             best = above;
-            best_distance = distance;
-        }
     }
 
     return best;
