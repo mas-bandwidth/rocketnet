@@ -484,11 +484,11 @@ uint64_t rocketnet_platform_receive_empties( void );
  *
  * Every sendto and sendmmsg that answers -1 (SOCKET_ERROR on Windows) drops
  * its datagram and increments the count, including the test seam's injected
- * errors. A refused sendmsg_x chunk whose per-packet replay refused any send
- * counts once here: the kernel may have delivered a prefix of it, so its fate
- * is indeterminate. The replay's own refusals count in
- * rocketnet_platform_socket_send_replay_failures instead, and a replay that
- * sent every message counts nothing. Monotonic for the socket's life.
+ * errors. A refused sendmsg_x chunk counts once here, whatever its per-packet
+ * replay does: the kernel may have delivered a prefix of it, so its fate is
+ * indeterminate. The replay's own refusals count in
+ * rocketnet_platform_socket_send_replay_failures instead. Monotonic for the
+ * socket's life.
  * @param socket Live socket; must be non-NULL.
  * @return Number of dropped datagrams and refused sendmsg_x chunks since the socket was created.
  */
@@ -1066,7 +1066,7 @@ bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t *
         bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
         double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
-        uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk whose replay refused a send; atomic, monotonic
+        uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
         uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
     };
 

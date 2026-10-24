@@ -336,9 +336,8 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 // drop is counted on the socket that made it, so a caller can price what the
 // kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
 // buffer, a refused destination). Atomic: the client's I/O thread and the
-// main thread both read. send_failures counts each dropped datagram, and a
-// refused sendmsg_x chunk once when its replay refused a send (its delivered
-// prefix is indeterminate);
+// main thread both read. send_failures counts each dropped datagram, and each
+// refused sendmsg_x chunk once (its delivered prefix is indeterminate);
 // send_replay_failures counts the refusals of that chunk's per-packet replay,
 // which may resend datagrams the kernel had already delivered.
 
@@ -3510,9 +3509,9 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             // message may already have reached the wire (a full buffer,
             // EAGAIN or ENOBUFS, that refused the chunk usually refuses its
             // replay too, delivered prefix included). the refused chunk
-            // counts ONCE in send_failures when its replay refused anything:
+            // itself counts ONCE in send_failures, whatever its replay does:
             // its fate is indeterminate. a replay that sent every message
-            // dropped nothing, and counts nothing.
+            // adds nothing to send_replay_failures.
 
             const int error = errno;
 
@@ -3533,14 +3532,12 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
                 rocketnet_msgx_pause( socket, "sendmsg_x", error );
             }
 
-            const uint64_t replay_failures_before = rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
+            rocketnet_platform_note_send_failure( socket );
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];
                 rocketnet_platform_darwin_send_packet( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
             }
-            if ( rocketnet_platform_atomic_load_u64( &socket->send_replay_failures ) != replay_failures_before )
-                rocketnet_platform_note_send_failure( socket );
             offset = count;
         }
 
