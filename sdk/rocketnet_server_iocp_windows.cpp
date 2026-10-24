@@ -346,8 +346,9 @@ DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
 // UDP_COALESCED_INFO stride except a shorter last one, split by the shared
 // coalescing rule and each checked against the bounds a single datagram is.
 static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketnet_iocp_receive_buffer_t * buffer,
-    rocketnet_iocp_operation_t * op, bool success, DWORD bytes )
+    rocketnet_iocp_operation_t * op, ULONG_PTR status, DWORD bytes )
 {
+    const bool success = status == 0;
     rocketnet_address_t from;
     if ( !success || bytes == 0 || ( op->message.dwFlags & MSG_TRUNC ) ||
          !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
@@ -355,7 +356,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
         if ( success && bytes == 0 )
             iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
-        else if ( op->message.dwFlags & MSG_TRUNC )
+        else if ( status == WSAEMSGSIZE || ( success && ( op->message.dwFlags & MSG_TRUNC ) ) )
             iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
@@ -508,7 +509,7 @@ static void rocketnet_iocp_worker( void * argument )
             if ( op->uro_data )
             {
                 if ( running )
-                    rocketnet_iocp_publish_uro( iocp, buffer, op, success, bytes );
+                    rocketnet_iocp_publish_uro( iocp, buffer, op, status, bytes );
             }
             else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
                  buffer->num_packets < ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE &&
@@ -525,7 +526,7 @@ static void rocketnet_iocp_worker( void * argument )
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
                 if ( success && bytes == 0 )
                     iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
-                else if ( success && bytes > ROCKETNET_RECEIVE_CEILING )
+                else if ( status == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
                     iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
             }
 

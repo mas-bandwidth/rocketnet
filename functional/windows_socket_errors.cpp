@@ -433,10 +433,15 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
     const uint64_t before = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter );
     windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
     const double drain = rocketnet_platform_time();
+    uint64_t counted = 0;
     while ( rocketnet_platform_time() - drain < 0.5 )
+    {
         windows_socket_errors_tick( &session );
-    const uint64_t counted = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter ) - before;
-    printf( "%s %s: sent %llu, prefilter size counter %llu\\n", name, windows_socket_errors_label( transport ),
+        counted = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter ) - before;
+        if ( counted == datagrams.size() )
+            break;
+    }
+    printf( "%s %s: sent %llu, prefilter size counter %llu\n", name, windows_socket_errors_label( transport ),
         (unsigned long long) datagrams.size(), (unsigned long long) counted );
     fflush( stdout );
     windows_socket_errors_require( counted == datagrams.size() );
