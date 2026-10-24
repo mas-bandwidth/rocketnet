@@ -75,6 +75,17 @@ void rocketnet_platform_term( void );
  */
 int rocketnet_platform_id( void );
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+/**
+ * @brief Compares a dynamic-store primary interface name with a BSD name.
+ *
+ * Both inputs must be Core Foundation strings. A missing or differently typed
+ * value is not a match.
+ * @return true when both names are Core Foundation strings and compare equal.
+ */
+bool rocketnet_platform_mac_primary_interface_matches( const void * primary_interface_name, const void * bsd_name );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 /**
  * @brief Returns the connection type detected during platform initialization.
  *
