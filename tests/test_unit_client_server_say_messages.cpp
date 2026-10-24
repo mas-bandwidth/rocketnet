@@ -110,6 +110,8 @@ static const allowlist_row_t allowlist[] =
     { F_API, "packet_filter", "PACKET FILTER AND ACK TRACKING" },
     { F_H, "Packets per second", "TRANSPORT SIZE" },
     { F_H, "PACKETS_IN_FLIGHT", "TRANSPORT SIZE" },
+    { F_H, "unacknowledged packets tracked for their acks", "TRANSPORT SIZE" },
+    { F_H, "one number to a packet never evicts", "TRANSPORT SIZE" },
     { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.

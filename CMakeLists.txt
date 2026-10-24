@@ -283,58 +283,11 @@ else()
     add_custom_target(rocketnet_xdp_header)
 endif()
 
+# The SDK's library sources are one list, shared with every application that
+# vendors sdk/ (cmake/RocketnetSources.cmake; tools/check_sdk_sources.py).
+include(cmake/RocketnetSources.cmake)
 set(ROCKETNET_SOURCE
-    sdk/rocketnet.cpp
-    sdk/rocketnet_abi.cpp
-    sdk/rocketnet_api.cpp
-    sdk/rocketnet_ack.cpp
-    sdk/rocketnet_allocator.cpp
-    sdk/rocketnet_window_send.cpp
-    sdk/rocketnet_address.cpp
-    sdk/rocketnet_base64.cpp
-    sdk/rocketnet_client_protocol.cpp
-    sdk/rocketnet_client_gso_linux.cpp
-    sdk/rocketnet_client_iocp_windows.cpp
-    sdk/rocketnet_client_slots.cpp
-    sdk/rocketnet_client_transport.cpp
-    sdk/rocketnet_config.cpp
-    sdk/rocketnet_connection_reset.cpp
-    sdk/rocketnet_driver.cpp
-    sdk/rocketnet_driver_builtin.cpp
-    sdk/rocketnet_driver_loopback.cpp
-    sdk/rocketnet_connect_token.cpp
-    sdk/rocketnet_counters.cpp
-    sdk/rocketnet_encryption_map.cpp
-    sdk/rocketnet_fragment.cpp
-    sdk/rocketnet_frame_sync.cpp
-    sdk/rocketnet_gateway_netlink_linux.cpp
-    sdk/rocketnet_hash.cpp
-    sdk/rocketnet_keys.cpp
-    sdk/rocketnet_message.cpp
-    sdk/rocketnet_message_client.cpp
-    sdk/rocketnet_message_server.cpp
-    sdk/rocketnet_endpoint.cpp
-    sdk/rocketnet_slots.cpp
-    sdk/rocketnet_channel.cpp
-    sdk/rocketnet_channel_reliable.cpp
-    sdk/rocketnet_channel_sequenced.cpp
-    sdk/rocketnet_channel_receipts.cpp
-    sdk/rocketnet_packet_builder.cpp
-    sdk/rocketnet_window_receive.cpp
-    sdk/rocketnet_window_ack.cpp
-    sdk/rocketnet_network_simulator.cpp
-    sdk/rocketnet_platform.cpp
-    sdk/rocketnet_protocol.cpp
-    sdk/rocketnet_replay.cpp
-    sdk/rocketnet_server_replay_marks.cpp
-    sdk/rocketnet_server_gso_linux.cpp
-    sdk/rocketnet_server_uring_linux.cpp
-    sdk/rocketnet_server_iocp_windows.cpp
-    sdk/rocketnet_server_rio_windows.cpp
-    sdk/rocketnet_server_protocol.cpp
-    sdk/rocketnet_server_socket_linux.cpp
-    sdk/rocketnet_server_transport.cpp
-    sdk/rocketnet_token_tables.cpp
+    ${ROCKETNET_SDK_SOURCES}
     ${ROCKETNET_TRANSPORT_SOURCES}
 )
 
@@ -665,6 +618,45 @@ if(ROCKETNET_BUILD_TESTS)
             target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
         endif()
     endif()
+    # The message layer stressed at 1024 and at 10000 channels
+    # (tests/test_channels_stress.cpp): one source, two binaries, each compiling
+    # the SDK once more with its ROCKETNET_MAX_CHANNELS, as test_wide does at 512.
+    # Neither is part of ./bin/test or the per-push tier; the nightly
+    # .github/workflows/nightly-channels-stress.yml runs both on Linux, macOS
+    # and Windows.
+    foreach(rocketnet_stress IN ITEMS "1024;1024" "10k;10000")
+        list(GET rocketnet_stress 0 rocketnet_stress_name)
+        list(GET rocketnet_stress 1 rocketnet_stress_channels)
+        set(rocketnet_stress_target test_channels_${rocketnet_stress_name})
+        add_executable(${rocketnet_stress_target}
+            tests/test_channels_stress.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+        add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
+        # the test seams (the step-driven client and the link simulator in a
+        # production build), the link simulator's development switch, and the
+        # server's ack stats worker stepped inline (no OS thread), as in test_wide
+        target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
+            ROCKETNET_TEST_SEAMS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
+            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+        target_include_directories(${rocketnet_stress_target} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_features(${rocketnet_stress_target} PRIVATE cxx_std_11)
+        target_compile_options(${rocketnet_stress_target} PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        rocketnet_use_sodium(${rocketnet_stress_target})
+        rocketnet_warning_floor(${rocketnet_stress_target})
+        target_link_libraries(${rocketnet_stress_target} PRIVATE Threads::Threads)
+        if(APPLE)
+            target_link_libraries(${rocketnet_stress_target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            if(ROCKETNET_XDP)
+                target_link_libraries(${rocketnet_stress_target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+            endif()
+            if(TARGET RocketNet::Uring)
+                target_link_libraries(${rocketnet_stress_target} PRIVATE RocketNet::Uring)
+                target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_IO_URING=1)
+            endif()
+        endif()
+    endforeach()
     # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
     # linker sends every call to the library's clock, rocketnet_platform_time,
     # from any object file of the test binary, to the test's counting wrapper.

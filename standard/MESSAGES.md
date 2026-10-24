@@ -2682,6 +2682,16 @@ send, a resend included, MUST take a fresh sequence, so an acknowledgement
 names exactly one send. A sender MUST ignore an acknowledgement whose sequence
 the map does not hold.
 
+The map MUST hold at least `W` entries, where `W` is the connection's
+`reliable_messages_in_flight`. Every entry names a send carrying at least one
+reliable number, and a window of `W` numbers may be in flight one to a send,
+all written inside one round trip; a smaller map would drop an entry whose
+acknowledgement is still on its way, and the numbers it carried would be
+resent. A sender whose map is full MUST drop its oldest entry to record a new
+send; the numbers the dropped entry carried stay unacknowledged and in their
+resend queues. With at least `W` entries and a resend delay above the round
+trip, the dropped entry is one whose acknowledgement can no longer arrive.
+
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from
 its resend queue, advance the lowest unacknowledged number, and take one
