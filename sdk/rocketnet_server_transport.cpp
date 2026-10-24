@@ -2220,6 +2220,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     }
 
+    // tla/RNChannel.tla FixBatch and tla/RNWindow.tla FixBatch: the received
+    // batch is fixed here, before this update builds any reply or ack, so no
+    // packet opened later can join it.
+
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
     // standalone ack, into send frames. The per-slot ACK statistics need no
@@ -2660,6 +2664,8 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
     frame->data = NULL;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a small payload whose seal fails after its sequence was taken leaves that sequence unsent.
+// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate withdraws the frames and sends nothing.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -2790,6 +2796,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     return total_wire_bytes;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
 static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
@@ -2880,6 +2887,7 @@ static bool rocketnet_server_transport_reflushes( int transport )
     return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
 }
 
+// tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

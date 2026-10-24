@@ -196,6 +196,7 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->free_head == -1;
 }
 
+// tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
@@ -260,6 +261,7 @@ const struct rocketnet_address_t * rocketnet_encryption_map_address( const struc
     return &map->address[index];
 }
 
+// tla/RNDestroyWipe.tla Remove: drops the mapping from live and wipes its secrets.
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );

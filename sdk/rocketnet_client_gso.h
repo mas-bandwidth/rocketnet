@@ -16,7 +16,16 @@
 // the plain tier for good and resends from that message's first packet, so
 // the degradation loses nothing (the server's live-refusal rule).
 //
-// Receive is recvmmsg in this card; UDP_GRO on receive is rn-client-gso-linux-b.
+// On receive UDP_GRO is probed at create by enabling it; a refused probe is
+// the plain tier, the platform's recvmmsg. With GRO on, each recvmmsg takes
+// one message into a 64 KiB coalesce buffer (a coalesced message can fill the
+// whole of it, so one buffer holds one message), with its own control area for
+// the UDP_GRO cmsg, and rocketnet_coalesce_split cuts it at the stride the
+// kernel reports into the I/O thread's receive slots, in arrival order. A
+// receive buffer with no room for every segment drops the rest, counted in
+// gro_packets_dropped. A truncated control area or a UDP_GRO cmsg too short
+// to hold its int is one fault (gro_cmsg_faults) and the message is one
+// datagram, as the gso server reads it (sdk/rocketnet_server_gso_linux.cpp).
 //
 // The I/O thread of docs/CLIENT-IO.md (tla/RNClientIo.tla) owns the socket and
 // calls the send path; the sender adds no state to that model: a send batch
@@ -52,15 +61,29 @@ struct rocketnet_client_transport_io_operations_t;
 // payload bytes in one UDP_SEGMENT message, under the 64 KiB IP envelope
 #define ROCKETNET_CLIENT_GSO_MAX_SUPER_BYTES                              65000
 
+// segments in one UDP_GRO message: the kernel's UDP_GRO_CNT_MAX
+#define ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS                            64
+// bytes of the receive coalesce buffer: the 64 KiB IP envelope
+#define ROCKETNET_CLIENT_GSO_COALESCE_BUFFER_BYTES                        65536
+
 // The syscall seam. sendmmsg returns the messages sent, or -1 with errno set;
-// segment_probe returns 0 when the socket accepts UDP_SEGMENT.
+// segment_probe returns 0 when the socket accepts UDP_SEGMENT. recvmmsg
+// returns the messages received, 0 or -1 with errno set (EAGAIN: none
+// waiting); gro_enable returns 0 when the socket turned UDP_GRO on;
+// read_address converts a received source and returns false for one the
+// socket does not speak.
 struct rocketnet_client_gso_syscalls_t
 {
     int (*sendmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
     int (*segment_probe)( void * context, int socket );
+    int (*recvmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
+    int (*gro_enable)( void * context, int socket );
+    bool (*read_address)( void * context, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 };
 
-// the kernel's: sendmmsg(2) and setsockopt(UDP_SEGMENT, 0)
+// the kernel's: sendmmsg(2), setsockopt(UDP_SEGMENT, 0), recvmmsg(2) with
+// MSG_DONTWAIT, setsockopt(UDP_GRO, 1), and the platform socket's source
+// conversion (the syscall context is the rocketnet_platform_socket_t)
 extern const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls;
 
 // One message's control block: room for the UDP_SEGMENT cmsg, aligned as a
@@ -68,6 +91,12 @@ extern const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscall
 struct rocketnet_client_gso_control_t
 {
     alignas( size_t ) char bytes[CMSG_SPACE( sizeof( uint16_t ) )];
+};
+
+// The receive message's control area: room for the UDP_GRO cmsg (an int)
+struct rocketnet_client_gso_receive_control_t
+{
+    alignas( size_t ) char bytes[CMSG_SPACE( sizeof( int ) )];
 };
 
 // The send path's state. Everything is sized here and lives in the transport's
@@ -94,6 +123,21 @@ struct rocketnet_client_gso_t
     int message_num_packets[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     int run_packet_bytes[ROCKETNET_CLIENT_GSO_SEND_BATCH];
     struct rocketnet_address_t run_to[ROCKETNET_CLIENT_GSO_SEND_BATCH];
+
+    // the receive path, I/O thread only
+    bool gro;                                           // UDP_GRO on: receive through the coalesce buffer
+    uint64_t receive_syscalls;
+    uint64_t packets_received;
+    uint64_t gro_batches;                               // received messages that held more than one datagram
+    uint64_t gro_cmsg_faults;                           // truncated control areas and short UDP_GRO cmsgs
+    uint64_t gro_packets_dropped;                       // segments past the room the receive buffer had
+    struct mmsghdr receive_message;
+    struct iovec receive_iovec;
+    struct sockaddr_storage receive_name;
+    struct rocketnet_client_gso_receive_control_t receive_control;
+    int segment_offsets[ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS];
+    int segment_lengths[ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS];
+    alignas( 16 ) uint8_t coalesce_buffer[ROCKETNET_CLIENT_GSO_COALESCE_BUFFER_BYTES];
 };
 
 // Sets up gso for socket, which is connected to its one server before the
@@ -107,6 +151,26 @@ bool rocketnet_client_gso_init( struct rocketnet_client_gso_t * gso, const rocke
 // in packet_send_failures.
 void rocketnet_client_gso_send_batch( struct rocketnet_client_gso_t * gso, const struct rocketnet_platform_send_t * sends, int num_packets );
 
+// Sets up the receive path: probe_gro asks the kernel to turn UDP_GRO on,
+// false keeps the plain tier without asking. Returns whether UDP_GRO is on.
+// Call after rocketnet_client_gso_init.
+bool rocketnet_client_gso_init_receive( struct rocketnet_client_gso_t * gso, bool probe_gro );
+
+// The GRO stride of one received message of message_bytes: the UDP_GRO cmsg's
+// int, or message_bytes when there is none. A truncated control area or a
+// UDP_GRO cmsg too short to hold an int adds one to *faults and is
+// message_bytes: the message is one datagram.
+int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int message_bytes, uint64_t * faults );
+
+// Receives into at most max_packets slots of packet_stride bytes from
+// packet_data, with each source in from[i] and each true size in
+// packet_bytes[i] (a datagram past packet_stride keeps its prefix): one
+// recvmmsg message per call into the coalesce buffer, split at its stride, in
+// arrival order. A message is read only while its segments can fit, but the
+// first, which always is: its segments past max_packets are dropped and
+// counted in gro_packets_dropped. Returns the slots filled.
+int rocketnet_client_gso_receive_batch( struct rocketnet_client_gso_t * gso, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+
 // The gso client transport operations, the client column of the gso row.
 extern const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations;
 
@@ -115,6 +179,10 @@ extern const rocketnet_client_transport_io_operations_t rocketnet_client_gso_ope
 // segmented messages every gso client has sent, summed.
 extern std::atomic<bool> rocketnet_client_gso_test_disable_segment;
 extern std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent;
+// a client created while this is set keeps plain recvmmsg, and the GRO
+// batches (messages of more than one datagram) every gso client received, summed
+extern std::atomic<bool> rocketnet_client_gso_test_disable_gro;
+extern std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches;
 #endif
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
