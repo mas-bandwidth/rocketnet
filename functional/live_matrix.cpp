@@ -241,7 +241,7 @@ static const struct rocketnet_counters_t * live_matrix_sender_counters( struct l
 
 // A start message the region has no room for ends the connection
 // (MESSAGE_MEMORY_EXHAUSTED), and the region frees a message only when the
-// peer acks it (or, for an unreliable one, writes it), so the sender asks the
+// receiver acks it (or, for an unreliable one, writes it), so the sender asks the
 // library for its room before each start message: a send is admitted only
 // while it fits and leaves at least half of the pool it takes from free, the
 // store class for a message up to one block stride, the send spans above it.
@@ -1120,7 +1120,7 @@ void live_message_matrix_loopback()
     m->message_config.num_channels = LIVE_MATRIX_CHANNELS;
     m->message_config.send_message_buffer_bytes = 128 * 1024 * 1024;
     m->message_config.send_queue_messages = 16384;
-    m->message_config.packets_in_flight = 2048;
+    m->message_config.packets_in_flight = 4096;                 // at least the window below
     m->message_config.packets_per_update = 64;
     m->message_config.unreliable_messages_per_update = 8192;
     m->message_config.max_message_receipts = 4096;

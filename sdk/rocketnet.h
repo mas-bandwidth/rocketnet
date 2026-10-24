@@ -335,7 +335,13 @@ enum rocketnet_status_t
     /// Connect refused. A production build (ROCKETNET_DEV=0) was given a
     /// connect token sealed to the published development server key.
 
-    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
+
+    /// Connect refused. The connect token names a server address with port 0,
+    /// where no server can be reached. Mint the token with the server's bound
+    /// port.
+
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31
 };
 
 
@@ -1124,8 +1130,11 @@ struct rocketnet_client_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1292,8 +1301,11 @@ struct rocketnet_server_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit per client. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1413,6 +1425,13 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
     return rocketnet_client_default_config_internal( config );
 }
 
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
+/// send budget. Use it in place of rocketnet_client_default_config. It changes
+/// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config );
+
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
@@ -1470,8 +1489,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 /// packet_loss_percent and duplicate_percent range from 0 to 100.
 /// Set all values to zero to disable the simulator.
 ///
-/// Changes apply at the next connect. An active simulator updates immediately.
-/// Out-of-range values count as API misuse and leave the settings unchanged.
+/// In a development build the settings apply at once to a live connection, on
+/// and off, in either direction. Every development connection owns a
+/// simulator from the start, so a zero setting costs the memory of one and
+/// neither latency nor a copy. Out-of-range values count as API misuse and
+/// leave the settings unchanged.
 ///
 /// These environment variables set the values at create.
 /// ROCKETNET_DEV_CLIENT_LATENCY_MS
@@ -1482,8 +1504,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
 /// Simulates outgoing server packets with the same ranges as the client call.
-/// Changes apply at the next start. An active simulator updates immediately.
-/// Invalid values count as API misuse and leave the settings unchanged.
+/// In a development build the settings apply at once to a running server, on
+/// and off, in either direction. Every development server owns a simulator
+/// from the start, so a zero setting costs the memory of one and neither
+/// latency nor a copy. Invalid values count as API misuse and leave the
+/// settings unchanged.
 /// Use the ROCKETNET_DEV_SERVER_LATENCY_MS, ROCKETNET_DEV_SERVER_JITTER_MS,
 /// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
 /// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.
@@ -1515,10 +1540,15 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// worker still owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED
 /// and retains the terminal state. Poll rocketnet_client_disconnected and retry
 /// with the token. After completion connect joins and frees the old attempt,
-/// then starts the new one. Explicit disconnect still clears the state to
-/// DISCONNECTED. Active handshake and CONNECTED states are refused.
+/// then starts the new one. A connect from a negative state starts a fresh
+/// attempt that carries no key, replay window, sequence, cookie or message
+/// state of the earlier one. A negative state stays until disconnect or the
+/// next connect; explicit disconnect clears it to DISCONNECTED. Active
+/// handshake and CONNECTED states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
+/// A token naming a server address with port 0 returns
+/// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO and leaves the client DISCONNECTED.
 /// A socket or thread failure leaves the client DISCONNECTED.
 /// The connection clock starts at the next update.
 /// Returns ROCKETNET_STATUS_OK on success or a failure status.
@@ -1687,6 +1717,14 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
         config->config_bytes = sizeof( *config );
     return rocketnet_server_default_config_internal( config );
 }
+
+/// Initializes every config field to its default, then sets the light-client
+/// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
+/// send budget per client. Use it in place of rocketnet_server_default_config.
+/// The caller still sets its protocol id and backend key. It changes no
+/// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config );
 
 /// As rocketnet_client_required_memory, for this config and max_clients.
 /// The defaults' test filter in a production build is an invalid config. A

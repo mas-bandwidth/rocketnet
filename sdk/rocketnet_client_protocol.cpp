@@ -43,6 +43,8 @@ const char * rocketnet_client_transport_state_name( int state )
     }
 }
 
+// tla/RNClientIoDecrypt.tla RetireKeys: a terminal state runs the connection
+// reset, whose retire_keys hook retires the I/O thread's open copy.
 static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * client, int state )
 {
     if ( client->state == state )
@@ -167,7 +169,11 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// tla/ClientConnection.tla AppConnect
+// tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
+// from any failure state carries nothing of the earlier attempt
+// tla/ClientConnection.tla ClientCommitEarly: the reversed witness's commit to
+// a family of its own choosing before any answer; the fixed client commits only
+// on the first accepted answer.
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
@@ -333,6 +339,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
+    // tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
@@ -534,7 +541,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     // the full derivation, refusing a degenerate server ephemeral outright.
-    // the attempt then ends at its deadline, the correct outcome for a peer
+    // the attempt then ends at its deadline, the correct outcome for a server
     // offering a small order point.
 
     if ( !rocketnet_derive_connection_keys( &client->keys,
@@ -1182,6 +1189,8 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     return 1;
 }
 
+// tla/ClientConnection.tla ClientFragmentReceive: a fragment is accepted only
+// in connected, the one step that creates client reassembly state.
 static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t * client,
                                               const uint8_t * packet_data,
                                               int packet_bytes,
@@ -1374,6 +1383,19 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // shared words a sequence add and a timestamp store.
 
 // tla/RNClientIoDecrypt.tla UpdateConsume
+// tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys: the I/O
+// thread reads the epoch at the top of a drain and takes, zeroes or keeps its
+// open key copy.
+// tla/RNClientIoDecrypt.tla IoReceive, IoCheck and IoOpen: the I/O thread
+// drains datagrams into its buffer, runs the cheap replay check and the AEAD,
+// tagging each record opened, replay, forged or raw.
+// tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
+// the I/O thread publishes its filled buffer or records the owed publish, waits
+// on the wake, and burns a wake it does not need.
+// tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
+// buffer at its start, returns it at its end, and the behaviour ends drained.
+// tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
+// which the SingleWriter invariant reads.
 int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
                                               const uint8_t * packet_data,
                                               int packet_bytes,
@@ -1412,6 +1434,8 @@ int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t 
     return 1;
 }
 
+// tla/RNClientIoDecrypt.tla FillAckBuild: a fill thread builds the ack block
+// from a receive window only update writes, and writes nothing shared.
 int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
                                                   uint64_t sequence,
                                                   uint64_t packet_id,
@@ -1639,6 +1663,8 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
 }
 
 // tla/ClientConnection.tla AppDisconnect
+// tla/ClientConnection.tla ClientDiscCopy: seals each copy of the disconnect
+// burst once; the burst is never retransmitted.
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
                                   int * out_packet_count,

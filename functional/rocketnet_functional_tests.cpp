@@ -369,7 +369,7 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     // next hand-off (RNClientIo HandOff and Defer), so every payload arrives.
 
     // This fixture exercises the native client's I/O hand-off, including when
-    // the surrounding suite selects loopback. Keep its UDP peer and native
+    // the surrounding suite selects loopback. Keep its UDP server and native
     // client selection local; the transport-matrix fixtures still honour pins.
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -3532,22 +3532,22 @@ void rocketnet_test_server_handshake_deadline_from_config()
     struct rocketnet_counters_t client_counters;
     rocketnet_client_protocol_init( &client, &client_counters );
     rocketnet_check( rocketnet_client_protocol_connect( &client, token, start_time - 0.5, timestamp ) );
-    struct rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    struct rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
         ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
+    rocketnet_check( client_socket );
     uint8_t packet[ROCKETNET_RECEIVE_PACKET_BYTES], payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, start_time - 0.5, packet, &packet_bytes );
     rocketnet_check( packet_bytes > 0 );
-    rocketnet_platform_socket_send_packet( peer, &client.server_address, packet, packet_bytes );
+    rocketnet_platform_socket_send_packet( client_socket, &client.server_address, packet, packet_bytes );
     const double delivery_start = rocketnet_platform_time();
     while ( !client.has_cookie && rocketnet_platform_time() - delivery_start < 5.0 )
     {
         rocketnet_server_transport_update( server, start_time );
         struct rocketnet_address_t from;
-        const int received = rocketnet_platform_socket_receive_packet( peer, &from, packet, sizeof(packet) );
+        const int received = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, sizeof(packet) );
         if ( received > 0 )
         {
             int payload_bytes = 0;
@@ -3563,7 +3563,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
         const double now = start_time + retry * 0.5;
         rocketnet_client_protocol_update( &client, now, packet, &packet_bytes );
         rocketnet_check( packet_bytes > 0 );
-        rocketnet_platform_socket_send_packet( peer, &client.server_address, packet, packet_bytes );
+        rocketnet_platform_socket_send_packet( client_socket, &client.server_address, packet, packet_bytes );
         const uint64_t expected = retry == 0 ? 1 : (uint64_t) retry;
         const int counter = retry == 0 ? ROCKETNET_COUNTER_MAPPING_CREATED : ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT;
         const double wait_start = rocketnet_platform_time();
@@ -3582,7 +3582,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
     rocketnet_server_transport_update( server, start_time + 3.0 );
     rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
     rocketnet_test_env_restore( &transport_guard );
     rocketnet_test_env_restore( &deadline_guard );
@@ -4156,7 +4156,7 @@ void rocketnet_test_server_transport_io_pin_rio()
 }
 
 // the rio transport (sdk/rocketnet_server_rio_windows.cpp, tla/RNRioDriver.tla)
-// against a plain UDP peer on loopback
+// against a plain UDP client on loopback
 
 #include "rocketnet_server_rio.h"
 
@@ -4255,12 +4255,12 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address.port != 0 );
+    rocketnet_check( client_socket );
+    rocketnet_check( client_address.port != 0 );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
@@ -4269,7 +4269,7 @@ void rocketnet_test_server_rio_wire_ipv4()
     static bool seen[ROCKETNET_RIO_TEST_PACKETS];
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
 
-    // peer -> transport: each datagram surfaces byte-exact, from the peer
+    // client -> transport: each datagram surfaces byte-exact, from the client
 
     memset( seen, 0, sizeof(seen) );
     int num_seen = 0;
@@ -4283,7 +4283,7 @@ void rocketnet_test_server_rio_wire_ipv4()
             packet[1] = (uint8_t) ( i >> 8 );
             for ( int j = 2; j < packet_bytes; j++ )
                 packet[j] = (uint8_t) ( i * 31 + j );
-            rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+            rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, packet_bytes );
         }
         double start = rocketnet_platform_time();
         while ( rocketnet_platform_time() - start < 5.0 && num_seen < last )
@@ -4298,7 +4298,7 @@ void rocketnet_test_server_rio_wire_ipv4()
                 rocketnet_check( !seen[tag] );
                 rocketnet_check( received->packet_bytes[k] == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + tag );
                 rocketnet_check( received->from[k].type == ROCKETNET_ADDRESS_IPV4 );
-                rocketnet_check( received->from[k].port == peer_address.port );
+                rocketnet_check( received->from[k].port == client_address.port );
                 rocketnet_check( received->from[k].data.ipv4[0] == 127 && received->from[k].data.ipv4[3] == 1 );
                 for ( int j = 2; j < received->packet_bytes[k]; j++ )
                     rocketnet_check( data[j] == (uint8_t) ( tag * 31 + j ) );
@@ -4310,7 +4310,7 @@ void rocketnet_test_server_rio_wire_ipv4()
         rocketnet_check( num_seen == last );
     }
 
-    // transport -> peer: one chunk per phase, so the chunks rotate through the
+    // transport -> client: one chunk per phase, so the chunks rotate through the
     // three send phases; a flush keeps a phase open while the next is not yet
     // idle, so the wait flushes again, as a frame loop does; each reply
     // arrives byte-exact
@@ -4326,7 +4326,7 @@ void rocketnet_test_server_rio_wire_ipv4()
         for ( int i = first; i < last; i++ )
         {
             uint64_t packet_id = 0;
-            uint8_t * frame = rocketnet_test_server_rio_start( rio, &peer_address, &packet_id, &refused );
+            uint8_t * frame = rocketnet_test_server_rio_start( rio, &client_address, &packet_id, &refused );
             rocketnet_check( frame );
             used_phase[packet_id / ROCKETNET_RIO_SEND_QUEUE_SIZE] = true;
             const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
@@ -4345,7 +4345,7 @@ void rocketnet_test_server_rio_wire_ipv4()
         {
             rocketnet_server_rio_send_packets( rio );
             rocketnet_address_t from;
-            const int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+            const int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
             if ( packet_bytes <= 0 )
             {
                 rocketnet_platform_sleep( 0.0005 );
@@ -4396,16 +4396,16 @@ void rocketnet_test_server_rio_wire_ipv4()
         rocketnet_platform_sleep( 0.0005 );
     rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
-// one exact packet in each direction, with the peer and destination families
+// one exact packet in each direction, with the client and destination families
 // selected by the caller; source normalization stays observable on receive
 static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * rio,
-    struct rocketnet_platform_socket_t * peer, const rocketnet_address_t * peer_address,
+    struct rocketnet_platform_socket_t * client_socket, const rocketnet_address_t * client_address,
     const rocketnet_address_t * server_address )
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -4413,30 +4413,30 @@ static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * ri
     for ( int i = 0; i < packet_bytes; ++i )
         packet[i] = (uint8_t) ( 0x40 + i );
 
-    rocketnet_platform_socket_send_packet( peer, server_address, packet, packet_bytes );
+    rocketnet_platform_socket_send_packet( client_socket, server_address, packet, packet_bytes );
 
-    bool received_peer = false;
+    bool received_from_client = false;
     double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && !received_peer )
+    while ( rocketnet_platform_time() - start < 5.0 && !received_from_client )
     {
         rocketnet_server_rio_receive_packets( rio );
         rocketnet_server_socket_process_packets_t * received = rocketnet_server_rio_process_packets( rio );
         for ( int i = 0; i < received->num_packets; ++i )
         {
-            rocketnet_check( !received_peer );
+            rocketnet_check( !received_from_client );
             rocketnet_check( received->packet_bytes[i] == packet_bytes );
             rocketnet_check( memcmp( received->packet_data[i], packet, packet_bytes ) == 0 );
-            rocketnet_check( rocketnet_address_equal( &received->from[i], peer_address ) );
-            received_peer = true;
+            rocketnet_check( rocketnet_address_equal( &received->from[i], client_address ) );
+            received_from_client = true;
         }
-        if ( !received_peer )
+        if ( !received_from_client )
             rocketnet_platform_sleep( 0.0005 );
     }
-    rocketnet_check( received_peer );
+    rocketnet_check( received_from_client );
 
     uint64_t packet_id = 0;
     uint64_t refused = 0;
-    uint8_t * frame = rocketnet_test_server_rio_start( rio, peer_address, &packet_id, &refused );
+    uint8_t * frame = rocketnet_test_server_rio_start( rio, client_address, &packet_id, &refused );
     rocketnet_check( frame );
     uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
     for ( int i = 0; i < packet_bytes; ++i )
@@ -4450,7 +4450,7 @@ static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * ri
     {
         rocketnet_server_rio_send_packets( rio ); // a flush may keep the phase open a frame
         rocketnet_address_t from;
-        const int bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, sizeof(packet) );
+        const int bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, sizeof(packet) );
         if ( bytes > 0 )
         {
             rocketnet_check( bytes == packet_bytes );
@@ -4465,15 +4465,15 @@ static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * ri
     rocketnet_check( received_reply );
 }
 
-static struct rocketnet_platform_socket_t * rocketnet_test_server_rio_peer( const char * address_string,
-    rocketnet_address_t * peer_address )
+static struct rocketnet_platform_socket_t * rocketnet_test_server_rio_client_socket( const char * address_string,
+    rocketnet_address_t * client_address )
 {
-    rocketnet_check( rocketnet_address_parse( peer_address, address_string ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, peer_address,
+    rocketnet_check( rocketnet_address_parse( client_address, address_string ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, client_address,
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address->port != 0 );
-    return peer;
+    rocketnet_check( client_socket );
+    rocketnet_check( client_address->port != 0 );
+    return client_socket;
 }
 
 void rocketnet_test_server_rio_wire_ipv6()
@@ -4483,15 +4483,15 @@ void rocketnet_test_server_rio_wire_ipv6()
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
 
-    rocketnet_address_t peer_address;
-    struct rocketnet_platform_socket_t * peer = rocketnet_test_server_rio_peer( "[::1]:0", &peer_address );
+    rocketnet_address_t client_address;
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "[::1]:0", &client_address );
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "[::1]:0" ) );
     server_address.port = bind_address.port;
 
-    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
+    rocketnet_test_server_rio_wire_exchange( rio, client_socket, &client_address, &server_address );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
@@ -4500,24 +4500,24 @@ void rocketnet_test_server_rio_wire_ipv6()
 void rocketnet_test_server_rio_wire_dual_stack()
 {
     rocketnet_address_t bind_address;
-    // wildcard bind kept: the case is the ipv6 wildcard listen serving ipv4 and ipv6 peers
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving ipv4 and ipv6 clients
     rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
     rocketnet_check( rio );
 
-    rocketnet_address_t peer_address;
-    struct rocketnet_platform_socket_t * peer = rocketnet_test_server_rio_peer( "127.0.0.1:0", &peer_address );
+    rocketnet_address_t client_address;
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "127.0.0.1:0", &client_address );
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     server_address.port = bind_address.port;
-    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_test_server_rio_wire_exchange( rio, client_socket, &client_address, &server_address );
+    rocketnet_platform_socket_destroy( client_socket );
 
-    peer = rocketnet_test_server_rio_peer( "[::1]:0", &peer_address );
+    client_socket = rocketnet_test_server_rio_client_socket( "[::1]:0", &client_address );
     rocketnet_check( rocketnet_address_parse( &server_address, "[::1]:0" ) );
     server_address.port = bind_address.port;
-    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_test_server_rio_wire_exchange( rio, client_socket, &client_address, &server_address );
+    rocketnet_platform_socket_destroy( client_socket );
 
     const uint64_t leaked = rocketnet_server_rio_leaked_regions();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
@@ -4571,10 +4571,10 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
-// the iocp transport's USO/URO tier against a plain UDP peer on loopback: the
-// peer sends tagged packets in, the transport must surface each byte-exact from
-// the peer's address; the transport then sends replies, deliberately in
-// equal-size same-destination runs (the shape USO coalesces), and the peer
+// the iocp transport's USO/URO tier against a plain UDP client on loopback: the
+// client sends tagged packets in, the transport must surface each byte-exact from
+// the client's address; the transport then sends replies, deliberately in
+// equal-size same-destination runs (the shape USO coalesces), and the client
 // must receive each as its own datagram, byte-exact and in order
 
 #define ROCKETNET_IOCP_TEST_PACKETS 200
@@ -4587,18 +4587,18 @@ static int rocketnet_test_iocp_reply_bytes( int tag )
 
 static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * bind_address )
 {
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address.port != 0 );
+    rocketnet_check( client_socket );
+    rocketnet_check( client_address.port != 0 );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     server_address.port = bind_address->port;
 
-    // peer -> transport: equal-size bursts first (the shape URO may coalesce),
+    // client -> transport: equal-size bursts first (the shape URO may coalesce),
     // then every size the wire allows
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -4608,7 +4608,7 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
         packet[0] = (uint8_t) i;
         for ( int j = 1; j < packet_bytes; j++ )
             packet[j] = (uint8_t) ( i * 31 + j );
-        rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, packet_bytes );
     }
 
     bool seen[ROCKETNET_IOCP_TEST_PACKETS];
@@ -4625,7 +4625,7 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
             rocketnet_check( tag < ROCKETNET_IOCP_TEST_PACKETS );
             rocketnet_check( !seen[tag] );
             rocketnet_check( received->packet_bytes[i] == rocketnet_test_iocp_reply_bytes( tag ) );
-            rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 && received->from[i].port == peer_address.port );
+            rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 && received->from[i].port == client_address.port );
             for ( int j = 1; j < received->packet_bytes[i]; j++ )
                 rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 31 + j ) );
             seen[tag] = true;
@@ -4635,12 +4635,12 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
     }
     rocketnet_check( num_seen == ROCKETNET_IOCP_TEST_PACKETS );
 
-    // transport -> peer, in one flush
+    // transport -> client, in one flush
 
     for ( int i = 0; i < ROCKETNET_IOCP_TEST_PACKETS; i++ )
     {
         uint64_t packet_id = 0;
-        uint8_t * frame = rocketnet_server_iocp_start_packet( iocp, &peer_address, &packet_id );
+        uint8_t * frame = rocketnet_server_iocp_start_packet( iocp, &client_address, &packet_id );
         rocketnet_check( frame );
         const int packet_bytes = rocketnet_test_iocp_reply_bytes( i );
         uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -4656,7 +4656,7 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
     while ( rocketnet_platform_time() - start < 5.0 && next_tag < ROCKETNET_IOCP_TEST_PACKETS )
     {
         rocketnet_address_t from;
-        const int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        const int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
         if ( packet_bytes <= 0 )
         {
             rocketnet_platform_sleep( 0.001 );
@@ -4685,7 +4685,7 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
     rocketnet_check( counters[ROCKETNET_IOCP_SEND_COMPLETED] == ROCKETNET_IOCP_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_IOCP_SEND_FAILED] == 0 );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
 }
 
 void rocketnet_test_server_iocp_uso_uro_probe()
@@ -5061,9 +5061,8 @@ void rocketnet_test_server_transport_io_pin_msgx()
 // test_server_transport_io_ladder_fall, create the development config's
 // full-capacity server (ROCKETNET_MAX_CLIENTS slots) on "127.0.0.1:0" and
 // accept whichever rung the ladder grants, so their footprint is the server
-// memory plan, not the suite-wide bound: the stats worker's two delta buffers
-// and history per slot and the transport's owned receive buffers are
-// allocated up front by design. The rungs that can grant a port-zero address
+// memory plan, not the suite-wide bound: the per-slot ACK history and the
+// transport's owned receive buffers are allocated up front by design. The rungs that can grant a port-zero address
 // are the auto-order transports that are not pin-only and that discover
 // their bound port (the #109 rule refuses the rest before create); the
 // ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
@@ -5228,7 +5227,7 @@ void rocketnet_test_client_transport_io()
 // always built, so its probe, its wire paths, its degraded tiers and its
 // overflow behaviour are covered even when the transport above it is
 // portable. Everything here is over-the-wire on loopback through real
-// sockets; the peer is the portable platform socket, which also proves the
+// sockets; the client is the portable platform socket, which also proves the
 // transport interoperates with a plain UDP endpoint.
 
 #include "rocketnet_server_gso.h"
@@ -5386,12 +5385,12 @@ void rocketnet_test_server_gso_probe()
     rn_native_backend_stop_and_destroy( plain, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
-// the wire exchange, shared by the tiers and the families: a plain UDP peer
+// the wire exchange, shared by the tiers and the families: a plain UDP client
 // sends tagged packets of every size the wire allows into the transport, the
 // transport's process batch must surface each byte-exact with the right
 // source, then the transport sends tagged packets back -- deliberately
 // including equal-size same-destination runs, the shape GSO coalesces --
-// and the peer must receive each byte-exact.
+// and the client must receive each byte-exact.
 
 // The GSO transport's transmit worker sends published banks off the caller
 // thread and counts them as it goes. A check of the send counters first waits
@@ -5426,7 +5425,7 @@ static void rocketnet_test_gso_wait_sent_or_dropped( struct rocketnet_server_gso
     }
 }
 
-static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name */, const char * bind_string, const char * peer_string, const char * server_host, int flags, int expect_ipv4_from )
+static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name */, const char * bind_string, const char * client_string, const char * server_host, int flags, int expect_ipv4_from )
 {
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
@@ -5434,12 +5433,12 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, flags );
     rocketnet_check( gso );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, peer_string ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, client_string ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address.port != 0 );
+    rocketnet_check( client_socket );
+    rocketnet_check( client_address.port != 0 );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, server_host ) );
@@ -5447,7 +5446,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
 
     #define ROCKETNET_GSO_TEST_PACKETS 200
 
-    // peer -> transport
+    // client -> transport
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
 
@@ -5457,7 +5456,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
         packet[0] = (uint8_t) i;
         for ( int j = 1; j < packet_bytes; j++ )
             packet[j] = (uint8_t) ( i * 31 + j );
-        rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, packet_bytes );
     }
 
     bool seen[ROCKETNET_GSO_TEST_PACKETS];
@@ -5479,11 +5478,11 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
             for ( int j = 1; j < expected_bytes; j++ )
                 rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 31 + j ) );
 
-            // the source is the peer's real port, and a v4 peer arriving on
+            // the source is the client's real port, and a v4 client arriving on
             // a dual stack listen is native ipv4 -- normalized exactly once
             // at the boundary, per the standard's law
 
-            rocketnet_check( received->from[i].port == peer_address.port );
+            rocketnet_check( received->from[i].port == client_address.port );
             if ( expect_ipv4_from )
                 rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 );
 
@@ -5494,7 +5493,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     }
     rocketnet_check( num_seen == ROCKETNET_GSO_TEST_PACKETS );
 
-    // transport -> peer. the first half all one size -- adjacent equal-size
+    // transport -> client. the first half all one size -- adjacent equal-size
     // same-destination slots, the runs the GSO tier folds into
     // super-datagrams -- the second half cycling sizes
 
@@ -5503,7 +5502,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
         const int packet_bytes = i < ROCKETNET_GSO_TEST_PACKETS / 2 ? 400
                                : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( i * 53 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
         uint64_t packet_id = 0;
-        uint8_t * frame = rocketnet_server_gso_start_packet( gso, &peer_address, &packet_id );
+        uint8_t * frame = rocketnet_server_gso_start_packet( gso, &client_address, &packet_id );
         rocketnet_check( frame );
         uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
         wire[0] = (uint8_t) i;
@@ -5521,7 +5520,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_GSO_TEST_PACKETS )
     {
         rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
         if ( packet_bytes == 0 )
         {
             rocketnet_platform_sleep( 0.001 );
@@ -5560,10 +5559,10 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     const uint64_t dropped_before = counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE];
     uint8_t runt[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1];
     memset( runt, 0xEE, sizeof(runt) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, runt, (int) sizeof(runt) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, runt, (int) sizeof(runt) );
     uint8_t oversize[ROCKETNET_RECEIVE_CEILING + 74];
     memset( oversize, 0xEF, sizeof(oversize) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, oversize, (int) sizeof(oversize) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, oversize, (int) sizeof(oversize) );
 
     start = rocketnet_platform_time();
     uint64_t dropped_after = dropped_before;
@@ -5577,13 +5576,13 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     }
     rocketnet_check( dropped_after == dropped_before + 2 );
 
-    // provoke GRO for real: the peer sends one UDP_SEGMENT super-datagram,
+    // provoke GRO for real: the client sends one UDP_SEGMENT super-datagram,
     // which loopback segments and the transport's UDP_GRO socket receives
     // coalesced -- the multi-segment split path runs, proven by the
     // GRO_BATCHES counter, and every segment surfaces byte-exact. the
     // suite's ordinary traffic never repeats a size back to back, so
     // without this phase the split loop would never execute under test.
-    // ipv4 peers only (the sockaddr is built inline), which covers every
+    // ipv4 clients only (the sockaddr is built inline), which covers every
     // tier this helper runs.
 
     if ( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) &&
@@ -5624,7 +5623,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
         uint16_t stride = (uint16_t) gro_segment_bytes;
         memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
 
-        rocketnet_check( sendmsg( peer->handle, &msg, 0 ) == (ssize_t) sizeof(super) );
+        rocketnet_check( sendmsg( client_socket->handle, &msg, 0 ) == (ssize_t) sizeof(super) );
 
         rocketnet_server_gso_counters( gso, counters );
         const uint64_t gro_before = counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES];
@@ -5646,7 +5645,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
                 rocketnet_check( received->packet_bytes[i] == gro_segment_bytes );
                 for ( int j = 1; j < gro_segment_bytes; j++ )
                     rocketnet_check( received->packet_data[i][j] == (uint8_t) ( ( 200 + tag ) * 13 + j ) );
-                rocketnet_check( received->from[i].port == peer_address.port );
+                rocketnet_check( received->from[i].port == client_address.port );
                 segment_seen[tag] = true;
                 num_segments_seen++;
             }
@@ -5670,7 +5669,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
         }
     }
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
@@ -5695,10 +5694,10 @@ void rocketnet_test_server_gso_wire_ipv6()
 
 void rocketnet_test_server_gso_wire_dual_stack()
 {
-    // an ipv6 wildcard listen accepts an ipv4 peer, whose source surfaces
+    // an ipv6 wildcard listen accepts an ipv4 client, whose source surfaces
     // as native ipv4 -- the v4-mapped normalization the standard makes law
 
-    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 peer
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
     rocketnet_test_server_gso_wire_exchange( "test_gso_transport_server_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
 }
 
@@ -5707,11 +5706,14 @@ void rocketnet_test_server_gso_wire_dual_stack()
 // payloads both ways so every client send batch is runs that leave as
 // UDP_SEGMENT messages (the segmented-message count proves the path ran), and
 // every payload byte-exact, none lost, none twice. segment false is the plain
-// tier: the probe is skipped and no message is segmented.
+// tier: both probes are skipped, no message is segmented and receive is the
+// platform's recvmmsg. server_transport "gso" sends UDP_SEGMENT runs, which
+// loopback delivers whole to the client's UDP_GRO socket, so the client's GRO
+// batch count proves the receive split ran.
 
 #include "rocketnet_client_gso.h"
 
-static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment )
+static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -5720,10 +5722,11 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    snprintf( server_config.transport, sizeof(server_config.transport), "portable" );
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", server_transport );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), server_transport ) == 0 );
 
     char server_address[64];
     snprintf( server_address, sizeof(server_address), "%s:%d", server_host, rocketnet_server_transport_port( server ) );
@@ -5736,7 +5739,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     snprintf( client_config.transport, sizeof(client_config.transport), "gso" );
 
     rocketnet_client_gso_test_disable_segment.store( !segment );
+    rocketnet_client_gso_test_disable_gro.store( !segment );
     const uint64_t segment_messages_before = rocketnet_client_gso_test_segment_messages_sent.load();
+    const uint64_t gro_batches_before = rocketnet_client_gso_test_gro_batches.load();
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -5854,7 +5859,14 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     else
         rocketnet_check( segment_messages == 0 );
 
+    const uint64_t gro_batches = rocketnet_client_gso_test_gro_batches.load() - gro_batches_before;
+    if ( strcmp( server_transport, "gso" ) == 0 && segment )
+        rocketnet_check( gro_batches > 0 );
+    if ( !segment )
+        rocketnet_check( gro_batches == 0 );
+
     rocketnet_client_gso_test_disable_segment.store( false );
+    rocketnet_client_gso_test_disable_gro.store( false );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
@@ -5880,6 +5892,13 @@ void rocketnet_test_gso_client_wire_plain()
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
 }
 
+void rocketnet_test_gso_client_wire_gro()
+{
+    // the gso server sends each frame's equal-sized packets to the one client
+    // as UDP_SEGMENT runs: the client receives them coalesced and splits them
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso" );
+}
+
 void rocketnet_test_server_gso_send_overflow()
 {
     // fill the send staging past capacity: starts beyond it refuse with
@@ -5892,24 +5911,24 @@ void rocketnet_test_server_gso_send_overflow()
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
     rocketnet_check( gso );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
+    rocketnet_check( client_socket );
 
     for ( int i = 0; i < ROCKETNET_GSO_SEND_QUEUE_SIZE; i++ )
     {
         uint64_t packet_id = 0;
-        uint8_t * frame = rocketnet_server_gso_start_packet( gso, &peer_address, &packet_id );
+        uint8_t * frame = rocketnet_server_gso_start_packet( gso, &client_address, &packet_id );
         rocketnet_check( frame );
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
         rocketnet_server_gso_finish_packet( gso, packet_id, frame, 64 );
     }
 
     uint64_t overflow_id = 0;
-    rocketnet_check( rocketnet_server_gso_start_packet( gso, &peer_address, &overflow_id ) == NULL );
-    rocketnet_check( rocketnet_server_gso_start_packet( gso, &peer_address, &overflow_id ) == NULL );
+    rocketnet_check( rocketnet_server_gso_start_packet( gso, &client_address, &overflow_id ) == NULL );
+    rocketnet_check( rocketnet_server_gso_start_packet( gso, &client_address, &overflow_id ) == NULL );
 
     rocketnet_server_gso_send_packets( gso );
 
@@ -5927,7 +5946,7 @@ void rocketnet_test_server_gso_send_overflow()
     memset( tag, 0xAB, sizeof(tag) );
 
     uint64_t packet_id = 0;
-    uint8_t * frame = rocketnet_server_gso_start_packet( gso, &peer_address, &packet_id );
+    uint8_t * frame = rocketnet_server_gso_start_packet( gso, &client_address, &packet_id );
     rocketnet_check( frame );
     memcpy( frame + ROCKETNET_FRAME_WIRE_OFFSET, tag, sizeof(tag) );
     rocketnet_server_gso_finish_packet( gso, packet_id, frame, (int) sizeof(tag) );
@@ -5939,7 +5958,7 @@ void rocketnet_test_server_gso_send_overflow()
     while ( rocketnet_platform_time() - start < 5.0 && !recovered )
     {
         rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
         if ( packet_bytes == 0 )
         {
             rocketnet_platform_sleep( 0.001 );
@@ -5950,7 +5969,7 @@ void rocketnet_test_server_gso_send_overflow()
     }
     rocketnet_check( recovered );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
@@ -5983,16 +6002,16 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
 
 void rocketnet_test_server_gso_held_receive_view()
 {
-    rocketnet_address_t bind, peer_address;
+    rocketnet_address_t bind, client_address;
     rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
     rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1,
         ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO );
     rocketnet_check( gso );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address,
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address,
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
         ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
+    rocketnet_check( client_socket );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
@@ -6001,7 +6020,7 @@ void rocketnet_test_server_gso_held_receive_view()
     uint8_t second[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES];
     memset( first, 0xA5, sizeof(first) );
     memset( second, 0x5A, sizeof(second) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, first, sizeof(first) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, first, sizeof(first) );
 
     uint8_t * held_view = NULL;
     const double first_deadline = rocketnet_time() + 5.0;
@@ -6023,7 +6042,7 @@ void rocketnet_test_server_gso_held_receive_view()
 
     // The worker must publish a second packet without touching the main-held
     // first view. This condition poll observes ownership, not elapsed sleep.
-    rocketnet_platform_socket_send_packet( peer, &server_address, second, sizeof(second) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, second, sizeof(second) );
     const double ready_deadline = rocketnet_time() + 5.0;
     while ( !rocketnet_server_gso_test_receive_ready( gso, 0 ) && rocketnet_time() < ready_deadline )
         rocketnet_platform_sleep( 0.001 );
@@ -6036,14 +6055,14 @@ void rocketnet_test_server_gso_held_receive_view()
     rocketnet_check( received->packet_bytes[0] == (int) sizeof(second) );
     rocketnet_check( memcmp( received->packet_data[0], second, sizeof(second) ) == 0 );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop,
         rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
 // The io_uring transport's own tests, linux only, in the gso section's shape:
 // over the wire on loopback through real sockets and a real io_uring, the
-// peer the portable platform socket. They are in the suite only where the
+// client the portable platform socket. They are in the suite only where the
 // transport is available (rocketnet_server_uring_available).
 
 #include "rocketnet_server_uring.h"
@@ -6138,25 +6157,35 @@ void rocketnet_test_server_uring_probe()
 }
 
 // the wire exchange, the gso exchange's shape for this transport: a plain UDP
-// peer sends tagged packets of every size the wire allows into the transport,
+// client sends tagged packets of every size the wire allows into the transport,
 // each must surface byte-exact with the right source; then the transport sends
 // tagged packets back, including equal-size same-destination runs, and the
-// peer must receive each byte-exact
+// client must receive each byte-exact
 
-static void rocketnet_test_server_uring_wire_exchange( const char * bind_string, const char * peer_string, const char * server_host, int expect_ipv4_from )
+// expect_segment: 1, the transport must use UDP_SEGMENT and send at least
+// one segmented SENDMSG; 0, it must send none (created with
+// ROCKETNET_SERVER_URING_DISABLE_SEGMENT); -1, whatever this kernel's probe
+// says
+
+static void rocketnet_test_server_uring_wire_exchange_flags( const char * bind_string, const char * client_string, const char * server_host, int expect_ipv4_from,
+                                                             int create_flags, int expect_segment )
 {
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, create_flags );
     rocketnet_check( uring );
+    if ( expect_segment == 1 )
+        rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
+    if ( expect_segment == 0 )
+        rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, peer_string ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, client_string ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address.port != 0 );
+    rocketnet_check( client_socket );
+    rocketnet_check( client_address.port != 0 );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, server_host ) );
@@ -6164,7 +6193,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
 
     #define ROCKETNET_URING_TEST_PACKETS 200
 
-    // peer -> transport
+    // client -> transport
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
 
@@ -6174,7 +6203,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
         packet[0] = (uint8_t) i;
         for ( int j = 1; j < packet_bytes; j++ )
             packet[j] = (uint8_t) ( i * 31 + j );
-        rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, packet_bytes );
     }
 
     bool seen[ROCKETNET_URING_TEST_PACKETS];
@@ -6199,7 +6228,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
                 rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 );
             else
                 rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV6 );
-            rocketnet_check( received->from[i].port == peer_address.port );
+            rocketnet_check( received->from[i].port == client_address.port );
             seen[tag] = true;
             num_seen++;
         }
@@ -6207,7 +6236,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     }
     rocketnet_check( num_seen == ROCKETNET_URING_TEST_PACKETS );
 
-    // transport -> peer: the first half all one size (adjacent equal-size
+    // transport -> client: the first half all one size (adjacent equal-size
     // same-destination slots), the second half cycling sizes, with one
     // aborted slot in the middle that must never reach the wire
 
@@ -6217,7 +6246,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
         const int packet_bytes = i < ROCKETNET_URING_TEST_PACKETS / 2 ? 400
                                : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( i * 53 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
         uint64_t packet_id = 0;
-        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &peer_address, &packet_id );
+        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &client_address, &packet_id );
         rocketnet_check( frame );
         uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
         wire[0] = (uint8_t) i;
@@ -6229,7 +6258,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
         if ( i == ROCKETNET_URING_TEST_PACKETS / 2 )
         {
             uint64_t aborted_id = 0;
-            uint8_t * aborted = rocketnet_server_uring_start_packet( uring, &peer_address, &aborted_id );
+            uint8_t * aborted = rocketnet_server_uring_start_packet( uring, &client_address, &aborted_id );
             rocketnet_check( aborted );
             aborted[ROCKETNET_FRAME_WIRE_OFFSET] = 0xFF;
             rocketnet_server_uring_abort_packet( uring, aborted_id, aborted );
@@ -6256,7 +6285,7 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_URING_TEST_PACKETS )
     {
         rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
         if ( packet_bytes == 0 )
         {
             rocketnet_platform_sleep( 0.001 );
@@ -6280,6 +6309,11 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == ROCKETNET_URING_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS] > 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 0 );
+    if ( expect_segment == 1 )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] > 0 );
+    if ( expect_segment == 0 )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] == 0 );
 
     // a runt and an oversize packet die at the transport's size pass, counted,
     // never surfaced
@@ -6287,10 +6321,10 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     const uint64_t dropped_before = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE];
     uint8_t runt[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1];
     memset( runt, 0xEE, sizeof(runt) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, runt, (int) sizeof(runt) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, runt, (int) sizeof(runt) );
     uint8_t oversize[ROCKETNET_RECEIVE_CEILING + 74];
     memset( oversize, 0xEF, sizeof(oversize) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, oversize, (int) sizeof(oversize) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, oversize, (int) sizeof(oversize) );
 
     start = rocketnet_platform_time();
     uint64_t dropped_after = dropped_before;
@@ -6305,13 +6339,189 @@ static void rocketnet_test_server_uring_wire_exchange( const char * bind_string,
     rocketnet_check( dropped_after == dropped_before + 2 );
     rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
+static void rocketnet_test_server_uring_wire_exchange( const char * bind_string, const char * client_string, const char * server_host, int expect_ipv4_from )
+{
+    rocketnet_test_server_uring_wire_exchange_flags( bind_string, client_string, server_host, expect_ipv4_from, 0, -1 );
 }
 
 void rocketnet_test_server_uring_wire_ipv4()
 {
     rocketnet_test_server_uring_wire_exchange( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1 );
+}
+
+// the send runs as segmented SENDMSGs (UDP_SEGMENT): the 400-byte half of the
+// exchange is consecutive equal-size slots to one destination, so the
+// transport must send it in segmented sends, and the far socket must still
+// receive every packet byte-exact, one datagram each
+
+void rocketnet_test_server_uring_wire_gso_ipv4()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1, 0, 1 );
+}
+
+void rocketnet_test_server_uring_wire_gso_ipv6()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "[::1]", "[::1]", "[::1]", 0, 0, 1 );
+}
+
+// the plain tier, forced: the same exchange with segmentation disabled at
+// create sends one SENDMSG per packet and no segmented send
+
+void rocketnet_test_server_uring_wire_plain()
+{
+    rocketnet_test_server_uring_wire_exchange_flags( "127.0.0.1", "127.0.0.1", "127.0.0.1", 1, ROCKETNET_SERVER_URING_DISABLE_SEGMENT, 0 );
+}
+
+// UDP_GRO on the io_uring receive: the client sends a burst of UDP_SEGMENT
+// super-datagrams, which loopback keeps whole and the transport's UDP_GRO
+// sockets receive coalesced, one provided buffer and one CQE each: the
+// receive splits each buffer by its stride (rocketnet_coalesce_split) into
+// the bank, so every datagram surfaces byte-exact, in arrival order, and the
+// GRO_BATCHES counter proves the split ran. the bursts are a short-tail run,
+// an exact multiple and one near the 64 KiB a buffer holds. the counter is
+// asserted where the host probe observed real coalescing (the gso
+// transport's rule: tx-udp-segmentation off on loopback is a legitimate
+// host, delivering the same bytes uncoalesced)
+
+static void rocketnet_test_server_uring_wire_gro( const char * address_string, bool ipv6 )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, address_string ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, 0 );
+    rocketnet_check( uring );
+    rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) != 0 );
+
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, address_string ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                         ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+
+    struct sockaddr_storage to;
+    memset( &to, 0, sizeof(to) );
+    socklen_t to_bytes = 0;
+    if ( ipv6 )
+    {
+        struct sockaddr_in6 * to6 = (struct sockaddr_in6*) &to;
+        to6->sin6_family = AF_INET6;
+        to6->sin6_port = htons( bind_address.port );
+        to6->sin6_addr = in6addr_loopback;
+        to_bytes = sizeof(struct sockaddr_in6);
+    }
+    else
+    {
+        struct sockaddr_in * to4 = (struct sockaddr_in*) &to;
+        to4->sin_family = AF_INET;
+        to4->sin_port = htons( bind_address.port );
+        to4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        to_bytes = sizeof(struct sockaddr_in);
+    }
+
+    // the bursts: { segments, stride, tail } with tail 0 for an exact multiple
+
+    const int bursts[3][3] = { { 8, 100, 0 }, { 5, 300, 150 }, { 50, 1200, 600 } };
+    const int num_bursts = 3;
+
+    int expected_bytes[128];
+    int num_expected = 0;
+
+    static uint8_t super[65000];
+    for ( int b = 0; b < num_bursts; b++ )
+    {
+        const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+        int bytes = 0;
+        for ( int i = 0; i < segments; i++ )
+        {
+            const int segment_bytes = i < bursts[b][0] ? bursts[b][1] : bursts[b][2];
+            const int tag = num_expected;
+            super[bytes] = (uint8_t) tag;
+            for ( int j = 1; j < segment_bytes; j++ )
+                super[bytes + j] = (uint8_t) ( tag * 13 + j );
+            expected_bytes[num_expected++] = segment_bytes;
+            bytes += segment_bytes;
+        }
+        rocketnet_check( bytes <= (int) sizeof(super) );
+
+        struct iovec iov = { super, (size_t) bytes };
+        alignas(8) char control[CMSG_SPACE(sizeof(uint16_t))];
+        memset( control, 0, sizeof(control) );
+        struct msghdr msg;
+        memset( &msg, 0, sizeof(msg) );
+        msg.msg_name = &to;
+        msg.msg_namelen = to_bytes;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_SEGMENT;
+        cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+        const uint16_t stride = (uint16_t) bursts[b][1];
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+        rocketnet_check( sendmsg( client_socket->handle, &msg, 0 ) == (ssize_t) bytes );
+    }
+
+    // every datagram byte-exact and in arrival order: the bursts are one flow
+    // into one queue, so the bank holds them in the order they were sent
+
+    int num_seen = 0;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < num_expected )
+    {
+        rocketnet_server_uring_receive_packets( uring );
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            const int tag = received->packet_data[i][0];
+            rocketnet_check( tag == num_seen );
+            rocketnet_check( received->packet_bytes[i] == expected_bytes[tag] );
+            for ( int j = 1; j < expected_bytes[tag]; j++ )
+                rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 13 + j ) );
+            rocketnet_check( received->from[i].type == ( ipv6 ? ROCKETNET_ADDRESS_IPV6 : ROCKETNET_ADDRESS_IPV4 ) );
+            rocketnet_check( received->from[i].port == client_address.port );
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == num_expected );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == (uint64_t) num_expected );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] == 0 );
+    if ( rocketnet_test_gso_host_coalesces() )
+        rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES] > 0 );
+
+    // the plain tier on the same kernel: DISABLE_GRO reserves no control
+    // area and reports no GRO
+
+    rocketnet_platform_socket_destroy( client_socket );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+
+    rocketnet_address_t plain_address;
+    rocketnet_check( rocketnet_address_parse( &plain_address, address_string ) );
+    struct rocketnet_server_uring_t * plain = rocketnet_server_uring_create_flags( NULL, &plain_address, 1, ROCKETNET_SERVER_URING_DISABLE_GRO );
+    rocketnet_check( plain );
+    rocketnet_check( ( rocketnet_server_uring_features( plain ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) == 0 );
+    rn_native_backend_stop_and_destroy( plain, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
+void rocketnet_test_server_uring_wire_gro_ipv4()
+{
+    rocketnet_test_server_uring_wire_gro( "127.0.0.1", false );
+}
+
+void rocketnet_test_server_uring_wire_gro_ipv6()
+{
+    rocketnet_test_server_uring_wire_gro( "[::1]", true );
 }
 
 void rocketnet_test_server_uring_wire_ipv6()
@@ -6321,10 +6531,10 @@ void rocketnet_test_server_uring_wire_ipv6()
 
 void rocketnet_test_server_uring_wire_dual_stack()
 {
-    // an ipv6 wildcard listen accepts an ipv4 peer, whose source surfaces
+    // an ipv6 wildcard listen accepts an ipv4 client, whose source surfaces
     // as native ipv4 -- the v4-mapped normalization the standard makes law
 
-    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 peer
+    // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
     rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );
 }
 
@@ -6340,24 +6550,24 @@ void rocketnet_test_server_uring_send_overflow()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1 );
     rocketnet_check( uring );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
+    rocketnet_check( client_socket );
 
     for ( int i = 0; i < ROCKETNET_URING_SEND_QUEUE_SIZE; i++ )
     {
         uint64_t packet_id = 0;
-        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &peer_address, &packet_id );
+        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &client_address, &packet_id );
         rocketnet_check( frame );
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
         rocketnet_server_uring_finish_packet( uring, packet_id, frame, 64 );
     }
 
     uint64_t overflow_id = 0;
-    rocketnet_check( rocketnet_server_uring_start_packet( uring, &peer_address, &overflow_id ) == NULL );
-    rocketnet_check( rocketnet_server_uring_start_packet( uring, &peer_address, &overflow_id ) == NULL );
+    rocketnet_check( rocketnet_server_uring_start_packet( uring, &client_address, &overflow_id ) == NULL );
+    rocketnet_check( rocketnet_server_uring_start_packet( uring, &client_address, &overflow_id ) == NULL );
 
     rocketnet_server_uring_send_packets( uring );
 
@@ -6374,7 +6584,7 @@ void rocketnet_test_server_uring_send_overflow()
     memset( tag, 0xAB, sizeof(tag) );
 
     uint64_t packet_id = 0;
-    uint8_t * frame = rocketnet_server_uring_start_packet( uring, &peer_address, &packet_id );
+    uint8_t * frame = rocketnet_server_uring_start_packet( uring, &client_address, &packet_id );
     rocketnet_check( frame );
     memcpy( frame + ROCKETNET_FRAME_WIRE_OFFSET, tag, sizeof(tag) );
     rocketnet_server_uring_finish_packet( uring, packet_id, frame, (int) sizeof(tag) );
@@ -6386,7 +6596,7 @@ void rocketnet_test_server_uring_send_overflow()
     while ( rocketnet_platform_time() - start < 5.0 && !recovered )
     {
         rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        int packet_bytes = rocketnet_platform_socket_receive_packet( client_socket, &from, packet, (int) sizeof(packet) );
         if ( packet_bytes == 0 )
         {
             rocketnet_platform_sleep( 0.001 );
@@ -6397,7 +6607,7 @@ void rocketnet_test_server_uring_send_overflow()
     }
     rocketnet_check( recovered );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
@@ -6413,11 +6623,11 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1 );
     rocketnet_check( uring );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
+    rocketnet_check( client_socket );
 
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
@@ -6435,7 +6645,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
         packet[0] = (uint8_t) i;
         for ( int j = 1; j < (int) sizeof(packet); j++ )
             packet[j] = (uint8_t) ( i * 7 + j );
-        rocketnet_platform_socket_send_packet( peer, &server_address, packet, (int) sizeof(packet) );
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof(packet) );
     }
 
     int num_received = 0;
@@ -6466,7 +6676,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
 
     uint8_t tag[64];
     memset( tag, 0xCD, sizeof(tag) );
-    rocketnet_platform_socket_send_packet( peer, &server_address, tag, (int) sizeof(tag) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, tag, (int) sizeof(tag) );
 
     bool recovered = false;
     start = rocketnet_platform_time();
@@ -6484,7 +6694,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
     }
     rocketnet_check( recovered );
 
-    rocketnet_platform_socket_destroy( peer );
+    rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
@@ -6495,7 +6705,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
     // P2 (docs/CHANNELS.md section 2) over real loopback: for an
     // unfragmented payload (type 5), an acked packet id means the payload
-    // was in exactly one delivered batch at the peer. Both directions, ten
+    // was in exactly one delivered batch at the receiver. Both directions, ten
     // thousand payloads each way. The payload body carries its sender
     // sequence, the acked id is joined back to that sequence, and every
     // acked id's payload must have been delivered exactly once -- with an id
@@ -7437,10 +7647,10 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     if ( rocketnet_test_getenv( "ROCKETNET_TEST_MTU_SERVER_NETNS", netns, sizeof( netns ) ) && netns[0] != '\0' )
     {
         self_ns = open( "/proc/self/ns/net", O_RDONLY );
-        const int peer_ns = open( netns, O_RDONLY );
-        rocketnet_check( self_ns >= 0 && peer_ns >= 0 );
-        rocketnet_check( setns( peer_ns, CLONE_NEWNET ) == 0 );
-        close( peer_ns );
+        const int server_ns = open( netns, O_RDONLY );
+        rocketnet_check( self_ns >= 0 && server_ns >= 0 );
+        rocketnet_check( setns( server_ns, CLONE_NEWNET ) == 0 );
+        close( server_ns );
     }
 #endif
 
@@ -7676,7 +7886,7 @@ static bool rocketnet_xdp_veth_inside_virtme()
 // the cases make a namespace and a veth pair and attach XDP, so they run
 // only as root inside a virtme-ng guest, or as root with
 // ROCKETNET_TEST_XDP_VETH=1
-static bool rocketnet_test_xdp_veth_runs_here()
+bool rocketnet_test_xdp_veth_runs_here()
 {
     char opt_in[256];
     const bool opted_in = rocketnet_test_getenv( "ROCKETNET_TEST_XDP_VETH", opt_in, sizeof( opt_in ) ) && strcmp( opt_in, "1" ) == 0;
@@ -7687,7 +7897,7 @@ static bool rocketnet_xdp_veth_capture_present = false;
 
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
-static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
 
     atexit( rocketnet_xdp_veth_teardown );
@@ -7846,6 +8056,43 @@ static struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) == 0 );
 
     return server;
+}
+
+void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server )
+{
+    rocketnet_xdp_veth_server = server;
+}
+
+// If destroyed is the recorded server, drop that record first. Then remove
+// the pair, and free a recorded server that is still set. The hard-killed
+// cell records NULL before it frees its own server and passes NULL here.
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed )
+{
+    if ( rocketnet_xdp_veth_server == destroyed )
+        rocketnet_xdp_veth_server = NULL;
+    rocketnet_xdp_veth_teardown();
+}
+
+const char * rocketnet_xdp_veth_netns_path()
+{
+    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
+}
+
+void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
+{
+    // setns does not switch the mounted sysfs, so the far end's address file
+    // is not visible that way. ip netns exec mounts a sysfs for that namespace.
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
+        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    rocketnet_check( lines.size() == 1 );
+    unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
+    const int got = sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] );
+    rocketnet_check( got == 6 );
+    for ( int i = 0; i < 6; i++ )
+    {
+        rocketnet_check( octet[i] <= 0xffu );
+        mac[i] = (uint8_t) octet[i];
+    }
 }
 
 // the portable client, its socket opened inside the far end's namespace
@@ -8175,6 +8422,18 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
     rocketnet_xdp_max_size_both_ways( true, "test_xdp_transport_max_size_both_ways_ipv6" );
 }
 
+// the three hard-killed kinds on the xdp server cell. They live in the static
+// table, not the generated hard-killed count, so a host where the veth gate
+// is false omits them and an explicit --run prints the runs_here refusal.
+extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
+
+static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
+static void rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, true ); }
+static void rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, false ); }
+static void rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, true ); }
+static void rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, false ); }
+static void rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, true ); }
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 
@@ -8494,12 +8753,12 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_test_env_restore( &server_guard );
 }
 
-// The wire totals count the peer's own IP header: an IPv4 peer adds 28 bytes
-// (20 + 8) and an IPv6 peer adds 48 (40 + 8). One exchange per family, with a
+// The wire totals count each packet's own IP header: an IPv4 client adds 28 bytes
+// (20 + 8) and an IPv6 client adds 48 (40 + 8). One exchange per family, with a
 // settled baseline, then N packets each way whose sealed UDP payload sizes are
 // known from finish_packet, so each counter delta is exact.
 
-static void wire_bytes_per_family_exchange( const char * public_address, const char * peer_address,
+static void wire_bytes_per_family_exchange( const char * public_address, const char * connect_host,
                                             uint64_t client_id, int ip_udp_header_bytes )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
@@ -8521,7 +8780,7 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     const int server_port = rocketnet_server_transport_port( server );
-    snprintf( address, sizeof( address ), "%s:%d", peer_address, server_port );
+    snprintf( address, sizeof( address ), "%s:%d", connect_host, server_port );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( address, client_id, rocketnet_functional_token_timestamp( WIRE_TOTALS_GAME_CLOCK_EPOCH, time ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
@@ -9024,6 +9283,9 @@ void rocketnet_test_linux_uring_send_cqe_errors();
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
 bool rocketnet_test_linux_xdp_weather_runs_here();
+#if ROCKETNET_XDP
+bool rocketnet_test_xdp_veth_runs_here();
+#endif
 #endif
 #endif
 
@@ -9497,6 +9759,12 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv4_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv6_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
 #endif
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
@@ -9533,6 +9801,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_client_transport_wire_ipv4", rocketnet_test_gso_client_wire_ipv4, NULL },
     { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
+    { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
@@ -9540,6 +9809,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_dual_stack", rocketnet_test_server_uring_wire_dual_stack, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gso_ipv4", rocketnet_test_server_uring_wire_gso_ipv4, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gso_ipv6", rocketnet_test_server_uring_wire_gso_ipv6, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_plain", rocketnet_test_server_uring_wire_plain, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gro_ipv4", rocketnet_test_server_uring_wire_gro_ipv4, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_wire_gro_ipv6", rocketnet_test_server_uring_wire_gro_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif
@@ -9656,13 +9930,14 @@ void rocketnet_functional_prepare()
         rocketnet_functional_environment = new rocketnet_test_environment_t();
 }
 
-// the hard-killed peer and ICMP-error cases (functional/posix_hard_killed_peer.cpp)
+// the hard-killed client and ICMP-error cases (functional/posix_hard_killed_client.cpp)
 // are a generated table of their own, one case per transport cell, after the
-// static table
+// static table. The xdp server cell is in the static table, gated by
+// rocketnet_test_xdp_veth_runs_here, and is not repeated here.
 
-int rocketnet_posix_hard_killed_peer_test_count();
-const char * rocketnet_posix_hard_killed_peer_test_name( int index );
-void rocketnet_posix_hard_killed_peer_test_run( int index );
+int rocketnet_posix_hard_killed_client_test_count();
+const char * rocketnet_posix_hard_killed_client_test_name( int index );
+void rocketnet_posix_hard_killed_client_test_run( int index );
 
 static const int rocketnet_functional_num_tests = (int) ( sizeof( rocketnet_functional_tests ) / sizeof( rocketnet_functional_tests[0] ) );
 
@@ -9684,13 +9959,13 @@ static int rocketnet_functional_static_test_count()
 
 int rocketnet_functional_test_count()
 {
-    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_peer_test_count();
+    return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_client_test_count();
 }
 
 const char * rocketnet_functional_test_name( int index )
 {
     if ( index >= rocketnet_functional_static_test_count() )
-        return rocketnet_posix_hard_killed_peer_test_name( index - rocketnet_functional_static_test_count() );
+        return rocketnet_posix_hard_killed_client_test_name( index - rocketnet_functional_static_test_count() );
     return rocketnet_functional_tests[rocketnet_functional_here[index]].name;
 }
 
@@ -9711,14 +9986,14 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_functional_tests[i].function();
         return 0;
     }
-    for ( int i = 0; i < rocketnet_posix_hard_killed_peer_test_count(); i++ )
+    for ( int i = 0; i < rocketnet_posix_hard_killed_client_test_count(); i++ )
     {
-        if ( strcmp( rocketnet_posix_hard_killed_peer_test_name( i ), name ) != 0 )
+        if ( strcmp( rocketnet_posix_hard_killed_client_test_name( i ), name ) != 0 )
             continue;
         rocketnet_test_log_ring_clear();
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );
-        rocketnet_posix_hard_killed_peer_test_run( i );
+        rocketnet_posix_hard_killed_client_test_run( i );
         return 0;
     }
     fprintf( stderr, "unknown functional test %s\n", name );

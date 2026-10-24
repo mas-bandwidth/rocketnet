@@ -43,7 +43,7 @@ Actions, one per operation and per outside event:
 | `PlaceBlock` | the sender | section 8: `k` consecutive numbers, one contiguous span of `k * F`, fragment `i` at `p + i * F`, both bounds checked once for the whole block |
 | `Open(n)` | the receiver | record `n` arrives and its bytes are written at its span; `n` is live from here |
 | `Release(n)` | the receiver | `n` was delivered and the update ended; a block is released whole, once every fragment has been opened |
-| `Ack(n)` | the peer's ack | the sender learns `n` was acked (see the assumption below) |
+| `Ack(n)` | the receiver's ack | the sender learns `n` was acked (see the assumption below) |
 
 The floor is `ring_start(U')` while something is outstanding (`U' < next`) and `p`
 when nothing is. `U' = U` except when `U` lies inside a block that is not fully

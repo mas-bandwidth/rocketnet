@@ -55,17 +55,18 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C fuzz -j 4                 # rocketnet_fuzz, _connect_token, _receive_structured, _message
-make -C fuzz compile              # syntax check of those sources on any host
+make -C fuzz -j 4                 # the ten targets (not the differential)
+make -C fuzz compile              # syntax check of all ten sources on any host
 ```
 
-`fuzz/Makefile` builds the four original targets with
-`-fsanitize=fuzzer,address,undefined`. The others are built the same way, by
-hand or as the nightly job (`.github/workflows/fuzz-nightly.yml`) does:
+`fuzz/Makefile` builds the ten targets other than `rocketnet_fuzz_differential` with
+`-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
+nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
+nightly builds it:
 
 ```sh
 cd fuzz
-clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk -I../test \
+clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -I../sodium -I../sdk \
     -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
     rocketnet_fuzz_session.cpp ../build/librocketnet_dev.a -lbpf -lxdp -luring -lpthread \
     -o rocketnet_fuzz_session
@@ -201,8 +202,11 @@ CC=clang CXX=clang++ FUZZ_COV_JOBS=4 tools/fuzz_coverage.sh rocketnet_fuzz_sessi
 ```
 
 The comment at the top of the script lists its variables (`FUZZ_COV_ITERS`,
-`FUZZ_COV_BUILD`, `FUZZ_COV_OUT`, `FUZZ_COV_JOBS`, `FUZZ_COV_SETUP`, `SLOT`,
-`LLVM_PROFDATA`, `LLVM_COV`). By default the pair targets count only what
+`FUZZ_COV_BUILD`, `FUZZ_COV_OUT`, `FUZZ_COV_JOBS`, `FUZZ_COV_SETUP`,
+`FUZZ_COV_SUMMARY`, `SLOT`, `LLVM_PROFDATA`, `LLVM_COV`). Set
+`FUZZ_COV_SUMMARY=<file>` to append the per-area table to that file as a
+Markdown table (the job summary in CI), e.g.
+`FUZZ_COV_SUMMARY=$GITHUB_STEP_SUMMARY`. By default the pair targets count only what
 inputs reach, not their one-time create and connect. To get a comparable
 before and after number for a change, run it the same way on both commits.
 On Linux the script adds `-mllvm -runtime-counter-relocation`, which
@@ -242,6 +246,23 @@ commit the minimized input to its corpus as `regress_<name>`.
 - `fuzz-nightly.yml` builds the libFuzzer targets, restores each target's
   growing corpus from the cache, runs a bounded campaign
   (`max_total_time`, 900 s by default) and uploads any reproducer.
+- `fuzz-nightly.yml` also runs the same ten-target matrix under
+  MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
+  sodium included, is built with the MSan flags and the instrumented libc++
+  headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
+  links `-fsanitize=fuzzer-no-link,memory` with origin tracking and the
+  instrumented libc++ (`/opt/msan-libcxx-<clang version>`; a runner without
+  it fails with a TOOL-MISSING line). The leg builds libFuzzer's engine from
+  the compiler-rt source pinned by `tools/build_msan_libcxx.sh` against that
+  libc++ and with the same MSan flags: the engine clang ships is built
+  against libstdc++, so it cannot resolve a target's `std::__1` references
+  and, forced to link, leaves poison its uninstrumented `std::string` writes
+  never clear. The engine is cached per runner clang version (the fleet's
+  Linux runners carry different clangs, and the engine is built against
+  each one's libc++). Any MemorySanitizer report fails that leg.
+- After the matrix, one `coverage` job per OS (Linux and macOS) runs
+  `tools/fuzz_coverage.sh` over every target and appends its per-area table
+  as Markdown to the job summary (`FUZZ_COV_SUMMARY=$GITHUB_STEP_SUMMARY`).
 
 ## OSS-Fuzz (prepared, not submitted)
 

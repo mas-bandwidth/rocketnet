@@ -31,6 +31,9 @@ struct rocketnet_encryption_map_t
     int * live;                                             // hot: parallel to address
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
+#if ROCKETNET_TEST_SEAMS
+    mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
+#endif // #if ROCKETNET_TEST_SEAMS
 };
 
 #if ROCKETNET_TEST_SEAMS
@@ -165,6 +168,9 @@ static int rocketnet_encryption_map_bucket( const struct rocketnet_encryption_ma
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, map->hash_key );
+#if ROCKETNET_TEST_SEAMS
+    map->test_hashes++;
+#endif // #if ROCKETNET_TEST_SEAMS
     uint64_t value;
     memcpy( &value, hash, 8 );
     return (int) ( value % (uint64_t) map->num_buckets );
@@ -190,6 +196,7 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->free_head == -1;
 }
 
+// tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
@@ -254,6 +261,7 @@ const struct rocketnet_address_t * rocketnet_encryption_map_address( const struc
     return &map->address[index];
 }
 
+// tla/RNDestroyWipe.tla Remove: drops the mapping from live and wipes its secrets.
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );
@@ -313,3 +321,11 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
     rocketnet_assert( map );
     return map->num_mappings;
 }
+
+#if ROCKETNET_TEST_SEAMS
+uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map )
+{
+    rocketnet_assert( map );
+    return map->test_hashes;
+}
+#endif // #if ROCKETNET_TEST_SEAMS

@@ -10,7 +10,13 @@ On Linux with xxd and a clang that has the BPF target this checks that
   - the generated header's array holds exactly the object it was made from;
   - a build tree's embedded object equals a fresh compile of the current
     sources, so a stale object fails (pass the build tree, default ./build);
-  - a changed source gives a different object, so the stale check can fail.
+  - a changed source gives a different object, so the stale check can fail;
+  - an embed given no MAX_CLIENTS or HISTORY_PACKETS compiles the program at
+    the SDK's defaults, the same object as one given the defaults, and its
+    header compiles into a library at the defaults;
+  - the generated header refuses a library built with another
+    ROCKETNET_MAX_CLIENTS or ROCKETNET_HISTORY_PACKETS than the program, and
+    accepts a custom ROCKETNET_MAX_CLIENTS=10000 passed to both.
 
 Elsewhere, or with --committed-only, it checks that every input the shared
 list (cmake/XdpSources.cmake) names exists; that check needs no compiler.
@@ -101,9 +107,11 @@ def build_max_clients(build):
 
 
 def embed(root, output, xxd, clang, max_clients):
+    """Runs cmake/EmbedXdp.cmake; max_clients None passes no MAX_CLIENTS."""
+    limits = [] if max_clients is None else [f"-DMAX_CLIENTS={max_clients}"]
     subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
                     f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={multiarch()}",
-                    f"-DMAX_CLIENTS={max_clients}",
+                    *limits,
                     "-P", str(root / "cmake/EmbedXdp.cmake")],
                    check=True, encoding="utf-8", env=utf8_env())
     data = (output / "server_xdp.o").read_bytes()
@@ -112,6 +120,57 @@ def embed(root, output, xxd, clang, max_clients):
     if embedded_bytes(output / "rocketnet_server_xdp.h") != data:
         raise RuntimeError("the generated header's array differs from server_xdp.o")
     return data
+
+
+def library_compiles(root, output, defines):
+    """Compiles a library source that includes rocketnet.h and the generated
+    header, as sdk/rocketnet_server_socket_linux.cpp does, with the given
+    library defines; returns (compiled, diagnostics)."""
+    source = output / "library_probe.c"
+    source.write_text('#include "rocketnet.h"\n#include <rocketnet_server_xdp.h>\n'
+                      "int rocketnet_library_probe(void);\n"
+                      "int rocketnet_library_probe(void) { return (int) rocketnet_server_xdp_o_len + rocketnet_server_xdp_o[0]; }\n",
+                      encoding="utf-8")
+    cc = os.environ.get("CC", "cc")
+    result = subprocess.run([cc, *defines, "-Wall", "-Wextra", "-Werror", "-fsyntax-only",
+                             f"-I{str(output)}", f"-I{str(root / 'sdk')}", str(source)],
+                            capture_output=True, encoding="utf-8", env=utf8_env())
+    return result.returncode == 0, result.stderr
+
+
+def check_embed_limits(source, directory, inputs, xxd, clang):
+    root = directory / "limits"
+    copy_tree(source, root, inputs, 1_000_000_000)
+
+    unset = directory / "generated unset"
+    default_object = embed(root, unset, xxd, clang, None)
+    explicit_object = embed(root, directory / "generated default", xxd, clang, DEFAULT_MAX_CLIENTS)
+    if default_object != explicit_object:
+        raise RuntimeError("an embed given no MAX_CLIENTS did not compile the program at the SDK default")
+    header = (unset / "rocketnet_server_xdp.h").read_text(encoding="utf-8")
+    if f"#define ROCKETNET_SERVER_XDP_MAX_CLIENTS {DEFAULT_MAX_CLIENTS}\n" not in header:
+        raise RuntimeError("the generated header does not record the default ROCKETNET_MAX_CLIENTS")
+    compiled, diagnostics = library_compiles(root, unset, [])
+    if not compiled:
+        raise RuntimeError(f"the default embed does not compile into a default library:\n{diagnostics}")
+    print("test_xdp_embed_default_needs_no_defines")
+
+    for define, macro in (("-DROCKETNET_MAX_CLIENTS=10000", "ROCKETNET_MAX_CLIENTS"),
+                          ("-DROCKETNET_HISTORY_PACKETS=8192", "ROCKETNET_HISTORY_PACKETS")):
+        compiled, diagnostics = library_compiles(root, unset, [define])
+        if compiled or f"another {macro} than this library" not in diagnostics:
+            raise RuntimeError(f"a library built with {define} accepted a default program:\n{diagnostics}")
+    print("test_xdp_embed_mismatch_is_refused")
+
+    custom = directory / "generated custom"
+    embed(root, custom, xxd, clang, 10000)
+    compiled, diagnostics = library_compiles(root, custom, ["-DROCKETNET_MAX_CLIENTS=10000"])
+    if not compiled:
+        raise RuntimeError(f"a 10000-client embed does not compile into a 10000-client library:\n{diagnostics}")
+    compiled, diagnostics = library_compiles(root, custom, [])
+    if compiled or "another ROCKETNET_MAX_CLIENTS than this library" not in diagnostics:
+        raise RuntimeError(f"a default library accepted a 10000-client program:\n{diagnostics}")
+    print("test_xdp_embed_custom_max_clients")
 
 
 def copy_tree(source, root, inputs, mtime):
@@ -195,6 +254,8 @@ def main():
         if stale == objects[0]:
             raise RuntimeError("a changed source compiled to the same object")
         print("test_xdp_object_stale_is_red")
+
+        check_embed_limits(source, directory, inputs, xxd, clang)
 
         if build is not None:
             check_fresh(build.resolve(), objects[0])

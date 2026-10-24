@@ -23,10 +23,20 @@
     so the wire's 32-bit sequence field wraps (standard/TRANSPORT.md t4).
 
     --rate N sends N packets per second each way (N a positive integer, at
-    most 1000000), paced against the wall clock from each connect, at most
-    ROCKETNET_SOAK_RATE_BURST each way per iteration; the transport layer has
-    no send budget, so the rate is the only limit. Without it soak sends one
-    packet each way per iteration.
+    most 1000000), paced against the wall clock from each connect; the
+    transport layer has no send budget, so the rate is the only limit. Without
+    it soak sends one packet each way per iteration. The pacing never makes a
+    refusal itself: each direction sends at most ROCKETNET_SOAK_RATE_BURST
+    packets per iteration and holds its unacknowledged span (its highest sent
+    session sequence less the largest the other side has acknowledged, read
+    through the delivery capture) under ROCKETNET_SOAK_RATE_WINDOW, so a stall
+    on either side never overruns the 4096-packet send history
+    (SEND_HISTORY_OVERFLOW); and the client sends
+    nothing more in an iteration once a hand-off of its fill ring is deferred
+    (CLIENT_SEND_DEFERRED: the I/O thread still holds the other rings), so a
+    stalled I/O thread never fills the ring (SEND_RING_FULL). What a stall
+    holds back is still owed and sent after it. A packet counts as sent only
+    when the transport staged it (start_packet and finish_packet).
 
     --assert-every S runs the counter discipline below (conservation, and
     every REFUSAL counter 0) on the client and the server every S seconds
@@ -35,7 +45,11 @@
     by more than ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES past its value at the
     first check (not on Windows). Each check prints one "soak assert:" line
     with the packets each way and the highest session sequence each way. The
-    first violation ends the run, exit 1. A malformed --rate or --assert-every
+    first violation ends the run, exit 1. With --rate a check also fails when
+    either direction sent nothing since the previous check (the pacing
+    stalled). After each "soak assert:" line soak prints one "soak assert
+    counters:" line: every non-zero client and server counter, name=value,
+    the hourly summary of scripts/soak-multiday carries it. A malformed --rate or --assert-every
     argument, a missing one or a repeated flag is refused like --seconds.
 
     ROCKETNET_DEV_SESSION_SEQUENCE_START (development builds only,
@@ -93,7 +107,8 @@ static int dev_token_binary( const char * address, uint64_t client_id, uint64_t 
 
 #define ROCKETNET_SOAK_MAX_COUNTERS 256
 #define ROCKETNET_SOAK_RATE_MAX 1000000ULL
-#define ROCKETNET_SOAK_RATE_BURST 128
+#define ROCKETNET_SOAK_RATE_BURST 64           // packets each way per iteration at most: a quarter of the client's 256-slot fill ring
+#define ROCKETNET_SOAK_RATE_WINDOW 1024        // unacknowledged sequences each way at most: a quarter of the 4096-packet send history
 #define ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES ( 64ULL * 1024 * 1024 )
 #define ROCKETNET_SOAK_USAGE "usage: soak [--seconds S] [--one-connection] [--rate N] [--assert-every S] [positive iteration count]"
 #define ROCKETNET_SOAK_DISCONNECT_REASONS ( ROCKETNET_CLIENT_STATE_DISCONNECTED - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED + 1 )
@@ -314,6 +329,75 @@ static int soak_flag_value( int argc, char ** argv, int * i, int * have, uint64_
     return 1;
 }
 
+// a counter's index by its rocketnet_counter_name, -1 when the build has none
+static int soak_counter_index( const char * counter_name )
+{
+    for ( int i = 0; i < rocketnet_num_counters(); i++ )
+    {
+        if ( strcmp( rocketnet_counter_name( i ), counter_name ) == 0 )
+            return i;
+    }
+    return -1;
+}
+
+// every non-zero counter of one end on the current line, name=value
+static void soak_print_counters( const char * name, const struct rocketnet_counters_t * counters )
+{
+    printf( " %s", name );
+    for ( int i = 0; i < rocketnet_num_counters(); i++ )
+    {
+        const uint64_t value = rocketnet_counter_value( counters, i );
+        if ( value )
+            printf( " %s=%llu", rocketnet_counter_name( i ), (unsigned long long) value );
+    }
+}
+
+// the unacknowledged span of one end: its highest sent session sequence less
+// the largest the other end has acknowledged, counted from the end's highest
+// sent sequence at the connect (before the first acknowledgement the largest
+// acknowledged reads 0); 0 when the capture is not connected
+static uint64_t soak_unacked_span( const struct rocketnet_delivery_capture_t * capture, uint64_t sent_sequence_at_connect )
+{
+    if ( !capture->connected )
+        return 0;
+    const uint64_t acked = capture->largest_acked_sequence > sent_sequence_at_connect ? capture->largest_acked_sequence : sent_sequence_at_connect;
+    return capture->highest_sent_sequence > acked ? capture->highest_sent_sequence - acked : 0;
+}
+
+// how many packets one direction may send this iteration: what the wall
+// clock owes, at most a burst, and at most what keeps its unacknowledged span
+// inside the window
+static uint64_t soak_rate_send_count( uint64_t owed, uint64_t sent, uint64_t unacked_span )
+{
+    uint64_t count = owed > sent ? owed - sent : 0;
+    if ( count > ROCKETNET_SOAK_RATE_BURST )
+        count = ROCKETNET_SOAK_RATE_BURST;
+    const uint64_t room = unacked_span < ROCKETNET_SOAK_RATE_WINDOW ? ROCKETNET_SOAK_RATE_WINDOW - unacked_span : 0;
+    return count < room ? count : room;
+}
+
+// stages one pattern payload through the acquire/commit family, written at
+// frame + payload_index; 1 only when the transport staged it
+static int soak_client_send( struct rocketnet_client_transport_t * client, int payload_size )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_client_transport_start_packet( client, payload_size, &context );
+    if ( !frame )
+        return 0;
+    generate_payload( frame + context.payload_index, payload_size );
+    return rocketnet_client_transport_finish_packet( client, &context, payload_size ) > 0;
+}
+
+static int soak_server_send( struct rocketnet_server_transport_t * server, int client_index, int payload_size )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, payload_size, &context );
+    if ( !frame )
+        return 0;
+    generate_payload( frame + context.payload_index, payload_size );
+    return rocketnet_server_transport_finish_packet( server, &context, payload_size ) > 0;
+}
+
 int main( int argc, char ** argv )
 {
     uint64_t max_iterations = 0;
@@ -443,12 +527,28 @@ int main( int argc, char ** argv )
     int connected = 0;
     int unplanned_disconnect_recorded = 0;
     int deadline_reached = 0;
-    int payload_size = 1;
+    int client_payload_size = 1;
+    int server_payload_size = 1;
     struct soak_sequences_t sequences;
     memset( &sequences, 0, sizeof( sequences ) );
     uint64_t resident_baseline = 0;
     uint64_t asserts = 0;
-    uint64_t rate_sent = 0;                 // packets sent each way on this connection, for the pacing
+    // the pacing, per connection: packets each way sent since the connect,
+    // and each end's highest sent session sequence at the connect
+    uint64_t connection_client_sent = 0;
+    uint64_t connection_server_sent = 0;
+    uint64_t client_sent_sequence_at_connect = 0;
+    uint64_t server_sent_sequence_at_connect = 0;
+    uint64_t asserted_client_sent = 0;
+    uint64_t asserted_server_sent = 0;
+    const int counter_send_deferred = soak_counter_index( "CLIENT_SEND_DEFERRED" );
+    if ( rate && counter_send_deferred < 0 )
+    {
+        printf( "soak: --rate needs the CLIENT_SEND_DEFERRED counter\n" );
+        rn_native_server_transport_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
     const double start_time = rocketnet_time();
     double last_report_time = start_time;
     double last_assert_time = start_time;
@@ -506,8 +606,12 @@ int main( int argc, char ** argv )
             connected = 0;
         }
 
+        // a deferred hand-off in update means the I/O thread still holds the
+        // other rings: the client sends nothing more this iteration
+        const uint64_t deferred_before_update = counter_send_deferred >= 0 ? rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) : 0;
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
+        const int client_ring_held = counter_send_deferred >= 0 && rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) != deferred_before_update;
 
         const int client_state = rocketnet_client_transport_state( client );
         if ( client_state < 0 || ( connected && client_state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) )
@@ -529,35 +633,59 @@ int main( int argc, char ** argv )
                 connected = 1;
                 connects++;
                 connect_time = rocketnet_time();
-                rate_sent = 0;
+                connection_client_sent = 0;
+                connection_server_sent = 0;
+                struct rocketnet_delivery_capture_t capture;
+                memset( &capture, 0, sizeof( capture ) );
+                rocketnet_client_transport_delivery_capture( client, &capture );
+                client_sent_sequence_at_connect = capture.highest_sent_sequence;
+                memset( &capture, 0, sizeof( capture ) );
+                rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &capture );
+                server_sent_sequence_at_connect = capture.highest_sent_sequence;
             }
 
             // one packet each way per iteration, or with --rate as many as
-            // the wall clock owes since the connect, a burst at most
+            // the wall clock owes since the connect, inside the burst and the
+            // window (soak_rate_send_count)
 
-            uint64_t send_count = 1;
+            uint64_t client_send_count = 1;
+            uint64_t server_send_count = 1;
             if ( rate )
             {
                 const uint64_t owed = (uint64_t) ( ( rocketnet_time() - connect_time ) * (double) rate );
-                send_count = owed > rate_sent ? owed - rate_sent : 0;
-                if ( send_count > ROCKETNET_SOAK_RATE_BURST )
-                    send_count = ROCKETNET_SOAK_RATE_BURST;
+                struct rocketnet_delivery_capture_t client_capture;
+                struct rocketnet_delivery_capture_t server_capture;
+                memset( &client_capture, 0, sizeof( client_capture ) );
+                memset( &server_capture, 0, sizeof( server_capture ) );
+                rocketnet_client_transport_delivery_capture( client, &client_capture );
+                rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &server_capture );
+                client_send_count = client_ring_held ? 0 : soak_rate_send_count( owed, connection_client_sent, soak_unacked_span( &client_capture, client_sent_sequence_at_connect ) );
+                server_send_count = soak_rate_send_count( owed, connection_server_sent, soak_unacked_span( &server_capture, server_sent_sequence_at_connect ) );
             }
 
-            // every size cycles through, both directions, every byte checked
+            // every size cycles through, both directions, every byte checked;
+            // each direction cycles its own sizes, so the receiver's check
+            // holds whatever each direction sent
 
             const int client_index = rocketnet_client_transport_client_index( client );
-            for ( uint64_t n = 0; n < send_count; n++ )
+            for ( uint64_t n = 0; n < client_send_count; n++ )
             {
-                uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-                generate_payload( payload, payload_size );
-                rocketnet_client_transport_send_packet( client, payload, payload_size );
+                if ( !soak_client_send( client, client_payload_size ) )
+                    break;
                 client_sent++;
-                rocketnet_server_transport_send_packet( server, client_index, payload, payload_size );
-                server_sent++;
-                payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
+                connection_client_sent++;
+                client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
             }
-            rate_sent += send_count;
+            if ( client_send_count )
+                rocketnet_client_transport_send_packets( client );
+            for ( uint64_t n = 0; n < server_send_count; n++ )
+            {
+                if ( !soak_server_send( server, client_index, server_payload_size ) )
+                    break;
+                server_sent++;
+                connection_server_sent++;
+                server_payload_size = server_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? server_payload_size + 1 : 1;
+            }
             rocketnet_server_transport_send_packets( server );
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
@@ -618,12 +746,24 @@ int main( int argc, char ** argv )
                         (unsigned long long) resident, (unsigned long long) resident_baseline );
                 violations++;
             }
+            if ( rate && ( client_sent == asserted_client_sent || server_sent == asserted_server_sent ) )
+            {
+                printf( "soak: RATE STALLED: client_sent %llu, server_sent %llu, unchanged since the previous check\n",
+                        (unsigned long long) client_sent, (unsigned long long) server_sent );
+                violations++;
+            }
+            asserted_client_sent = client_sent;
+            asserted_server_sent = server_sent;
             printf( "soak assert: %.0f s, client_sent %llu, server_sent %llu, client_verified %llu, server_verified %llu, "
                     "client_highest_sent_sequence 0x%llx, server_highest_sent_sequence 0x%llx, peak_resident %llu, %s\n",
                     last_assert_time - start_time, (unsigned long long) client_sent, (unsigned long long) server_sent,
                     (unsigned long long) client_verified, (unsigned long long) server_verified,
                     (unsigned long long) sequences.client_highest_sent, (unsigned long long) sequences.server_highest_sent,
                     (unsigned long long) resident, violations ? "FAILED" : "ok" );
+            printf( "soak assert counters:" );
+            soak_print_counters( "client", rocketnet_client_transport_counters( client ) );
+            soak_print_counters( "server", rocketnet_server_transport_counters( server ) );
+            printf( "\n" );
             fflush( stdout );
             if ( violations )
             {

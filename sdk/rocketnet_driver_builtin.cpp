@@ -212,9 +212,10 @@ static void portable_tx_worker( void * arg )
 // read, the copies and the producer reset run outside it, and main only ever
 // tries the mutex.
 
-// RNPortableRx WLock and WSwap: true when the producer is empty or was
-// queued for a free bank. Without a free bank the worker keeps its full
-// producer (HoldOnFull) and stops reading the socket.
+// tla/RNPortableRx.tla WPublishEmpty, WLock, WSwap and WReset: true when
+// the producer is empty or was queued for a free bank. Without a free bank
+// the worker keeps its full producer (HoldOnFull) and stops reading the
+// socket.
 static bool portable_rx_publish( portable_server_t * server )
 {
     if ( server->rx_bank[server->rx_producer].count == 0 ) return true;
@@ -235,10 +236,10 @@ static bool portable_rx_publish( portable_server_t * server )
     return true;
 }
 
-// RNPortableRx MTry, MSwap and MWake: true while main owns a consumer with
-// datagrams left to copy. A completely copied consumer is returned and the
-// oldest ready bank taken under one try; a failed try keeps the consumer and
-// its cursor. Main wakes the worker only when it returns a bank to an empty
+// tla/RNPortableRx.tla MTry, MTryFail, MSwap and MWake: true while main
+// owns a consumer with datagrams left to copy. A completely copied consumer
+// is returned and the oldest ready bank taken under one try; a failed try
+// keeps the consumer and its cursor and ends the call. Main wakes the worker only when it returns a bank to an empty
 // free FIFO: only then can the worker be waiting for one (WakeOnReturn).
 static bool portable_rx_acquire( portable_server_t * server )
 {
@@ -275,7 +276,7 @@ enum portable_rx_step_t
     PORTABLE_RX_WAIT_IDLE,
 };
 
-// One pass of the RX worker loop, without its waits (RNPortableRx WTop,
+// One pass of the RX worker loop, without its waits (tla/RNPortableRx.tla WTop,
 // publish and WRead). Quit is read at the top of every pass, so a stop that
 // sets quit before its wake (QuitBeforeWake) always ends the worker.
 static portable_rx_step_t portable_rx_step( portable_server_t * server )
@@ -297,6 +298,9 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 }
 
 #if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+// tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
+// alone when every bank is full, and on the wake or socket readability
+// after an empty read.
 static void portable_rx_worker( void * arg )
 {
     portable_server_t * server = (portable_server_t*) arg;
@@ -464,6 +468,9 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
     }
     portable_tx_publish( server );
 }
+// tla/RNPortableRx.tla MCall, MCopy and MEnd: a call copies datagrams from
+// the consumer at its cursor within the caller's count and returns when the
+// count is spent or no consumer is left; a stopping server returns nothing.
 static int portable_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -491,6 +498,8 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
     }
     return received;
 }
+// tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
+// the RX wake (QuitBeforeWake).
 static void portable_stop( void * transport )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -508,6 +517,8 @@ static void portable_stop( void * transport )
     rocketnet_platform_wake_set( server->wake );
     if ( server->rx_wake ) rocketnet_platform_wake_set( server->rx_wake );
 }
+// tla/RNPortableRx.tla MPollStopped: main polls between frames, and nothing
+// changes until the workers have exited.
 static bool portable_stopped( void * transport )
 {
     portable_server_t * server = (portable_server_t*) transport;
@@ -1073,9 +1084,9 @@ static void xdp_replay_commit( void * transport )
 {
     rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) transport );
 }
-static void xdp_peer_accepted( void * transport, int view_index )
+static void xdp_client_accepted( void * transport, int view_index )
 {
-    rocketnet_server_socket_peer_accepted( (rocketnet_server_socket_t*) transport, view_index );
+    rocketnet_server_socket_client_accepted( (rocketnet_server_socket_t*) transport, view_index );
 }
 static uint64_t xdp_send_failures( void * transport )
 {
@@ -1086,7 +1097,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_peer_accepted, xdp_send_failures, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL
 };
 #else
 // Keep a refusing rung: removing this known row would make an all-skipped

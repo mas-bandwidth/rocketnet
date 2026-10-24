@@ -451,7 +451,7 @@ static int violation_finish_records( uint8_t * p )
     return 1;
 }
 
-// A hostile peer sends two RELIABLE_ORDERED records with one channel and
+// A hostile sender sends two RELIABLE_ORDERED records with one channel and
 // ordering index but different numbers: the second is refused at the held
 // index (rn_channels_dispatch, sdk/rocketnet_channel.cpp), counted
 // MESSAGE_DUPLICATE_ORDERING and, once for the ended connection,

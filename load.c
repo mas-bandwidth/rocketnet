@@ -4,9 +4,9 @@
 
     Load: single-process many-client load harness driving the public API.
     Stands up one public server (rocketnet_server_t) and N public clients
-    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
-    on loopback, connects every client within 10 seconds, drives the selected
-    profile (the existing one message per client per update in each
+    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS, 1000 by default) in
+    one process on loopback, connects every client within 10 seconds, drives
+    the selected profile (the existing one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
     message is reliable-ordered). LOAD_MESSAGES_PER_CLIENT_SECOND optionally
@@ -22,9 +22,10 @@
     Configuration:
     LOAD_PROFILE=default (the default) keeps the SDK's default message and
     transport sizing. LOAD_PROFILE=light keeps the same offered traffic and
-    pass criteria but sizes both endpoints for the harness's 32-byte messages,
-    eight reliability cases, and one transport fragment slot. The server's
-    max_clients and 10-second handshake deadline are set in both profiles.
+    pass criteria but uses the SDK's public light-client profile,
+    rocketnet_server_light_config and rocketnet_client_light_config, for both
+    endpoints. The server's max_clients and 10-second handshake deadline are
+    set in both profiles.
     LOAD_HANDSHAKE_DIAGNOSTICS=1 prints token age, client setup, and connect
     sweep timing to stderr for handshake triage; it changes no pass criteria.
 
@@ -52,6 +53,9 @@
     when the result is below 2 fds per client plus 64, so `ulimit -n 512`
     fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
+    A -DROCKETNET_MAX_CLIENTS=10000 build runs `LOAD_PROFILE=light load 10000
+    30` nightly (.github/workflows/nightly-max-clients.yml); the default
+    profile's per-client config plans about 183 GB for that server.
 */
 
 /* the title's protocol id: the server config's and every token's */
@@ -1072,49 +1076,29 @@ int main( int argc, char ** argv )
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     /* Public server and client configurations. The default profile preserves
-       SDK defaults; light narrows memory geometry to the workload below. */
+       SDK defaults; light is the SDK's public light-client profile, one
+       source of truth for the bounded geometry. */
     struct rocketnet_server_config_t server_config;
+    struct rocketnet_client_config_t client_config;
+    if ( light_profile )
+    {
+        rocketnet_server_light_config( &server_config );
+        rocketnet_client_light_config( &client_config );
+    }
+    else
+    {
+        rocketnet_server_default_config( &server_config );
+        rocketnet_client_default_config( &client_config );
+    }
+
     /* the published development backend key, set by hand (a real server
        brings its backend's key); the server makes its own keypair at create,
        and every client's token is sealed to rocketnet_server_public_key */
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
-    rocketnet_server_default_config( &server_config );
     server_config.protocol_id = LOAD_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, dev_backend_key, sizeof( server_config.backend_public_key ) );
     server_config.max_clients = num_clients;
     server_config.handshake_deadline_seconds = 10;
-
-    struct rocketnet_client_config_t client_config;
-    rocketnet_client_default_config( &client_config );
-
-    if ( light_profile )
-    {
-        /* At 1000 clients each endpoint emits one 32-byte message per
-           100 ms; the eight reliability cases rotate across updates, so
-           payload is 2.56 kbps per direction and 64 kbps is 25x that rate.
-           The 100-client slice runs every 10 ms: at 1..100 clients each
-           client updates at 100 Hz (25.6 kbps payload; 2.5x budget headroom).
-           Intermediate populations follow the number of slices per round. */
-        server_config.max_fragmented_messages = 1;
-        server_config.per_client_send_kbps = 64;
-        server_config.num_channels = 8;
-        server_config.reliable_messages_in_flight = 64;
-        server_config.receive_message_buffer_bytes = 4096;
-        server_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
-        server_config.send_message_buffer_bytes = 12288;
-        server_config.send_queue_messages = 16;
-        server_config.packets_in_flight = 16;
-
-        client_config.max_fragmented_messages = 1;
-        client_config.send_kbps = 64;
-        client_config.num_channels = 8;
-        client_config.reliable_messages_in_flight = 64;
-        client_config.receive_message_buffer_bytes = 4096;
-        client_config.max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
-        client_config.send_message_buffer_bytes = 12288;
-        client_config.send_queue_messages = 16;
-        client_config.packets_in_flight = 16;
-    }
 
     const size_t client_public_required_bytes = rocketnet_client_required_memory( &client_config );
     const size_t server_public_required_bytes = rocketnet_server_required_memory( &server_config );
