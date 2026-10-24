@@ -1505,12 +1505,23 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
     return rocketnet_client_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_client_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
 /// send budget. Use it in place of rocketnet_client_default_config. It changes
 /// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config );
+static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_client_light_config_internal( config );
+}
 
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
@@ -1828,13 +1839,24 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
     return rocketnet_server_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_server_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
 /// send budget per client. Use it in place of rocketnet_server_default_config.
 /// The caller still sets its protocol id and backend key. It changes no
 /// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config );
+static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_server_light_config_internal( config );
+}
 
 /// As rocketnet_client_required_memory, for this config and max_clients.
 /// The defaults' test filter in a production build is an invalid config. A
