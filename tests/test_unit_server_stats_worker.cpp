@@ -215,7 +215,7 @@ static void stats_step_and_update( stats_world_t * world )
     rocketnet_server_update(world->server, world->time);
 }
 
-static void test_server_stats_worker_publishes_only_on_next_update()
+static void test_server_stats_worker_never_delays_publication()
 {
     stats_env_pin_t pin;
     stats_world_t world;
@@ -226,27 +226,29 @@ static void test_server_stats_worker_publishes_only_on_next_update()
     check(endpoint);
     for ( int i = 0; i < 4; ++i ) stats_step_and_update(&world);
 
+    // The running aggregates publish as the producer calls land
+    // (tla/RNServerStats.tla): current at the very next read, with no worker
+    // step and no update in between.
     stats_add_sample(endpoint, world.time, 7.0);
     stats_add_sample(endpoint, world.time, 17.0);
     rocketnet_ack_endpoint_record_received(endpoint, 200, 100, world.time);
     rocketnet_ack_endpoint_record_received(endpoint, 201, 100, world.time + 0.01);
-    const rocketnet_server_client_stats_t before = rn_server_client_stats_of(world.server, world.slots[0]);
+    rocketnet_ack_endpoint_t * expected = stats_reference(endpoint);
+    check(fabsf(expected->rtt - 7.0f) < 0.001f && expected->bandwidth_received_kbps > 0.0f);
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *expected);
+
+    // A held worker batch, and then its late completion, leave the current
+    // numbers alone.
     uint64_t submitted = 0, completed = 0, busy = 0;
     check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted, &completed, NULL, &busy));
     rocketnet_server_update(world.server, world.time + 0.02);
     uint64_t submitted_after = 0, completed_after = 0, busy_after = 0;
     check(rocketnet_server_transport_stats_worker_status_for_test(transport, &submitted_after, &completed_after, NULL, &busy_after));
     check(submitted_after == submitted && completed_after == completed && busy_after == busy + 1);
-    stats_check_unchanged(rn_server_client_stats_of(world.server, world.slots[0]), before);
-
-    // Finish the older sealed delta, then swap in the producer mutations.
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *expected);
     world.time += 0.02;
     stats_step_and_update(&world);
-    rocketnet_ack_endpoint_t * expected = stats_reference(endpoint);
-    check(fabsf(expected->rtt - 7.0f) < 0.001f && expected->bandwidth_received_kbps > 0.0f);
-    const rocketnet_server_client_stats_t prior = rn_server_client_stats_of(world.server, world.slots[0]);
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
-    stats_check_unchanged(rn_server_client_stats_of(world.server, world.slots[0]), prior);
     world.time += 0.001;
     rocketnet_server_update(world.server, world.time);
     stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *expected);
@@ -255,7 +257,7 @@ static void test_server_stats_worker_publishes_only_on_next_update()
     check(pin.restore());
 }
 
-REGISTER_UNIT_TEST(test_server_stats_worker_publishes_only_on_next_update);
+REGISTER_UNIT_TEST(test_server_stats_worker_never_delays_publication);
 
 static void test_server_stats_worker_late_batch_keeps_modulo_fairness()
 {
@@ -463,10 +465,13 @@ static void test_server_stats_worker_coalesces_wrapped_history_and_late_ack()
     check(after_ack->packet_loss < before_ack->packet_loss);
     check(after_ack->rtt < before_ack->rtt);
 
+    // the late ack is published at once; the sealed and active batches
+    // completing afterwards do not roll it back
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *after_ack);
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
     world.time += 0.001;
     rocketnet_server_update(world.server, world.time);
-    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *before_ack);
+    stats_check_six(rn_server_client_stats_of(world.server, world.slots[0]), *after_ack);
     check(rocketnet_server_transport_stats_worker_step_for_test(transport));
     world.time += 0.001;
     rocketnet_server_update(world.server, world.time);
