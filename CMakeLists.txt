@@ -878,6 +878,16 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
+    # The worst-case receive update (bench/server_receive_cost.cpp): the bench
+    # compiles sdk/rocketnet_server_transport.cpp into itself, as the unit
+    # suite's loopback case does, to put a capture receive in front of the
+    # loopback transport, so it takes the library's definitions and goes first
+    # on the link line.
+    add_executable(server_receive_cost bench/server_receive_cost.cpp)
+    target_link_libraries(server_receive_cost PRIVATE rocketnet_dev)
+    target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+    target_compile_features(server_receive_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
     foreach(tool soak load load_split soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)

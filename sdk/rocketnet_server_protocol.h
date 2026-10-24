@@ -139,6 +139,33 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                      int * out_payload_bytes,
                                      int * out_payload_client_index );
 
+// The receive entry the server transport calls, with nothing copied twice.
+// known_mapping_index is the caller's encryption-map lookup for from (-1 for
+// none), made with nothing changing the map since, or
+// ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP and the protocol looks it up: each
+// packet pays one keyed hash. The packet opens into opened, the caller's
+// ROCKETNET_RECEIVE_CEILING bytes; an accepted payload is delivered where it
+// opened, *out_payload pointing at its bytes inside opened (NULL otherwise),
+// and one above out_payload_capacity is refused whole as
+// RECEIVE_CURSOR_TOO_SMALL. Every counter is the one process_packet counts.
+
+#define ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP -2
+
+int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
+                                                const struct rocketnet_address_t * from,
+                                                int known_mapping_index,
+                                                const uint8_t * packet_data,
+                                                int packet_bytes,
+                                                uint64_t current_timestamp,
+                                                double current_time,
+                                                uint8_t * response_packet,
+                                                int * response_bytes,
+                                                uint8_t * opened,
+                                                int out_payload_capacity,
+                                                const uint8_t ** out_payload,
+                                                int * out_payload_bytes,
+                                                int * out_payload_client_index );
+
 // Rotates the connection cookie key when current_time has reached
 // cookie_key_rotation_time. With an on-time rotation the outgoing key is kept
 // as previous_cookie_key until cookie_key_rotation_time + period; after a
