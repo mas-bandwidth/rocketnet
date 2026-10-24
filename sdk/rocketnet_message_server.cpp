@@ -211,8 +211,8 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     // lower in the config field itself disables that direction's budget.
     // The environment is not read here: the public creates resolve the
     // budget from ROCKETNET_CLIENT_SEND_KBPS or
-    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (sdk/rocketnet_api.cpp:135
-    // and :173) and pass it as default_kbps.
+    // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS (rn_client_split and
+    // rn_server_split) and pass it as default_kbps.
     if ( default_kbps == 0 )
         default_kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
 

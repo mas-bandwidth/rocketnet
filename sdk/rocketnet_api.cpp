@@ -8,9 +8,8 @@
 // a public server a lifecycle object holding one message server per run, so
 // every call here is a guard, a state check and one call down. The configs are resolved here: the public
 // struct is split into the transport config and the message config the
-// layers take, the message fields and the send budget take their environment
-// overrides here, and the transport fields take theirs at the transport's
-// create, as they always have.
+// layers take, and every override, transport rows included, is applied once
+// at public create by the split.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_test_seams.h"
@@ -140,7 +139,7 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
 // the message table's two budget rows, client_send_kbps and server_send_kbps,
 // take no variable here: the endpoint's budget is its one budget field above,
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
-// rn_client_split (:135) and rn_server_split (:173) resolve for the create
+// rn_client_split and rn_server_split resolve for the create
 
 static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {
@@ -420,7 +419,6 @@ enum rn_client_count_t
     RN_CLIENT_RECEIPTS_LOST,
     RN_CLIENT_RECEIPTS_DROPPED,
     RN_CLIENT_BUDGET_DROPS,
-    RN_CLIENT_SEND_DEFERRED,
     RN_CLIENT_NOT_CONNECTED_DROPS,
     RN_CLIENT_COUNT
 };
@@ -1196,7 +1194,6 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
     counts[RN_CLIENT_RECEIPTS_LOST] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
     counts[RN_CLIENT_RECEIPTS_DROPPED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL );
     counts[RN_CLIENT_BUDGET_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-    counts[RN_CLIENT_SEND_DEFERRED] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
     counts[RN_CLIENT_NOT_CONNECTED_DROPS] = rn_counter_sum( transport_counters, message_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
     if ( transport_stats )
         *transport_stats = stats;
