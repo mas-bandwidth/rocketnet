@@ -468,6 +468,134 @@ static inline bool rocketnet_xdp_cpu_in_set( int cpu, int set_size )
     return cpu >= 0 && cpu < set_size;
 }
 
+// CPU LIST ENTRY: parse one kernel cpu-list entry ("3" or "1-7") at *cursor,
+// advancing past it and any following comma. The list ends with the string
+// terminator; only trailing whitespace (the sysfs newline) may follow. A
+// malformed entry, a reversed range or trailing garbage refuses the list.
+
+static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * first, int * last )
+{
+    const char * p = *cursor;
+    if ( *p < '0' || *p > '9' )
+        return false;
+
+    int value = 0;
+    while ( *p >= '0' && *p <= '9' )
+    {
+        value = value * 10 + ( *p - '0' );
+        if ( value > 0x7FFFFFFF )
+            return false;
+        p++;
+    }
+    *first = value;
+    *last = value;
+
+    if ( *p == '-' )
+    {
+        p++;
+        if ( *p < '0' || *p > '9' )
+            return false;
+        value = 0;
+        while ( *p >= '0' && *p <= '9' )
+        {
+            value = value * 10 + ( *p - '0' );
+            if ( value > 0x7FFFFFFF )
+                return false;
+            p++;
+        }
+        *last = value;
+    }
+
+    if ( *last < *first )
+        return false;
+
+    if ( *p == ',' )
+    {
+        *cursor = p + 1;
+        return true;
+    }
+
+    while ( *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' )
+        p++;
+
+    if ( *p != '\0' )
+        return false;
+
+    *cursor = p;
+    return true;
+}
+
+// PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
+// num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
+// ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never
+// verifies. first_missing names the first target not in the list, or -1
+// when every target is there.
+
+static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_list, int num_os_cpus, int num_queues, int * first_missing )
+{
+    if ( first_missing )
+        *first_missing = -1;
+
+    if ( !isolated_list || isolated_list[0] == '\0' || num_os_cpus < 0 || num_queues < 0 ||
+         num_os_cpus > 0x7FFFFFFF - num_queues )
+    {
+        if ( first_missing )
+            *first_missing = num_os_cpus > 0 ? num_os_cpus : 0;
+        return false;
+    }
+
+    const char * cursor = isolated_list;
+    while ( *cursor == ' ' || *cursor == '\t' )
+        cursor++;
+
+    // validate the whole list before trusting any of it: a malformed line is
+    // an unmet condition, not a pass
+    {
+        const char * check = cursor;
+        while ( true )
+        {
+            int first = 0;
+            int last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &check, &first, &last ) )
+            {
+                if ( first_missing )
+                    *first_missing = num_os_cpus > 0 ? num_os_cpus : 0;
+                return false;
+            }
+            if ( *check == '\0' )
+                break;
+        }
+    }
+
+    for ( int cpu = num_os_cpus; cpu < num_os_cpus + num_queues; cpu++ )
+    {
+        bool found = false;
+        const char * scan = cursor;
+        while ( true )
+        {
+            int first = 0;
+            int last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &scan, &first, &last ) )
+                break; // validated above
+            if ( cpu >= first && cpu <= last )
+            {
+                found = true;
+                break;
+            }
+            if ( *scan == '\0' )
+                break;
+        }
+        if ( !found )
+        {
+            if ( first_missing )
+                *first_missing = cpu;
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // STATS READ: the per-cpu stats map is read into a buffer of
 // ROCKETNET_XDP_STATS_MAX_CPUS values held inside the server's create-time
 // allocation (8192 is the largest CONFIG_NR_CPUS the kernel allows). A
