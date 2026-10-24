@@ -27,6 +27,7 @@
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_window_send.h"
 #include "../sdk/rocketnet_window_ack.h"
+#include "../sdk/rocketnet_channel.h"
 
 #define check rocketnet_unit_check
 
@@ -41,9 +42,12 @@ struct resend_timing_fixture_t
     rocketnet_message_config_t config;
     rn_arena_t * arena;
     rn_region_t * region;
-    rn_window_send_t send;
-    rn_window_ack_t ack;
+    rn_ordered_t ordered;
+    rn_window_send_t & send;
+    rn_window_ack_t & ack;
     uint64_t next_packet_id;
+
+    resend_timing_fixture_t() : send( ordered.send ), ack( ordered.ack ) {}
 };
 
 static void resend_timing_open( resend_timing_fixture_t * f )
@@ -53,8 +57,7 @@ static void resend_timing_open( resend_timing_fixture_t * f )
     check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
     rn_region_carve( f->region );
-    rn_window_send_init( &f->send, f->region, 0 );
-    rn_window_ack_init( &f->ack, &f->send, f->region, &f->config );
+    check( rn_ordered_init( &f->ordered, f->region, &f->config, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
     f->next_packet_id = 1;
 }
 
@@ -68,8 +71,10 @@ static void resend_timing_close( resend_timing_fixture_t * f )
 // Returns the packet id it went in.
 static uint64_t resend_timing_send( resend_timing_fixture_t * f, double now, uint64_t * out_number )
 {
+    const uint32_t d = rn_region_send_alloc( f->region, 16 );
+    check( d != RN_DESCRIPTOR_NONE );
     uint64_t number = 0, ring_start = 0;
-    check( rn_window_send_first_write( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_first_write( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, d, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
     const uint64_t packet_id = f->next_packet_id++;
     rn_window_ack_commit_packet( &f->ack, packet_id, &number, 1, now );
     if ( out_number )
@@ -77,11 +82,33 @@ static uint64_t resend_timing_send( resend_timing_fixture_t * f, double now, uin
     return packet_id;
 }
 
-// One resend pass at now; returns how many numbers it resent.
+// One resend pass at now through the product walk (rn_ordered_write), reading
+// the numbers each written packet carries; returns how many it resent.
+static uint32_t resend_timing_write( resend_timing_fixture_t * f, double now, uint64_t * out, uint32_t max_numbers )
+{
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * payloads[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    for ( int i = 0; i < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; i++ )
+        payloads[i] = frames[i];
+    const int written = rn_ordered_write( &f->ordered, now, payloads, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+    uint32_t resent = 0;
+    for ( int p = 0; p < written; p++ )
+    {
+        uint32_t count = 0;
+        const uint64_t * numbers = rn_packet_builder_numbers( &f->ordered.builder, p, &count );
+        check( numbers != NULL || count == 0 );
+        check( resent + count <= max_numbers );
+        for ( uint32_t i = 0; i < count; i++ )
+            out[resent++] = numbers[i];
+        rn_ordered_commit( &f->ordered, p, f->next_packet_id++, now );
+    }
+    return resent;
+}
+
 static uint32_t resend_timing_pass( resend_timing_fixture_t * f, double now )
 {
     uint64_t out[16];
-    return rn_window_ack_resend( &f->ack, now, &f->next_packet_id, out, 16 );
+    return resend_timing_write( f, now, out, 16 );
 }
 
 // test_resend_delay_is_adaptive_resend_delay: both paths use one resend delay equation, without a fixed cap.
@@ -302,7 +329,7 @@ static void test_resend_timing_witness_replays()
             break;
         }
         uint64_t out[4];
-        const uint32_t resent = rn_window_ack_resend( &f.ack, now, &f.next_packet_id, out, 4 );
+        const uint32_t resent = resend_timing_write( &f, now, out, 4 );
         for ( uint32_t k = 0; k < resent; k++ )
             if ( out[k] == record )
                 attempts++;
@@ -346,7 +373,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 // how many there are.
 static uint32_t resend_timing_send_block( resend_timing_fixture_t * f, double now, int bytes, uint64_t * out_numbers, uint32_t max_numbers )
 {
-    const uint32_t d = rn_region_send_alloc( f->region, bytes );
+    const uint32_t d = rn_region_send_take( f->region, bytes );
     check( d != RN_DESCRIPTOR_NONE );
     uint64_t first = 0, ring_start = 0;
     const uint32_t fragments = rn_window_send_first_write_block( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, (uint32_t) bytes, d, &first, &ring_start );
@@ -373,7 +400,7 @@ static double resend_timing_sample( resend_timing_fixture_t * f, double now, dou
 // One resend pass at now; writes what it resent to out (capacity 64).
 static uint32_t resend_timing_pass_numbers( resend_timing_fixture_t * f, double now, uint64_t * out )
 {
-    return rn_window_ack_resend( &f->ack, now, &f->next_packet_id, out, 64 );
+    return resend_timing_write( f, now, out, 64 );
 }
 
 static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, uint64_t number )
@@ -454,11 +481,12 @@ static void test_small_record_behind_a_chunk_not_held()
 REGISTER_UNIT_TEST( test_small_record_behind_a_chunk_not_held );
 
 // test_both_fifos_walk_only_what_is_due: each class is walked from its head while
-// due and no further. Tripwires show it: a number marked acked by hand while
-// still linked is unlinked by the first walk that reaches it, so resend_count
-// drops only when a walk goes as far as a tripwire. One tripwire sits in each
-// class behind numbers that are not yet due; while the walks stop before
-// them the count holds, and a walk past a stop point would remove them.
+// due and no further. Tripwires show it: a number marked acked by hand stays
+// linked (the product walk skips it without unlinking), so walk_visits grows
+// past it only when a walk goes as far as the tripwire. One tripwire sits in
+// each class behind numbers that are not yet due; while the walks stop before
+// them only the due entries are visited, and a walk past a stop point would
+// visit the tripwire too.
 static void test_both_fifos_walk_only_what_is_due()
 {
     resend_timing_fixture_t f;
@@ -491,15 +519,18 @@ static void test_both_fifos_walk_only_what_is_due()
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );
     check( f.ack.resend_count == linked );                         // no tripwire reached
+    check( f.ack.walk_visits == 2 );                               // both heads, neither due
 
     // The walks stop at their heads before the resend delay
     check( resend_timing_pass_numbers( &f, t1 + 1.229, out ) == 0 );
     check( f.ack.resend_count == linked );
+    check( f.ack.walk_visits == 2 );
 
     // Still no record is due
     resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );
     check( f.ack.resend_count == linked );
+    check( f.ack.walk_visits == 2 );
 
     // +1231 ms: s1 and c0..c2 are due. s2 is due at +1250 ms; c3 is due at +1260 ms.
     resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
@@ -508,16 +539,19 @@ static void test_both_fifos_walk_only_what_is_due()
     for ( int i = 0; i < 3; i++ )
         check( resend_timing_contains( out, resent, c[i] ) );
     check( !resend_timing_contains( out, resent, c[4] ) );
-    check( f.ack.resend_count == linked - 1 );              // the acked c3 is unlinked when reached
+    check( f.ack.resend_count == linked );                  // acked entries stay linked
+    check( f.ack.walk_visits == 7 );                        // s1, s2 (stop), c0, c1, c2, c3 (acked), c4 (stop)
 
     // small records come out of the walk before chunks (R6 retransmit order)
     check( out[0] == s1 );
     resent = resend_timing_pass_numbers( &f, t1 + 1.251, out );
     check( resent == 1 && out[0] == s2 );
-    check( f.ack.resend_count == linked - 2 );           // s3, the small tripwire, is unlinked
+    check( f.ack.resend_count == linked );
+    check( f.ack.walk_visits == 5 );                        // s2, s3 (acked), s1 (stop); c3 (acked), c4 (stop)
     resent = resend_timing_pass_numbers( &f, t1 + 1.261, out );
     check( resent == 1 && out[0] == c[4] );              // the next chunk is now due
-    check( f.ack.resend_count == linked - 2 );
+    check( f.ack.resend_count == linked );
+    check( f.ack.walk_visits == 5 );                        // s3 (acked), s1 (stop); c3 (acked), c4
     resend_timing_close( &f );
 }
 

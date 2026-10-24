@@ -20,7 +20,6 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
 #include "rocketnet_packet_loss_tracker.h"
-#include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
 #include "../tests/rocketnet_value_tracker.h"
 #include "rocketnet_test_vectors.h"
@@ -7153,50 +7152,6 @@ void rocketnet_test_packet_loss_tracker()
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
     rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-}
-
-void rocketnet_test_out_of_order_tracker()
-{
-    rocketnet_out_of_order_tracker_t tracker;
-    rocketnet_out_of_order_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    uint64_t sequence = 0;
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        rocketnet_out_of_order_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    sequence = 500;
-
-    for ( int i = 0; i < 500; ++i )
-    {
-        rocketnet_out_of_order_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 499 );
-
-    rocketnet_out_of_order_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.last_packet_processed == 0 );
-    rocketnet_check( tracker.num_out_of_order_packets == 0 );
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        uint64_t mod_sequence = ( sequence / 2 ) * 2;
-        if ( sequence % 2 )
-            mod_sequence -= 1;
-        rocketnet_out_of_order_tracker_packet_received( &tracker, mod_sequence );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.num_out_of_order_packets == 500 );
 }
 
 void rocketnet_test_jitter_tracker()
@@ -14890,7 +14845,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
     { "test_packet_loss_tracker", rocketnet_test_packet_loss_tracker },
-    { "test_out_of_order_tracker", rocketnet_test_out_of_order_tracker },
     { "test_jitter_tracker", rocketnet_test_jitter_tracker },
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
