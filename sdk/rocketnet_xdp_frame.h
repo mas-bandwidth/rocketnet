@@ -222,6 +222,7 @@ static inline bool rocketnet_xdp_frame_parse(
     const uint8_t * f = (const uint8_t*) frame;
     int header_bytes;
     int payload_bytes;
+    uint16_t udp_len;
 
     if ( !frame || !out_from || !out_payload || !out_payload_length )
         return false;
@@ -243,7 +244,7 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
@@ -266,7 +267,7 @@ static inline bool rocketnet_xdp_frame_parse(
         if ( frame_bytes < (size_t) header_bytes )
             return false;
 
-        const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
+        udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
 
@@ -280,13 +281,11 @@ static inline bool rocketnet_xdp_frame_parse(
         return false;
     }
 
-    if ( frame_bytes < (size_t) header_bytes )
-        return false;
-
-    // bytes past the UDP length (link-layer padding) are not payload; a UDP
+    // header_bytes and udp_len are carried from the family branch, which
+    // already proved the frame holds the full header and read the UDP length.
+    // Bytes past the UDP length (link-layer padding) are not payload; a UDP
     // length past the frame end is refused, as server_xdp_udp drops it
 
-    const uint16_t udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
     payload_bytes = (int) ( frame_bytes - (size_t) header_bytes );
     if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
         return false;
@@ -447,6 +446,18 @@ static inline const uint8_t * rocketnet_xdp_receive_descriptor(
         return NULL;
     }
     return (const uint8_t*) umem + addr;
+}
+
+// RECEIVE DRAIN: the queue a receive call visits at this step. start is the
+// first queue of the call and step is how far around the ring it has walked.
+
+static inline int rocketnet_xdp_drain_queue( int start, int step, int num_queues )
+{
+    if ( num_queues <= 0 )
+        return 0;
+    const int sum = start + step;
+    const int mod = sum % num_queues;
+    return mod < 0 ? mod + num_queues : mod;
 }
 
 // PIN CPU: a cpu is set in a cpu_set_t of set_size bits (CPU_SETSIZE on

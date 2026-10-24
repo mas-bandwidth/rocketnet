@@ -951,7 +951,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     }
 
     if ( strcmp( transport, "portable" ) == 0
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC // msgx exists on macOS only, as in the registry and the server plan
          || strcmp( transport, "msgx" ) == 0
 #endif
        )
