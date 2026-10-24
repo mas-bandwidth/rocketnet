@@ -188,7 +188,9 @@ inline long plan_rss_bound_mb()
 }
 
 // whether the counter is the installed allocator: allocate( 1 ) is the
-// installed allocator's rocketnet_malloc, free( block ) its rocketnet_free
+// installed allocator's rocketnet_malloc, free( block ) its rocketnet_free.
+// The caller probes only an initialised library with no allocator context,
+// so the probe never calls a case's allocator whose context has gone
 inline bool plan_rss_installed( void * ( *allocate )( void * context, size_t bytes ), void ( *release )( void * context, void * p ) )
 {
     const uint64_t before = plan_rss_calls().load();

@@ -58,7 +58,11 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
     const int result = rocketnet_functional_run_named( name );
-    if ( result == 0 && plan_rss_installed( rocketnet_malloc, rocketnet_free ) )
+    // a case that ended the library or re-initialised it with a context of
+    // its own installed its own allocator, which may hold that context: it is
+    // not called. Otherwise one probe allocation names the installed allocator
+    if ( result == 0 && rocketnet_library_initialized() && rocketnet_global_context == NULL &&
+         plan_rss_installed( rocketnet_malloc, rocketnet_free ) )
         plan_rss_report();
     rocketnet_term();
     fflush( stdout );
