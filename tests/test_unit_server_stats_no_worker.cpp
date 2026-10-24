@@ -241,16 +241,15 @@ static void test_server_stats_creates_no_thread()
     for ( int step = 0; step < 20; step++ )
         no_worker_step( world, true, 0.1 );
     const int after_updates = no_worker_thread_count();
-
-    struct rocketnet_server_client_stats_t stats;
-    rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
-    check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
-
     if ( before >= 0 )
     {
         check( after_create == before );
         check( after_updates == before );
     }
+
+    struct rocketnet_server_client_stats_t stats;
+    rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
+    check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
 
     no_worker_world_destroy( world );
 }
@@ -274,8 +273,9 @@ static void test_server_stats_current_every_update()
         no_worker_step( world, false, 0.1 );
     check( no_worker_connected_slots( world ) == NO_WORKER_CLIENTS );
 
-    // steady traffic at 100 ms steps until every slot has samples
-    for ( int step = 0; step < 10; step++ )
+    // steady traffic at 100 ms steps, long enough that even a schedule of 20
+    // slots per update has visited every slot
+    for ( int step = 0; step < 60; step++ )
         no_worker_step( world, true, 0.1 );
 
     static struct rocketnet_server_client_stats_t before[NO_WORKER_CLIENTS];
