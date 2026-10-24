@@ -219,6 +219,8 @@ static void test_sequenced_hold_pool_constant_time()
 #endif
     for ( uint32_t slot = 0; slot < region->holds; ++slot )
         rocketnet_unit_check( region->sequenced_messages_held[slot].used == 0 );
+    rocketnet_unit_check( region->sequenced_hold_free_count == region->holds );
+    rocketnet_unit_check( region->sequenced_holds_delivered_count == 0 );
 
     // A returned hold is reusable, and its delivered view returns in turn.
     record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 129, 128, &held_byte, 1 );
