@@ -11,41 +11,47 @@ A ring of `N` records holds at record `i` the newest sequence congruent to `i`
 mod `N` written there. The reference counts the present records in the older
 half of the retained window,
 
-    [base, min(base + H - 1, highest)],  base = max(1, highest - N + 1),  H = N / 2
+    [base, top],  base = max(1, highest - N + 1),  top = min(highest, base + H - 1),  H = N / 2
 
-and the aggregates must equal it after every write and every ack. A write:
+and, for loss, the part of it at or below `highest - H` (the newest half of the
+ring is still in flight). The aggregates must equal the reference after every
+write and every ack. Every edge is a function of `highest`, so the code stores
+none. A write that raises `highest` from `h0` to `h1`:
 
-1. slides the window to the base its sequence implies, before anything is
-   overwritten: each step removes the record leaving at the low edge, moves the
-   base, then counts the record entering at the new top edge
-   (`base + H - 1`); a jump of `H` or more re-counts the new window, so one
-   write does at most `H` records of work even for a sequence the remote end
-   chose;
+1. moves the window in one step, before anything is overwritten
+   (`rocketnet_ack_stats_sent_advance`, `rocketnet_ack_stats_received_advance`):
+   the counted records below the new base leave (all at once, in O(1), when
+   the new base is past the old top, so a sequence the remote end chose costs
+   nothing to jump); the counted survivors crossing into the loss-eligible
+   part are counted there; the present records between the old top and the
+   new one, and no higher than `h0` (nothing above it is written yet), enter;
 2. retires the record it replaces, when that one is counted (on the received
    side a late or duplicate sequence can replace one anywhere in the window);
-3. writes, raises `highest`, and counts the new record if it lands in the
-   window.
+3. writes, and counts the new record if it lands in the window.
 
-Removing a bound moves it by scanning the ring for the next present sequence,
-as the code does. The sent side writes in increasing sequence order, so its
-send times follow its sequences and its spans come from the sequence bounds.
-The received side writes any sequence at any time, so its counted records are
+Each sequence enters and leaves once, so the work is O(1) per sequence
+amortized and at most half a ring per call. A removed low bound moves to the
+next counted sequence. The sent side's send times follow its sequences
+(update refuses a time that goes backwards, and concurrent fill writers of one
+phase share its time), so its spans come from the sequence bounds. The
+received side writes any sequence at any time, so its counted records are
 kept on a list ordered by receive time (inserted by walking back from the
-tail) and its span comes from the list's ends.
+tail, the links held in the records' padding) and its span comes from the
+list's ends.
 
 ## What the model has
 
 - Constants: `N`, `MaxSeq`, `MaxWrites`, `Late` (the received side's writes),
-  `SeqTimes` (spans from the sequence bounds rather than the list) and one
-  defect switch, `BrokenEntering`.
+  `Reorder` (sent writes below `highest`, as fill writers record out of
+  order), `SeqTimes` (spans from the sequence bounds rather than the list) and
+  two defect switches, `BrokenEntering` and `BrokenCrossing`.
 - Variables: the ring (`seq`, `acked`, `time` per record), `highest`, `base`,
   `writes` (also the clock), `agg` (the counted set, `cnt`, `unacked`, the
-  four bounds and the time-ordered list), and `pc`/`pending` for a write's
-  micro-steps.
-- Actions: `Send(s)` (sent side: above `highest`, gaps and jumps; received
-  side: any sequence), `Slide` (one step or one jump), `Write`, `Ack(s)` (sent
-  side, any held unacknowledged record of the retained window, any order),
-  `Done`.
+  eligible `ecnt` and `eunacked`, the four bounds and the time-ordered list),
+  and `pc`/`pending` for a write's two micro-steps.
+- Actions: `Send(s)`, `Slide` (the one-step window move, raising `highest`),
+  `Write`, `Ack(s)` (sent side, any held unacknowledged record of the retained
+  window, any order), `Done`.
 
 ## Properties
 
@@ -55,6 +61,7 @@ All stated at rest (`pc = "idle"`), where the transports read the numbers.
 |---|---|
 | `BaseFollowsHighest` | the base is the one `highest` implies |
 | `CountedIsWindow` | the counted set, `cnt` and `unacked` are exactly the reference window's |
+| `EligibleExact` | `ecnt` and `eunacked` are exactly the reference's loss-eligible sends |
 | `BoundsExact` | the lowest/highest present and acknowledged sequences are the reference's |
 | `OrderedByTime` | the list holds the counted records once each, in time order |
 | `PublishedSpanExact` | the published span is the reference's earliest-to-latest time |
@@ -64,24 +71,36 @@ All stated at rest (`pc = "idle"`), where the transports read the numbers.
 
 | Config | Instance | Expected |
 |---|---|---|
-| `MCRNServerStats.cfg` | sent side, `N = 6`, sequences to 14, 8 writes | pass (730,490 distinct states) |
-| `MCRNServerStatsReceived.cfg` | received side, `N = 6`, sequences to 9, 7 writes | pass (2,061,957 distinct states) |
+| `MCRNServerStats.cfg` | sent side, `N = 6`, sequences to 14, 8 writes | pass (546,325 distinct states) |
+| `MCRNServerStatsReordered.cfg` | sent side with writes below `highest`, sequences to 10, 6 writes; counts and bounds | pass (2,921,633 distinct states) |
+| `MCRNServerStatsReceived.cfg` | received side, `N = 6`, sequences to 9, 7 writes | pass (1,908,142 distinct states) |
 | `MCRNServerStatsBrokenEntering.cfg` | sent side, `BrokenEntering = TRUE` | `CountedIsWindow` violated |
+| `MCRNServerStatsBrokenCrossing.cfg` | sent side, `BrokenCrossing = TRUE` | `EligibleExact` violated |
 | `MCRNServerStatsBrokenSeqTimes.cfg` | received side, `SeqTimes = TRUE` | `PublishedSpanExact` violated |
+
+The reordered instance leaves the spans to the in-order one: the model's clock
+is the write count, so two out-of-order sends get different times, where the
+code gives one fill phase one time.
 
 ## The reversed witnesses, replayed by hand
 
-`BrokenEntering` is the defect the first incremental version shipped: the
-entering record was inserted at `base + H` while the base had not moved, and
-the insert's own window test (`seq <= base + H - 1`) refused it, so every slide
-removed a record and added none. TLC's trace: write 4 (window `[1, 3]`, 4 not
-yet in it), then write 7: the target base is 2, the step removes nothing at 1
-(absent), and the record 4 entering at the top edge is refused; after the write
-the window `[2, 4]` holds 4 and the counted set is empty. In the code at
-`adbc1f1` this is `rocketnet_ack_stats_sent_sync` calling
-`rocketnet_ack_stats_sent_insert` with `entering = sent_base + HALF` before
-`sent_base++`; with 4096 records it drains the published numbers to zero after
-4096 sends.
+`BrokenEntering` is the defect the first incremental version shipped (head
+`adbc1f1`): the record entering the window's top edge was never counted, so
+every slide removed a record and added none, and after one ring of sends the
+published numbers drained to zero. TLC's trace: write 4 (window `[1, 3]`, 4
+not in it), then write 7: the window becomes `[2, 4]` and 4, present, must
+enter (`(old top, min(new top, old highest)] = {4}`); skipped, the counted set
+is empty where the reference holds 4. In the code this is the entering loop at
+the end of `rocketnet_ack_stats_sent_advance`; removing it fails
+`test_server_stats_current_after_window_slides` at its first slide.
+
+`BrokenCrossing` forgets the survivors crossing into the loss-eligible part.
+TLC's trace: write 1 (window `[1, 1]`, nothing eligible while `highest <= H`),
+then write 4: the eligible part becomes `[1, 1]` and the counted record 1 must
+be counted there; skipped, `ecnt` is 0 where the reference has 1, so loss is
+taken over too few sends while the ring fills. In the code this is the crossing
+loop in `rocketnet_ack_stats_sent_advance`; removing it fails the same unit
+case.
 
 `BrokenSeqTimes` reads the received span from the lowest and highest counted
 sequences. TLC's trace: receive 2 (time 1), then 1 late (time 2). The window
@@ -93,9 +112,14 @@ and tail instead.
 ## Running it
 
 From the checkout root, with the pinned `tla2tools.jar` and `tlacheck` (see
-`tla/README.md`):
+`tla/README.md`), one shard per case:
 
 ```sh
-"$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-  --group rnserverstats --workers 2 --timeout 110s --dir "$job/rnserverstats"
+for i in $(seq 0 5); do
+  "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
+    --group rnserverstats --shards 6 --shard "$i" --workers 2 --timeout 110s \
+    --dir "$job/rnserverstats-$i"
+done
+"$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
+  --out "$job/RUNS.tsv" "$job"/rnserverstats-*/RUNS.tsv
 ```
