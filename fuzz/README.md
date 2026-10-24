@@ -109,6 +109,21 @@ mkdir -p /tmp/corpus_session && cp fuzz/corpus_session/* /tmp/corpus_session/
     -max_total_time=60 /tmp/corpus_session
 ```
 
+### The campaigns
+
+| campaign | where | library | harness | what it runs |
+|---|---|---|---|---|
+| nightly fuzz | `fuzz-nightly.yml` job `fuzz` (and `fuzz-macos`, `fuzz-msan`) | Debug, asserts live | asserts live | every target for `max_total_time` seconds |
+| NDEBUG | `fuzz-nightly.yml` job `fuzz-ndebug`, or `tools/fuzz_ndebug.sh` by hand | Release (`-DNDEBUG`), `rocketnet_assert` compiled out | `-DNDEBUG` | every target, so a bound only an assert holds is fuzzed as a release build runs it |
+| NDEBUG smoke | `ci.yml` job `fuzz-smoke-ndebug` | Debug, asserts live | `-DNDEBUG` | corpus replay only |
+
+`tools/fuzz_ndebug.sh --seconds 30 --jobs 8` builds the Release library and
+all eleven targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
+line carries `-DNDEBUG` and that no library object references the assert
+callback, and fuzzes each target; `--target <name>` runs one. Reproducers
+land in `build-fuzz-ndebug/out/crashes/<target>/` and the script exits 1
+naming them.
+
 Targets without their own dictionary use `fuzz/rocketnet.dict`. Leak
 checking stays on. The pair targets keep their pair in statics, so what they
 hold is reachable, not leaked.
