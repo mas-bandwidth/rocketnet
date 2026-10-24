@@ -19,6 +19,14 @@ sdk/rocketnet_tests.cpp (the unit suite's own cases, linked only into
 ./bin/test) and test-seam code, the lines inside a preprocessor branch that
 is compiled only when ROCKETNET_TEST_SEAMS or a ROCKETNET_<name>_TEST_HOOKS
 macro is on. Those lines get their own reached/never counts.
+ROCKETNET_TEST_SEAMS is 1 in a development build too
+(sdk/rocketnet_test_seams.h), so the functional suite and the examples,
+which link rocketnet_dev, can reach seam lines.
+
+The examples run through tools/run_examples.py's own drivers, one at a
+time, and a failing example does not stop the ones after it, so every
+example is measured; the backend pair (tools/run_backend_examples.py) is
+not run.
 
 The build is Release, so the NDEBUG paths are the ones measured. Its
 binaries go to build-cov/bin (CMAKE_RUNTIME_OUTPUT_DIRECTORY), never the
@@ -118,6 +126,50 @@ def failed_cases(log):
         if "check failed" in line or line.startswith("FAIL"):
             names.append(line.strip())
     return names[:40]
+
+
+def run_examples(env, log):
+    """Runs every example through tools/run_examples.py's own drivers
+    (run_pair, run_single and its grouping), one group at a time, and keeps
+    going past a failing example so the ones after it are still measured;
+    tools/run_examples.py's main() stops at the first failure. Returns
+    (exit code, seconds, failed example names)."""
+    print("coverage_split: examples (tools/run_examples.py)", flush=True)
+    start = time.monotonic()
+    sys.path.insert(0, str(ROOT / "tools"))
+    import run_examples as examples  # pylint: disable=import-outside-toplevel
+    sys.path.pop(0)
+    os.environ["LLVM_PROFILE_FILE"] = env["LLVM_PROFILE_FILE"]
+    names = {path.stem for path in examples.EXAMPLES.glob("*.c")}
+    pair_bases = {n[: -len("_server")] for n in names if n.endswith("_server") and n[: -len("_server")] + "_client" in names}
+    used = {base + suffix for base in pair_bases for suffix in ("_server", "_client")}
+    pair_bases -= examples.RUN_ELSEWHERE
+    groups = [(base, [base + "_server", base + "_client"]) for base in sorted(pair_bases)]
+    groups += [(name, [name]) for name in sorted(names) if name not in used]
+    dirs = examples.binary_dirs(BUILD, None)
+    failed = []
+    with open(log, "w") as out:
+        saved = (sys.stdout, sys.stderr)
+        sys.stdout = sys.stderr = out
+        try:
+            for base, members in groups:
+                binaries = [examples.find_binary(member, dirs) for member in members]
+                if None in binaries:
+                    ok = examples.failure(base, "binary not found under build-cov")
+                elif len(binaries) == 2:
+                    ok = examples.run_pair(base, binaries[0], binaries[1])
+                else:
+                    ok = examples.run_single(base, binaries[0])
+                print(f"{'PASS' if ok is True else 'FAIL'} example_{base}", flush=True)
+                if ok is not True:
+                    failed.append(f"example_{base}")
+        finally:
+            sys.stdout, sys.stderr = saved
+            del os.environ["LLVM_PROFILE_FILE"]
+    seconds = time.monotonic() - start
+    rc = 1 if failed else 0
+    print(f"coverage_split: examples exit {rc} in {seconds:.1f}s", flush=True)
+    return rc, seconds, failed
 
 
 def merge(profdata, raw_dir, target):
@@ -297,8 +349,8 @@ def main():
     runs["functional"] = {"exit": rc, "failed": failed_cases(out / "functional.log") if rc else []}
 
     env["LLVM_PROFILE_FILE"] = str(raw["production"] / "examples-%p.profraw")
-    rc, seconds["examples"] = run_logged("examples (tools/run_examples.py)", [sys.executable, str(ROOT / "tools" / "run_examples.py"), "--build", str(BUILD)], out / "examples.log", env)
-    runs["examples"] = {"exit": rc, "failed": failed_cases(out / "examples.log") if rc else []}
+    rc, seconds["examples"], failed = run_examples(env, out / "examples.log")
+    runs["examples"] = {"exit": rc, "failed": failed}
 
     start = time.monotonic()
     profiles = {}
