@@ -92,6 +92,18 @@
     alive: the post-warmup sample at the first planned reconnect, a peak
     sample at every later reconnect and every 10 s, and the end sample after
     the bound, once the last client is destroyed and before the server is.
+    On Linux the post-warmup sample comes after the warm-up of
+    tests/process_resources.h (process_resources_touch_all): every page of
+    every private mapping faulted in once, so memory preallocated at create
+    that one light client reaches only slowly (the server's receive buffer is
+    sized for 1000 clients) is resident before the comparison starts; it
+    prints as "soak resources: touched <bytes> bytes before the post-warmup
+    sample" (or "soak resources: touch not available" where the kernel has
+    no MADV_POPULATE_*). Every between-clients sample and every 10 s sample
+    also prints "soak memory: <phase> t=<s> resident_bytes=<n>" and, on
+    Linux, "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup;
+    phase is between (no client alive) or live (a client alive), and only
+    between samples are compared.
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes on
     Windows); a run that ends inside the warm cycle, as every run under 30 s
@@ -446,6 +458,21 @@ static int soak_server_send( struct rocketnet_server_transport_t * server, int c
     return rocketnet_server_transport_finish_packet( server, &context, payload_size ) > 0;
 }
 
+// one "soak memory:" line: the memory count of *sample and, on Linux, the
+// smaps_rollup Rss and Private_Dirty read now
+
+static void soak_print_memory( const char * phase, double seconds, const struct process_resources_t * sample )
+{
+    int64_t rss = -1;
+    int64_t private_dirty = -1;
+    printf( "soak memory: %s t=%.0f %s=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
+            (long long) sample->values[PROCESS_RESOURCES_MEMORY] );
+    if ( process_resources_smaps( &rss, &private_dirty ) )
+        printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
+    printf( "\n" );
+    fflush( stdout );
+}
+
 int main( int argc, char ** argv )
 {
     uint64_t max_iterations = 0;
@@ -711,12 +738,26 @@ int main( int argc, char ** argv )
                 }
                 if ( !resources_started )
                 {
+                    // the warm-up: every preallocated page resident before
+                    // the post-warmup sample (tests/process_resources.h)
+                    const int64_t touched = process_resources_touch_all();
+                    if ( touched >= 0 )
+                        printf( "soak resources: touched %lld bytes before the post-warmup sample\n", (long long) touched );
+                    else
+                        printf( "soak resources: touch not available\n" );
+                    if ( !process_resources_read( &sample ) )
+                    {
+                        printf( "soak: failed to read the process resource counts\n" );
+                        failures++;
+                        break;
+                    }
                     resources_started = 1;
                     resources_start = sample;
                     resources_peak = sample;
                     resources_start_time = rocketnet_time();
                 }
                 process_resources_peak( &resources_peak, &sample );
+                soak_print_memory( "between", rocketnet_time() - start_time, &sample );
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
             if ( !dev_token_binary( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
@@ -948,7 +989,10 @@ int main( int argc, char ** argv )
             {
                 struct process_resources_t sample;
                 if ( process_resources_read( &sample ) )
+                {
                     process_resources_peak( &resources_peak, &sample );
+                    soak_print_memory( client ? "live" : "between", rocketnet_time() - start_time, &sample );
+                }
             }
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
@@ -1041,6 +1085,7 @@ int main( int argc, char ** argv )
     {
         resources_ended = 1;
         process_resources_peak( &resources_peak, &resources_end );
+        soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
     if ( resources_started && resources_ended )

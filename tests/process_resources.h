@@ -7,8 +7,7 @@
 
         Linux    fds             the entries of /proc/self/fd
                  threads         the entries of /proc/self/task
-                 resident_bytes  VmRSS from /proc/self/status, after
-                                 glibc has returned free arenas
+                 resident_bytes  VmRSS from /proc/self/status
         macOS    fds             proc_pidinfo PROC_PIDLISTFDS
                  threads         proc_pidinfo PROC_PIDTASKINFO pti_threadnum
                  resident_bytes  proc_pidinfo PROC_PIDTASKINFO pti_resident_size
@@ -20,8 +19,25 @@
     reads for its cells; the Windows counters are the ones load.c reads.
     A count that cannot be read is -1, and process_resources_read returns 0.
 
+    THE WARM-UP (process_resources_touch_all). Memory allocated at create is
+    resident only once a page of it is first written, and a light run writes
+    a preallocated buffer only as deep as its deepest burst so far: a server
+    sized for 1000 clients and soaked by one reaches a new depth of its
+    receive buffer (rocketnet_server_transport.cpp's construct skips its
+    49 MB of buffers so create stays fast) every few minutes under
+    impairment, for as long as the run lasts. That is first touch, not a
+    leak, and it never levels off in a 120 s or a 30-minute run. So on Linux
+    the post-warmup sample is taken after process_resources_touch_all has
+    faulted in every page of every private mapping once (MADV_POPULATE_WRITE
+    on the writable ones, MADV_POPULATE_READ on the rest; contents are not
+    changed): from then on resident memory grows only when the process maps
+    or touches memory it did not hold at the post-warmup sample. On Windows
+    the memory count is the commit charge (PrivateUsage), which counts
+    preallocated memory at its allocation, touched or not; macOS has no
+    populate call and its count is read as it is.
+
     THE FLAT RULE (process_resources_flat). Taken after a warm cycle, so every
-    path the run repeats has run once: the fd or handle count and the thread
+    path the run repeats has run once, and after the warm-up above: the fd or handle count and the thread
     count at the end must equal their post-warmup counts exactly, and the
     memory count at the end may exceed its post-warmup count by at most one
     page for every ten minutes of run since the post-warmup sample, rounded
@@ -54,10 +70,9 @@
 #include <unistd.h>
 #else
 #include <dirent.h>
+#include <errno.h>
+#include <sys/mman.h>
 #include <unistd.h>
-#if defined(__GLIBC__)
-#include <malloc.h>
-#endif
 #endif
 
 #define PROCESS_RESOURCES_COUNT 3
@@ -124,11 +139,6 @@ static inline int64_t process_resources_count_directory( const char * path )
 
 static inline int64_t process_resources_resident_bytes( void )
 {
-#if defined(__GLIBC__)
-    // A freed client stays in VmRSS until the allocator returns those arenas.
-    // Return them before the read, so the count is memory still held.
-    malloc_trim( 0 );
-#endif
     FILE * file = fopen( "/proc/self/status", "r" );
     if ( !file )
         return -1;
@@ -260,6 +270,71 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
     if ( index == PROCESS_RESOURCES_MEMORY )
         return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
     return end == start;
+}
+
+// THE WARM-UP: faults in every page of every private mapping once, so memory
+// preallocated at create and not yet reached is resident before the
+// post-warmup sample. Returns the bytes of the mappings populated, or -1 where
+// the platform (or the kernel: MADV_POPULATE_* is Linux 5.14) has no populate
+// call. Shared mappings (io_uring and XDP rings) and the kernel's [vvar],
+// [vdso] and [vsyscall] are left alone; a mapping the kernel refuses (no
+// read permission, for one) is skipped.
+
+static inline int64_t process_resources_touch_all( void )
+{
+#if !defined(_WIN32) && !defined(__APPLE__) && defined(MADV_POPULATE_WRITE) && defined(MADV_POPULATE_READ)
+    FILE * file = fopen( "/proc/self/maps", "r" );
+    if ( !file )
+        return -1;
+    char line[512];
+    int64_t populated = 0;
+    int unsupported = 0;
+    while ( fgets( line, sizeof( line ), file ) )
+    {
+        unsigned long long start = 0;
+        unsigned long long end = 0;
+        char perms[8] = { 0 };
+        if ( sscanf( line, "%llx-%llx %7s", &start, &end, perms ) != 3 )
+            continue;
+        if ( perms[0] != 'r' || perms[3] != 'p' )
+            continue;
+        if ( strstr( line, "[vvar" ) || strstr( line, "[vdso]" ) || strstr( line, "[vsyscall]" ) )
+            continue;
+        const int advice = perms[1] == 'w' ? MADV_POPULATE_WRITE : MADV_POPULATE_READ;
+        if ( madvise( (void *) (uintptr_t) start, (size_t) ( end - start ), advice ) == 0 )
+            populated += (int64_t) ( end - start );
+        else if ( errno == EINVAL )
+            unsupported = 1;
+    }
+    fclose( file );
+    return unsupported && populated == 0 ? -1 : populated;
+#else
+    return -1;
+#endif
+}
+
+// Linux only: Rss and Private_Dirty from /proc/self/smaps_rollup, in bytes,
+// the soak's memory lines beside VmRSS. Returns 1 when both were read.
+
+static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * private_dirty_bytes )
+{
+    *rss_bytes = -1;
+    *private_dirty_bytes = -1;
+#if !defined(_WIN32) && !defined(__APPLE__)
+    FILE * file = fopen( "/proc/self/smaps_rollup", "r" );
+    if ( !file )
+        return 0;
+    char line[256];
+    while ( fgets( line, sizeof( line ), file ) )
+    {
+        if ( strncmp( line, "Rss:", 4 ) == 0 )
+            *rss_bytes = (int64_t) strtoll( line + 4, NULL, 10 ) * 1024;
+        else if ( strncmp( line, "Private_Dirty:", 14 ) == 0 )
+            *private_dirty_bytes = (int64_t) strtoll( line + 14, NULL, 10 ) * 1024;
+    }
+    fclose( file );
+#endif
+    return *rss_bytes >= 0 && *private_dirty_bytes >= 0;
 }
 
 #endif // #ifndef ROCKETNET_TESTS_PROCESS_RESOURCES_H
