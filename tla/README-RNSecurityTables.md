@@ -132,8 +132,8 @@ clock is at or after the window's start and less than one window past
 it, so a recorded failure refuses its source for at most the window
 length of clock movement in either direction. Under the one-sided
 rollover (`BackwardsRollover = FALSE`, the code before 2026-10-24) a
-forger spends the budget in a window begun at clock 2, the clock steps
-back to 1, and the source is still refused: the window would stay open
+forger spends the budget in a window begun at clock 2 (6 states), the clock steps
+back to 0, and the source is still refused: the window would stay open
 for the correction plus its length. `test_signature_budget_window_restarts_on_backwards_clock`
 pins the code: the budget spent at timestamp 1000 refuses the source,
 and the same source is allowed at 900.
