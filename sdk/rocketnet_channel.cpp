@@ -854,7 +854,8 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     for ( uint32_t i = 0; i < count; i++ )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
-        if ( descriptor->live && descriptor->number == number + i )
+        // Descriptors hold the 24-bit wire number, so compare every fragment across the 2^24 wrap the same way.
+        if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
             descriptor->live = 0;
             descriptor->block_count = 0;
