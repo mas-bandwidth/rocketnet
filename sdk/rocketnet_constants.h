@@ -206,7 +206,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 
 // the packet threshold of RFC 9002 section 6.1.1 (kPacketThreshold): a sent
-// packet is known lost once the peer has acknowledged a sequence at least
+// packet is known lost once the receiver has acknowledged a sequence at least
 // this many above it. sequence based, so it needs no clock and fits the
 // sequence-distance windows of the standard's _Replay window sizing_.
 // tla/RNSentHistory.tla models the classification it drives.

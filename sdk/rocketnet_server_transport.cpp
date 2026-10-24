@@ -2012,8 +2012,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         // its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md); a
         // dropped or unauthenticated packet (a cookie or a challenge answer)
         // teaches nothing
-        if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->peer_accepted )
-            server_transport->io.operations->peer_accepted( server_transport->io.instance, i );
+        if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->client_accepted )
+            server_transport->io.operations->client_accepted( server_transport->io.instance, i );
 
         rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
 

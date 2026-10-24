@@ -469,7 +469,7 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
     return num_cpus > 0 && num_cpus <= ROCKETNET_XDP_STATS_MAX_CPUS;
 }
 
-// REPLY MAC: the destination MAC address of a reply frame. A peer is learned
+// REPLY MAC: the destination MAC address of a reply frame. A client's MAC is learned
 // from the source MAC of a packet the transport accepted for a connection
 // (it opened under the connection's keys), never from a packet it dropped or
 // answered without authenticating; a reply goes to the newest MAC learned for

@@ -1168,7 +1168,7 @@ static void test_connection_reset_each_state_leaves_a_clean_slot()
         reset_loopback_client_disconnect_state_scenario( handshake_and_connected[i], 0 );
 
     // Mid-fragment is a connected state with fragments already flushed into
-    // the loopback wire but not yet consumed by the peer.
+    // the loopback wire but not yet consumed by the server.
     reset_loopback_client_disconnect_state_scenario( ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, 1 );
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
@@ -1300,7 +1300,7 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );
 
 // Reuse the same server slot with deliberately dirty payload storage and an
-// unsealed aggregate from the former peer. Reset must clear ownership/state,
+// unsealed aggregate from the former client. Reset must clear ownership/state,
 // not the payload bytes. Each delivery mode must work for the replacement.
 static void test_connection_reset_dirty_slot_discards_open_aggregate()
 {
@@ -1388,7 +1388,7 @@ static int reset_loopback_no_send_capacity( void * transport )
 
 // The reliable timeout (6.4 "Giving up") is checked by every update for every
 // connected slot, not only by a write pass that reaches its reliable phase.
-// The message is sent once; then every send pass is starved and the peer
+// The message is sent once; then every send pass is starved and the receiver
 // never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
 // or past first send + reliable_message_timeout_ms, and not before.
 static void test_reliable_timeout_fires_while_send_pass_starved()

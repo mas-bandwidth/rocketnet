@@ -259,7 +259,7 @@ struct server_stream_t
     uint64_t seen[ROCKETNET_SERVER_MAX_SEQUENCES / 64];
     uint32_t bucket_sent[ROCKETNET_LIVE_NUM_BUCKETS];
     uint32_t bucket_received[ROCKETNET_LIVE_NUM_BUCKETS];
-    uint32_t confirmed;             // contiguous sequences the peer reported received (highest + 1)
+    uint32_t confirmed;             // contiguous sequences the client reported received (highest + 1)
     uint32_t contiguous;            // the sequence after the highest contiguous one received (section 5)
     uint64_t bytes_received;        // the bytes of the messages received for this stream
 };
@@ -325,8 +325,8 @@ static void matrix_fail( struct server_client_t * c, int mode, int channel, int6
 
 // the pacing ledger (docs/LIVE-XDP.md section 6): outstanding bytes, messages
 // and reliable numbers, admitted only while each stays under its half margin.
-// Outstanding is sent minus what the peer's progress reports have confirmed
-// (section 5: the peer reports, per stream, the highest contiguous sequence
+// Outstanding is sent minus what the client's progress reports have confirmed
+// (section 5: the client reports, per stream, the highest contiguous sequence
 // it received); the ledger shrinks as those reports arrive. Tiny messages
 // carry no sequence and occupy negligible memory, so they are never admitted
 // or counted here.

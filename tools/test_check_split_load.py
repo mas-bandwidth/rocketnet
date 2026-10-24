@@ -42,7 +42,7 @@ def receipt(role, first, count, total=2, rate=1):
                 duplicate_errors=0, unexpected_disconnects=0,
                 offer_refusals=0, protocol_errors=0, wire_valid=1,
                 wire_up=10000 * count, wire_down=10000 * count,
-                max_peer_up_kbps=f"{max_rate:.6f}", max_peer_down_kbps=f"{max_rate:.6f}",
+                max_client_up_kbps=f"{max_rate:.6f}", max_client_down_kbps=f"{max_rate:.6f}",
                 aggregate_up_kbps=f"{aggregate_rate:.6f}", aggregate_down_kbps=f"{aggregate_rate:.6f}",
                 aggregate_limit_kbps="1000.0", wire_rate_denominator_s=60,
                 wire_scope="pre_run_to_traffic_end_conservative",
@@ -287,7 +287,7 @@ class SplitReceiptTests(unittest.TestCase):
             self.check(server.replace("s2c_offered=120", "s2c_offered=119")
                        .replace("s2c_accepted=120", "s2c_accepted=119"), shards)
 
-    def test_missing_peer_wire(self):
+    def test_missing_client_wire(self):
         server, shards = fixture()
         server = "\n".join(line for line in server.splitlines()
                            if not line.startswith(f"split_wire: role=server run_id={RUN} client=0"))
@@ -299,10 +299,10 @@ class SplitReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reported aggregate rate"):
             self.check(server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=2.0"), shards)
 
-    def test_false_peer_max(self):
+    def test_false_client_max(self):
         server, shards = fixture()
-        with self.assertRaisesRegex(ValueError, "reported max peer rate"):
-            self.check(server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=0.0"), shards)
+        with self.assertRaisesRegex(ValueError, "reported max client rate"):
+            self.check(server.replace("max_client_up_kbps=1.333333", "max_client_up_kbps=0.0"), shards)
 
     def test_same_machine_allocation(self):
         server, shards = fixture()
@@ -374,7 +374,7 @@ class SplitReceiptTests(unittest.TestCase):
         server = server.replace("client=0 sent_bytes=10000", "client=0 sent_bytes=750000")
         server = server.replace("wire_up=20000", "wire_up=760000")
         server = server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=101.333333")
-        server = server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=99.999999")
+        server = server.replace("max_client_up_kbps=1.333333", "max_client_up_kbps=99.999999")
         with self.assertRaisesRegex(ValueError, "raw wire bytes exceed"):
             self.check(server, shards)
 
@@ -414,7 +414,7 @@ class SplitReceiptTests(unittest.TestCase):
         server = server.replace("client=0 sent_bytes=10000", "client=0 sent_bytes=750000")
         server = server.replace("wire_up=20000", "wire_up=760000")
         server = server.replace("aggregate_up_kbps=2.666667", "aggregate_up_kbps=101.333333")
-        server = server.replace("max_peer_up_kbps=1.333333", "max_peer_up_kbps=99.999999")
+        server = server.replace("max_client_up_kbps=1.333333", "max_client_up_kbps=99.999999")
         with self.assertRaisesRegex(ValueError, "raw wire bytes exceed"):
             self.check(server, shards)
 

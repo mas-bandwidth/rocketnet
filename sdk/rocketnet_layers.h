@@ -320,7 +320,7 @@ const char * rocketnet_client_transport_state_name( int state );
  */
 struct rocketnet_client_transport_config_t
 {
-    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
+    /** @brief Per-title 4-byte packet filter; clients with a different value cannot connect. */
     uint8_t packet_filter[4];
     /** @brief Concurrent fragmented payloads per connection; zero selects the default, otherwise 1 through 256. */
     int max_fragmented_messages;                       // 1 .. 256; 0 is ROCKETNET_DEFAULT_REASSEMBLY_SLOTS
@@ -747,7 +747,7 @@ struct rocketnet_server_transport_config_t
     uint64_t protocol_id;
     /** @brief Maximum simultaneous clients; 1 through ROCKETNET_MAX_CLIENTS, default 1000. */
     int max_clients;                                // 1 .. ROCKETNET_MAX_CLIENTS; default 1000
-    /** @brief Per-title 4-byte packet filter; peers with a different value cannot connect. */
+    /** @brief Per-title 4-byte packet filter; clients with a different value cannot connect. */
     uint8_t packet_filter[4];
     /** @brief 32-byte key used to verify connect-token signatures. */
     uint8_t backend_public_key[32];
@@ -1486,7 +1486,7 @@ struct rocketnet_message_receipt_t
 // rules of docs/CHANNELS.md section 14, and refuses, never clamps.
 
 /** @brief Memory, wire, and timing settings for the message layer.
- * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between peers. The caller owns this value; validation and sizing do not allocate.
+ * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between client and server. The caller owns this value; validation and sizing do not allocate.
  */
 struct rocketnet_message_config_t
 {

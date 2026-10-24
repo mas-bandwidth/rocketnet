@@ -1,6 +1,6 @@
 # Link: the shared lossy UDP path
 
-`tla/Link.tla` is one direction of a UDP path between two peers, carrying typed packets.
+`tla/Link.tla` is one direction of a UDP path between client and server, carrying typed packets.
 It is the module every other rocketnet model drives its state transitions through, so
 that the connection, security and fragment machines are checked under packet loss,
 latency, jitter, duplication and reordering rather than over a perfect wire. The
@@ -29,8 +29,8 @@ Actions, one per operation and per outside event:
 
 | Action | Who | What |
 |---|---|---|
-| `Send(p)` | the sending peer | counts the send; appends a copy with any `due` in `0..MaxDelay` unless the pattern loses this send; disabled at `Capacity` |
-| `Deliver(p)` | the receiving peer | takes the head of the wire when it carries `p` and is due |
+| `Send(p)` | the sender | counts the send; appends a copy with any `due` in `0..MaxDelay` unless the pattern loses this send; disabled at `Capacity` |
+| `Deliver(p)` | the receiver | takes the head of the wire when it carries `p` and is due |
 | `Drop(i)` | the path | removes copy `i`; enabled only under `Pattern = "arbitrary"` |
 | `Duplicate(i)` | the path | appends a second copy of copy `i` with its own `due`; disabled at `Capacity` |
 | `Reorder(i)` | the path | swaps copies `i` and `i+1` |

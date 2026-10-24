@@ -25,7 +25,7 @@
 // Unauthenticated damage (drops, duplicates, reordering, corruption, garbage
 // from anywhere) can never excuse a broken guarantee, so it never switches a
 // check off. The one operation that does is the authenticated injection,
-// which seals fuzz plaintext under the live keys: that is the peer itself
+// which seals fuzz plaintext under the live keys: that is the remote endpoint itself
 // misbehaving, and a forged ack may legitimately end a resend. An input that
 // uses it keeps the safety checks on deliveries it can attribute and drops
 // the liveness check. A connection the script itself tears down (a sealed
@@ -166,7 +166,7 @@ static void rocketnet_fuzz_session_delivered( struct rocketnet_fuzz_pair_t * pai
         return;
     }
     if ( rocketnet_fuzz_session_tainted )
-        return;     // a forged peer can repeat a real message's bytes; the safety rows assume an honest one
+        return;     // a forged sender can repeat a real message's bytes; the safety rows assume an honest one
     const int session = direction == 0 ? ROCKETNET_FUZZ_SESSION_SERVER : ROCKETNET_FUZZ_SESSION_CLIENT;
     st->step = rocketnet_fuzz_session_step;
     rocketnet_fuzz_session_delivered_tally[direction][channel]++;
