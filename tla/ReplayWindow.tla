@@ -42,7 +42,7 @@
 (* is the same struct, but handshake packets are exempt from replay        *)
 (* marking and only raise its highest_opened                               *)
 (* (sdk/rocketnet_server_protocol.cpp:1205-1206;                           *)
-(* sdk/rocketnet_client_protocol.cpp:576-577); advance never runs on it,   *)
+(* sdk/rocketnet_client_protocol.cpp:580-581); advance never runs on it,   *)
 (* and nothing here speaks for it.                                         *)
 (*                                                                         *)
 (* A second ghost, processed, records what a slot actually processed: the  *)
