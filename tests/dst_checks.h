@@ -117,6 +117,30 @@ struct rocketnet_dst_check_stream_t
     uint64_t outstanding_bytes;
 };
 
+// The cross-type view of the sequenced messages on one (session, channel).
+// The SDK keeps one sequenced_write counter and one sequenced_watermark per
+// channel for types 1 and 4 together (rn_channels_send_sequenced in
+// sdk/rocketnet_channel.cpp), and tla/RNChannelTypes.tla states
+// SequencedNewestWins over one SequencedTrace per channel holding both codes.
+// So a newer delivery of either type supersedes an older send of the other,
+// and the receiver drops what it superseded. send_count mirrors
+// sequenced_write: the send index (from 1) of each type 1 or 4 send.
+struct rocketnet_dst_check_sequenced_channel_t
+{
+    int seen;
+    uint64_t identity;
+    uint32_t send_count;
+    uint32_t settle_count;              // send_count when the quiet window began
+    int first_quiet_set;                // the first type 4 send of the quiet window
+    uint32_t first_quiet_index;
+    uint32_t first_quiet_epoch;
+    uint32_t delivered_index;           // the highest send index delivered, either type
+    uint32_t delivered_epoch;
+    int delivered_set;
+    int quiet_satisfied;                // a delivery at or above first_quiet in its epoch
+    uint32_t index_of[2][ROCKETNET_DST_CHECK_SEQ_BITS];     // [type 1, type 4][sequence]
+};
+
 struct rocketnet_dst_check_state_t
 {
     uint64_t seed;
@@ -125,6 +149,7 @@ struct rocketnet_dst_check_state_t
     char check[64];
     char detail[256];
     struct rocketnet_dst_check_stream_t stream[ROCKETNET_DST_CHECK_MAX_STREAMS];
+    struct rocketnet_dst_check_sequenced_channel_t sequenced[ROCKETNET_DST_CHECK_MAX_SESSIONS * 9];
 
     // one_session_per_slot / token_admits_once (ServerSession::
     // SlotOwnsItsSession, TokenAdmitsOnce; ClientSession::
@@ -271,6 +296,24 @@ static inline struct rocketnet_dst_check_stream_t * rocketnet_dst_check_stream(
     return s;
 }
 
+// The cross-type sequenced view of (session, channel), reset when the session
+// changes identity like the stream tables are. NULL outside the tables.
+static inline struct rocketnet_dst_check_sequenced_channel_t * rocketnet_dst_check_sequenced_channel(
+    struct rocketnet_dst_check_state_t * st, int session, int channel, uint64_t identity )
+{
+    if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS || channel < 0 || channel >= 9 )
+        return NULL;
+    struct rocketnet_dst_check_sequenced_channel_t * c = &st->sequenced[session * 9 + channel];
+    if ( c->seen && c->identity != identity )
+        memset( c, 0, sizeof(*c) );
+    if ( !c->seen )
+    {
+        c->seen = 1;
+        c->identity = identity;
+    }
+    return c;
+}
+
 // Records the size the sender drew for a sequence. Called where the harness
 // builds a payload, before the message object sees it.
 static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t * st,
@@ -307,6 +350,22 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     {
         s->sequenced_epoch = epoch;
         s->sequenced_has_epoch = 1;
+    }
+    if ( type == 1 || type == 4 )
+    {
+        struct rocketnet_dst_check_sequenced_channel_t * c =
+            rocketnet_dst_check_sequenced_channel( st, session, channel, identity );
+        if ( c )
+        {
+            c->send_count++;
+            c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = c->send_count;
+            if ( type == 4 && c->send_count > c->settle_count && !c->first_quiet_set )
+            {
+                c->first_quiet_set = 1;
+                c->first_quiet_index = c->send_count;
+                c->first_quiet_epoch = epoch;
+            }
+        }
     }
 }
 
@@ -655,6 +714,23 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
             rocketnet_dst_check_sequenced_epoch( st, time, stream, sequence, epoch );
         else
             rocketnet_dst_check_sequenced( st, time, stream, sequence );
+
+        // The cross-type view: a delivery of either type at or above the
+        // first quiet-window type 4 send, in its epoch, serves that send.
+        struct rocketnet_dst_check_sequenced_channel_t * c =
+            rocketnet_dst_check_sequenced_channel( st, session, channel, identity );
+        const uint32_t index = c ? c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] : 0;
+        if ( index > 0 )
+        {
+            if ( !c->delivered_set || index > c->delivered_index )
+            {
+                c->delivered_set = 1;
+                c->delivered_index = index;
+                c->delivered_epoch = epoch;
+            }
+            if ( c->first_quiet_set && index >= c->first_quiet_index && epoch == c->first_quiet_epoch )
+                c->quiet_satisfied = 1;
+        }
     }
 
     if ( type == 0 || type == 5 )
@@ -868,6 +944,17 @@ static inline uint64_t rocketnet_dst_check_outstanding( struct rocketnet_dst_che
     return total;
 }
 
+// The newest type 4 sequence this stream delivered (every sequence below the
+// reliable base is delivered), for the failure line.
+static inline uint32_t rocketnet_dst_check_type4_newest( const struct rocketnet_dst_check_stream_t * s )
+{
+    uint32_t newest = s->reliable_base > 0 ? s->reliable_base - 1 : 0;
+    for ( uint32_t seq = s->reliable_base; seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
+        if ( ( s->reliable_delivered[( seq % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] >> ( seq % 8 ) ) & 1 )
+            newest = seq;
+    return newest;
+}
+
 // Marks the sequences that were sent before the fault window ended: the
 // quiet window is the liveness bound, so only those are due at the last step.
 static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_t * st )
@@ -880,6 +967,15 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
         s->settled_seq = s->last_sent_seq;
         s->quiet_start_seq = s->last_sent_seq;
         s->settled = 1;
+    }
+    for ( int i = 0; i < ROCKETNET_DST_CHECK_MAX_SESSIONS * 9; i++ )
+    {
+        struct rocketnet_dst_check_sequenced_channel_t * c = &st->sequenced[i];
+        if ( !c->seen )
+            continue;
+        c->settle_count = c->send_count;
+        c->first_quiet_set = 0;
+        c->quiet_satisfied = 0;
     }
 }
 
@@ -925,28 +1021,24 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                 }
                 if ( type == 4 && s->has_last_sent && s->last_sent_seq > s->quiet_start_seq )
                 {
-                    // Sequenced delivery never goes backwards and may drop a
-                    // superseded value, so a sequence sent in the quiet window
-                    // or a newer one serves as the newest delivered. Every
-                    // sequence below the base is delivered; the window starts
-                    // there.
-                    uint32_t newest = s->reliable_base > 0 ? s->reliable_base - 1 : 0;
-                    int any = s->reliable_base > 0;
-                    for ( uint32_t seq = s->reliable_base;
-                          seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
-                    {
-                        if ( rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
-                        {
-                            newest = seq;
-                            any = 1;
-                        }
-                    }
-                    if ( !any || newest <= s->quiet_start_seq )
+                    // Sequenced delivery never goes backwards and drops what a
+                    // newer message superseded, and types 1 and 4 share one
+                    // sequenced_write and one sequenced_watermark per channel
+                    // (rn_channels_send_sequenced in sdk/rocketnet_channel.cpp;
+                    // SequencedNewestWins in tla/RNChannelTypes.tla). So the
+                    // quiet window is served when a delivery of type 1 or 4
+                    // at or above its first type 4 send was seen on the
+                    // channel, in that send's ordered epoch.
+                    const struct rocketnet_dst_check_sequenced_channel_t * c =
+                        &st->sequenced[session * 9 + channel];
+                    if ( !c->seen || !c->quiet_satisfied )
                     {
                         char what[200];
-                        snprintf( what, sizeof(what), "stream=%d quiet_start=%u newest=%u sent_count=%u",
+                        snprintf( what, sizeof(what),
+                                  "stream=%d quiet_start=%u newest=%u sent_count=%u cross_newest=%u first_quiet=%u",
                                   rocketnet_dst_check_stream_index( session, channel, type ), s->quiet_start_seq,
-                                  newest, s->reliable_sent_count );
+                                  rocketnet_dst_check_type4_newest( s ), s->reliable_sent_count,
+                                  c->delivered_set ? c->delivered_index : 0, c->first_quiet_set ? c->first_quiet_index : 0 );
                         rocketnet_dst_check_fail( st, "liveness_delivered", what );
                     }
                 }
