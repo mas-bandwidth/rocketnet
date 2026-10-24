@@ -14,13 +14,18 @@
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
     a sanitizer build does not enforce it unless the variable sets one). A case
     whose subject is a full-capacity server declares its own bound with
-    SUITE_CASE_RSS_BOUND. Every registered name is test_ lowercase snake_case,
+    SUITE_CASE_RSS_BOUND. A case process that counts the SDK's bytes reports
+    its own bound, its plan's peak plus a fixed slack (tests/plan_rss.h), and
+    is held to that instead. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
     the slowest cases and the peak resident sets after the results.
+    ROCKETNET_TEST_NIGHTLY=1 adds the nightly tier: the cases group_of marks
+    with SUITE_GROUP_NIGHTLY, which a per-commit run leaves out.
 */
 
 #pragma once
 
+#include "plan_rss.h"
 #include "portable_crt.h"
 #include "time_scale.h"
 #include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
@@ -62,7 +67,8 @@ extern char **environ;
 // of 256 and 1.5 times the largest case measured on a Linux Release build
 // (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
-// overrides it with a positive value.
+// overrides it with a positive value. A case process that reports its plan's
+// bound (tests/plan_rss.h) is held to that instead.
 //
 // A build for more clients (-DROCKETNET_MAX_CLIENTS, BUILDING.md "Maximum
 // clients") carries larger per-server tables whatever the case's max_clients:
@@ -76,6 +82,18 @@ extern char **environ;
 #else
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 1217
 #endif
+
+// group_of's flag for a case of the nightly tier: the case runs, in the group
+// the rest of the value names, only under ROCKETNET_TEST_NIGHTLY=1. The cases
+// moved there each wait out a real protocol timeout or repeat a transport
+// pair whose every assertion a per-commit case of the same name keeps.
+#define SUITE_GROUP_NIGHTLY 0x100
+
+inline bool suite_nightly()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
+}
 
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
@@ -106,6 +124,7 @@ struct suite_result
     bool failed;
     std::string detail;
     long peak_rss_mb; // -1: not measured
+    long plan_rss_mb; // the bound the case process reported from its plan (tests/plan_rss.h); -1: none
     std::string output;
 };
 
@@ -178,28 +197,33 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
 }
 
 // The bound for one case: none in a sanitizer build without the environment
-// override, else the bound the case declares, else the suite-wide one. The
-// environment override replaces the suite-wide bound for every case, and a
-// declared bound under it: it lifts a case's plan, never lowers it. A
-// declared bound of 0 (a refused plan) keeps the suite-wide bound.
-inline long suite_case_rss_mb( const std::string & name )
+// override, else the bound the case declares, else the bound its process
+// reported from its plan (plan_mb, -1 for none), else the suite-wide one.
+// The environment override replaces the suite-wide bound for every case, and
+// a declared or reported bound under it: it lifts a case's plan, never
+// lowers it. A declared bound of 0 (a refused plan) keeps the suite-wide
+// bound.
+inline long suite_case_rss_mb( const std::string & name, long plan_mb )
 {
     const long bound = suite_max_case_rss_mb();
     if ( bound <= 0 )
         return bound;
+    long planned = plan_mb > 0 ? plan_mb : 0;
     for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
     {
         if ( name == entry->name )
         {
             const long declared = entry->bound_mb();
-            if ( declared <= 0 )
-                return bound;
-            if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
-                return declared > bound ? declared : bound;
-            return declared;
+            if ( declared > 0 )
+                planned = declared;
+            break;
         }
     }
-    return bound;
+    if ( planned <= 0 )
+        return bound;
+    if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+        return planned > bound ? planned : bound;
+    return planned;
 }
 
 // Fails a finished case whose peak is over the bound, naming both.
@@ -444,6 +468,24 @@ template <typename F> inline void suite_for_each_line( const std::string & outpu
     }
 }
 
+// The bound a case process reported on its plan_rss line (tests/plan_rss.h)
+// in its captured output, or -1 when it reported none.
+inline long suite_reported_plan_rss_mb( const std::string & output )
+{
+    const char * line = PLAN_RSS_LINE;
+    const size_t length = std::strlen( line );
+    long reported = -1;
+    suite_for_each_line( output, [line, length, &reported]( const std::string & text ) {
+        if ( text.compare( 0, length, line ) == 0 )
+        {
+            const long bound = std::atol( text.c_str() + length );
+            if ( bound > 0 )
+                reported = bound;
+        }
+    } );
+    return reported;
+}
+
 // A passing case's output keeps only its test-name lines. Returns the number
 // of lines printed.
 inline int suite_emit_captured( const std::string & output, bool show_all )
@@ -505,7 +547,7 @@ inline void suite_print_report( const std::vector<suite_result> & results )
     printf( "peak rss:\n" );
     for ( size_t i = 0; i < ran.size() && i < 10; i++ )
         if ( ran[i].peak_rss_mb >= 0 )
-            printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name ), ran[i].name.c_str() );
+            printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name, ran[i].plan_rss_mb ), ran[i].name.c_str() );
     fflush( stdout );
 }
 
@@ -519,12 +561,20 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // or moved as a whole string: under MemorySanitizer the prebuilt
     // libstdc++ copies a short (SSO) string without telling the shadow, so a
     // copied name reads as uninitialised (tools/run_msan.sh).
+    // A registered case group_of marks SUITE_GROUP_NIGHTLY is not collected
+    // outside the nightly tier.
     const size_t first = pending.size();
-    const int num_registered = count();
+    const bool nightly = suite_nightly();
+    int num_registered = 0;
+    for ( int i = 0; i < count(); i++ )
+        if ( nightly || !group_of || ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) == 0 )
+            num_registered++;
     pending.resize( first + (size_t) num_registered + (size_t) nexecs );
-    for ( int i = 0; i < num_registered; i++ )
+    for ( int i = 0, kept = 0; i < count(); i++ )
     {
-        suite_case & item = pending[first + (size_t) i];
+        if ( !nightly && group_of && ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) != 0 )
+            continue;
+        suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
         item.group = 0;
     }
@@ -563,7 +613,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // own group, so a group runs in parallel within itself and alone. Within
     // a group the cases run in layer order (suite_layer_of).
     for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
+        pending[i].group = group_of ? ( group_of( pending[i].name.c_str() ) & ~SUITE_GROUP_NIGHTLY ) : 0;
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
         if ( a.group != b.group )
             return a.group < b.group;
@@ -578,6 +628,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         result.seconds = 0;
         result.failed = false;
         result.peak_rss_mb = -1;
+        result.plan_rss_mb = -1;
         results.push_back( result );
     }
     return true;
@@ -885,12 +936,13 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( text, sizeof( text ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
                 result.detail = result.name + text;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( running[i].out_fd >= 0 )
             {
                 suite_drain( running[i].out_fd, result.output );
                 close( running[i].out_fd );
             }
+            result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
+            suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ) );
             result.done = true;
             uring_running -= running[i].uring ? 1 : 0;
             running.erase( running.begin() + (std::ptrdiff_t) i );
@@ -1104,7 +1156,8 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( text, sizeof( text ), " exit %lu", (unsigned long) code );
                 result.detail = result.name + text;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name ) );
+            result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
+            suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ) );
             result.done = true;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
