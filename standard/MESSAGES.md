@@ -2107,7 +2107,7 @@ n     = R + delta
 | ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
 | fragment bytes | `1152` | bytes | the block stride |
 | window messages default | `1024` | records | the default of `reliable_messages_in_flight` |
-| receive ring bytes default | `262144` | bytes | the default of `receive_message_buffer_bytes` |
+| receive ring bytes default | `1048576` | bytes | the default of `receive_message_buffer_bytes` |
 | window messages limit | `1048576` | records | the largest valid `reliable_messages_in_flight` |
 | replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
 | replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
@@ -2989,7 +2989,7 @@ differ in any compared field end the connection with `CONFIG_MISMATCH`.
 | version | `1` | none |
 | enabled default | `0xFF` | mask |
 | num channels default | `32` | channels |
-| max message bytes default | `262144` | bytes |
+| max message bytes default | `1048576` | bytes |
 | form | `1` | none |
 
 `enabled` with bit r set permits the application to send reliability r; the
@@ -3027,7 +3027,7 @@ for each of the others.
 ```vector m11.config-defaults
 config: library defaults
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3035,7 +3035,7 @@ config: library defaults
 field: version
 value: 2
 22 1c 00 00 00 00 01 02 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3043,7 +3043,7 @@ value: 2
 field: enabled
 value: 0x01
 22 1c 00 00 00 00 01 01 01 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3051,7 +3051,7 @@ value: 0x01
 field: num_channels
 value: 16
 22 1c 00 00 00 00 01 01 ff 00 10 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3059,7 +3059,7 @@ value: 16
 field: reliable_messages_in_flight
 value: 512
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 02
-00 00 00 00 04 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3067,7 +3067,7 @@ value: 512
 field: receive_message_buffer_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 02 00 00 00 04 00 80 04 00 00 00 00
+00 00 00 00 02 00 00 00 10 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3075,7 +3075,7 @@ value: 131072
 field: max_message_bytes
 value: 131072
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 02 00 80 04 00 00 00 00
+00 00 00 00 10 00 00 00 02 00 80 04 00 00 00 00
 00 00 01
 ```
 
@@ -3083,7 +3083,7 @@ value: 131072
 field: fragment_bytes
 value: 1024
 22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04
-00 00 00 00 04 00 00 00 04 00 00 04 00 00 00 00
+00 00 00 00 10 00 00 00 10 00 00 04 00 00 00 00
 00 00 01
 ```
 

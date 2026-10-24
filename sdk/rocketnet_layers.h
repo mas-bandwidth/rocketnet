@@ -1512,12 +1512,12 @@ struct rocketnet_message_config_t
     int num_channels;                   // WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     /** @brief Reliable receive window; WIRE, power of two from 64 through 1<<20, default 1024. */
     int reliable_messages_in_flight;                // WIRE, power of two; 64 .. 1 << 20; default 1024
-    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 262144. */
-    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 262144. */
-    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 262144
-    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 800000. */
-    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 800000
+    /** @brief Receive ring bytes; WIRE, multiple of 16 from 4096 through 1<<20, default 1048576. */
+    int receive_message_buffer_bytes;             // WIRE, multiple of 16; 4096 .. 1 << 20; default 1048576
+    /** @brief Maximum message bytes; WIRE, at most receive_message_buffer_bytes and from ROCKETNET_MESSAGE_SINGLE_BYTES through 1<<20, default 1048576. */
+    int max_message_bytes;              // WIRE, <= receive_message_buffer_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. ROCKETNET_MAX_MESSAGE_BYTES; default 1048576
+    /** @brief Per-connection queued payload bytes; 12288 through 1<<28, default 4194304. */
+    int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 4194304
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
     /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */

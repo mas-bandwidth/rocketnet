@@ -367,3 +367,45 @@ void reliable_receive_full_ordered_gap_recovers()
     reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_channel_harness_destroy( &h );
 }
+
+
+// No size or buffer overrides: the public default must actually carry a full
+// 1 MiB message, including promotion of all three unreliable modes.
+void default_one_mib_messages_all_modes()
+{
+    static uint8_t data[ROCKETNET_MAX_MESSAGE_BYTES];
+    const int bytes = (int) sizeof(data);
+    for ( int mode = 0; mode < 8; ++mode )
+    {
+        for ( int i = 0; i < bytes; ++i ) data[i] = (uint8_t) ( ( i * 17 + mode * 31 ) & 255 );
+        rocketnet_channel_harness_t h;
+        reliable_check( rocketnet_channel_harness_create( &h ) );
+        reliable_check( h.message_config.max_message_bytes == bytes );
+        rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
+        reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
+        reliable_check( rocketnet_channel_harness_client_send( &h, 0, mode, data, bytes ) );
+        reliable_check( rocketnet_channel_harness_server_send( &h, 0, mode, data, bytes ) );
+        int client_seen = 0, server_seen = 0, settled = 0;
+        for ( int step = 0; step < 60 * 30; ++step )
+        {
+            reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+            rocketnet_channel_delivery_t delivery;
+            while ( rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
+            {
+                reliable_check( ++client_seen == 1 && delivery.bytes == bytes );
+                reliable_check( memcmp( delivery.data, data, sizeof(data) ) == 0 );
+            }
+            while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
+            {
+                reliable_check( ++server_seen == 1 && delivery.bytes == bytes );
+                reliable_check( memcmp( delivery.data, data, sizeof(data) ) == 0 );
+            }
+            if ( client_seen && server_seen && ++settled == 120 ) break;
+        }
+        printf( "default 1 MiB mode=%d client_received=%d server_received=%d\n", mode, client_seen, server_seen );
+        reliable_check( client_seen == 1 && server_seen == 1 );
+        reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+        reliable_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
+        rocketnet_channel_harness_destroy( &h );
+    }
+}
