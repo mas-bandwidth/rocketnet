@@ -98,7 +98,8 @@ every update, and 1 transport loss.
 | Action / operator | Function in `sdk/rocketnet_packet_builder.cpp` |
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
-| `IsHead`, `Boost`, `PickLevel`, `PickIn` | `rn_builder_next_in_class` (with `rn_builder_effective_clock`, the pull-forward) |
+| `IsHead`, `Boost` | `rn_builder_link`: once per call, each channel's writable items of a class linked in the caller's order through the items' own fields, each with the best priority to its list's end, so a list's head is `IsHead` and its `channel_level` is `Boost`; `rn_builder_take_head` moves a channel's head on when it is taken |
+| `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one visit per channel head of the class (with `rn_builder_effective_clock`, the pull-forward); `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
 | `Write` (class order, clock step, `rr'`) | `rn_packet_builder_write`'s class loop, `rn_builder_take_level` |
 | `Tick`'s clock reset | the end of `rn_packet_builder_write`: every item taken -> `rn_builder_reset_clocks` |
 

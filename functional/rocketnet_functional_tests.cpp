@@ -1286,7 +1286,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
 
     const int capacity = rocketnet_client_transport_max_payload_bytes( client );
     rocketnet_check( capacity >= 8 );
-    static uint8_t packet[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t packet[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     int packet_bytes = rocketnet_client_transport_receive_packet( client, packet, capacity );
     rocketnet_check( packet_bytes == 8 );
     rocketnet_check( memcmp( packet, "capacity", 8 ) == 0 );
@@ -2920,7 +2920,7 @@ void rocketnet_test_transport_fragmentation()
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    static uint8_t pattern[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t pattern[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     for ( int i = 0; i < (int) sizeof(pattern); i++ )
         pattern[i] = (uint8_t) ( 0xC3 + i );
 
@@ -2930,7 +2930,7 @@ void rocketnet_test_transport_fragmentation()
     uint8_t * frame = rocketnet_client_transport_start_packet( client, 5000, &up_context );
     rocketnet_check( frame );
     rocketnet_check( up_context.payload_index == 0 );
-    rocketnet_check( up_context.payload_capacity == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( up_context.payload_capacity == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     memcpy( frame, pattern, 5000 );
     rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 5000 ) > 0 );
     rocketnet_client_transport_send_packets( client );
@@ -3052,8 +3052,8 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == (uint64_t) ( ( 5000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );        // unchanged
 
     // the configured maximum is readable, so callers can size buffers
-    rocketnet_check( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
 
     // the copying cursor carries reassembled payloads too, sized by the
     // configured maximum
@@ -3062,7 +3062,7 @@ void rocketnet_test_transport_fragmentation()
     memcpy( frame, pattern, 4000 );
     rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4000 ) > 0 );
 
-    static uint8_t cursor_buffer[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    static uint8_t cursor_buffer[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
     int cursor_received = 0;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 && !cursor_received )
@@ -3163,8 +3163,8 @@ void rocketnet_test_transport_fragmentation()
     // NEGATIVE: a request past the configured maximum refuses outright
     {
         struct rocketnet_packet_context_t oversize_context;
-        rocketnet_check( rocketnet_client_transport_start_packet( client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
-        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
+        rocketnet_check( rocketnet_client_transport_start_packet( client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
+        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES + 1, &oversize_context ) == NULL );
     }
 
     // nothing died on the clean wire
@@ -3778,8 +3778,8 @@ void rocketnet_test_public_client_server_queries()
 
 void rocketnet_test_config_precedence()
 {
-    // DEFAULT < STRUCT < ENV, observed through the one config field with a
-    // public query: max_payload_bytes
+    // the transport's payload capacity is a constant now, so the removed
+    // field's env name is inert: nothing displaces anything
 
     struct rocketnet_test_env_guard_t payload_guard;
     rocketnet_test_env_clear( &payload_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
@@ -3793,23 +3793,16 @@ void rocketnet_test_config_precedence()
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
-    // struct displaces default
-
-    config.max_payload_bytes = 18000;
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-    rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
-
-    // env displaces struct
+    // the removed field's env name moves nothing: the transport's payload
+    // capacity is a constant, not a configured one
 
     setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     rocketnet_test_env_restore( &payload_guard );

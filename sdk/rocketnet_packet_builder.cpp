@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "rocketnet_platform.h"
+#include "rocketnet_test_seams.h"
 
 // Layer 6's packet builder (docs/CHANNELS.md 9.3). tla/RNChannel.tla's
 // WritePacket is the packet, tla/RNSendBudget.tla's Send, Wait and Drop are
@@ -130,22 +131,100 @@ static bool rn_builder_writable( const struct rn_packet_item_t * item )
     return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
 }
 
-// RNScheduler!Pick inside one class. Returns the item's index, or -1 when the
-// class is spent; *out_level is the level it was taken at.
+// The items the builder looked at, counted only where the unit seams are
+// compiled in (test_packet_builder_visits_linear pins the bound).
+
+static inline void rn_builder_visit( struct rn_packet_builder_t * builder )
+{
+#if ROCKETNET_TEST_SEAMS
+    builder->visits++;
+#else // #if ROCKETNET_TEST_SEAMS
+    (void) builder;
+#endif // #if ROCKETNET_TEST_SEAMS
+}
+
+// The hash a channel and class find their list under while the lists are
+// linked. 128 slots hold 32 channels times 4 classes with no collision, so the
+// default configuration never walks a chain; more channels share slots and
+// walk their chain. It lives on the stack of one call: the builder owns no
+// memory (R2).
+
+#define RN_BUILDER_LINK_SLOTS                   128
+
+// RNScheduler's IsHead and Boost, made once per call: every writable item of
+// a class joins its channel's list, in the caller's order (next_in_channel),
+// and records the best priority from itself to the list's end
+// (channel_level), so the head of a list is the channel's head (IsHead) and
+// its channel_level is the channel's boost (Boost). The heads of each class
+// are linked through next_head from class_head[class]. Items are visited in
+// reverse, so each is put in front of its list and the lists come out in the
+// caller's order. One visit per writable item: linear in the plan.
 //
-// 1. Channel FIFO: only a channel's head (its first writable item of this
-//    class, in the caller's order, which is the order the application
-//    queued) is offered, at the best priority among the channel's writable
-//    items of this class: per-send priority boosts the whole channel (17.3
-//    item 3, RNScheduler!Boost and IsHead).
-// 2. The level: the smallest clock among the levels offered, a clock behind
-//    clock_base counting as clock_base (the pull-forward); a tie goes to
-//    the more urgent level (RNScheduler!PickLevel).
-// 3. The channel: round robin from the channel after the last one taken, one
-//    item per turn (17.3 item 4, RNScheduler!PickIn).
-//
-// The plan is a few dozen items per update at most, so the scan is quadratic
-// in it and keeps no table: the builder owns no memory (R2).
+// Returns true when a writable item has a class outside the budget's four,
+// so it is never taken and the plan never drains.
+
+// tla/RNScheduler.tla, IsHead and Boost
+static bool rn_builder_link( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, int32_t * class_head )
+{
+    int32_t slot_head[RN_BUILDER_LINK_SLOTS];
+    for ( int k = 0; k < RN_BUILDER_LINK_SLOTS; k++ )
+        slot_head[k] = -1;
+
+    bool stray = false;
+
+    for ( int i = num_items - 1; i >= 0; i-- )
+    {
+        rn_builder_visit( builder );
+
+        struct rn_packet_item_t * item = &items[i];
+        if ( !rn_builder_writable( item ) )
+            continue;
+
+        if ( item->send_class > ROCKETNET_SEND_CLASS_UNRELIABLE )
+        {
+            stray = true;
+            continue;
+        }
+
+        // the channel's list so far: its head is the channel's item after this one
+        int32_t * link = &slot_head[( (uint32_t) item->channel * 4u + item->send_class ) % RN_BUILDER_LINK_SLOTS];
+        while ( *link >= 0 && ( items[*link].channel != item->channel || items[*link].send_class != item->send_class ) )
+        {
+            rn_builder_visit( builder );
+            link = &items[*link].next_head;
+        }
+
+        const int32_t next = *link;
+        if ( next >= 0 )
+        {
+            item->next_in_channel = next;
+            item->channel_level = items[next].channel_level < item->priority ? items[next].channel_level : item->priority;
+            item->next_head = items[next].next_head;
+        }
+        else
+        {
+            item->next_in_channel = -1;
+            item->channel_level = item->priority;
+            item->next_head = -1;
+        }
+        *link = (int32_t) i;
+    }
+
+    // each slot's heads onto their class's list
+    for ( int k = 0; k < RN_BUILDER_LINK_SLOTS; k++ )
+    {
+        int32_t head = slot_head[k];
+        while ( head >= 0 )
+        {
+            const int32_t next = items[head].next_head;
+            items[head].next_head = class_head[items[head].send_class];
+            class_head[items[head].send_class] = head;
+            head = next;
+        }
+    }
+
+    return stray;
+}
 
 // tla/RNScheduler.tla, PickLevel's pull-forward: a clock behind clock_base counts as clock_base
 static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * builder, int level )
@@ -154,8 +233,29 @@ static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * b
     return clock > builder->clock_base ? clock : builder->clock_base;
 }
 
-// tla/RNScheduler.tla, IsHead, Boost, PickLevel and PickIn
-static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder, const struct rn_packet_item_t * items, int num_items, int send_class, int * out_level )
+// RNScheduler!Pick inside one class. Returns the item's index, or -1 when the
+// class is spent; *out_level is the level it was taken at and *out_link the
+// link that holds it, for rn_builder_take_head.
+//
+// 1. Channel FIFO: only a channel's head (its first writable item of this
+//    class, in the caller's order, which is the order the application
+//    queued) is offered, at the best priority among the channel's writable
+//    items of this class: per-send priority boosts the whole channel (17.3
+//    item 3, RNScheduler!Boost and IsHead). rn_builder_link made both.
+// 2. The level: the smallest clock among the levels offered, a clock behind
+//    clock_base counting as clock_base (the pull-forward); a tie goes to
+//    the more urgent level (RNScheduler!PickLevel).
+// 3. The channel: round robin from the channel after the last one taken, one
+//    item per turn (17.3 item 4, RNScheduler!PickIn). Channels the same
+//    distance away (a channel at or past the modulus) go in the caller's
+//    order.
+//
+// One visit per channel head of the class, so a take costs the channels
+// with something to send (at most ROCKETNET_MAX_CHANNELS, plus any channel
+// at or past it), never the plan.
+
+// tla/RNScheduler.tla, PickLevel and PickIn
+static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int32_t * class_head, int * out_level, int32_t ** out_link )
 {
     const uint32_t channels = builder->num_channels > 0 ? builder->num_channels : 1;
 
@@ -163,45 +263,50 @@ static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder,
     int best_level = 0;
     uint64_t best_clock = 0;
     uint32_t best_distance = 0;
+    int32_t * best_link = NULL;
 
-    for ( int i = 0; i < num_items; i++ )
+    for ( int32_t * link = class_head; *link >= 0; link = &items[*link].next_head )
     {
-        if ( items[i].send_class != (uint8_t) send_class || !rn_builder_writable( &items[i] ) )
-            continue;
+        rn_builder_visit( builder );
 
-        // the channel's head, and the channel's boost
-        bool head = true;
-        int level = items[i].priority;
-        for ( int j = 0; j < num_items; j++ )
-        {
-            if ( j == i || items[j].channel != items[i].channel || items[j].send_class != (uint8_t) send_class || !rn_builder_writable( &items[j] ) )
-                continue;
-            if ( j < i )
-            {
-                head = false;
-                break;
-            }
-            if ( items[j].priority < level )
-                level = items[j].priority;
-        }
-        if ( !head )
-            continue;
-
+        const int i = *link;
+        const int level = items[i].channel_level;
         const uint64_t clock = rn_builder_effective_clock( builder, level );
         const uint32_t distance = ( items[i].channel % channels + channels - builder->round_robin % channels - 1 ) % channels;
 
         if ( best < 0 || clock < best_clock || ( clock == best_clock && level < best_level ) ||
-             ( clock == best_clock && level == best_level && distance < best_distance ) )
+             ( clock == best_clock && level == best_level && ( distance < best_distance || ( distance == best_distance && i < best ) ) ) )
         {
             best = i;
             best_level = level;
             best_clock = clock;
             best_distance = distance;
+            best_link = link;
         }
     }
 
     *out_level = best_level;
+    *out_link = best_link;
     return best;
+}
+
+// A head taken: the channel's next item of the class is its head now, at its
+// own channel_level (the boost of what is left), or the channel leaves the
+// class's list. Only heads are ever taken, so the lists stay exact.
+
+static void rn_builder_take_head( struct rn_packet_item_t * items, int32_t * link )
+{
+    const int32_t taken = *link;
+    const int32_t next = items[taken].next_in_channel;
+    if ( next >= 0 )
+    {
+        items[next].next_head = items[taken].next_head;
+        *link = next;
+    }
+    else
+    {
+        *link = items[taken].next_head;
+    }
 }
 
 // RNScheduler!Write's clock step: the level taken becomes the origin and its
@@ -223,9 +328,18 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     builder->packets = 0;
     builder->unreliable_dropped = 0;
+    builder->visits = 0;
 
     if ( !items || num_items < 1 || !payloads || num_payloads < 1 )
         return 0;
+
+    // each class's channel heads, linked once for the whole call: an item
+    // leaves its list only when it is taken, and a refused packet ends the call
+    int32_t class_head[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
+    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE; c++ )
+        class_head[c] = -1;
+    const bool stray = rn_builder_link( builder, items, num_items, class_head );
+    bool refused = false;
 
     const int limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
 
@@ -261,7 +375,8 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             for ( ;; )
             {
                 int level = 0;
-                const int i = rn_builder_next_in_class( builder, items, num_items, send_class, &level );
+                int32_t * link = NULL;
+                const int i = rn_builder_next_in_class( builder, items, &class_head[send_class], &level, &link );
                 if ( i < 0 )
                     break;
 
@@ -289,6 +404,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 }
 
                 items[i].taken = 1;
+                rn_builder_take_head( items, link );
                 taken[records] = i;
                 records++;
 
@@ -345,6 +461,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 }
             }
 
+            refused = true;
             break;
         }
 
@@ -361,10 +478,12 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     }
 
     // RNScheduler!Tick's reset: every item taken, nothing queued, the clocks
-    // go back to the seeds
-    bool drained = true;
-    for ( int i = 0; i < num_items && drained; i++ )
-        if ( rn_builder_writable( &items[i] ) )
+    // go back to the seeds. Every class list empty is every writable item
+    // taken, unless a refused packet gave its items back or an item's class
+    // is none of the four.
+    bool drained = !refused && !stray;
+    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE && drained; c++ )
+        if ( class_head[c] >= 0 )
             drained = false;
     if ( drained )
         rn_builder_reset_clocks( builder );

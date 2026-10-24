@@ -8857,10 +8857,11 @@ void rocketnet_test_ack_block_validity()
         rocketnet_check( rocketnet_ack_block_read( &decoded, data, 11, 100 ) == 11 );
     }
 
-    // validity is evaluated on the reconstructed 64-bit largest: a genuine
-    // sequence whose low 32 bits are zero does not read as a fresh
-    // connection -- wire zero against a highest sent near the epoch
-    // boundary reconstructs to 2^32, and a nonzero first range is required
+    // a genuine sequence whose low 32 bits are zero does not read as a fresh
+    // connection -- wire zero against a highest sent near the epoch boundary
+    // reconstructs to 2^32 when the first range is nonzero, and the all-zero
+    // wire block is the empty block at any highest sent
+    // (tla/AckBlockWrap.tla ReadBlock)
     {
         uint8_t * p = data;
         rocketnet_write_uint32( &p, 0 );
@@ -8873,7 +8874,8 @@ void rocketnet_test_ack_block_validity()
         rocketnet_write_uint32( &p, 0 );
         rocketnet_write_uint8( &p, 0 );
         rocketnet_write_uint16( &p, 0 );
-        rocketnet_check( rocketnet_ack_block_read( &decoded, data, 7, 0xFFFFFFF0ULL ) == 0 );
+        rocketnet_check( rocketnet_ack_block_read( &decoded, data, 7, 0xFFFFFFF0ULL ) == 7 );
+        rocketnet_check( decoded.largest == 0 );
     }
 
     // the ack largest reconstruction is the wire rule with expected = the
@@ -12539,7 +12541,6 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, transport ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, state_change_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, packet_filter ),
-    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_payload_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, send_kbps ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_channels ),
@@ -12568,7 +12569,6 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, backend_public_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_xdp_queues ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_os_cpus ),
-    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_payload_bytes ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_fragmented_messages ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, max_timeout_seconds ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshake_deadline_seconds ),
@@ -12706,7 +12706,6 @@ void rocketnet_test_public_config_resolve()
     rocketnet_client_default_config( &client );
     const uint8_t filter[4] = { 1, 2, 3, 4 };
     memcpy( client.packet_filter, filter, 4 );
-    client.max_payload_bytes = 2000;
     client.max_fragmented_messages = 3;
     client.transport = "portable";
     client.state_change_callback = rocketnet_test_resolve_state_change;
@@ -12717,7 +12716,7 @@ void rocketnet_test_public_config_resolve()
     client.message_resend_delay_min_ms = 20; client.message_resend_delay_max_ms = 300; client.reliable_message_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
-    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.max_fragmented_messages == 3 );
+    rocketnet_check( client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change );
     rocketnet_check( kbps == 1234 );
@@ -12769,7 +12768,7 @@ void rocketnet_test_public_config_resolve()
     server.protocol_id = 0x1122334455667788ULL;
     server.max_clients = 5;
     memcpy( server.packet_filter, filter, 4 );
-    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.max_fragmented_messages = 4;
+    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_fragmented_messages = 4;
     server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
     server.transport = "gso,portable";
     server.per_client_send_kbps = 4321;
@@ -12780,7 +12779,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
-    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.max_fragmented_messages == 4 );
+    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_fragmented_messages == 4 );
     rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
@@ -13223,13 +13222,13 @@ void rocketnet_test_config_env_round_trip()
 void rocketnet_test_config_env_names_are_per_endpoint()
 {
     struct rocketnet_test_env_guard_t server_guard;
-    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     struct rocketnet_test_env_guard_t client_guard;
-    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
-    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
-    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
+    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
@@ -13243,23 +13242,23 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "19000", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
-    rocketnet_check( server_config.max_payload_bytes == 19000 );
-    rocketnet_check( client_config.max_payload_bytes == 0 );
-    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+    rocketnet_check( server_config.max_fragmented_messages == 19 );
+    rocketnet_check( client_config.max_fragmented_messages == 0 );
+    unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     // the client name moves only the client config
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "17000", 1 );
+    setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17", 1 );
     rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
     rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
-    rocketnet_check( client_config.max_payload_bytes == 17000 );
-    rocketnet_check( server_config.max_payload_bytes == 0 );
-    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+    rocketnet_check( client_config.max_fragmented_messages == 17 );
+    rocketnet_check( server_config.max_fragmented_messages == 0 );
+    unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // a hand-built config gets no state-change callback it did not set: the
     // default-config function zeroes the struct and the table carries no
@@ -13316,11 +13315,11 @@ void rocketnet_test_config_validation()
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
 
     rocketnet_server_transport_default_config_current( &config );
-    config.max_payload_bytes = -1;
+    config.max_fragmented_messages = -1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+    config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
-    config.max_payload_bytes = 0;
+    config.max_fragmented_messages = 0;
     rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
 
     // the table's num_xdp_queues range is structural; the per-transport

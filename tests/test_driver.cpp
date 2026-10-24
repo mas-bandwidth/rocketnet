@@ -138,6 +138,8 @@ static void test_transport_registry()
     const int * clients = rocketnet_client_transport_io_availability(&count);
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     CHECK(count == 3 && clients[0] == ROCKETNET_TRANSPORT_MSGX && clients[1] == ROCKETNET_TRANSPORT_PORTABLE && clients[2] == ROCKETNET_TRANSPORT_LOOPBACK);
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    CHECK(count == 3 && clients[0] == ROCKETNET_TRANSPORT_PORTABLE && clients[1] == ROCKETNET_TRANSPORT_GSO && clients[2] == ROCKETNET_TRANSPORT_LOOPBACK);
 #else
     CHECK(count == 2 && clients[0] == ROCKETNET_TRANSPORT_PORTABLE && clients[1] == ROCKETNET_TRANSPORT_LOOPBACK);
 #endif
@@ -180,8 +182,16 @@ static void test_transport_pin_only()
 #endif
 
     const int * clients = rocketnet_client_transport_io_availability(&num);
-    CHECK(rocketnet_transport_ladder_parse("auto", clients, num, &ladder));
-    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_transport_pin_only(ladder.candidates[i]));
+    CHECK(rocketnet_transport_ladder_parse("auto", clients, num, &ladder, false));
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_transport_pin_only(ladder.candidates[i], false));
+    // gso ranks in the server auto order and is pin-only on the client
+    CHECK(rocketnet_transport_pin_only(ROCKETNET_TRANSPORT_GSO, false));
+    CHECK(!rocketnet_transport_pin_only(ROCKETNET_TRANSPORT_GSO, true));
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(ladder.candidates[i] != ROCKETNET_TRANSPORT_GSO);
+    CHECK(rocketnet_transport_ladder_parse("gso", clients, num, &ladder, false));
+    CHECK(ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO);
+#endif
     printf("test_transport_pin_only\n");
 }
 

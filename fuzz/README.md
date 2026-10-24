@@ -21,9 +21,17 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
 | `rocketnet_fuzz_client_transport` | the client's real receive loop (`rocketnet_client_transport_update`) and the message client above it | `corpus_client_transport/` | `dict/rocketnet_fuzz_client_transport.dict` |
 | `rocketnet_fuzz_session` | a scripted session (send, tick, drop, duplicate, reorder, corrupt, inject) checked against the DST invariants in `../dst_checks.h` | `corpus_session/` | `dict/rocketnet_fuzz_session.dict` |
+| `rocketnet_fuzz_differential` | both admission deciders on one abstract case, shared with the fixed gate (`tools/differential/decide.h`); aborts on rocketnet-weaker or an undocumented stricter class | `corpus_differential/` | `dict/rocketnet_fuzz_differential.dict` |
 
 The input format of each target is described in the comment at the top of
-its source file. The last three are the pair targets. They share
+its source file. `rocketnet_fuzz_differential` runs the two admission
+deciders of `tools/differential/` (the fixed gate and this target both use
+`tools/differential/decide.h`) on one abstract case encoded as a 25-byte
+record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
+`tools/differential/README.md` does not document as permitted. It needs the
+pinned netcode checkout to build: the nightly Linux leg checks out
+mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
+`tools/differential/run.sh` does. The last three are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
 They run with no sockets, no threads and no clock, and their randomness is
@@ -150,6 +158,7 @@ input: the value is refused by the table's range and never clamped.
 `rocketnet_fuzz_server_transport`, `rocketnet_fuzz_client_transport`,
 `rocketnet_fuzz_session`, `rocketnet_fuzz_round_trip`,
 `rocketnet_fuzz_token_private`, `rocketnet_fuzz_config`,
+`rocketnet_fuzz_connect_token`, `rocketnet_fuzz_receive_structured`,
 `rocketnet_fuzz` and `rocketnet_fuzz_message` each contain a
 deterministic seed generator. Set `ROCKETNET_FUZZ_SEED_DIR` and run the
 binary (the libFuzzer build or the replay driver) to use it:
@@ -165,7 +174,13 @@ seeds. The two stateless generators turn the types their own parsers read
 into seeds: `rocketnet_fuzz` writes one seed per packet type the prefilter
 returns, per outcome the reassembly engine reaches, and per base64 and
 config shape, and `rocketnet_fuzz_message` writes one seed per violation
-the decoder names and per code a record carries. Each seed is replayed through the target before it is written. The
+the decoder names and per code a record carries. `rocketnet_fuzz_connect_token`
+writes one seed per branch the connect-token ladder and the client's
+pre-send checks take (raw and structured halves, the signature verdicts, the
+client's flags, window, version, expiry and address-family refusals), and
+`rocketnet_fuzz_receive_structured` writes one seed per packet type the stateful
+receive path dispatches on, from a completed handshake and the real send
+paths. Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
