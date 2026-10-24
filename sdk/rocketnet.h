@@ -1519,8 +1519,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 
 /// Expects rocketnet_client_disconnected(client) to be true; asserts otherwise.
 /// Called early, it logs one error naming the skipped completion poll, records
-/// the misuse, requests disconnect, waits for the worker, then synchronously
-/// joins, wipes and frees. All client pointers become invalid. NULL is allowed.
+/// the misuse, requests disconnect and updates the transport a bounded number
+/// of times without sleeping. Once disconnected it joins, wipes and frees; if
+/// the worker has not exited it logs a second error and keeps the client, which
+/// stays owned by that worker. All client pointers become invalid. NULL is allowed.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1719,8 +1721,10 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 
 /// Expects rocketnet_server_stopped(server) to be true; asserts otherwise.
 /// Called early, it logs one error naming the skipped completion poll, records
-/// the misuse, requests stop, waits for the worker, then synchronously joins,
-/// wipes and frees memory and keys. All pointers from the server become invalid.
+/// the misuse, requests stop and updates the transport a bounded number of times
+/// without sleeping. Once stopped it joins, wipes and frees memory and keys; if
+/// the worker has not exited it logs a second error and keeps the server, which
+/// stays owned by that worker. All pointers from the server become invalid.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 

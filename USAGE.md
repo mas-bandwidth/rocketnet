@@ -9,7 +9,9 @@ The main frame calls and create are designed to be unnoticeable in a game
 profiler. Client disconnect and server stop request shutdown without waiting
 for workers. Their completion queries let a game keep its frame loop running;
 after completion synchronous destroy joins and frees. An early destroy logs and
-counts the misuse, then performs the shutdown and join itself. Soak, load and
+counts the misuse, then performs the shutdown and join itself with a bounded
+number of updates and no sleep; a worker that has not exited by then is logged
+and its object is kept, not freed. Soak, load and
 profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
@@ -292,7 +294,9 @@ frame thread. After a successful start, stop requests worker shutdown;
 `rocketnet_server_stopped` remains false until both transport I/O and the stats
 worker have exited. Destroy normally follows completion and synchronously joins
 the worker before freeing its storage; called early, it logs and counts the
-misuse, requests shutdown, waits for that completion, then joins and frees.
+misuse, requests shutdown and updates a bounded number of times without
+sleeping, then joins and frees once complete, or logs and keeps the object if
+the worker has not exited.
 
 ### Server memory footprint
 
@@ -386,8 +390,10 @@ To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
 request shutdown and poll completion before destroy. Destroy asserts completion;
 called early, it logs one error naming the skipped completion function, records
-the misuse, then requests shutdown itself, waits for completion, joins any
-remaining thread handle and wipes/frees resources synchronously. Keep
+the misuse, then requests shutdown itself and updates a bounded number of
+times without sleeping. Once complete it joins any remaining thread handle and
+wipes/frees resources synchronously; if the worker has not exited it logs a
+second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise peer receipt.
 
@@ -766,7 +772,8 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 Destroy every client and server before `rocketnet_term`. Request shutdown first,
 wait by polling completion from the event loop, then destroy. An early destroy
 is API misuse: it logs one error naming the skipped completion function, records
-the misuse, then requests shutdown, waits for completion and frees. A stalled
+the misuse, then requests shutdown, updates a bounded number of times without
+sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
 worker keeps completion false, so its object and contexts must remain alive.
 Destroy is synchronous after completion; allocator hooks and thread-handle
 cleanup do not have a strict wall-time guarantee.

@@ -34,7 +34,9 @@ connected is already complete.
 
 Calling destroy too early is API misuse in every build: it logs one error
 naming the skipped completion function, records the misuse, requests shutdown
-itself, waits for the worker, then synchronously joins, wipes and frees. The
+itself and updates a bounded number of times without sleeping, then
+synchronously joins, wipes and frees. A worker that has not exited by then is
+logged a second time and its object is kept, not freed under it. The
 debug assert still stops on the misuse. Preview-1 callers must still adopt the
 completion checks above; the leak is gone, but the error and misuse count say
 the contract was broken.
