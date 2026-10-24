@@ -108,7 +108,6 @@ client-io-core	sdk/rocketnet_client_io.h	RNClientIo	current	-	The I/O core sends
 client-io-decrypt-core	sdk/rocketnet_client_io.h	RNClientIoDecrypt	current	-	The I/O core receives, publishes or owes, waits, wakes and clears a wake, and exposes and returns the held buffer. Steps IoReceive, IoPublish, IoOwe, IoWait, IoWake, IoClearWake, Expose and Return.
 client-buffer-handoff-core	sdk/rocketnet_client_io.h	RNBufferHandoff	current	-	The I/O worker waits and wakes, exchanges a buffer, stops and exits. Steps WorkerWait, WorkerWakes, ConsumerExchange, ProducerExchange, MainStop and WorkerExit.
 client-io-shutdown-core	sdk/rocketnet_client_io.h	RNClientIoShutdown	current	-	The I/O send loop finishes a sent ring, takes the next ring, and the quit path exits the worker. Steps FinishRing, TakeRing and WorkerExit.
-xdp-replay-walk	sdk/rocketnet_server_replay_marks.cpp	RNXdpReplay	current	-	Walk forgets marks for slots no longer in session and marks slots whose opened high water changed.
 xdp-replay-commit	sdk/rocketnet_server_socket_linux.cpp	RNXdpReplay	current	-	Commit writes every forget and then every mark into the kernel map in one commit.
 xdp-replay-userspace	sdk/rocketnet_server_protocol.cpp	RNXdpReplay	current	-	Connect starts a session with the opened high water at zero. UserOpen raises that high water on a genuine session packet.
 xdp-replay-release	sdk/rocketnet_connection_reset.cpp	RNXdpReplay	current	-	Release ends the session for the slot being cleared.
