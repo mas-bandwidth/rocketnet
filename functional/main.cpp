@@ -159,7 +159,10 @@ int main( int argc, char ** argv )
         { "test_xdp", "test_xdp" },
 #endif
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    // io_uring cases are bounded by RLIMIT_MEMLOCK as well as by the one job:
+    // a limit under one case's need fails the suite before it starts, naming
+    // the limit (tests/suite_runner.h, tools/check_memlock.sh)
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
 #else
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize" },
