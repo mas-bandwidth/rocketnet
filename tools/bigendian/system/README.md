@@ -50,7 +50,7 @@ REPLAY_CASE:test_transport_control RUN:1 EXIT:0 SEC:12.3
 REPLAY_END:func_auto:test_transport_control RUN:1
 ```
 
-`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand.
+`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand. The platform-socket burst case (`test_posix_send_burst`, `functional/posix_socket_errors.cpp`) is one such emulation-under-load timing case: its receiver-drain catch-up window is a completion bound, so it is scaled with the suite's case-time scale through `tests/time_scale.h` (`ROCKETNET_TEST_BURST_CATCHUP_SECONDS`).
 
 By hand, the same three replays are:
 
