@@ -606,18 +606,18 @@ static void rocketnet_ack_stats_received_link( struct rocketnet_ack_endpoint_t *
 
     int after = endpoint->stats_received_tail;
     while ( after >= 0 && endpoint->received[after].receive_time > time )
-        after = after == endpoint->stats_received_head ? -1 : (int) endpoint->stats_received_prev[after];
+        after = after == endpoint->stats_received_head ? -1 : (int) endpoint->received[after].stats_prev;
 
     if ( after < 0 )
     {
-        endpoint->stats_received_next[slot] = endpoint->stats_received_head;
-        endpoint->stats_received_prev[endpoint->stats_received_head] = slot;
+        endpoint->received[slot].stats_next = endpoint->stats_received_head;
+        endpoint->received[endpoint->stats_received_head].stats_prev = slot;
         endpoint->stats_received_head = slot;
         endpoint->stats_received_low_time = time;
         return;
     }
 
-    endpoint->stats_received_prev[slot] = (uint16_t) after;
+    endpoint->received[slot].stats_prev = (uint16_t) after;
     if ( after == endpoint->stats_received_tail )
     {
         endpoint->stats_received_tail = slot;
@@ -625,11 +625,11 @@ static void rocketnet_ack_stats_received_link( struct rocketnet_ack_endpoint_t *
     }
     else
     {
-        const uint16_t next = endpoint->stats_received_next[after];
-        endpoint->stats_received_next[slot] = next;
-        endpoint->stats_received_prev[next] = slot;
+        const uint16_t next = endpoint->received[after].stats_next;
+        endpoint->received[slot].stats_next = next;
+        endpoint->received[next].stats_prev = slot;
     }
-    endpoint->stats_received_next[after] = slot;
+    endpoint->received[after].stats_next = slot;
 }
 
 // the record must be counted and still in the ring
@@ -645,20 +645,20 @@ static void rocketnet_ack_stats_received_unlink( struct rocketnet_ack_endpoint_t
     endpoint->stats_received_bytes -= endpoint->received[slot].wire_bytes;
     if ( slot == endpoint->stats_received_head )
     {
-        endpoint->stats_received_head = endpoint->stats_received_next[slot];
+        endpoint->stats_received_head = endpoint->received[slot].stats_next;
         endpoint->stats_received_low_time = endpoint->received[endpoint->stats_received_head].receive_time;
     }
     else if ( slot == endpoint->stats_received_tail )
     {
-        endpoint->stats_received_tail = endpoint->stats_received_prev[slot];
+        endpoint->stats_received_tail = endpoint->received[slot].stats_prev;
         endpoint->stats_received_high_time = endpoint->received[endpoint->stats_received_tail].receive_time;
     }
     else
     {
-        const uint16_t prev = endpoint->stats_received_prev[slot];
-        const uint16_t next = endpoint->stats_received_next[slot];
-        endpoint->stats_received_next[prev] = next;
-        endpoint->stats_received_prev[next] = prev;
+        const uint16_t prev = endpoint->received[slot].stats_prev;
+        const uint16_t next = endpoint->received[slot].stats_next;
+        endpoint->received[prev].stats_next = next;
+        endpoint->received[next].stats_prev = prev;
     }
 }
 

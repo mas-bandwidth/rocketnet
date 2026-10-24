@@ -113,7 +113,8 @@ struct rocketnet_received_packet_record_t
     uint64_t sequence;
     double receive_time;
     uint32_t wire_bytes;
-    uint32_t pad;
+    uint16_t stats_prev;                    // the running stats' receive-time list, by ring slot;
+    uint16_t stats_next;                    // read only while the record is counted
 };
 
 // The sent ring's shadow bitmaps: one bit per slot, held (written) and
@@ -254,7 +255,8 @@ struct rocketnet_ack_endpoint_t
     // that goes backwards), so the sent spans are read at the lowest and
     // highest counted sequences. Receive times do not follow sequence
     // (reordering, late and duplicate arrivals), so the counted received
-    // records are linked in receive-time order through their ring slots.
+    // records are linked in receive-time order through their ring slots,
+    // the links held in the records themselves.
     // All zero is the empty state.
 
     uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
@@ -305,10 +307,6 @@ struct rocketnet_ack_endpoint_t
     // the history entry it names (an empty or non-positive entry reads as
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
-
-    // the received list's links, by ring slot; read only for counted slots
-    uint16_t stats_received_prev[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
-    uint16_t stats_received_next[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
 };
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
