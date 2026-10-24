@@ -48,6 +48,11 @@
 #   macos / transport       every cell of ci.yml's macOS transport family
 #   cells x50               matrix fifty times in a row on the fleet's
 #                           Apple-silicon runner, for the same reason.
+#
+#   windows / transport     every cell of ci.yml's Windows transport family
+#   cells x50               matrix (the portable, iocp and rio servers and
+#                           loopback) fifty times in a row on the native
+#                           Windows runner, for the same one-in-fifty reason.
 
 name: nightly
 
@@ -267,6 +272,53 @@ jobs:
           name: macos-transport-cells-repeat-${{ matrix.ref }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
+
+  # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW.
+  # scripts/transport-cells-repeat reads the cells and cases from ci.yml's
+  # TRANSPORT_MATRIX_WINDOWS step (never a copy) and runs each named cell's
+  # cases (IPv4, IPv6, an IPv4 client of a dual-stack server, and the pin
+  # check) fifty times in a row with the matrix's pins and pass rule, printing
+  # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
+  # keeping the first failing log. A failure is reported with its log, never
+  # retried. The cells named here are the portable, iocp and rio servers and
+  # loopback: every cell of the Windows matrix, each named so a cell added to
+  # ci.yml is added here on purpose.
+
+  windows-transport-cells-repeat:
+    name: windows / transport cells x50
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-transport-cells-repeat-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel 4
+
+      - name: The Windows transport cells, fifty times in a row
+        timeout-minutes: 60
+        shell: bash
+        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-transport-cells-repeat-${{ matrix.ref }}
+          path: build/transport-cells-repeat
+          if-no-files-found: ignore
+
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
