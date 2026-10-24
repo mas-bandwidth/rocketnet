@@ -93,7 +93,7 @@ struct rn_message_object_t;
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
 
 #define ROCKETNET_MESSAGE_CONNECTION_FIELDS( X ) \
-    X( KEEP, hot ) X( KEEP, disconnect_reason )
+    X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
     X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \

@@ -8521,6 +8521,7 @@ extern void control_disconnect_burst_each_end();
 extern void control_standalone_ack_each_end();
 extern void control_fragment_packets_each_end();
 extern void control_denied_when_server_full();
+extern void unreliable_small_messages_pack_in_place();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
@@ -9110,6 +9111,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_control_standalone_ack_each_end", control_standalone_ack_each_end, NULL },
     { "test_control_fragment_packets_each_end", control_fragment_packets_each_end, NULL },
     { "test_control_denied_when_server_full", control_denied_when_server_full, NULL },
+    { "test_unreliable_small_messages_pack_in_place", unreliable_small_messages_pack_in_place, NULL },
     { "test_unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted, NULL },
     { "test_reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full, NULL },
     { "test_resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links, NULL },

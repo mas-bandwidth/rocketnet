@@ -1642,7 +1642,7 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, and ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 // a type a caller's own mask leaves out is refused (counted
 // MESSAGE_SEND_TYPE_NOT_ENABLED). Plain
-// UNRELIABLE is one record in one packet, up to 1411 bytes. UNRELIABLE_SEQUENCED
+// UNRELIABLE uses records packed together in a frame, up to 1411 bytes per message. UNRELIABLE_SEQUENCED
 // can use the transport's fragments for one larger unreliable RECORDS payload.
 // Receipt-bearing UNRELIABLE uses the code-0 wire form at single-packet size and promotes a larger
 // message to a reliable code-2 block with an ACKED-only receipt. Both are
