@@ -9,11 +9,6 @@ clang-tidy	sdk/rocketnet.cpp	performance-no-int-to-ptr	7fd99072c7417c25
 clang-tidy	sdk/rocketnet_abi.cpp	bugprone-macro-parentheses	fc0604c655b601f5
 clang-tidy	sdk/rocketnet_ack.cpp	bugprone-narrowing-conversions	6d61a0fd957160e2
 clang-tidy	sdk/rocketnet_ack.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	b28aaea8e261fc44
-clang-tidy	sdk/rocketnet_address.cpp	cert-err33-c	2c0a34be9a095a5c
-clang-tidy	sdk/rocketnet_address.cpp	cert-err33-c	79c26fbda3ab868e
-clang-tidy	sdk/rocketnet_address.cpp	cert-err33-c	9936545a6ae4c5c8
-clang-tidy	sdk/rocketnet_address.cpp	cert-err33-c	d0707f3b7eeb590c
-clang-tidy	sdk/rocketnet_address.cpp	cert-err33-c	e11d7fe4ee955cef
 clang-tidy	sdk/rocketnet_allocator.cpp	cert-dcl50-cpp	ea8860165c227751
 clang-tidy	sdk/rocketnet_api.cpp	bugprone-branch-clone	6934c2676d115b09
 clang-tidy	sdk/rocketnet_api.cpp	cert-err58-cpp	273764aff8893124
@@ -96,10 +91,8 @@ clang-tidy	sdk/rocketnet_layers.h	bugprone-macro-parentheses	6640f2469af909aa
 clang-tidy	sdk/rocketnet_layers.h	bugprone-macro-parentheses	739c2e56b427849b
 clang-tidy	sdk/rocketnet_layers.h	bugprone-macro-parentheses	88591aa8f884fd60
 clang-tidy	sdk/rocketnet_layers.h	bugprone-macro-parentheses	8c795a4b2ec6779f
-clang-tidy	sdk/rocketnet_message_client.cpp	bugprone-multi-level-implicit-pointer-conversion	d46b97a54ba5fc24
 clang-tidy	sdk/rocketnet_message_client.cpp	bugprone-multi-level-implicit-pointer-conversion	dc8f1a7e5383696e
 clang-tidy	sdk/rocketnet_message_server.cpp	bugprone-multi-level-implicit-pointer-conversion	604eac17e7563da8
-clang-tidy	sdk/rocketnet_message_server.cpp	bugprone-multi-level-implicit-pointer-conversion	f922aef812ed8868
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	0fcec978bb44ca0f
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	3256467742cc32f1
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	524671b580df112c
@@ -320,7 +313,6 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	ec1cf42dca477d7f
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f112e36b24864e9b
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f3a69817196f64c5
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f95ef499d47b64ce
-clang-tidy	sdk/rocketnet_tests.cpp	cert-err58-cpp	3adb09a7c0b29cd3
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	051a6ba35a2add08
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	1248d73d29c76d86
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	1ffeccc6426b1fe4

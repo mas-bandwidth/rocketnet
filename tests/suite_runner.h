@@ -168,10 +168,14 @@ inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
     return &head;
 }
 
+// The registrar only links a static entry, so it cannot throw; noexcept says
+// so. Without it clang-tidy's cert-err58-cpp flags every registrar, and that
+// finding names the __LINE__-suffixed variable, so its baseline fingerprint
+// changed whenever a line above the registration moved.
 struct suite_case_rss_bound_registrar_t
 {
     suite_case_rss_bound_t entry;
-    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
+    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() ) noexcept
     {
         entry.name = name;
         entry.bound_mb = bound_mb;
