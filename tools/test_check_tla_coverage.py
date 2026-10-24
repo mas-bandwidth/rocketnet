@@ -213,6 +213,43 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertEqual(code, 0, out)
         self.assertIn("ACTIONS UNCITED 0", out)
 
+    WITNESS_MODULE = (
+        "---- MODULE ActMod ----\n"
+        "CONSTANTS Broken\n"
+        "VARIABLES x\n"
+        "ActionA == x' = 1\n"
+        "Defect ==\n"
+        "    /\\ \"defect\" \\in Broken /\\ x = 0\n"
+        "    /\\ x' = 2\n"
+        "Next == ActionA \\/ Defect\n"
+        "====\n"
+    )
+
+    def plant_witness_cfgs(self, root, passing):
+        (root / "tla" / "MCActMod.cfg").write_text("CONSTANTS\n    Broken = %s\n" % passing)
+        (root / "tla" / "MCActModBrokenDefect.cfg").write_text(
+            "CONSTANTS\n    Broken = {\"defect\"}\n")
+
+    def test_actions_witness_only_exempt_from_cfgs(self):
+        root = self.plant_action_repo("// tla/ActMod.tla ActionA\n",
+                                      module_text=self.WITNESS_MODULE)
+        self.plant_witness_cfgs(root, "{}")
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+        self.assertIn("WITNESS-ONLY ACTIONS", out)
+        self.assertIn("ActMod Defect: MCActModBrokenDefect", out)
+
+    def test_actions_witness_guard_enabled_by_passing_cfg_is_cited(self):
+        root = self.plant_action_repo("// tla/ActMod.tla ActionA\n",
+                                      module_text=self.WITNESS_MODULE)
+        self.plant_witness_cfgs(root, "{\"defect\"}")
+        code, out = run_check(root, ["--actions"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ActMod Defect: sdk/act.c", out)
+        self.assertIn("ACTIONS UNCITED 1", out)
+        self.assertIn("ACTIONS WITNESS-ONLY 0", out)
+
     def test_actions_environment_note_exempts(self):
         code_text = ("// tla/ActMod.tla ActionA\n"
                      "// tla/ActMod.tla ActionB\n")

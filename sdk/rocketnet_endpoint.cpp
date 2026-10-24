@@ -269,8 +269,8 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
         {
-            // RNConnectionMemory Exhaust then Kick (R5): the region has no room
-            // for a send it must not drop
+            // tla/RNChannelTypes.tla MemoryExhausted: the send region has no room left, so the connection ends.
+            // The region has no room for a send it must not drop.
             endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
             return NULL;
         }
@@ -313,9 +313,10 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
 
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial )
 {
-    // tla/RNEndpoint.tla Send, its second half (RNChannel Enqueue's): the
+    // tla/RNEndpoint.tla Send, its second half: the
     // message joins its channel's queue in FIFO order and takes its receipt
     // serial (7.4: nonzero for every send). 0 leaves the start pending.
+    // tla/RNReceipts.tla Send: issues the next receipt serial before any packet write.
     // tla/RNOutgoingBuild.tla FinishQueued: the region record's message is
     // appended to the queue the write pass copies from.
     if ( endpoint->pending_type == -1 || endpoint->pending_in_place )
@@ -808,9 +809,10 @@ static bool rn_endpoint_large_sequenced( const rn_endpoint_t * endpoint, const r
            rn_endpoint_sequenced_payload_bytes( descriptor ) >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
+// tla/RNChannel.tla DropUnreliableForBudget: unreliable sends past the budget are dropped and counted, and this pass writes nothing further.
 // The end of the reliable path: a reliable packet the budget could not pay
-// waits; nothing after it spends the bucket this pass (RNSendBudget Wait), so
-// this pass's unreliable sends are over budget: dropped and counted (Drop, R6).
+// waits; nothing after it spends the bucket this pass, so
+// this pass's unreliable sends are over budget: dropped and counted.
 
 static void rn_endpoint_end_reliable( rn_endpoint_t * endpoint )
 {

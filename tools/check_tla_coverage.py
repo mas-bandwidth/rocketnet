@@ -345,6 +345,81 @@ def module_actions(module):
     return actions, []
 
 
+_CFG_CONST_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$", re.M)
+_GUARD_IN_RE = re.compile(r'^"([A-Za-z0-9_]+)"\s*\\in\s+([A-Za-z][A-Za-z0-9_]*)$')
+_GUARD_BOOL_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)$")
+
+
+def top_conjuncts(body):
+    """The conjuncts of an action body's outermost /\\ list: each line at
+    the shallowest /\\ indentation, split on /\\."""
+    lines = [l for l in body.splitlines() if l.strip().startswith("/\\")]
+    if not lines:
+        return []
+    depth = min(len(l) - len(l.lstrip()) for l in lines)
+    out = []
+    for l in lines:
+        if len(l) - len(l.lstrip()) == depth:
+            out.extend(p.strip() for p in l.split("/\\") if p.strip())
+    return out
+
+
+def module_cfgs(module):
+    """The model-checking configs of a module: tla/MC<Module>.cfg and
+    tla/MC<Module><Suffix>.cfg, skipping a suffix that names a longer
+    module (MCRNSlotsFoo.cfg belongs to RNSlotsFoo when tla/RNSlotsFoo.tla
+    exists)."""
+    cfgs = {}
+    modules = {p.stem for p in TLA_DIR.glob("*.tla")}
+    for path in sorted(TLA_DIR.glob(f"MC{module}*.cfg")):
+        rest = path.stem[len("MC") + len(module):]
+        if rest and not rest[0].isupper():
+            continue
+        if any(m != module and m.startswith(module) and path.stem[2:].startswith(m)
+               for m in modules):
+            continue
+        consts = {}
+        for name, value in _CFG_CONST_RE.findall(strip_comments(path.read_text(errors="replace"))):
+            consts[name] = value
+        cfgs[path.stem] = consts
+    return cfgs
+
+
+def guard_holds(kind, const, tag, consts):
+    value = consts.get(const)
+    if value is None:
+        return None
+    if kind == "in":
+        return f'"{tag}"' in value
+    return value.strip() == "TRUE"
+
+
+def witness_only(body, cfgs):
+    """The witness cfgs that enable an action, when every passing cfg (a
+    stem without "Broken") disables it through a guard conjunct on a
+    constant ("tag" \\in Const, or a bare boolean Const); else None."""
+    guards = []
+    for part in top_conjuncts(body):
+        m = _GUARD_IN_RE.match(part)
+        if m:
+            guards.append(("in", m.group(2), m.group(1)))
+        elif _GUARD_BOOL_RE.match(part):
+            guards.append(("bool", part, None))
+    passing = {n: c for n, c in cfgs.items() if "Broken" not in n}
+    broken = {n: c for n, c in cfgs.items() if "Broken" in n}
+    if not passing or not broken:
+        return None
+    for kind, const, tag in guards:
+        if not all(const in c for c in cfgs.values()):
+            continue
+        if any(guard_holds(kind, const, tag, c) for c in passing.values()):
+            continue
+        enabling = sorted(n for n, c in broken.items() if guard_holds(kind, const, tag, c))
+        if enabling:
+            return enabling
+    return None
+
+
 def code_files_for_module(rows, module):
     files = set()
     for r in rows:
@@ -415,6 +490,7 @@ def environment_exempt(notes):
 
 def actions_report(rows, modules):
     lines = []
+    witness = []
     total = 0
     failures = []
     for module in modules:
@@ -431,6 +507,14 @@ def actions_report(rows, modules):
             if p.is_file():
                 texts[f] = p.read_text(errors="replace")
         exempt = environment_exempt(notes)
+        cfgs = module_cfgs(module)
+        defs = find_definitions(strip_comments((TLA_DIR / f"{module}.tla").read_text(errors="replace"))) \
+            if (TLA_DIR / f"{module}.tla").exists() else {}
+        for a in sorted(actions):
+            enabling = witness_only(defs.get(a, ""), cfgs)
+            if enabling:
+                witness.append(f"{module} {a}: {', '.join(enabling)}")
+                exempt.add(a)
         for name in sorted(exempt - actions):
             fail = f"{module}: environment note names unknown action {name}"
             failures.append(fail)
@@ -444,6 +528,9 @@ def actions_report(rows, modules):
             lines.append(f"{module} {a}: {', '.join(files)}")
             total += 1
     lines.append(f"ACTIONS UNCITED {total}")
+    lines.append("WITNESS-ONLY ACTIONS (enabled only by Broken cfgs, exempt from citation)")
+    lines.extend(witness)
+    lines.append(f"ACTIONS WITNESS-ONLY {len(witness)}")
     return lines, total, failures
 
 

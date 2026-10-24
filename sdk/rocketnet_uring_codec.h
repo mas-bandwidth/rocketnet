@@ -35,9 +35,17 @@
 #define UDP_SEGMENT 103
 #endif
 
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
 // the control bytes of one segmented send: one UDP_SEGMENT cmsg holding the
 // 16-bit stride
 #define ROCKETNET_URING_GSO_CONTROL_BYTES    CMSG_SPACE( sizeof(uint16_t) )
+
+// the control area a multishot recvmsg reserves in every receive buffer when
+// UDP_GRO is on: one UDP_GRO cmsg holding the int stride
+#define ROCKETNET_URING_GRO_CONTROL_BYTES    CMSG_SPACE( sizeof(int) )
 
 // the kind fields carried in the upper bits of every SQE's user_data.
 #define ROCKETNET_URING_TAG_SEND      1
@@ -84,18 +92,66 @@ static inline int rocketnet_uring_buffer_id( uint32_t cqe_flags )
     return -1;
 }
 
+// the GRO stride in the control area of a multishot recvmsg buffer:
+// control_bytes is what the kernel wrote (io_uring_recvmsg_out.controllen),
+// at most the area the msghdr reserved. The cmsg headers are read with memcpy,
+// never cast. No UDP_GRO cmsg is 0 (one datagram). A truncated control area
+// (MSG_CTRUNC in out_flags), a cmsg whose length is under its header or runs
+// past the control area, or a UDP_GRO cmsg too short for an int, is one
+// fault, the gso transport's: *gro_faults is incremented and the stride is 0.
+static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, int control_bytes, uint32_t out_flags, uint64_t * gro_faults )
+{
+    if ( out_flags & MSG_CTRUNC )
+    {
+        if ( gro_faults )
+            *gro_faults += 1;
+        return 0;
+    }
+    int offset = 0;
+    while ( control_bytes - offset >= (int) sizeof( struct cmsghdr ) )
+    {
+        struct cmsghdr header;
+        memcpy( &header, control + offset, sizeof( header ) );
+        if ( header.cmsg_len < sizeof( struct cmsghdr ) || header.cmsg_len > (size_t) ( control_bytes - offset ) )
+        {
+            if ( gro_faults )
+                *gro_faults += 1;
+            return 0;
+        }
+        if ( header.cmsg_level == IPPROTO_UDP && header.cmsg_type == UDP_GRO )
+        {
+            if ( header.cmsg_len < CMSG_LEN( sizeof( int ) ) )
+            {
+                if ( gro_faults )
+                    *gro_faults += 1;
+                return 0;
+            }
+            int stride = 0;
+            memcpy( &stride, control + offset + CMSG_LEN( 0 ), sizeof( stride ) );
+            return stride > 0 ? stride : 0;
+        }
+        offset += (int) CMSG_ALIGN( header.cmsg_len );
+    }
+    return 0;
+}
+
 // parses the multishot recvmsg buffer layout: struct io_uring_recvmsg_out,
 // then msg_namelen bytes of name area, then msg_controllen bytes of control
 // area, then the payload. The header is read with memcpy so an unaligned
 // buffer pointer is never cast. On OK the name and payload views have exactly
-// out->namelen and out->payloadlen bytes; otherwise each refusal has its own
-// value.
+// out->namelen and out->payloadlen bytes, and *segment_bytes (when not NULL)
+// is the UDP_GRO stride the control area carries, 0 for none
+// (rocketnet_uring_recvmsg_gro_stride, which counts its faults into
+// *gro_faults when not NULL); otherwise each refusal has its own value.
 static inline int rocketnet_uring_recvmsg_parse(
     const uint8_t * buffer, int buffer_bytes,
     int msg_namelen, int msg_controllen,
     const uint8_t ** name, int * name_bytes,
-    const uint8_t ** payload, int * payload_bytes )
+    const uint8_t ** payload, int * payload_bytes,
+    int * segment_bytes, uint64_t * gro_faults )
 {
+    if ( segment_bytes )
+        *segment_bytes = 0;
     if ( msg_namelen < 0 || msg_controllen < 0 )
         return ROCKETNET_URING_RECV_SHORT_BUFFER;
     struct io_uring_recvmsg_out out;
@@ -113,6 +169,11 @@ static inline int rocketnet_uring_recvmsg_parse(
     *name_bytes = (int) out.namelen;
     *payload = buffer + sizeof( out ) + msg_namelen + msg_controllen;
     *payload_bytes = (int) out.payloadlen;
+    if ( segment_bytes && msg_controllen > 0 )
+    {
+        const int control_bytes = out.controllen < (uint32_t) msg_controllen ? (int) out.controllen : msg_controllen;
+        *segment_bytes = rocketnet_uring_recvmsg_gro_stride( buffer + sizeof( out ) + msg_namelen, control_bytes, out.flags, gro_faults );
+    }
     return ROCKETNET_URING_RECV_OK;
 }
 
