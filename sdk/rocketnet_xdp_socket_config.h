@@ -53,6 +53,13 @@ static inline void rocketnet_xdp_umem_config( struct xsk_umem_config * config )
     config->frame_headroom = 0;
 }
 
+// R3 of the pre-flight: the interface is free only when no program is attached
+// in any mode. prog_id alone reads 0 for a multi-mode attachment.
+static inline bool rocketnet_xdp_attached_any( const rocketnet_xdp_attached_t * attached )
+{
+    return attached->prog_id != 0 || attached->drv_prog_id != 0 || attached->skb_prog_id != 0 || attached->hw_prog_id != 0;
+}
+
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_FILL_RING_SIZE & ( ROCKETNET_XDP_FILL_RING_SIZE - 1 ) ) == 0, "the kernel takes only power of two ring sizes" );
 
 #endif // #ifndef ROCKETNET_XDP_SOCKET_CONFIG_H

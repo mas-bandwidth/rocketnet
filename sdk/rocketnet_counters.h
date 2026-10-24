@@ -957,7 +957,15 @@
     /* (standard/MESSAGES.md m1.6). REFUSAL. appended: indices are the */ \
     /* contract. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED: Counts messages delivered in an update that the application never took with receive before the next update; the connection then ends with MESSAGE_NOT_RECEIVED. Unit: messages. Class: refusal; family: none. */ \
-    X( MESSAGE_NOT_RECEIVED, REFUSAL, NONE )
+    X( MESSAGE_NOT_RECEIVED, REFUSAL, NONE ) \
+    \
+    /* A connection response that opened and whose padding is not all zero: */ \
+    /* the packet is authentic, so it is a refusal of its contents and not a */ \
+    /* forgery, and the integrity-failure count stays where it is */ \
+    /* (standard/TRANSPORT.md t9 rule 8). REFUSAL. appended: indices are the */ \
+    /* contract. */ \
+    /** @brief ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO: Counts connection response packets that opened but whose padding bytes are not all zero. Unit: occurrences. Class: refusal; family: CONNECTION_RESPONSE_RECEIVED. */ \
+    X( CONNECTION_RESPONSE_PADDING_NOT_ZERO, REFUSAL, CONNECTION_RESPONSE_RECEIVED )
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

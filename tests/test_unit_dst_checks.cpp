@@ -153,3 +153,20 @@ REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_ack_undelivered_fails );
 REGISTER_UNIT_TEST( test_dst_check_stale_session_payload_fails );
 REGISTER_UNIT_TEST( test_dst_check_clean_sequence_passes );
+
+static void test_dst_check_whole_message_over_65535_bytes()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 44 );
+    rocketnet_dst_check_sent( &st, 1000.0, 0, 0, 2, 5, 1, 1, 0, 70000 );
+    rocketnet_dst_check_whole_message( &st, 2, 5, 70000 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    static struct rocketnet_dst_check_state_t st2;
+    rocketnet_dst_check_init( &st2, 1, 45 );
+    rocketnet_dst_check_sent( &st2, 1000.0, 0, 0, 2, 5, 1, 1, 0, 70000 );
+    rocketnet_dst_check_whole_message( &st2, 2, 5, 70000 + 65536 );
+    rocketnet_unit_check( st2.failed == 1 );
+    rocketnet_unit_check( strcmp( st2.check, "whole_message" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_whole_message_over_65535_bytes );
