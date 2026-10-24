@@ -201,6 +201,7 @@ MCRNXdpReplay.cfg	MCRNXdpReplay.tla	pass	-	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenKernelAdvances.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNeverDropped	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenNoForget.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenNarrowWindow.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNeverDropped	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg	MCRNXdpReplay.tla	invariant	ReleasedSlotForgetsItsReplyMac	check	rnxdpreplay	required	-
 MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
@@ -374,3 +375,5 @@ MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	
 MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
+MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
+MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-
