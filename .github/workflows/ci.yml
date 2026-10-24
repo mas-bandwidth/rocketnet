@@ -103,7 +103,9 @@ on:
 # of the branch -- so it yields its runners to the run that replaced it
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Every job sets timeout-minutes: 3, the per-commit law above (one to two
 # minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
