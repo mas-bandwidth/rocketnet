@@ -199,9 +199,9 @@ through the pinned `tlacheck` as `tla/README.md` describes, each case its own sh
 the 110 s budget:
 
 ```sh
-for i in $(seq 0 24); do
+for i in $(seq 0 26); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group fragmentsandacks --shards 25 --shard "$i" --workers 2 --timeout 110s \
+    --group fragmentsandacks --shards 27 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/fragmentsandacks-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -315,7 +315,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
 |---|---|---|---|---|
-| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 111.080 s |
+| `MCFragmentsAndAcks.cfg` | pass: the gate instance | 3,796,546 | 1,056,577 | 85.518 s |
 | `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.397 s |
 | `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 9.422 s |
 | `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 9.381 s |
@@ -341,7 +341,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 10.165 s |
 | `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.867 s |
 | `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.910 s |
-| `MCFragmentsAndAcksWitAckRefused.cfg` | `NamedOnlyIfAccepted` violated (exit 12) | 193,615 | 64,587 | 7.506 s |
+| `MCFragmentsAndAcksWitAckRefused.cfg` | `NamedOnlyIfAccepted` violated (exit 12) on the gate instance | 8,335 | 3,858 | 2.310 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
