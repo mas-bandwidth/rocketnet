@@ -324,6 +324,54 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * co
  */
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
 
+// the dual-stack port pick of the Darwin IPv6 wildcard bind. a dual-stack
+// socket must hold its port in both namespaces, and Darwin checks neither
+// against the other: an IPv6 port-0 bind can take a port an IPv4 socket
+// holds, and an IPv4 port-0 bind can take a port an IPv6 socket holds. so
+// the port is reserved in IPv4 first and the IPv6 socket binds to it while
+// the reservation is held; an IPv6 bind refused with the port in use draws a
+// fresh reservation, every earlier reservation still held so the next is a
+// different port, up to ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS.
+
+#define ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS         16
+
+#define ROCKETNET_PLATFORM_DUAL_STACK_BIND_OK                0
+#define ROCKETNET_PLATFORM_DUAL_STACK_BIND_FAILED           -1
+#define ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE           -2
+
+/**
+ * @brief The socket calls the dual-stack port pick makes, so a unit test can
+ * stand in for the kernel.
+ */
+struct rocketnet_platform_dual_stack_bind_ops_t
+{
+    /** @brief Passed to every call below. */
+    void * context;
+    /** @brief Reserves port in IPv4 (0 for any), writes the reserved port, and returns a handle of 0 or more, or -1. */
+    int (*reserve_ipv4)( void * context, uint16_t port, uint16_t * reserved_port );
+    /** @brief Binds the IPv6 socket to port: returns BIND_OK, BIND_IN_USE, or BIND_FAILED. */
+    int (*bind_ipv6)( void * context, uint16_t port );
+    /** @brief Releases a reservation handle reserve_ipv4 returned. */
+    void (*release_ipv4)( void * context, int reservation );
+};
+
+/**
+ * @brief Picks and binds the port of a dual-stack IPv6 socket.
+ *
+ * A nonzero requested port is tried once. Port 0 retries an IPv6 bind refused
+ * as in use with a fresh IPv4 reservation, up to
+ * ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS attempts. Every reservation is
+ * released before return.
+ * @param ops The socket calls; must be non-NULL.
+ * @param requested_port The port asked for; 0 picks one.
+ * @param bound_port Receives the bound port on success; must be non-NULL.
+ * @param attempts Receives the number of IPv6 binds tried; may be NULL.
+ * @return BIND_OK; BIND_IN_USE when the port stayed in use (every attempt, or
+ * the one requested port); BIND_FAILED when a reservation or bind failed for
+ * another reason.
+ */
+int rocketnet_platform_dual_stack_bind( const struct rocketnet_platform_dual_stack_bind_ops_t * ops, uint16_t requested_port, uint16_t * bound_port, int * attempts );
+
 /**
  * @brief Closes and frees a socket returned by socket_create.
  *

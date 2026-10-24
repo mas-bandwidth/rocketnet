@@ -9268,6 +9268,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 void rocketnet_test_darwin_send_epipe_no_signal();
+void rocketnet_test_darwin_dual_stack_bind_under_ipv6_pressure();
 #endif
 void rocketnet_test_posix_server_receive_weather();
 void rocketnet_test_posix_client_receive_weather();
@@ -9722,6 +9723,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if !defined(_WIN32) && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
+    { "test_darwin_dual_stack_bind_under_ipv6_pressure", rocketnet_test_darwin_dual_stack_bind_under_ipv6_pressure, NULL },
 #endif
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },

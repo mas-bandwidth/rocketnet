@@ -739,6 +739,71 @@ void rocketnet_test_darwin_send_epipe_no_signal()
     }
     posix_check( pthread_sigmask( SIG_SETMASK, &previous, NULL ) == 0 );
 }
+
+// The Darwin dual-stack port pick under IPv6 port pressure. Darwin hands an
+// IPv4 port-0 bind a port an IPv6 socket already holds, so the IPv6 wildcard
+// bind to the IPv4 reservation's port was refused with EADDRINUSE: once in
+// about 10000 creates on a quiet host, 2448 in 20000 with 2000 IPv6 sockets
+// held, and as "failed to bind socket (ipv6)" in loaded functional runs on
+// mini-m5. With 2000 IPv6 loopback sockets held the plain way (as other
+// processes hold theirs), 20000 wildcard creates on port 0 must all succeed
+// (rocketnet_platform_dual_stack_bind picks again on EADDRINUSE). The bind
+// address is the IPv6 wildcard built field by field: the wildcard path is
+// the one under test.
+
+#include <netinet/in.h>
+#include <sys/resource.h>
+
+#define DARWIN_DUAL_STACK_HELD          2000
+#define DARWIN_DUAL_STACK_CREATES       20000
+
+void rocketnet_test_darwin_dual_stack_bind_under_ipv6_pressure()
+{
+    struct rlimit limit;
+    posix_check( getrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    const rlim_t wanted = (rlim_t) DARWIN_DUAL_STACK_HELD + 1024;
+    if ( limit.rlim_cur < wanted )
+    {
+        limit.rlim_cur = limit.rlim_max < wanted ? limit.rlim_max : wanted;
+        posix_check( setrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    }
+
+    static int held[DARWIN_DUAL_STACK_HELD];
+    for ( int i = 0; i < DARWIN_DUAL_STACK_HELD; i++ )
+    {
+        held[i] = ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+        posix_check( held[i] >= 0 );
+        sockaddr_in6 loopback;
+        memset( &loopback, 0, sizeof(loopback) );
+        loopback.sin6_family = AF_INET6;
+        loopback.sin6_addr = in6addr_loopback;
+        posix_check( bind( held[i], (sockaddr*) &loopback, sizeof(loopback) ) == 0 );
+    }
+    const int num_held = DARWIN_DUAL_STACK_HELD;
+
+    int failures = 0;
+    for ( int i = 0; i < DARWIN_DUAL_STACK_CREATES; i++ )
+    {
+        rocketnet_address_t address;
+        memset( &address, 0, sizeof(address) );
+        address.type = ROCKETNET_ADDRESS_IPV6;
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump(
+            NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 65536, 65536, "portable" );
+        if ( !socket )
+        {
+            failures++;
+            continue;
+        }
+        posix_check( address.port != 0 );
+        rocketnet_platform_socket_destroy( socket );
+    }
+
+    for ( int i = 0; i < num_held; i++ )
+        close( held[i] );
+
+    printf( "  %d ipv6 sockets held, %d wildcard creates on port 0: %d failed\n", num_held, DARWIN_DUAL_STACK_CREATES, failures );
+    posix_check( failures == 0 );
+}
 #endif
 
 void rocketnet_test_posix_server_receive_weather()

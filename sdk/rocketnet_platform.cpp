@@ -389,6 +389,54 @@ int rocketnet_platform_nonblocking_flags( int flags )
     return flags | O_NONBLOCK;
 }
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// the dual-stack port pick (rocketnet_platform.h). pure over its ops, so it
+// builds on every platform and the unit suite drives it with a fake kernel;
+// only the Darwin IPv6 wildcard bind calls it.
+
+int rocketnet_platform_dual_stack_bind( const struct rocketnet_platform_dual_stack_bind_ops_t * ops, uint16_t requested_port, uint16_t * bound_port, int * attempts )
+{
+    rocketnet_assert( ops );
+    rocketnet_assert( bound_port );
+
+    int reservations[ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS];
+    int num_reservations = 0;
+    int result = ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE;
+
+    const int max_attempts = requested_port == 0 ? ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS : 1;
+
+    while ( num_reservations < max_attempts )
+    {
+        uint16_t port = 0;
+        const int reservation = ops->reserve_ipv4( ops->context, requested_port, &port );
+        if ( reservation < 0 )
+        {
+            result = ROCKETNET_PLATFORM_DUAL_STACK_BIND_FAILED;
+            break;
+        }
+        reservations[num_reservations++] = reservation;
+
+        result = ops->bind_ipv6( ops->context, port );
+        if ( result == ROCKETNET_PLATFORM_DUAL_STACK_BIND_OK )
+        {
+            *bound_port = port;
+            break;
+        }
+        if ( result != ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE )
+            break;
+
+        // the port is held in IPv6 alone. this reservation stays held, so
+        // the next one is a different port
+    }
+
+    for ( int i = 0; i < num_reservations; i++ )
+        ops->release_ipv4( ops->context, reservations[i] );
+
+    if ( attempts )
+        *attempts = num_reservations;
+
+    return result;
+}
 // Test-only send-failure seam, compiled into the development library only.
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
 // without reaching the kernel, so a functional case can drive the send error
@@ -2621,6 +2669,59 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
 }
 
+// the dual-stack port pick's socket calls on Darwin (rocketnet_platform.h)
+
+struct rocketnet_platform_darwin_dual_stack_t
+{
+    int handle;
+    int error;
+};
+
+static int rocketnet_platform_darwin_reserve_ipv4( void * context, uint16_t port, uint16_t * reserved_port )
+{
+    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t*) context;
+    const int reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( reservation < 0 )
+    {
+        dual_stack->error = errno;
+        return -1;
+    }
+    sockaddr_in reservation_address;
+    memset( &reservation_address, 0, sizeof(reservation_address) );
+    reservation_address.sin_family = AF_INET;
+    reservation_address.sin_addr.s_addr = INADDR_ANY;
+    reservation_address.sin_port = rocketnet_platform_htons( port );
+    socklen_t reservation_length = sizeof(reservation_address);
+    if ( bind( reservation, (sockaddr*) &reservation_address, sizeof(reservation_address) ) < 0 ||
+         getsockname( reservation, (sockaddr*) &reservation_address, &reservation_length ) < 0 )
+    {
+        dual_stack->error = errno;
+        close( reservation );
+        return -1;
+    }
+    *reserved_port = rocketnet_platform_ntohs( reservation_address.sin_port );
+    return reservation;
+}
+
+static int rocketnet_platform_darwin_bind_ipv6( void * context, uint16_t port )
+{
+    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t*) context;
+    sockaddr_in6 socket_address;
+    memset( &socket_address, 0, sizeof( sockaddr_in6 ) );
+    socket_address.sin6_family = AF_INET6;
+    socket_address.sin6_addr = in6addr_any;
+    socket_address.sin6_port = rocketnet_platform_htons( port );
+    if ( bind( dual_stack->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) == 0 )
+        return ROCKETNET_PLATFORM_DUAL_STACK_BIND_OK;
+    dual_stack->error = errno;
+    return errno == EADDRINUSE ? ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE : ROCKETNET_PLATFORM_DUAL_STACK_BIND_FAILED;
+}
+
+static void rocketnet_platform_darwin_release_ipv4( void *, int reservation )
+{
+    close( reservation );
+}
+
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
 {
     rocketnet_assert( address );
@@ -2700,59 +2801,50 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         return NULL;
     }
 
-    // Darwin chooses an ephemeral port for an IPv6 wildcard without checking
-    // whether an IPv4 socket already owns that port. Both binds then coexist,
-    // and IPv4 traffic goes to the IPv4 socket instead of this dual-stack
-    // socket. Reserve the requested port in the IPv4 namespace first. Binding
-    // the IPv6 wildcard to that explicit port while the reservation is held
-    // makes it own both namespaces after the reservation closes.
-
-    uint16_t bind_port = address->port;
-    int ipv4_port_reservation = -1;
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        bool wildcard = true;
-        for ( int i = 0; i < 8; i++ )
-            wildcard &= address->data.ipv6[i] == 0;
-        if ( wildcard )
-        {
-            ipv4_port_reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-            if ( ipv4_port_reservation < 0 )
-            {
-                rocketnet_error( "failed to create ipv4 port reservation for dual stack socket" );
-                rocketnet_platform_socket_destroy( socket );
-                return NULL;
-            }
-            sockaddr_in reservation_address;
-            memset( &reservation_address, 0, sizeof(reservation_address) );
-            reservation_address.sin_family = AF_INET;
-            reservation_address.sin_addr.s_addr = INADDR_ANY;
-            reservation_address.sin_port = rocketnet_platform_htons( bind_port );
-            if ( bind( ipv4_port_reservation, (sockaddr*) &reservation_address, sizeof(reservation_address) ) < 0 )
-            {
-                rocketnet_error( "failed to reserve ipv4 port for dual stack socket" );
-                close( ipv4_port_reservation );
-                rocketnet_platform_socket_destroy( socket );
-                return NULL;
-            }
-            if ( bind_port == 0 )
-            {
-                socklen_t reservation_length = sizeof(reservation_address);
-                if ( getsockname( ipv4_port_reservation, (sockaddr*) &reservation_address, &reservation_length ) < 0 )
-                {
-                    rocketnet_error( "failed to get reserved ipv4 port for dual stack socket" );
-                    close( ipv4_port_reservation );
-                    rocketnet_platform_socket_destroy( socket );
-                    return NULL;
-                }
-                bind_port = rocketnet_platform_ntohs( reservation_address.sin_port );
-            }
-        }
-    }
-
     // bind to port
 
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    bool wildcard = address->type == ROCKETNET_ADDRESS_IPV6;
+    if ( wildcard )
+    {
+        for ( int i = 0; i < 8; i++ )
+            wildcard &= address->data.ipv6[i] == 0;
+    }
+
+    if ( wildcard )
+    {
+        // the IPv6 wildcard is dual stack and must hold its port in both
+        // namespaces, which Darwin does not check against each other: the
+        // port is reserved in IPv4 and the IPv6 bind takes it while the
+        // reservation is held, and an IPv6 bind refused with that port in
+        // use picks again (rocketnet_platform_dual_stack_bind)
+
+        rocketnet_platform_darwin_dual_stack_t dual_stack;
+        dual_stack.handle = socket->handle;
+        dual_stack.error = 0;
+
+        rocketnet_platform_dual_stack_bind_ops_t ops;
+        ops.context = &dual_stack;
+        ops.reserve_ipv4 = rocketnet_platform_darwin_reserve_ipv4;
+        ops.bind_ipv6 = rocketnet_platform_darwin_bind_ipv6;
+        ops.release_ipv4 = rocketnet_platform_darwin_release_ipv4;
+
+        uint16_t bound_port = 0;
+        int attempts = 0;
+        const int result = rocketnet_platform_dual_stack_bind( &ops, address->port, &bound_port, &attempts );
+        if ( result != ROCKETNET_PLATFORM_DUAL_STACK_BIND_OK )
+        {
+            if ( result == ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE && address->port == 0 )
+                rocketnet_error( "failed to bind socket (ipv6): no port free in both ipv4 and ipv6 after %d attempts", attempts );
+            else if ( result == ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE )
+                rocketnet_error( "failed to bind socket (ipv6): port %d in use", address->port );
+            else
+                rocketnet_error( "failed to bind socket (ipv6): %s after %d attempts", strerror( dual_stack.error ), attempts );
+            rocketnet_platform_socket_destroy( socket );
+            return NULL;
+        }
+        address->port = bound_port;
+    }
+    else if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         sockaddr_in6 socket_address;
         memset( &socket_address, 0, sizeof( sockaddr_in6 ) );
@@ -2761,20 +2853,13 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         {
             ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( address->data.ipv6[i] );
         }
-        socket_address.sin6_port = rocketnet_platform_htons( bind_port );
+        socket_address.sin6_port = rocketnet_platform_htons( address->port );
 
         if ( bind( socket->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) < 0 )
         {
-            rocketnet_error( "failed to bind socket (ipv6)" );
-            if ( ipv4_port_reservation >= 0 )
-                close( ipv4_port_reservation );
+            rocketnet_error( "failed to bind socket (ipv6): %s", strerror( errno ) );
             rocketnet_platform_socket_destroy( socket );
             return NULL;
-        }
-        if ( ipv4_port_reservation >= 0 )
-        {
-            close( ipv4_port_reservation );
-            address->port = bind_port;
         }
     }
     else
