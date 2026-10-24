@@ -454,30 +454,20 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         {
             char name[128];
             if ( rocketnet_config_env_var_name_for( fuzz_tables[t].endpoint, fuzz_tables[t].fields[i].name, name, (int) sizeof( name ) ) )
-            {
                 fuzz_unsetenv( name );
-                // Every derived name goes through one set and one unset here.
-                // The C library's environment array grows only when a name it
-                // has never held is added, and an unset never shrinks it, so
-                // warming each name the tables derive makes that array's size
-                // final before the first input runs. The per-input heap check
-                // then measures what an overlay itself leaves, not the
-                // library's one-time bookkeeping for a new name.
-                fuzz_setenv( name, "1" );
-                fuzz_unsetenv( name );
-            }
             if ( rocketnet_config_env_var_name( fuzz_tables[t].fields[i].name, name, (int) sizeof( name ) ) )
-            {
                 fuzz_unsetenv( name );
-                fuzz_setenv( name, "1" );
-                fuzz_unsetenv( name );
-            }
         }
         union fuzz_config_storage_t config;
         fuzz_defaults( t, &config );
         rocketnet_fuzz_require( rocketnet_config_validate( fuzz_tables[t].endpoint, &config, fuzz_tables[t].fields, fuzz_tables[t].num_fields ),
                                 "the defaults validate" );
     }
+
+    // the first variable set moves environ onto the heap, once per process;
+    // do it here so the per-input heap check sees only what an input leaves
+    fuzz_setenv( "ROCKETNET_FUZZ_ENVIRON_WARM", "1" );
+    fuzz_unsetenv( "ROCKETNET_FUZZ_ENVIRON_WARM" );
 
     char seed_dir[1024];
     char seed_from[1024];

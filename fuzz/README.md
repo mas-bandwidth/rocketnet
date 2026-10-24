@@ -126,19 +126,17 @@ table). The files have three origins:
 `corpus_config/regress_config_f80d0030` is the four bytes `f8 0d 00 30`:
 table 2 (the message table, as "client"), field 13
 (`message_resend_delay_max_ms`), mode 0 (the per-endpoint name), value "0".
-It pins the environment overlay's contract for an out-of-range integer: the
-overlay applies the value, the table's range refuses it (10..60000, and zero
-is not "use the default" for this field), and the value is never clamped into
-range. The unit case `test_message_config_resend_delay_max_zero_refused` in
-`tests/test_unit_message_config.cpp` pins the same refusal on the library
-side, with the struct field set directly.
-
-The harness's environment handling is the other half of that contract: at
-`LLVMFuzzerInitialize` every name the tables derive goes through one set and
-one unset, so the C library's environment array has its final size before the
-first input runs. An overlay can then add no name the array has not already
-held, and the per-input heap check ("an overlay leaves the heap as it found
-it") measures what the overlay itself leaves.
+It is the input that raised the ASan heap oracle "an overlay leaves the heap
+as it found it" at de53cc6a, when `fuzz_setenv` called glibc `setenv`, which
+keeps every NAME=value string it makes for the life of the process. 9e9bac41
+moved `fuzz_setenv` to `putenv` over one harness buffer, and the signal has
+been gone since: on an ASan replay build the input aborts with that oracle
+line at de53cc6a and passes at 9e9bac41 and at main 830c5437; a plain replay
+build never trips it, because the heap check exists only under ASan.
+The library was never at fault. The seed is kept as a regression input for
+that oracle, and the unit case `test_message_config_resend_delay_max_zero_refused`
+in `tests/test_unit_message_config.cpp` pins the library side of the same
+input: the value is refused by the table's range and never clamped.
 
 ## Seed generators
 
