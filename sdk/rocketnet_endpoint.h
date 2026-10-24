@@ -144,6 +144,13 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 // and returns its serial (serial 0: the next), abort returns the room.
 // transport_max_payload_bytes is the transport's payload cap now.
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+
+// The room query: true when rn_endpoint_start with these arguments, now,
+// would be given its room in the region; false when it would be refused or
+// would find no room (and so end the connection, R5). It shares the start's
+// route and the region's allocation decision (rn_region_send_fit), so the two
+// never disagree. Pure: changes nothing, counts nothing, allocates nothing.
+bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 

@@ -703,6 +703,37 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 //                          send
 // ---------------------------------------------------------------
 
+// the channel is the ordering channel: the types that are neither
+// ordered nor sequenced ignore it (they have no ordering state) and travel with none (codes 0 and 2), so any
+// value is accepted for them, never refused, and taken as 0
+static int rn_message_send_channel( int channel, int reliability )
+{
+    if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_RELIABLE ||
+         reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT || reliability == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+        return 0;
+    return channel;
+}
+
+// standard/MESSAGES.md m1.5 (tla/ClientSession.tla DropSend,
+// tla/ServerSession.tla ServerDropSend): an application message is sent
+// only on a CONNECTED connection. A link with no connection query (a bare
+// object with no transport) has no transport state to wait on.
+static bool rn_message_send_connected( const struct rn_message_object_t * object, const rn_message_connection_t * connection )
+{
+    return connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED &&
+           ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );
+}
+
+// the transport's payload cap, which the endpoint's large unreliable
+// check reads (a seam: a transport value passed in as an argument)
+static int rn_message_send_transport_max( const struct rn_message_object_t * object, int reliability )
+{
+    const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+                            reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+    return unreliable && object->link.max_payload_bytes ?
+        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
     // RNSlots Request, RNChannel Enqueue's first half: room in the region for a
@@ -711,24 +742,14 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( index < 0 || index >= object->num_connections )
         return NULL;
 
-    // the channel is the ordering channel: the types that are neither
-    // ordered nor sequenced ignore it (they have no ordering state) and travel with none (codes 0 and 2), so any
-    // value is accepted for them, never refused, and taken as 0
-    if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_RELIABLE ||
-         reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT || reliability == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
-        channel = 0;
+    channel = rn_message_send_channel( channel, reliability );
 
     rn_message_connection_t * connection = &object->connections[index];
 
-    // standard/MESSAGES.md m1.5 (tla/ClientSession.tla DropSend,
-    // tla/ServerSession.tla ServerDropSend): an application message is sent
-    // only on a CONNECTED connection. A client whose transport is not
-    // CONNECTED, or a slot with no connection, drops the start: NULL, counted
-    // once, nothing queued for later. A link with no connection query (a bare
-    // object with no transport) has no transport state to wait on.
-    const bool connected = connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED &&
-                           ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );
-    if ( !connected )
+    // A client whose transport is not CONNECTED, or a slot with no
+    // connection, drops the start: NULL, counted once, nothing queued for
+    // later.
+    if ( !rn_message_send_connected( object, connection ) )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
         return NULL;
@@ -742,12 +763,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         return NULL;
     }
 
-    // the transport's payload cap, which the endpoint's large unreliable
-    // check reads (a seam: a transport value passed in as an argument)
     const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
-    const int transport_max = unreliable && object->link.max_payload_bytes ?
-        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    const int transport_max = rn_message_send_transport_max( object, reliability );
 
     if ( unreliable && object->link.start_packet )
     {
@@ -856,6 +874,25 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
     object->pending_connection = index;
     return pointer;
+}
+
+bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
+{
+    // The room query (rocketnet_client_can_send_message,
+    // rocketnet_server_can_send_message): rn_message_object_start's checks
+    // ahead of the endpoint, then the endpoint's own decision
+    // (rn_endpoint_send_room), which shares the start's route and the
+    // region's allocation decision. Pure: no count, no state, no allocation.
+    // The in-place unreliable path (a transport frame taken at start) is not
+    // asked: it takes no region room, and when it finds no frame the start
+    // falls back to the region, which this answers for.
+    if ( !object || index < 0 || index >= object->num_connections )
+        return false;
+    const rn_message_connection_t * connection = &object->connections[index];
+    if ( !rn_message_send_connected( object, connection ) || object->pending_connection >= 0 )
+        return false;
+    return rn_endpoint_send_room( connection, rn_message_send_channel( channel, reliability ), reliability, bytes,
+                                  rn_message_send_transport_max( object, reliability ) );
 }
 
 // The functional tier's pacing reads the send room through these: 1 when a

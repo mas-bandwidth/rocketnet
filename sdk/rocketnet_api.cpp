@@ -1037,6 +1037,18 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
     rocketnet_message_client_abort( client->connection );
 }
 
+// the room query: rn_message_object_send_room shares start message's checks,
+// its route and the region's allocation decision, so the answer is the
+// start's. Pure; with no connection object there is nothing to send on
+bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return false;
+    if ( !client->connection )
+        return false;
+    return rn_message_object_send_room( &client->connection->object, 0, channel, (int) reliability, max_bytes );
+}
+
 
 const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client )
 {
@@ -1921,6 +1933,23 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
     if ( slot < 0 )
         return 0;
     return rocketnet_message_server_finish( rn_server( server ), slot, bytes_written );
+}
+
+// the room query for one slot: start message's destination rules (an index at
+// or past max_clients is misuse; a stopped server or an empty slot answers
+// false), then rn_message_object_send_room. Pure
+bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return false;
+    }
+    if ( !server->running )
+        return false;
+    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, (int) reliability, max_bytes );
 }
 
 void rocketnet_server_abort_message( struct rocketnet_server_t * server )

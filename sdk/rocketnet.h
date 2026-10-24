@@ -1360,7 +1360,8 @@ struct rocketnet_server_config_t
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
 /// Running out of message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED.
+/// MESSAGE_MEMORY_EXHAUSTED. Ask first with rocketnet_client_can_send_message
+/// or rocketnet_server_can_send_message.
 
 struct rocketnet_message_batch_t;
 
@@ -1604,6 +1605,22 @@ ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_clie
 
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
+/// Returns true if rocketnet_client_start_message with the same channel,
+/// reliability and max_bytes would be given room now. Returns false if it
+/// would not: the message memory is full, or the start would be dropped or
+/// refused (not CONNECTED, a message already open, a bad argument).
+///
+/// Ask before a start you cannot afford to lose. A start that finds no room
+/// still ends the connection with MESSAGE_MEMORY_EXHAUSTED. Only start and
+/// update take room, so a true answer holds until the next of either. Room
+/// returns as the server acknowledges messages.
+///
+/// Changes no state, counts nothing and allocates nothing. Constant time.
+/// A false answer may be pessimistic for a small unreliable message: start
+/// can write it straight into a transport frame without message memory.
+
+ROCKETNET_EXPORT bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
+
 /// Returns the next batch of messages from the server.
 /// Each message has client_index 0. Keep calling until NULL is returned.
 /// The application must take every message before the next update, or the
@@ -1836,6 +1853,15 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// Does nothing if no message is open.
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
+
+/// Returns true if rocketnet_server_start_message to client_index with the
+/// same channel, reliability and max_bytes would be given room now.
+/// Use it like rocketnet_client_can_send_message. Each client has its own
+/// message memory. Returns false while stopped and for an index without a
+/// connected client. An index outside 0 .. max_clients - 1 is misuse and
+/// returns false.
+
+ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Returns the next batch of messages from all clients.
 /// Each message names its sender in client_index.
