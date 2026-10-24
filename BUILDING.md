@@ -286,9 +286,19 @@ target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
 `/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
 Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
 `cmake --build build --config Release --parallel 4`), the build copies the MSVC
-AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
-into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
-`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly. With clang-cl
+AddressSanitizer runtime (beside `cl.exe`) into `bin\<config>\` so
+`bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+The Debug configuration is built with the same command and a different
+configuration name (`cmake --build build --config Debug --parallel 4`, then
+`bin\Debug\test.exe` and `bin\Debug\functional.exe`). Under Visual Studio 18
+(cl 19.51.36260) both configurations load the same
+`clang_rt.asan_dynamic-x86_64.dll`: a Debug target is compiled against the debug
+CRT (`/MDd`; `dumpbin /directives build\Debug\rocketnet.lib` names `MSVCRTD`
+and `VCASAND`) and `dumpbin /dependents bin\Debug\test.exe` names
+`ucrtbased.dll` beside the one AddressSanitizer runtime. Every target must be
+compiled against the same CRT, or the executables refuse to start; those two
+commands are where to look when one does. With clang-cl
 (`cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=MinSizeRel -DROCKETNET_SANITIZE_ADDRESS=ON`)
 the build links clang's own dynamic runtime and copies its DLL beside the executables in `bin\`.
 
