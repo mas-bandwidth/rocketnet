@@ -336,7 +336,7 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
 // Seal the connection's completed records once. No message payload is copied.
 // RNOutgoingBuild Seal, from SealBuild (a start that does not fit or falls
 // back), BeginFlush (send_packets) and BeginUpdate (update); the over-budget
-// drop is its drop branch, and the packet counts either way.
+// drop is its drop branch, and the allowance is charged either way.
 static void rn_message_flush_unreliable( rn_message_object_t * object, int index, bool discard )
 {
     rn_message_connection_t * connection = &object->connections[index];
