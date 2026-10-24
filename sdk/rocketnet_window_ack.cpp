@@ -4,6 +4,8 @@
 */
 
 #include "rocketnet_window_ack.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 
 #include <math.h>
@@ -469,7 +471,8 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t W = region->window;
     const uint32_t P = region->packets;
     const uint32_t max_refs = region->sent_ref_entries;
-    rocketnet_assert( count + receipt_count <= 16 ); // one packet holds at most sixteen records
+    static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX == ROCKETNET_PACKET_BUILDER_MAX_RECORDS, "the receipt bound is the sent map's record limit" );
+    rocketnet_assert( count + receipt_count <= RN_MESSAGE_RECEIPT_SERIALS_MAX ); // one record table holds at most this many records
     const uint32_t total = count + receipt_count;
 
     // 1. Update each referenced number's last_send (and first_send on its
