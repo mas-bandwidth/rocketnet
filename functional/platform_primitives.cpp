@@ -8,6 +8,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_ack.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_test_vectors.h"
@@ -182,4 +183,74 @@ void rocketnet_test_connect_token_mint_concurrent()
     rocketnet_check( results[1].ok );
     rocketnet_check( results[0].mints == iterations );
     rocketnet_check( results[1].mints == iterations );
+}
+
+// two independent ack endpoints -- one per connection, as a client and a
+// server in one process each own theirs -- apply ack blocks at once on two
+// threads. the ack walk must touch no state outside its own endpoint: under
+// a thread sanitizer any shared write here is a reported race.
+
+struct rocketnet_ack_thread_result_t
+{
+    bool ok;
+    int acked;
+};
+
+static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack_thread_result_t * result )
+{
+    result->ok = false;
+    result->acked = 0;
+
+    struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
+        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    if ( !endpoint )
+        return;
+    rocketnet_ack_endpoint_reset( endpoint );
+
+    uint64_t acked[64];
+    uint64_t unknown = 0;
+    uint64_t batch_full = 0;
+    double time = 1000.0;
+    uint64_t sequence = 100;
+
+    bool ok = true;
+    for ( int round = 0; round < rounds; round++ )
+    {
+        // send 16 packets, then apply one block that acknowledges all of them
+
+        const uint64_t first = sequence;
+        for ( int i = 0; i < 16; i++, sequence++ )
+            rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, time );
+
+        struct rocketnet_ack_block_t block;
+        memset( &block, 0, sizeof(block) );
+        block.largest = sequence - 1;
+        block.first_range_length = (uint32_t) ( sequence - first );
+
+        time += 0.01;
+        int acked_count = 0;
+        const int newly_acked = rocketnet_ack_endpoint_process_block( endpoint, &block, time, acked, 64, &acked_count, &unknown, &batch_full );
+        if ( newly_acked != 16 || acked_count != 16 )
+            ok = false;
+        result->acked += newly_acked;
+    }
+
+    rocketnet_free( NULL, endpoint );
+    result->ok = ok && unknown == 0 && batch_full == 0;
+}
+
+void rocketnet_test_ack_endpoints_independent_across_threads()
+{
+    const int rounds = 2000;
+    struct rocketnet_ack_thread_result_t results[2];
+
+    std::thread thread_a( rocketnet_test_ack_endpoint_thread, rounds, &results[0] );
+    std::thread thread_b( rocketnet_test_ack_endpoint_thread, rounds, &results[1] );
+    thread_a.join();
+    thread_b.join();
+
+    rocketnet_check( results[0].ok );
+    rocketnet_check( results[1].ok );
+    rocketnet_check( results[0].acked == rounds * 16 );
+    rocketnet_check( results[1].acked == rounds * 16 );
 }

@@ -35,7 +35,9 @@ on:
 # of the branch -- so it yields its runners to the run that replaced it
 concurrency:
   group: static-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read

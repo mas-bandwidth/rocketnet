@@ -676,7 +676,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp );
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+    const uint64_t * resolved_memory_budget = NULL );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
@@ -691,6 +692,13 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current( void *
 rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0 );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
+                                                                           uint64_t memory_budget_bytes, int * status )
+{
+    rocketnet_assert( config );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof(struct rocketnet_client_transport_config_t), 0, &memory_budget_bytes );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
@@ -737,7 +745,8 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp )
+    const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+    const uint64_t * resolved_memory_budget )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -766,7 +775,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the development posture (the default shape); the caller's struct is
     // the middle layer; the environment overlays both through the config
     // table, every override logged loudly with the value it displaced.
-    // validation refuses loudly and never clamps.
+    // validation refuses loudly and never clamps. A config the public create
+    // already resolved (resolved_memory_budget set,
+    // rocketnet_client_transport_create_resolved) takes no second environment
+    // pass: connect uses the config create validated and sized, whatever the
+    // environment says now.
 
     struct rocketnet_client_transport_config_t effective_config;
     rocketnet_client_transport_default_config_current( &effective_config );
@@ -776,7 +789,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );
 
-    if ( !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -849,8 +862,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    uint64_t memory_budget = 0;
-    if ( !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
+    uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
