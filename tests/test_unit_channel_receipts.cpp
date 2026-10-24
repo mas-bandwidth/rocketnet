@@ -33,7 +33,6 @@ static void receipt_fixture_init( receipt_fixture_t * f, int ring = 16 )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.max_message_receipts = ring;
-    config.packets_in_flight = 16;
     f->arena = rn_arena_create( NULL, &config, 1, &f->counters );
     rocketnet_unit_check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
@@ -129,13 +128,83 @@ static void test_unreliable_receipt_loss_at_deadline_sweep()
     receipt_fixture_destroy( &f );
 }
 
+// tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: the receipt deadline is
+// the fixed maximum resend delay, not the adaptive resend delay. An ACK that
+// arrives after the resend delay but inside the deadline reports ACKED.
+static void test_receipt_late_ack_inside_deadline_is_acked()
+{
+    receipt_fixture_t f;
+    receipt_fixture_init( &f );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    // One quick RTT sample brings the adaptive resend delay well below the maximum.
+    const uint32_t first_serial = 31;
+    rn_window_ack_commit_receipt_packet( &f.ack, 301, &first_serial, 1, 1000.0 );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 301, 1000.01 ) == 1 );
+    rocketnet_unit_check( f.ack.resend_delay < f.ack.resend_delay_max );
+    const double send_time = 1000.1;
+    const uint32_t serial = 32;
+    rn_window_ack_commit_receipt_packet( &f.ack, 302, &serial, 1, send_time );
+    // An update after the resend delay and before the receipt deadline.
+    const double late = send_time + ( f.ack.resend_delay + f.ack.resend_delay_max ) * 0.5;
+    rocketnet_unit_check( late > send_time + f.ack.resend_delay && late < send_time + f.ack.resend_delay_max );
+    rn_window_ack_receipt_sweep( &f.ack, late );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 302, late ) == 1 );
+    rn_window_ack_receipt_sweep( &f.ack, send_time + f.ack.resend_delay_max + 1.0 );
+    rocketnet_message_receipt_t out[16];
+    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 2 );
+    rocketnet_unit_check( out[0].serial == first_serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( out[1].serial == serial && out[1].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 2 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
+    receipt_fixture_destroy( &f );
+}
+
+// tla/RNReceipts.tla LossOnlyAfterDeadline: no LOSS before send time plus the
+// receipt deadline, LOSS on the first update at or after it, one outcome.
+static void test_receipt_loss_only_after_deadline()
+{
+    receipt_fixture_t f;
+    receipt_fixture_init( &f );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    const uint32_t first_serial = 41;
+    rn_window_ack_commit_receipt_packet( &f.ack, 401, &first_serial, 1, 1000.0 );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 401, 1000.01 ) == 1 );
+    const double send_time = 1000.1;
+    const uint32_t serial = 42;
+    rn_window_ack_commit_receipt_packet( &f.ack, 402, &serial, 1, send_time );
+    const double deadline = send_time + f.ack.resend_delay_max;
+    rocketnet_message_receipt_t out[16];
+    const double before[4] = { send_time, send_time + f.ack.resend_delay, send_time + f.ack.resend_delay * 2.0, deadline - 0.001 };
+    for ( int i = 0; i < 4; i++ )
+    {
+        rocketnet_unit_check( before[i] < deadline );
+        rn_window_ack_receipt_sweep( &f.ack, before[i] );
+        rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
+    }
+    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
+    rocketnet_unit_check( out[0].serial == first_serial && out[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rn_window_ack_receipt_sweep( &f.ack, deadline );               // the first update at the deadline
+    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
+    rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rn_window_ack_receipt_sweep( &f.ack, deadline + 1.0 );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 402, deadline + 1.0 ) == 1 ); // a late ACK stutters
+    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 1 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 1 );
+    receipt_fixture_destroy( &f );
+}
+
 static void test_unreliable_receipt_loss_on_sent_map_eviction()
 {
     receipt_fixture_t f;
     receipt_fixture_init( &f );
     rn_window_ack_receipt_begin_update( &f.ack );
-    // The seventeenth live packet forces the first out of the P=16 sent map.
-    for ( uint32_t serial = 1; serial <= 17; serial++ )
+    // The (P+1)th live packet forces the first out of the P-entry sent map
+    // (the default P, the window W: the map holds no fewer than W entries).
+    const uint32_t P = f.region->packets;
+    for ( uint32_t serial = 1; serial <= P + 1; serial++ )
         rn_window_ack_commit_receipt_packet( &f.ack, 600 + serial, &serial, 1, 1.0 );
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
@@ -434,6 +503,8 @@ static void test_receipts_no_allocation_after_create()
 
 REGISTER_UNIT_TEST( test_unreliable_receipt_acked_or_loss_exactly_once );
 REGISTER_UNIT_TEST( test_unreliable_receipt_loss_at_deadline_sweep );
+REGISTER_UNIT_TEST( test_receipt_late_ack_inside_deadline_is_acked );
+REGISTER_UNIT_TEST( test_receipt_loss_only_after_deadline );
 REGISTER_UNIT_TEST( test_unreliable_receipt_loss_on_sent_map_eviction );
 REGISTER_UNIT_TEST( test_receipt_ring_full_drops_oldest_and_counts );
 REGISTER_UNIT_TEST( test_receipts_listed_per_update_by_the_c_api );

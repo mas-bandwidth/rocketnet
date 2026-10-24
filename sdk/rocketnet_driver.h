@@ -111,7 +111,7 @@ struct rocketnet_server_transport_io_operations_t
     // transport accepted the view's packet view_index for a connection (it
     // opened under the connection's keys); a transport that addresses frames
     // itself learns the packet's link-layer source for its address.
-    void (*peer_accepted)( void * transport, int view_index );
+    void (*client_accepted)( void * transport, int view_index );
     // optional; any thread. The datagrams the transport's sends dropped on a
     // failed send call, cumulative for the transport's life; the transport
     // surfaces it as SEND_FAILED when its counters are read.
@@ -202,7 +202,11 @@ const char * rocketnet_transport_name( int transport );
 const char * rocketnet_transport_names();
 const char * rocketnet_transport_discovering_names();
 bool rocketnet_transport_discovers_bound_port( int transport );
+// pin-only on the server side (a server's ladder, and the one-argument form)
 bool rocketnet_transport_pin_only( int transport );
+// pin-only for that endpoint: its own column of the registry row, so a
+// transport can rank in one endpoint's auto order and be pin-only in the other
+bool rocketnet_transport_pin_only( int transport, bool server );
 const int * rocketnet_server_transport_io_availability( int * num_available );
 const int * rocketnet_client_transport_io_availability( int * num_available );
 

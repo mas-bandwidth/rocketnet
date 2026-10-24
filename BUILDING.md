@@ -286,9 +286,19 @@ target with AddressSanitizer: `/fsanitize=address` and `/Zi` with
 `/INCREMENTAL:NO` at link under MSVC, and `-fsanitize=address` elsewhere. On
 Windows (`cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON`, then
 `cmake --build build --config Release --parallel 4`), the build copies the MSVC
-AddressSanitizer runtime (`clang_rt.asan_dynamic-x86_64.dll`, beside `cl.exe`)
-into `bin\<config>\` so `bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
-`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly. With clang-cl
+AddressSanitizer runtime (beside `cl.exe`) into `bin\<config>\` so
+`bin\Release\test.exe`, `bin\Release\test_lifecycle.exe`,
+`bin\Release\test_iocp.exe` and `bin\Release\functional.exe` run directly.
+The Debug configuration is built with the same command and a different
+configuration name (`cmake --build build --config Debug --parallel 4`, then
+`bin\Debug\test.exe` and `bin\Debug\functional.exe`). Under Visual Studio 18
+(cl 19.51.36260) both configurations load the same
+`clang_rt.asan_dynamic-x86_64.dll`: a Debug target is compiled against the debug
+CRT (`/MDd`; `dumpbin /directives build\Debug\rocketnet.lib` names `MSVCRTD`
+and `VCASAND`) and `dumpbin /dependents bin\Debug\test.exe` names
+`ucrtbased.dll` beside the one AddressSanitizer runtime. Every target must be
+compiled against the same CRT, or the executables refuse to start; those two
+commands are where to look when one does. With clang-cl
 (`cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=MinSizeRel -DROCKETNET_SANITIZE_ADDRESS=ON`)
 the build links clang's own dynamic runtime and copies its DLL beside the executables in `bin\`.
 
@@ -512,7 +522,24 @@ or `-DROCKETNET_MAX_CLIENTS=10000` on every compile when building the sources
 into your own build. CMake hands the value to the libraries, their consumers
 (a `PUBLIC` definition, so the header a game compiles matches its library),
 the tests, the tools and the embedded XDP program; build `server_xdp.o` by hand
-with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together.
+with `make ROCKETNET_MAX_CLIENTS=10000`. Rebuild everything together. A build
+that embeds the XDP program with its own copy of `cmake/EmbedXdp.cmake` passes
+nothing at the defaults and `-DMAX_CLIENTS=` (and `-DHISTORY_PACKETS=`) at
+another value; the generated `rocketnet_server_xdp.h` refuses to compile into a
+library whose `ROCKETNET_MAX_CLIENTS` or `ROCKETNET_HISTORY_PACKETS` differs
+from the program's.
+
+A 10000-client build is qualified by
+[docs/QUALIFICATION-max-clients-10000.md](docs/QUALIFICATION-max-clients-10000.md)
+and re-proven nightly on the Linux fleet runner by
+[`.github/workflows/nightly-max-clients.yml`](.github/workflows/nightly-max-clients.yml):
+zero-warning builds with gcc and clang at DEV ON and OFF, the unit suite, and
+a bounded loopback load of all 10000 clients for 30 seconds
+(`LOAD_PROFILE=light ./bin/load 10000 30`). The load uses the light
+per-client config, about 25 GB planned for the server and its 10000
+in-process clients, because the default per-client config plans about
+183 GB for the server alone (below); the runner checks host room against the
+plan before the load runs.
 
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
@@ -544,7 +571,7 @@ replay window (16 packets per client) is unchanged.
 
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the block before create.
-The default per-client config needs about 13.3 GB at 1000 clients and 133 GB at
+The default per-client config needs about 18.3 GB at 1000 clients and 183 GB at
 10000, so a 10000-client server sets lighter per-client limits (send and
 receive buffers, queues, windows, receipts and reassembly slots) for its game.
 A build for more clients also carries larger fixed per-server tables (the
@@ -598,8 +625,7 @@ this allocator plan before opening them.
 
 The internal transport plan, allocated at start, includes the transport, protocol tables and ACK history, reassembly and
 its delivered mirror, send arena, native transport queues and SDK worker allocations,
-including two background stats job banks, per-slot delta buffers and worker-owned
-history, and the socket-free wake, plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
 socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
@@ -628,23 +654,21 @@ twice the receive frames it keeps on the ring, and for
 submission, completion and provided buffer rings, thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
-resident pages. Every server adds one background stats worker to its transport's
-I/O workers. Its wake uses a native event or pipe, so it adds no UDP socket or
-socket-buffer reservation. The current default Linux worker topology is:
+resident pages. Statistics run on the ack path and add no thread. The current
+default Linux worker topology is:
 
-| transport | sockets | I/O workers | stats workers | total stacks |
-| --- | --- | --- | --- | --- |
-| portable server | 1 | 2 | 1 | 3 |
-| gso | 4 | 5 | 1 | 6 |
-| io_uring | 4 | 0 | 1 | 1 |
-| xdp | 7 | 7 | 1 | 8 |
+| transport | sockets | I/O workers | total stacks |
+| --- | --- | --- | --- |
+| portable server | 1 | 2 | 2 |
+| gso | 4 | 5 | 5 |
+| io_uring | 4 | 0 | 0 |
+| xdp | 7 | 7 | 7 |
 
-The default Windows server topology is one socket and two I/O workers plus the
-stats worker for IOCP (one completion worker and one transmit worker), or one
-socket and one I/O worker plus the stats worker for RIO. A portable
-server has the same two I/O workers as the Linux row. On macOS, msgx and the
-portable server also have one receive worker, one transmit worker
-and the stats worker. These server counts do not include client objects; each
+The default Windows server topology is one socket and two I/O workers for IOCP
+(one completion worker and one transmit worker), or one socket and one I/O
+worker for RIO. A portable server has the same two I/O workers as the Linux
+row. On macOS, msgx and the portable server also have one receive worker and
+one transmit worker. These server counts do not include client objects; each
 normal client adds its own one background network thread.
 
 Multiply the total stacks by the host's default stack reserve. Use the probe
@@ -700,7 +724,6 @@ the client and server forms are separate settings. The unit inventory checks thi
 list in both directions against the SDK reads and the public header.
 
 * Environment: ROCKETNET_CLIENT_PACKET_FILTER
-* Environment: ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES
 * Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_CLIENT_STEP_DRIVEN
 * Environment: ROCKETNET_CLIENT_TRANSPORT
@@ -730,7 +753,6 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
 * Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
-* Environment: ROCKETNET_SERVER_MAX_PAYLOAD_BYTES
 * Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS

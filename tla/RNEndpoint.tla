@@ -45,7 +45,8 @@
 (* the instances vary.  A mismatch is the error CONFIG_MISMATCH.  Data     *)
 (* records that arrive before CONFIG are processed against the receiver's  *)
 (* own bounds: a channel outside them is a VIOLATION, never an overrun.  A *)
-(* peer whose CONFIG or acks never come is RELIABLE_TIMEOUT (Tick).  An    *)
+(* remote endpoint whose CONFIG or acks never come is RELIABLE_TIMEOUT     *)
+(* (Tick).  An                                                             *)
 (* endpoint in error does nothing more: the object disconnects it.         *)
 (*                                                                         *)
 (* The reversed witnesses are constants, each the rule it names:           *)
@@ -53,7 +54,7 @@
 (*                           packet hangs verification                     *)
 (*                           (ConfigVerifiedDespiteFirstLoss fails);       *)
 (*   ConfigCompared = FALSE  CONFIG is taken without the comparison: a     *)
-(*                           mismatched peer is accepted                   *)
+(*                           mismatched remote endpoint is accepted        *)
 (*                           (MismatchErrorsBothEnds fails);               *)
 (*   OrderChecked = FALSE    an ordered message is released with no check  *)
 (*                           of its channel predecessors                   *)
@@ -70,7 +71,7 @@ CONSTANTS
     ConfigReliable, \* BOOLEAN: CONFIG takes the first reliable number (10.3)
     ConfigCompared, \* BOOLEAN: the receiver compares CONFIG with its own (13.4)
     OrderChecked,   \* BOOLEAN: an ordered message waits for its channel predecessors (7.2)
-    TimeoutAnyTime, \* BOOLEAN: Tick may time out at any time, not only on a silent peer
+    TimeoutAnyTime, \* BOOLEAN: Tick may time out at any time, not only on a silent remote endpoint
     Silence,        \* BOOLEAN: ack history overflow may drop pending acks (P5)
     Failures,       \* BOOLEAN: a written packet may fail to send (PacketFailed, P5)
     WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob;
@@ -81,11 +82,11 @@ CONSTANTS
     Capacity, MaxDelay, Duplication, Reordering, BurstStart, BurstLen
 
 E      == {"a", "b"}
-Peer(e) == IF e = "a" THEN "b" ELSE "a"
+Remote(e) == IF e = "a" THEN "b" ELSE "a"
 Msgs   == 1..N
 CONFIG == 0
 Recs   == 0..N          \* record ids: CONFIG and the messages
-NoCfg  == 0             \* peerCfg before a CONFIG is taken
+NoCfg  == 0             \* remoteCfg before a CONFIG is taken
 Errors == {"NONE", "CONFIG_MISMATCH", "VIOLATION", "RELIABLE_TIMEOUT"}
 
 ASSUME /\ N \in Nat \ {0}
@@ -99,7 +100,7 @@ ASSUME /\ N \in Nat \ {0}
        /\ WriteAll \in BOOLEAN /\ RtoAboveRtt \in BOOLEAN
 
 \* a packet: reliable records, unreliable records, and the transport acks
-\* it carries back (the records of the peer's packets this end opened)
+\* it carries back (the records of the remote endpoint's packets this end opened)
 Pkts == [rel : SUBSET Recs, unrel : SUBSET Recs, acks : SUBSET Recs]
 
 VARIABLES
@@ -111,9 +112,9 @@ VARIABLES
     unrelQ,       \* unreliable records waiting for their one write
     firstWritten, \* the endpoint has written its first packet
     \* the transport under each endpoint
-    pendAck,      \* records of opened peer packets, to ack
+    pendAck,      \* records of opened remote packets, to ack
     \* the receiver, per endpoint
-    peerCfg,      \* the peer's configuration once its CONFIG is taken
+    remoteCfg,      \* the remote endpoint's configuration once its CONFIG is taken
     rcvd,         \* the reliable messages received
     held,         \* ordered messages waiting for a predecessor
     deliv,        \* the messages delivered, in delivery order
@@ -127,7 +128,7 @@ VARIABLES
 abVars == <<abWire, abSent, abPulse>>
 baVars == <<baWire, baSent, baPulse>>
 epVars == <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck,
-            peerCfg, rcvd, held, deliv, err, opened>>
+            remoteCfg, rcvd, held, deliv, err, opened>>
 vars   == <<epVars, abVars, baVars>>
 
 AB == INSTANCE Link WITH wire <- abWire, sent <- abSent, pulse <- abPulse,
@@ -167,12 +168,12 @@ Writable(e) == {relQ[e][i] : i \in {j \in DOMAIN relQ[e] :
 
 \* RtoAboveRtt: the abstract RTO, bounded below by the RTT.  A record is
 \* due again only once no copy of it is in flight out of e and no ack of
-\* it is pending at the peer or in flight back: the resend answers a real
+\* it is pending at the remote endpoint or in flight back: the resend answers a real
 \* loss.  RNResendTiming checks the timing that makes this so.
 WireOutOf(e)  == IF e = "a" THEN abWire ELSE baWire
 InFlight(e)   == UNION {WireOutOf(e)[i].pkt.rel : i \in DOMAIN WireOutOf(e)}
 AckInFlight(e) ==
-    pendAck[Peer(e)] \cup UNION {WireOutOf(Peer(e))[i].pkt.acks : i \in DOMAIN WireOutOf(Peer(e))}
+    pendAck[Remote(e)] \cup UNION {WireOutOf(Remote(e))[i].pkt.acks : i \in DOMAIN WireOutOf(Remote(e))}
 Due(e) == IF RtoAboveRtt THEN Writable(e) \ (InFlight(e) \cup AckInFlight(e))
                          ELSE Writable(e)
 
@@ -197,7 +198,7 @@ Reset ==
     /\ unrelQ = [e \in E |-> IF ConfigReliable THEN {} ELSE {CONFIG}]
     /\ firstWritten = [e \in E |-> FALSE]
     /\ pendAck = [e \in E |-> {}]
-    /\ peerCfg = [e \in E |-> NoCfg]
+    /\ remoteCfg = [e \in E |-> NoCfg]
     /\ rcvd = [e \in E |-> {}]
     /\ held = [e \in E |-> {}]
     /\ deliv = [e \in E |-> <<>>]
@@ -225,7 +226,7 @@ Send(e) ==
                         /\ UNCHANGED relQ
                    ELSE /\ relQ' = [relQ EXCEPT ![e] = Append(@, k)]
                         /\ UNCHANGED unrelQ
-    /\ UNCHANGED <<cfg, acked, firstWritten, pendAck, peerCfg, rcvd, held, deliv,
+    /\ UNCHANGED <<cfg, acked, firstWritten, pendAck, remoteCfg, rcvd, held, deliv,
                    err, opened, abVars, baVars>>
 
 (***************************************************************************)
@@ -248,7 +249,7 @@ WritePacket(e, S, Us) ==
     /\ unrelQ' = [unrelQ EXCEPT ![e] = @ \ Us]
     /\ firstWritten' = [firstWritten EXCEPT ![e] = TRUE]
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, peerCfg, rcvd, held, deliv, err, opened>>
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, remoteCfg, rcvd, held, deliv, err, opened>>
 
 \* PacketFailed (rn_endpoint_packet_failed): the packet was written and the
 \* transport never sent it (a burned id).  Its reliable records stay unacked
@@ -258,7 +259,7 @@ PacketFailed(e, S, Us) ==
     /\ WriteOk(e, S, Us)
     /\ unrelQ' = [unrelQ EXCEPT ![e] = @ \ Us]
     /\ firstWritten' = [firstWritten EXCEPT ![e] = TRUE]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, pendAck, peerCfg, rcvd, held, deliv,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, pendAck, remoteCfg, rcvd, held, deliv,
                    err, opened, abVars, baVars>>
 
 \* The transport sends its acks with no message records (a keepalive).
@@ -267,7 +268,7 @@ WriteAck(e) ==
     /\ pendAck[e] # {}
     /\ LinkSend(e, [rel |-> {}, unrel |-> {}, acks |-> pendAck[e]])
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, peerCfg, rcvd,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd,
                    held, deliv, err, opened>>
 
 \* Ack history overflow: pending acks are lost unsent (P5, silence).
@@ -275,23 +276,24 @@ AckSilence(e) ==
     /\ Silence
     /\ pendAck[e] # {}
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, peerCfg, rcvd,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd,
                    held, deliv, err, opened, abVars, baVars>>
 
 (***************************************************************************)
-(* OnAcked (rn_endpoint_on_acked): the records of e's own packets the peer *)
-(* opened are acked.                                                       *)
+(* OnAcked (rn_endpoint_on_acked): the records of e's own packets the      *)
+(* remote endpoint opened are acked.                                       *)
 (*                                                                         *)
-(* ConfigCompare: TRUE when the peer's CONFIG differs from the receiver's  *)
+(* ConfigCompare: TRUE when the remote CONFIG differs from the receiver's  *)
 (* own configuration (13.4: every field compared).  ConfigCompared = FALSE *)
 (* is the reversed witness that takes CONFIG without looking.              *)
 (***************************************************************************)
 OnAcked(e, as) == acked[e] \cup (as \cap Range(relQ[e]))
 
-ConfigCompare(e) == ConfigCompared /\ cfg[Peer(e)] # cfg[e]
+ConfigCompare(e) == ConfigCompared /\ cfg[Remote(e)] # cfg[e]
 
 (***************************************************************************)
-(* OnPayload (rn_endpoint_on_payload): e opens a packet from its peer.     *)
+(* OnPayload (rn_endpoint_on_payload): e opens a packet from the remote    *)
+(* endpoint.                                                               *)
 (* The transport acks its reliable records whatever follows (P2), and its  *)
 (* acks reach e (OnAcked).  CONFIG, first in the packet, is compared; a    *)
 (* mismatch is the error and parsing stops.  The data records are checked *)
@@ -307,7 +309,7 @@ OnPayload(e, p) ==
          THEN UNCHANGED epVars
          ELSE
          LET hasCfg  == CONFIG \in (p.rel \cup p.unrel)
-             cfgNew  == hasCfg /\ peerCfg[e] = NoCfg
+             cfgNew  == hasCfg /\ remoteCfg[e] = NoCfg
              data    == (p.rel \cup p.unrel) \ {CONFIG}
              bad     == {k \in data : MsgChan[k] >= cfg[e]}
              fresh   == (p.rel \ {CONFIG}) \ rcvd[e]
@@ -323,9 +325,9 @@ OnPayload(e, p) ==
          /\ acked' = [acked EXCEPT ![e] = OnAcked(e, p.acks)]
          /\ IF cfgNew /\ ConfigCompare(e)
               THEN /\ err' = [err EXCEPT ![e] = "CONFIG_MISMATCH"]
-                   /\ UNCHANGED <<peerCfg, rcvd, held, deliv>>
-              ELSE /\ peerCfg' = IF cfgNew THEN [peerCfg EXCEPT ![e] = cfg[Peer(e)]]
-                                           ELSE peerCfg
+                   /\ UNCHANGED <<remoteCfg, rcvd, held, deliv>>
+              ELSE /\ remoteCfg' = IF cfgNew THEN [remoteCfg EXCEPT ![e] = cfg[Remote(e)]]
+                                           ELSE remoteCfg
                    /\ IF bad # {}
                         THEN /\ err' = [err EXCEPT ![e] = "VIOLATION"]
                              /\ UNCHANGED <<rcvd, held, deliv>>
@@ -338,20 +340,21 @@ OnPayload(e, p) ==
 
 (***************************************************************************)
 (* Tick (rn_endpoint_tick): the reliable timeout.  An endpoint still       *)
-(* waiting for the peer's CONFIG, or with a reliable record unacked, past  *)
-(* reliable_timeout enters RELIABLE_TIMEOUT.  The RTO due marks are        *)
-(* abstract (any unacked record may be resent at any time), so Tick here   *)
-(* is the timeout alone.  With TimeoutAnyTime the timeout may fire at any  *)
-(* moment (safety holds whenever it fires); without it, only once the peer *)
-(* is in error and silent: that time passes enough for a live peer's       *)
-(* resends to land first is RNResendTiming's AttemptsBeforeTimeout.        *)
+(* waiting for the remote endpoint's CONFIG, or with a reliable record     *)
+(* unacked, past reliable_timeout enters RELIABLE_TIMEOUT.  The RTO due    *)
+(* marks are abstract (any unacked record may be resent at any time), so   *)
+(* Tick here is the timeout alone.  With TimeoutAnyTime the timeout may    *)
+(* fire at any moment (safety holds whenever it fires); without it, only   *)
+(* once the remote end is in error and silent: that time passes enough for *)
+(* a live remote end's resends to land first is RNResendTiming's           *)
+(* AttemptsBeforeTimeout.                                                  *)
 (***************************************************************************)
 Tick(e) ==
     /\ Live(e)
-    /\ peerCfg[e] = NoCfg \/ Unacked(e) # {}
-    /\ TimeoutAnyTime \/ ~Live(Peer(e))
+    /\ remoteCfg[e] = NoCfg \/ Unacked(e) # {}
+    /\ TimeoutAnyTime \/ ~Live(Remote(e))
     /\ err' = [err EXCEPT ![e] = "RELIABLE_TIMEOUT"]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck, peerCfg,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck, remoteCfg,
                    rcvd, held, deliv, opened, abVars, baVars>>
 
 (***************************************************************************)
@@ -418,7 +421,7 @@ TypeOK ==
     /\ unrelQ \in [E -> SUBSET Recs]
     /\ firstWritten \in [E -> BOOLEAN]
     /\ pendAck \in [E -> SUBSET Recs]
-    /\ peerCfg \in [E -> Nat]
+    /\ remoteCfg \in [E -> Nat]
     /\ rcvd \in [E -> SUBSET Msgs] /\ held \in [E -> SUBSET Msgs]
     /\ \A e \in E : Range(deliv[e]) \subseteq Msgs
     /\ err \in [E -> Errors]
@@ -431,25 +434,25 @@ ConfigFirstReliable == ConfigReliable => \A e \in E : relQ[e][1] = CONFIG
 \* the window: no reliable record past U + W - 1 is ever written (6.2)
 WindowBounded == \A e \in E : Cardinality(Writable(e)) <= W
 
-\* acked implies opened: a record e holds acked was in a packet the peer
+\* acked implies opened: a record e holds acked was in a packet the remote endpoint
 \* opened (P2 carried end to end)
-AckedImpliesOpened == \A e \in E : acked[e] \subseteq opened[Peer(e)]
+AckedImpliesOpened == \A e \in E : acked[e] \subseteq opened[Remote(e)]
 
-\* a reliable message is delivered at most once, and only if the peer's
+\* a reliable message is delivered at most once, and only if the remote endpoint's
 \* application sent it; with OnPayload's dedupe and the liveness below this
 \* is exactly once
 ReliableExactlyOnce ==
     \A e \in E : \A k \in Msgs :
         MsgRel[k] # "unreliable" =>
             /\ Count(deliv[e], k) <= 1
-            /\ Count(deliv[e], k) = 1 => k \in Accepted(Peer(e))
+            /\ Count(deliv[e], k) = 1 => k \in Accepted(Remote(e))
 
 \* an unreliable message is delivered at most once, and only if sent
 UnreliableAtMostOnce ==
     \A e \in E : \A k \in Msgs :
         MsgRel[k] = "unreliable" =>
             /\ Count(deliv[e], k) <= 1
-            /\ Count(deliv[e], k) = 1 => k \in Accepted(Peer(e))
+            /\ Count(deliv[e], k) = 1 => k \in Accepted(Remote(e))
 
 \* an ordered message is delivered only after every ordered message before
 \* it on its channel
@@ -457,17 +460,17 @@ OrderedInOrder ==
     \A e \in E : \A i \in DOMAIN deliv[e] :
         \A j \in Preds(deliv[e][i]) : \E h \in 1..i-1 : deliv[e][h] = j
 
-\* An end that took the peer's CONFIG took an equal one, and an end in
+\* An end that took the remote endpoint's CONFIG took an equal one, and an end in
 \* CONFIG_MISMATCH saw a real difference: every end that opens a differing
 \* CONFIG errors, so with differing configurations both ends that hear the
 \* other error, and the liveness below says both do.
 MismatchErrorsBothEnds ==
     \A e \in E :
-        /\ peerCfg[e] # NoCfg => peerCfg[e] = cfg[e]
-        /\ err[e] = "CONFIG_MISMATCH" => cfg[e] # cfg[Peer(e)]
+        /\ remoteCfg[e] # NoCfg => remoteCfg[e] = cfg[e]
+        /\ err[e] = "CONFIG_MISMATCH" => cfg[e] # cfg[Remote(e)]
 
 \* data records before CONFIG are safe: with equal configurations a correct
-\* peer never trips the receiver's bounds
+\* remote endpoint never trips the receiver's bounds
 NoViolationWhenEqual ==
     cfg["a"] = cfg["b"] => \A e \in E : err[e] # "VIOLATION"
 
@@ -479,14 +482,14 @@ Equal == cfg["a"] = cfg["b"]
 \* CONFIG is verified by both ends even with each link losing its first
 \* packet ("first"): CONFIG is resent until acked
 ConfigVerifiedDespiteFirstLoss ==
-    Equal => <>(\A e \in E : peerCfg[e] # NoCfg)
+    Equal => <>(\A e \in E : remoteCfg[e] # NoCfg)
 
-\* every reliable message the peer sent is delivered (no hang)
+\* every reliable message the remote endpoint sent is delivered (no hang)
 EveryReliableDelivered ==
     Equal => <>(\A e \in E :
-                  {k \in Accepted(Peer(e)) : MsgRel[k] # "unreliable"}
+                  {k \in Accepted(Remote(e)) : MsgRel[k] # "unreliable"}
                       \subseteq Range(deliv[e])
-                  /\ nextMsg[Peer(e)] = N + 1)
+                  /\ nextMsg[Remote(e)] = N + 1)
 
 \* with differing configurations both ends end in error (no hang)
 MismatchBothEndsError ==

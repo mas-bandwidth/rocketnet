@@ -1,10 +1,13 @@
 --------------------------- MODULE RNClientLinkStop ---------------------------
 (***************************************************************************)
 (* The caller stages the disconnect burst in the development simulator.   *)
-(* Stop only publishes quit and transfers the queue to the worker.        *)
-(* WorkerComplete drains every surviving copy, including held latency,    *)
-(* before publishing stopped. Explicit step-driven tests run the same     *)
-(* completion action. Defect restores a missing or due-only drain.        *)
+(* On the legacy path Stop only publishes quit and transfers the queue to *)
+(* the worker; WorkerComplete drains every surviving copy, including held *)
+(* latency, before publishing stopped. Explicit step-driven tests run the *)
+(* same completion action. On the I/O-core path the simulator is never    *)
+(* transferred (the I/O worker does not know it), so Stop itself sends    *)
+(* every copy it holds, ahead of its latency, before publishing quit.     *)
+(* Defect restores a missing or due-only completion drain.                *)
 (***************************************************************************)
 EXTENDS Naturals
 
@@ -14,7 +17,8 @@ CONSTANTS Copies,   \* ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS, small
 ASSUME Copies \in Nat \ {0}
 ASSUME Defect \in {"none", "nodrain", "dueonly"}
 
-VARIABLES phase,    \* "running", "stopping" (stop requested), "stopped"
+VARIABLES path,     \* "legacy" or "iocore", fixed at create
+          phase,    \* "running", "stopping" (stop requested), "stopped"
           sealed,   \* the burst was sealed by disconnect
           due,      \* staged copies whose latency has elapsed
           held,     \* staged copies still inside their latency
@@ -23,9 +27,10 @@ VARIABLES phase,    \* "running", "stopping" (stop requested), "stopped"
           received, \* copies the server read
           freed     \* the server freed the slot on a copy
 
-vars == <<phase, sealed, due, held, wire, lost, received, freed>>
+vars == <<path, phase, sealed, due, held, wire, lost, received, freed>>
 
 Init ==
+    /\ path \in {"legacy", "iocore"}
     /\ phase = "running" /\ sealed = FALSE
     /\ due = 0 /\ held = 0 /\ wire = 0 /\ lost = 0 /\ received = 0
     /\ freed = FALSE
@@ -37,25 +42,31 @@ Disconnect ==
     /\ \E d \in 0..Copies : \E h \in 0..(Copies - d) :
          /\ due' = d /\ held' = h /\ lost' = Copies - d - h
     /\ sealed' = TRUE
-    /\ UNCHANGED <<phase, wire, received, freed>>
+    /\ UNCHANGED <<path, phase, wire, received, freed>>
 
 \* A running update advances the clock: a held copy comes due.
 Tick ==
     /\ phase = "running" /\ held > 0
     /\ held' = held - 1 /\ due' = due + 1
-    /\ UNCHANGED <<phase, sealed, wire, lost, received, freed>>
+    /\ UNCHANGED <<path, phase, sealed, wire, lost, received, freed>>
 
 \* A running update drains a due copy (rocketnet_client_link_drain).
 Drain ==
     /\ phase = "running" /\ due > 0
     /\ due' = due - 1 /\ wire' = wire + 1
-    /\ UNCHANGED <<phase, sealed, held, lost, received, freed>>
+    /\ UNCHANGED <<path, phase, sealed, held, lost, received, freed>>
 
-\* The caller publishes quit without draining or invoking the backend.
+\* rocketnet_client_transport_stop. Legacy path: the caller publishes quit
+\* without draining or invoking the backend. I/O-core path: the caller keeps
+\* the simulator, so it sends every copy it holds (rocketnet_client_link_drain
+\* at DBL_MAX) and then publishes quit.
 Stop ==
     /\ phase = "running" /\ sealed
     /\ phase' = "stopping"
-    /\ UNCHANGED <<sealed, due, held, wire, lost, received, freed>>
+    /\ IF path = "legacy"
+         THEN UNCHANGED <<due, held, wire>>
+         ELSE due' = 0 /\ held' = 0 /\ wire' = wire + due + held
+    /\ UNCHANGED <<path, sealed, lost, received, freed>>
 
 \* The worker acquires quit, drains the transferred queue, then completes.
 WorkerComplete ==
@@ -64,13 +75,13 @@ WorkerComplete ==
     /\ CASE Defect = "nodrain" -> UNCHANGED <<due, held, wire>>
          [] Defect = "dueonly" -> due' = 0 /\ wire' = wire + due /\ UNCHANGED held
          [] OTHER              -> due' = 0 /\ held' = 0 /\ wire' = wire + due + held
-    /\ UNCHANGED <<sealed, lost, received, freed>>
+    /\ UNCHANGED <<path, sealed, lost, received, freed>>
 
 \* The server reads a copy and frees the slot (the first one does it).
 ServerReceive ==
     /\ wire > 0
     /\ wire' = wire - 1 /\ received' = received + 1 /\ freed' = TRUE
-    /\ UNCHANGED <<phase, sealed, due, held, lost>>
+    /\ UNCHANGED <<path, phase, sealed, due, held, lost>>
 
 Next == Disconnect \/ Tick \/ Drain \/ Stop \/ WorkerComplete \/ ServerReceive
 
@@ -80,6 +91,7 @@ Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ WF_vars(Tick) /\ WF_vars(Drain) /\ WF_vars(WorkerComplete) /\ WF_vars(ServerReceive)
 
 TypeOK ==
+    /\ path \in {"legacy", "iocore"}
     /\ phase \in {"running", "stopping", "stopped"} /\ sealed \in BOOLEAN
     /\ due \in 0..Copies /\ held \in 0..Copies /\ wire \in 0..Copies
     /\ lost \in 0..Copies /\ received \in 0..Copies /\ freed \in BOOLEAN
@@ -90,8 +102,11 @@ BurstAccounted == sealed => due + held + wire + lost + received = Copies
 \* Completion, not the request, guarantees the transferred queue is empty.
 StopLeavesNothingStaged == phase = "stopped" => due + held = 0
 
-\* Requesting stop does no backend work; the queue is unchanged.
-StopDoesNotDrain == [][(phase = "running" /\ phase' = "stopping") => UNCHANGED <<due, held, wire>>]_vars
+\* On the legacy path requesting stop does no backend work; the queue is
+\* unchanged. On the I/O-core path the request leaves nothing staged.
+StopDoesNotDrain == [][(phase = "running" /\ phase' = "stopping") =>
+                        IF path = "legacy" THEN UNCHANGED <<due, held, wire>>
+                                           ELSE due' + held' = 0]_vars
 
 \* A burst with any copy surviving the loss policy reaches the server.
 BurstArrives == (sealed /\ lost < Copies) ~> freed

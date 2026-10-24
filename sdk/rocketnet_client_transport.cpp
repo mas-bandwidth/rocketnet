@@ -414,6 +414,36 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
     client->stats_counted = 0;
 }
 
+// The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
+// the caller hands a new setting over as a config record under the
+// simulator's own tiny mutex, and the thread that owns the simulator takes it
+// before its next send.  tla/MCLinkReconfigure.tla models the change: the
+// setting in force at the send holds the packet, and the change itself
+// removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
+// stubs below stand in for the development build's functions there.
+#if ROCKETNET_TEST_SEAMS
+extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
+extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
+extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
+extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+#else
+static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
+{
+    (void) simulator; (void) mutex;
+    return false;
+}
+static inline bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator )
+{
+    (void) simulator;
+    return false;
+}
+static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window )
+{
+    (void) capacity; (void) reverse_window;
+    return 0;
+}
+#endif
+
 // The deterministic drop and reverse patterns (tla/Link.tla "everynth" and
 // ReverseWindow) are on when the config names either and the link simulator
 // exists. With both fields zero nothing below differs from the link
@@ -424,12 +454,36 @@ static inline bool rocketnet_client_link_patterns( const rocketnet_client_transp
            ( transport->config.simulated_drop_every_nth != 0 || transport->config.simulated_reverse_window != 0 );
 }
 
-// The I/O ring core (hand-off and caller step) carries the sends and the
-// receives, unless the transport has a link simulator (any loss, latency, jitter,
-// duplicate or pattern field set), whose send and receive carry them instead.
+// The link simulator is active when the setting in force changes the packets:
+// any loss, latency, jitter or duplicate, or either pattern.  With all of
+// them zero it is a pass-through that neither adds latency nor copies, and
+// the I/O ring core (hand-off and caller step) carries the sends and receives
+// exactly as a simulator-less transport.
+//
+// Taking the setting also applies the one the caller handed over, so the
+// setting in force at the send is the setting the caller last asked for: the
+// change takes effect at once, on and off, in either direction.
+static inline bool rocketnet_client_link_active( rocketnet_client_transport_t * transport )
+{
+    if ( !transport->link_simulator )
+        return false;
+    return rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->mutex ) ||
+           rocketnet_client_link_patterns( transport );
+}
+
+// The path a connection runs on is fixed at create and never moves: the
+// transport decides it, and the link simulator never changes it.  A live
+// setting change only changes what the simulator does with the packets.
+//
+// A connection created with a simulator setting keeps the per-packet path it
+// has always run (the simulator holds the packets, and the caller sends them
+// one by one); a connection created without one keeps the ring path.  Which
+// of the two it is was decided when the simulator was configured, and the
+// live setting never changes it.
 static inline bool rocketnet_client_io_core( const rocketnet_client_transport_t * transport )
 {
-    return ( transport->io_thread || transport->step_in_update ) && !transport->link_simulator;
+    return ( transport->io_thread || transport->step_in_update ) &&
+           !rocketnet_network_simulator_created_active( transport->link_simulator );
 }
 
 // Link!ReverseWindow: the window held by the simulator is emitted reversed, whole,
@@ -655,11 +709,20 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
         transport->io.operations->send( transport->io.instance, to, packet_data, packet_bytes );
         return;
     }
+    if ( !rocketnet_client_link_active( transport ) )
+    {
+        transport->io.operations->send( transport->io.instance, to, packet_data, packet_bytes );
+        return;
+    }
     rocketnet_network_simulator_send( transport->link_simulator, &transport->link_simulator_from,
                                       to, packet_data, packet_bytes, transport->time );
 }
 
-static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport )
+// tla/RNClientLinkStop.tla Drain: a running update sends every copy the link
+// simulator holds that has come due by now.  A held packet leaves on the
+// thread that owns the simulator: the caller's thread on both paths, since
+// the per-packet path sends there and the ring path's hand-off is there too.
+static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport, double now )
 {
     if ( !transport->link_simulator )
         return;
@@ -667,7 +730,7 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes;
     while ( ( packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
-                                                                       transport->time, &from, &to, packet ) ) > 0 )
+                                                                       now, &from, &to, packet ) ) > 0 )
         transport->io.operations->send( transport->io.instance, &to, packet, packet_bytes );
 }
 
@@ -708,6 +771,36 @@ static inline struct rocketnet_client_payload_ring_t * rocketnet_client_frame_ri
             return ring;
     }
     return &client_transport->payload_ring[0];
+}
+
+// the ring commit of a packet the main thread built, defined with the ring
+static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
+
+// The I/O ring path's link simulator: the hand-off is where the sealed
+// packets leave the ring for the wire, so with the simulator active that is
+// where they go instead.  The setting in force decides there whether a
+// packet is let out, lost or held, and a held packet leaves with the drain
+// when it comes due.  Nothing here changes the threading of the connection:
+// the ring, the hand-off and the drain are the caller's thread, as they
+// were before the simulator was here.
+static void rocketnet_client_link_hold( rocketnet_client_transport_t * transport, const rocketnet_address_t * to )
+{
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( transport );
+    uint64_t committed = ring->num_packets;
+    if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+        committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+    for ( uint64_t i = 0; i < committed; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+            rocketnet_network_simulator_send( transport->link_simulator, &transport->link_simulator_from, to,
+                                              ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
+                                              (int) ring->info[i].wire_bytes, transport->time );
+    }
+    ring->num_packets = 0;
+    transport->stats_counted = 0;
+    // the window the reverse pattern holds is emitted whole, at the end of
+    // the hand-off, as the per-packet path does at the end of its send
+    rocketnet_client_link_flush( transport );
 }
 
 // NULL time_callback: rocketnet_platform_time as double (*)( void * )
@@ -762,9 +855,14 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 struct rocketnet_client_memory_plan_t
 {
     uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, race_bytes, total_bytes;
+    uint64_t transport_io_bytes, race_bytes, link_simulator_bytes, total_bytes;
     int sockets;
 };
+
+// The link simulator's capacity: the packets one connection holds while the
+// setting delays them.  A development build creates the simulator for every
+// connection, so the plan carries its bytes.
+#define ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS 512
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 struct rocketnet_portable_io_client_layout_t
@@ -835,7 +933,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( !transport ) return false;
     rocketnet_client_transport_config_t defaults;
     if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
-    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
@@ -844,6 +942,13 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, rocketnet_client_reassembly_delivered_capacity( slots ) );
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
+    if ( rocketnet_public_link_simulator_development() )
+    {
+        // the simulator every development connection owns, created with it
+        plan.link_simulator_bytes = rocketnet_network_simulator_memory_bytes( ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS,
+                                                                              config->simulated_reverse_window );
+        if ( !plan.link_simulator_bytes ) return false;
+    }
 
     if ( strcmp( transport, "portable" ) == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -875,7 +980,8 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     else return false;
 
     if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes || !plan.race_bytes ) return false;
-    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes } )
+    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes,
+                             plan.link_simulator_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) ) return false;
     return plan.total_bytes <= SIZE_MAX;
 }
@@ -1048,7 +1154,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
-    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
     {
@@ -1065,7 +1171,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     const int * available_transports = rocketnet_client_transport_io_availability( &num_available_transports );
 
     struct rocketnet_transport_ladder_t ladder;
-    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder ) )
+    if ( !rocketnet_transport_ladder_parse( config->transport, available_transports, num_available_transports, &ladder, false ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
@@ -1138,7 +1244,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
 
-    client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    client_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
@@ -1217,6 +1323,19 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 *status = ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION;
             return NULL;
         }
+    }
+
+    // A token naming port 0 can never reach a server: macOS refuses the
+    // connect, and Linux and Windows accept it and the packets reach no
+    // server. Every flagged address is checked, so the refusal does not
+    // depend on the host's IPv6.
+    if ( rocketnet_signed_connect_data_names_port_zero( &client_transport->protocol.signed_fields ) )
+    {
+        rocketnet_error( "connect token names a server address with port 0; refusing to connect" );
+        rocketnet_client_transport_abort_create( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO;
+        return NULL;
     }
 
     // the socket binds after the token parse so the bind family can follow
@@ -1532,11 +1651,14 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->bound_port = bind_address.port;
     client_transport->link_simulator_from = bind_address;
 
-    if ( config->simulated_loss_percent || config->simulated_latency_ms ||
-         config->simulated_jitter_ms || config->simulated_duplicate_percent ||
-         config->simulated_drop_every_nth || config->simulated_reverse_window )
+    // A development build creates the link simulator for every connection,
+    // memory up front; all-zero settings are a pass-through that neither adds
+    // latency nor copies. A production library creates none and carries none
+    // of its memory (rocketnet_network_simulator_create is a stub returning
+    // NULL there, and the config walk already refuses nonzero simulated values).
+    if ( rocketnet_public_link_simulator_development() )
     {
-        client_transport->link_simulator = rocketnet_network_simulator_create( context, 512, UINT64_C(0x434c49454e545349) );
+        client_transport->link_simulator = rocketnet_network_simulator_create( context, ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS, UINT64_C(0x434c49454e545349) );
         if ( !client_transport->link_simulator )
         {
             if ( status )
@@ -1578,11 +1700,22 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
-    // tla/RNClientIo.tla. Built-in loopback uses the same core with bounded
-    // worker polling. Custom drivers without wait/wake keep BASE per-packet
-    // caller sends; the development simulator also keeps caller-owned frame
-    // work. Both exceptions retain the nonblocking receive ownership exchange.
-    client_transport->io_thread = !client_transport->link_simulator &&
+    // tla/RNClientIo.tla (every RNClientIo action named here). Built-in
+    // loopback uses the same core with bounded worker polling. Custom drivers
+    // without wait/wake keep the BASE path: per-packet sends on the main
+    // thread and a polling receive worker that exchanges buffer ownership
+    // under a short mutex.
+    // Threading is decided at create and never moves: the transport alone
+    // decides it, and the link simulator never changes the threading of a
+    // running connection.  The simulator is in the send path either way: in
+    // the I/O ring path the hand-off hands the sealed packets to it, and in
+    // the per-packet path the send does.
+    // A connection created with a simulator setting runs no network thread:
+    // the simulator holds its packets and the caller sends them, one by one,
+    // on its own thread.  That was decided when the simulator was configured
+    // and it never moves: a live setting change does not move a running
+    // connection between the two paths.
+    client_transport->io_thread = !rocketnet_network_simulator_created_active( client_transport->link_simulator ) &&
         ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
           ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );
 
@@ -1611,6 +1744,16 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    // tla/RNClientIoShutdown.tla Start: create starts the worker generation
+    // below, the I/O thread or the legacy receive thread.
+    // tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
+    // created here runs every core action.
+    // tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
+    // IoWait, IoWake, IoClearWake and IoExit: the I/O thread's step sends each
+    // handed-off ring, drains datagrams into its buffer and publishes it, waits
+    // and wakes, and exits once quit is stored.
+    // tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
+    // handed-off ring and marks it sent when every slot left.
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
         rocketnet_client_io_ring_view_t views[ROCKETNET_CLIENT_IO_NUM_RINGS];
@@ -1698,6 +1841,17 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 // Requests never join, call a backend send, or wait for a ring. The final
 // filling ring is published without reopening the other ring: no producer may
 // touch either ring after stop, and the worker can drain both independently.
+// tla/RNClientIoShutdown.tla RequestStop, RepeatStop and RequestReturn: the
+// first call publishes the final filling ring with quit, a repeat returns at
+// once, and neither waits on the worker.
+// tla/RNClientIo.tla Stop: stores quit and wakes the I/O thread
+// (rocketnet_client_io_stop).
+// tla/RNBufferHandoff.tla MainStop: hands the Filling ring to the worker with
+// the quit store.
+// tla/RNClientLinkStop.tla Stop: on the legacy path publishes quit without
+// draining the link simulator or calling the backend (the worker's
+// completion drains it); on the I/O-core path, where the caller keeps the
+// simulator, sends every copy it holds and then publishes quit.
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
@@ -1706,6 +1860,10 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     client_transport->packet_leases.reset();
     if ( rocketnet_client_io_core( client_transport ) )
     {
+        // tla/RNClientLinkStop.tla Stop, path iocore: the I/O worker never
+        // owns the link simulator, so the packets it holds leave here, with
+        // the stop, ahead of their latency
+        rocketnet_client_link_drain( client_transport, DBL_MAX );
         rocketnet_client_io_t * io = &client_transport->client_io;
         uint64_t committed = rocketnet_client_fill_ring( client_transport )->num_packets;
         if ( committed > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
@@ -1723,6 +1881,8 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
 }
 
+// tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
+// completion flag and returns without waiting.
 bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1744,6 +1904,8 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
     client_transport->stop_burst_pending.store( false, std::memory_order_release );
 }
 
+// tla/RNClientIoShutdown.tla WorkerQuiesce: the legacy worker sends what it
+// still holds, then stores stopped.
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_transport_flush_disconnect( client_transport );
@@ -1774,6 +1936,19 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
+// transport is freed.
+
+// tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
+// transport not yet stopped, joins the worker thread, then frees.
+// tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
+// Done: destroy makes its last hand-off, waits at the deadline for the other
+// ring to reach Sent, drops the committed slots it cannot hand off, joins,
+// frees and ends.
+// tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
+// generation before the next one runs, as the synchronous destroy and the
+// next connect do here.
+// tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -1795,7 +1970,9 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     rocketnet_client_transport_io_close( &client_transport->io );
 
     if ( client_transport->link_simulator )
+    {
         rocketnet_network_simulator_destroy( client_transport->link_simulator );
+    }
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
@@ -1934,6 +2111,11 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // yield, no retry; a ring the I/O thread holds is never reused
 // (HandOffNeverWaits, NoReuseBeforeSent).
 
+// tla/RNClientIo.tla HandOffTo, DeferTo and Reopen: hands the Filling ring to
+// the I/O thread, or counts the deferral when the other ring is busy; after a
+// hand-off it empties the reopened ring send_fill now names.
+// tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
+// the other ring is Sent; the fixed main never waits for the I/O thread.
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
 {
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
@@ -1963,6 +2145,16 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
     if ( committed == 0 )
         return;
+
+    // The simulator takes the sealed packets instead of the I/O thread when
+    // its setting is active: the hand-off is the last place the caller
+    // thread sees them.  The setting the caller handed over is applied
+    // here, outside the lock, before the answer is read.
+    if ( rocketnet_client_link_active( client_transport ) )
+    {
+        rocketnet_client_link_hold( client_transport, to );
+        return;
+    }
 
     const int result = rocketnet_client_io_hand_off( &client_transport->client_io, committed, to );
 
@@ -2006,6 +2198,12 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 
 // Try once at each caller handoff. Unit tests can refuse either phase without
 // starting a competing thread or depending on scheduler timing.
+// tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
+// exchange, never waiting.
+// tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
+// waits for a held mutex; the fixed main only try-acquires and never waits.
+// tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
+// return phases.
 static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
 {
 #if ROCKETNET_TEST_SEAMS
@@ -2029,6 +2227,10 @@ static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_rec
 // Take the oldest READY buffers that fit the packet budget. If the worker
 // owns the mutex, leave everything in place and continue this update without
 // receiving. Returning previously processed buffers precedes taking new ones.
+// tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
+// takes the oldest READY prefix within the packet budget.
+// tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
+// index exchange under the mutex, then the release.
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
 {
     if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
@@ -2051,6 +2253,8 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
 
 // Keep processed buffers caller-owned if the worker has the mutex. They are
 // neither READY nor FREE, so neither side can process or overwrite them again.
+// tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
+// outside the mutex and returns them without taking any.
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
 {
     if ( num_exposed == 0 )
@@ -2148,6 +2352,13 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 
 }
 
+// tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
+// buffer at its start and returns it at its end, on the main thread.
+// tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
+// I/O step runs on the caller's thread inside update, never blocking.
+// tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
+// tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
+// buffer outside the mutex, and its end begins the next expose.
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2180,7 +2391,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     const double current_time = time;
     client_transport->time = time;
-    rocketnet_client_link_drain( client_transport );
+    rocketnet_client_link_drain( client_transport, current_time );
 
     rocketnet_client_update_stats( client_transport, time );
 
@@ -2322,13 +2533,18 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// The client's acquire/commit family: the same shape, layout and phase
+// tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring, the arena or the lease refuses the frame.
+// The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
 // send-it-now meaning for simple callers.
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
+// tla/RNClientIo.tla Write and OnGame: a game thread takes a free slot of the
+// Filling ring.
+// tla/RNBufferHandoff.tla Produce: on send the producer writes its ring outside
+// the mutex.
 uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2463,6 +2679,8 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
     context->frame = NULL;
 }
 
+// tla/FragmentsAndAcks.tla BurnOne: a sequence already taken is spent unsent when the ring is full before any frame is sealed.
+// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate leaves every frame unsent.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -2571,6 +2789,7 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
     return total_wire_bytes;
 }
 
+// tla/RNClientIo.tla Commit: seals the slot in place and commits it.
 static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( client_transport );
@@ -2627,6 +2846,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     return result;
 }
 
+// tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2811,6 +3031,10 @@ int rocketnet_client_transport_client_index( rocketnet_client_transport_t * clie
     return client_transport->protocol.client_index;
 }
 
+// tla/RNClientIo.tla Disconnect: seals the burst into the Filling ring and
+// hands it off to the address saved before the protocol reset.
+// tla/RNClientLinkStop.tla Disconnect: with the link simulator the burst takes
+// the loss policy and its surviving copies are staged in the simulator queue.
 void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -2998,6 +3222,10 @@ void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint
 // buffer that cannot publish leaves datagrams in the transport until a later
 // update frees one. No buffer another side owns is ever written.
 
+// tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
+// worker locks, publishes its buffer index and takes a free one, then unlocks.
+// tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
+// with MaxReady N-1.
 static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
@@ -3011,6 +3239,11 @@ static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * clie
     }
 }
 
+// tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
+// its buffer outside the mutex.
+// tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
+// writes into a buffer it already published, which update now holds.
+// tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
     rocketnet_assert( client_transport );
@@ -3103,6 +3336,13 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
+// tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
+// seen.
+// tla/RNBufferHandoff.tla WorkerWait, WorkerWakes and Terminated: the worker
+// sleeps when nothing was done and wakes on the wake or readable, and the
+// behaviour ends with both threads done.
+// tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
+// stop is complete.
 static void rocketnet_client_thread_function( void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;
@@ -3119,20 +3359,25 @@ static void rocketnet_client_thread_function( void * data )
     rocketnet_client_transport_finish_stop( client_transport );
 }
 
-// The development network simulator call on a live transport: reconfigures
-// the link simulator while the caller still owns it. Stop transfers ownership
-// to the worker; a stopped transport cannot be reconfigured.
+// The development network simulator call on a live transport: applies at once.
+// A development connection always owns a link simulator, so this stores the new
+// settings as a config record under the tiny mutex and the thread that owns the
+// simulator applies them before its next send. No simulator work happens under
+// the lock. Stop transfers the simulator to the worker; a stopped transport
+// cannot be reconfigured.
 #if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( client_transport );
-    client_transport->config.simulated_latency_ms = latency_ms;
-    client_transport->config.simulated_jitter_ms = jitter_ms;
-    client_transport->config.simulated_loss_percent = packet_loss_percent;
-    client_transport->config.simulated_duplicate_percent = duplicate_percent;
     if ( !client_transport->link_simulator || client_transport->stop_requested )
         return false;
-    rocketnet_network_simulator_config( client_transport->link_simulator, latency_ms / 1000.0, jitter_ms / 1000.0, (float) packet_loss_percent, (float) duplicate_percent );
+    // The new setting is handed over as a config record under the
+    // simulator's own tiny mutex; the thread that owns the simulator takes
+    // it before its next send, so the change takes effect at once and the
+    // connection's threads do not move.
+    rocketnet_network_simulator_reconfigure( client_transport->link_simulator, &client_transport->mutex,
+                                             latency_ms / 1000.0, jitter_ms / 1000.0,
+                                             (float) packet_loss_percent, (float) duplicate_percent );
     return true;
 }
 #endif // #if ROCKETNET_TEST_SEAMS

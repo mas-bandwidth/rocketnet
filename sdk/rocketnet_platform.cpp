@@ -981,7 +981,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
-// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// A connected socket (rocketnet_platform_socket_connect) has one remote endpoint: every
 // send goes to it with no destination named, since a BSD stack refuses a
 // sendto that names one on a connected socket (EISCONN). An unconnected
 // socket names each datagram's destination.
@@ -993,7 +993,7 @@ static inline ssize_t rocketnet_platform_sendto( rocketnet_platform_socket_t * s
     return sendto( socket->handle, packet_data, (size_t) packet_bytes, 0, to, to_bytes );
 }
 
-// Connects the socket to its one peer, so the kernel drops every datagram
+// Connects the socket to its one remote endpoint, so the kernel drops every datagram
 // from any other source (the client trusts only the server: STANDARD t11).
 // The destination is converted as send_packet converts it.
 
@@ -2910,7 +2910,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_free( socket->context, socket );
 }
 
-// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// A connected socket (rocketnet_platform_socket_connect) has one remote endpoint: every
 // send goes to it with no destination named, since a BSD stack refuses a
 // sendto that names one on a connected socket (EISCONN). An unconnected
 // socket names each datagram's destination.
@@ -2922,7 +2922,7 @@ static inline ssize_t rocketnet_platform_sendto( rocketnet_platform_socket_t * s
     return sendto( socket->handle, packet_data, (size_t) packet_bytes, 0, to, to_bytes );
 }
 
-// Connects the socket to its one peer, so the kernel drops every datagram
+// Connects the socket to its one remote endpoint, so the kernel drops every datagram
 // from any other source (the client trusts only the server: STANDARD t11).
 // The destination is converted as send_packet converts it.
 
@@ -3043,7 +3043,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 }
 
 // UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors). a
-// BSD stack reports an ICMP error (port or host unreachable, a peer that
+// BSD stack reports an ICMP error (port or host unreachable, a remote endpoint that
 // died hard) to the next receive on a CONNECTED socket, and a full mbuf
 // pool reports ENOBUFS; neither says anything about the datagrams still
 // queued behind it. every receive arm skips these and keeps draining:
@@ -4497,7 +4497,7 @@ static volatile LONG64 rocketnet_platform_receive_empty_count = 0;
 
 // windows-udp-connreset audit: every socket rocketnet creates on Windows
 // (portable server and client, iocp, rio) turns both ICMP reset reports off
-// here, so a hard-killed peer never turns into receive errors (DRIVERS.md,
+// here, so a hard-killed client never turns into receive errors (DRIVERS.md,
 // "Windows connection reset")
 bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle )
 {
@@ -4587,7 +4587,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     }
 
     // IMPORTANT: tell windows we don't want to receive any connection or network
-    // reset reports for this socket, otherwise a receive errors out after a peer
+    // reset reports for this socket, otherwise a receive errors out after a remote endpoint
     // disconnects hard and its ICMP port unreachable comes back
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
 
@@ -4768,7 +4768,7 @@ static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t 
     rocketnet_debug( "sendto (%s) failed: WSA error %d: %s", address_string, error, error_string );
 }
 
-// A connected socket (rocketnet_platform_socket_connect) has one peer: every
+// A connected socket (rocketnet_platform_socket_connect) has one remote endpoint: every
 // send goes to it with no destination named, as on the other platforms.
 
 static int rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, int to_bytes )
@@ -4778,7 +4778,7 @@ static int rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, cons
     return sendto( socket->handle, (const char*) packet_data, packet_bytes, 0, to, to_bytes );
 }
 
-// Connects the socket to its one peer, so the stack drops every datagram
+// Connects the socket to its one remote endpoint, so the stack drops every datagram
 // from any other source (the client trusts only the server: STANDARD t11).
 // The destination is converted as send_packet converts it.
 
@@ -4933,7 +4933,7 @@ receive_again:
             }
 
             // an ICMP report of an earlier send is not the end of the
-            // queue: skip it and keep reading, or one dead peer ends every
+            // queue: skip it and keep reading, or one dead remote endpoint ends every
             // drain early (windows-udp-connreset audit, portable receive)
             if ( rocketnet_platform_receive_status_is_reset( error ) )
             {

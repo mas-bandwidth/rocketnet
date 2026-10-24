@@ -110,7 +110,7 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->max_message_bytes = 4096;
     config->send_message_buffer_bytes = 16384;
     config->send_queue_messages = 16;
-    config->packets_in_flight = 16;
+    config->packets_in_flight = 64;                 // at least the window: the sent map holds W entries
     config->packets_per_update = 4;
     config->unreliable_messages_per_update = 16;
     config->max_message_receipts = 16;

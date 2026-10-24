@@ -27,9 +27,9 @@ the planned functions of section 10.1. No code implements it yet, so
   the transport never sent it (a burned id). Its reliable records stay due;
   its unreliable records are gone.
 - **OnAcked** (`rn_endpoint_on_acked`): the records of the end's own packets
-  that the peer opened are acked.
+  that the remote endpoint opened are acked.
 - **OnPayload** (`rn_endpoint_on_payload`): an end opens a packet from its
-  peer. The transport acks the packet's reliable records whatever follows
+  remote endpoint. The transport acks the packet's reliable records whatever follows
   (P2). CONFIG, first in the packet, goes through **ConfigCompare**; a
   mismatch is `CONFIG_MISMATCH` and parsing stops. Data records are checked
   against the receiver's own `num_channels`: a channel outside it is a
@@ -38,7 +38,7 @@ the planned functions of section 10.1. No code implements it yet, so
   received and then delivered with every hold it releases, and an unreliable
   one is delivered at once. An end in error opens and discards.
 - **Tick** (`rn_endpoint_tick`): the reliable timeout. An end still waiting
-  for the peer's CONFIG, or holding an unacked reliable record, enters
+  for the remote endpoint's CONFIG, or holding an unacked reliable record, enters
   `RELIABLE_TIMEOUT`.
 - The transport's own steps: **WriteAck** sends pending acks with no message
   records (a keepalive); **AckSilence** drops pending acks unsent (ack history
@@ -52,7 +52,7 @@ An end in error does nothing more: the object disconnects it (section 11).
   id. The map from an acked id to the records it carried, its eviction and
   the never-repeating id are `RNWindow`'s sent map, checked there. Taking
   the records directly keeps "acked implies opened" (P2) exact at record
-  level: every acked record was in a packet the peer opened.
+  level: every acked record was in a packet the remote endpoint opened.
 - **Numbering, the window and the receiver's slots** are taken at the level
   `RNWindow` and `RNChannelTypes` check: the count bound `U + W`, a received
   set standing for `R` and the bitset, duplicates dropped, ordered messages
@@ -65,8 +65,8 @@ An end in error does nothing more: the object disconnects it (section 11).
   flight back. The timing that makes this so is `RNResendTiming`'s.
 - **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (the safety cases)
   `Tick` may fire at any moment, so safety holds wherever the timeout lands.
-  Under `FALSE` (the liveness cases) it fires only once the peer is in error
-  and silent: that a live peer's resends land before `reliable_timeout` is
+  Under `FALSE` (the liveness cases) it fires only once the remote endpoint is in error
+  and silent: that a live remote endpoint's resends land before `reliable_timeout` is
   `RNResendTiming`'s `AttemptsBeforeTimeout`.
 - **A configuration** is its `num_channels`, the field the instances vary.
   ConfigCompare compares the whole configuration value, which stands for the
@@ -101,19 +101,19 @@ Safety (every case lists them):
 | `TypeOK` | variable domains; each link within its capacity |
 | `ConfigFirstReliable` | CONFIG takes the first reliable number (10.3) |
 | `WindowBounded` | no more than `W` reliable records are ever writable (6.2) |
-| `AckedImpliesOpened` | an acked record was in a packet the peer opened (P2) |
-| `ReliableExactlyOnce` | a reliable message is delivered at most once, and only if the peer's application sent it and Send accepted it; with `EveryReliableDelivered`, exactly once |
+| `AckedImpliesOpened` | an acked record was in a packet the remote endpoint opened (P2) |
+| `ReliableExactlyOnce` | a reliable message is delivered at most once, and only if the remote endpoint's application sent it and Send accepted it; with `EveryReliableDelivered`, exactly once |
 | `UnreliableAtMostOnce` | an unreliable message is delivered at most once, and only if sent |
 | `OrderedInOrder` | an ordered message is delivered only after every ordered message before it on its channel |
-| `MismatchErrorsBothEnds` | an end that takes the peer's CONFIG takes an equal one, and `CONFIG_MISMATCH` means a real difference: every end that opens a differing CONFIG errors |
+| `MismatchErrorsBothEnds` | an end that takes the remote endpoint's CONFIG takes an equal one, and `CONFIG_MISMATCH` means a real difference: every end that opens a differing CONFIG errors |
 | `NoViolationWhenEqual` | with equal configurations, data records before CONFIG never trip the receiver's bounds (R6) |
 
 Liveness (`MCRNEndpointLive.cfg`, under `LiveSpec`):
 
 | Property | Meaning |
 |---|---|
-| `ConfigVerifiedDespiteFirstLoss` | with equal configurations and each link losing its first packet, both ends take the peer's CONFIG |
-| `EveryReliableDelivered` | with equal configurations, every reliable message the peer sent is delivered (no hang) |
+| `ConfigVerifiedDespiteFirstLoss` | with equal configurations and each link losing its first packet, both ends take the remote endpoint's CONFIG |
+| `EveryReliableDelivered` | with equal configurations, every reliable message the remote endpoint sent is delivered (no hang) |
 | `MismatchBothEndsError` | with differing configurations, both ends end in error (no hang) |
 
 Fairness is for liveness only: the application sends; the oldest unacked
@@ -218,7 +218,7 @@ invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing
 configurations, `num_channels` 2 at a and 1 at b. a writes its first packet,
 `[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, at the head of
 IMMEDIATE with reliable number 0 (10.3). b opens it with no comparison and
-records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
+records `remoteCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
 13.4 requires "any difference is DISCONNECT_REASON_CONFIG_MISMATCH"; without the
 comparison b goes on as if both ends were configured the same, so the
 "identical and verified" model of 10.3 is lost on the first CONFIG.
@@ -231,8 +231,8 @@ it. a writes its first packet carrying CONFIG; the AB link loses it. Both
 unreliable CONFIG records are gone after their single write. The rest runs
 normally: both applications send, the reliable ordered message 1 is
 delivered at each end, acks return, the unreliable message 2 travels; then
-nothing is enabled that changes `peerCfg`, and the behaviour stutters with
-`peerCfg = [a |-> 0, b |-> 0]`: neither end ever verifies. Section 10.3 rules
+nothing is enabled that changes `remoteCfg`, and the behaviour stutters with
+`remoteCfg = [a |-> 0, b |-> 0]`: neither end ever verifies. Section 10.3 rules
 this out by giving CONFIG the first reliable number, "so it is resent until
 acked"; with that rule the same first losses are followed by a resend, which
 the model's `WriteOldest` fairness carries.
