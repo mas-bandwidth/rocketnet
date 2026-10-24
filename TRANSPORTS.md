@@ -21,7 +21,7 @@ transport branches on generic capabilities, never a specific backend identity.
 The `transport` config value is an ordered candidate list
 (`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp:858-998`).
 A known name absent from this build's availability list for the endpoint on
-this platform (`gso` on a client or on macOS, `io_uring` built without
+this platform (`gso` or `io_uring` on macOS, `io_uring` on a client or built without
 liburing) is skipped with one info line (`:947-961`). A list with at least
 one name left after skipping is a strict pin: only those candidates are tried,
 in order, and if every one refuses, the ladder is exhausted and connect or
@@ -36,7 +36,11 @@ in a build without XDP) is not skipped: its pin refuses at start with
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
-one pin-only row. It is in-process, carries datagrams through memory with no
+one row pin-only on both endpoints. The pin-only check reads the
+endpoint's own column, so a transport can rank in one endpoint's `auto` order
+and be pin-only on the other: the `gso` client is pin-only
+(`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
+server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
@@ -50,6 +54,20 @@ and `rocketnet_server_uring_leaked_transports` are internal transport helpers
 (`sdk/rocketnet_server_uring.h`); a game uses `rocketnet_server_create`,
 `rocketnet_server_required_memory` and the other server entry points in
 `sdk/rocketnet.h`.
+
+## Client transports
+
+A client transport fills `rocketnet_client_transport_io_operations_t`
+(`sdk/rocketnet_driver.h`) and runs on the client I/O thread of
+[docs/CLIENT-IO.md](docs/CLIENT-IO.md): the I/O thread owns the socket, and the
+game thread hands it rings of sealed packets through the N-buffer handoff. The
+client ladder is `portable` on every platform and `msgx` on macOS, ahead of
+portable there. `msgx` and `portable` share one client table, and the pump is
+the socket's, chosen at create from the transport name: `msgx` the Darwin
+`sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
+the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
+pins and its degrade path are in [docs/MACOS.md](docs/MACOS.md), "The msgx
+client".
 
 ## Server capabilities and ownership
 
@@ -122,7 +140,17 @@ one size with at most one shorter tail. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
-- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
+- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive. The server
+  (`sdk/rocketnet_server_gso_linux.cpp`) does both. The client
+  (`sdk/rocketnet_client_gso_linux.cpp`) sends every datagram to its one
+  connected server, so each send batch is one `sendmmsg` call and each run
+  leaves as one message with a `UDP_SEGMENT` cmsg at the run's stride. It
+  probes `UDP_SEGMENT` at create as the server does; a refused probe is the
+  plain tier, one datagram per message. A live `EINVAL`, `EIO` or `EOPNOTSUPP`
+  on a segmented message moves the client to the plain tier for good and
+  resends from that message's first datagram, so no datagram is lost. The
+  client receives with `recvmmsg`; `UDP_GRO` on the client is
+  rn-client-gso-linux-b.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
   `UDP_SEND_MSG_SIZE` socket option, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
@@ -219,7 +247,20 @@ receive errno pauses the msgx pump with one warning per pause
 already classes the same errnos as weather. A backend's receive keeps the same
 contract: one peer's death never stalls or degrades another peer's traffic.
 The functional cases in functional/posix_hard_killed_peer.cpp hold this per
-transport cell, and an injected-errno seam covers each receive arm.
+transport cell, and an injected-errno seam covers each receive arm. The macOS
+cells are the portable and msgx servers with the portable and msgx clients;
+the seam cases are macOS only. The Linux cells are the portable, gso and
+io_uring servers (io_uring where `rocketnet_server_uring_available()` is true)
+with the portable client, IPv4 and IPv6: `test_posix_hard_killed_client_*`,
+`test_posix_send_to_closed_port_*` and `test_posix_client_server_gone_*`.
+Linux reports ICMP port unreachable to an unconnected UDP socket only with
+`IP_RECVERR`, which no server socket sets, so the kernel drops the answers to
+the server's sends to a killed client or a closed port: the Linux server cells
+prove those sends never stall or degrade the other clients, the dead slot
+times out and frees, and a fifth client connects. The client socket is
+connected, and Linux reports ICMP errors to it without `IP_RECVERR`:
+`test_posix_client_server_gone_*` proves the portable client's receive takes
+each ECONNREFUSED as weather. The xdp cell is a separate case.
 
 ## Server network threads and their priority
 
