@@ -32,7 +32,12 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     rocketnet_assert( send->next >= send->U_prime && count > 0 && count <= W );
     int fits = send->next - send->U_prime <= W - count;
     uint64_t p = send->ring_next;
-    if ( holdable )
+    // tla/RNRing.tla ASSUME B > 0 /\ B % 16 = 0: the init assert compiles out
+    // in Release, so a zero-byte ring stalls here rather than reaching the
+    // modulo in rn_window_send_position.
+    if ( holdable && B == 0 )
+        fits = 0;
+    else if ( holdable )
     {
         p = rn_window_send_position( send, span );
         const uint64_t floor = send->U_prime < send->next ?
@@ -184,15 +189,5 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     }
     if ( send->U_prime != old_prime )
         send->stalled = 0;
-    return 1;
-}
-
-// CHANNELS 6.2 I13/I3; RNWindow NumberRecord models only reliable records.
-// A reliable stall never prevents writing an unreliable record with no number.
-// tla/RNWindow.tla NumberRecord
-int rn_window_send_can_write_unreliable( const rn_window_send_t * send )
-{
-    rocketnet_assert( send && send->region );
-    (void) send; // read only by the assert above
     return 1;
 }
