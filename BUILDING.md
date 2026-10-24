@@ -184,6 +184,11 @@ The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
 
+The two process thread-count cases live in `functional/process_thread_counts.cpp`
+and count the process's threads from `/proc/self/task`, which Linux has and
+the other platforms do not: off Linux the count reads -1 and the case pins
+nothing, so neither case is unit logic.
+
 Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, liburing is the bench

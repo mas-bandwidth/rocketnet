@@ -31,8 +31,9 @@ simulated time for protocol deadlines, never host scheduling speed. See
 The process thread-count cases `test_server_stats_creates_no_thread` and
 `test_public_step_driven_client_connects_without_a_thread` read the process's
 OS thread count from `/proc/self/task`, so they are functional cases in
-`./bin/functional`, not unit cases. On platforms without that file the count
-is -1 and the thread assertion pins nothing, so it is never unit logic.
+`./bin/functional`, not unit cases. Their bodies are in
+`functional/process_thread_counts.cpp`. On platforms without that file the
+count is -1 and the thread assertion pins nothing, so it is never unit logic.
 
 ## Peak memory per case
 
