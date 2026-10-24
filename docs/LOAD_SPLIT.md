@@ -279,7 +279,7 @@ to every client shard, run the server pinned to one transport, and pass
 `--load proof` to the merger:
 
 ```text
-ROCKETNET_SERVER_TRANSPORT=portable \
+ROCKETNET_SERVER_TRANSPORT=gso \
 load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
 load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
 ```
@@ -358,7 +358,7 @@ in the server's receipt and in the server's proof line. It prints one line,
 the cell verdict:
 
 ```text
-split_proof_cell: verdict=PASS transport=portable total=1000 streams=26000 messages_sent=6240000 messages_delivered=6182400 unreliable_lost=42000 sequenced_skipped=15600 timing_verdict=PASS
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=6240000 messages_delivered=6182400 unreliable_lost=42000 sequenced_skipped=15600 timing_verdict=PASS
 ```
 
 The cell verdict is the delivery proof, and the merger exits 0 when it
@@ -376,7 +376,7 @@ address, the port and the public key the shards need:
 
 ```text
 # on the server bench
-ROCKETNET_SERVER_TRANSPORT=portable \
+ROCKETNET_SERVER_TRANSPORT=gso \
   load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
 
 # on each of the two client benches, two shards each
@@ -427,7 +427,7 @@ Then the merger, with the proof cell:
 python3 tools/check_split_load.py --server server.log \
   --shard shard0.log --shard shard1.log --shard shard2.log --shard shard3.log \
   --run-id 0123456789abcdef --total 1000 --duration 60 \
-  --aggregate-limit-kbps 600000 --server-transport portable \
+  --aggregate-limit-kbps 600000 --server-transport gso \
   --client-transport portable --allocation-manifest allocation.json \
   --load proof
 ```
