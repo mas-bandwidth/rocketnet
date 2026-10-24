@@ -436,7 +436,329 @@ static void test_message_record_valid_refuses_each_shape()
     }
 }
 
+// The pick order is tla/RNScheduler.tla's IsHead, Boost, PickLevel and PickIn.
+// What follows is BASE's picker (sdk/rocketnet_packet_builder.cpp before the
+// linear class pass), kept here verbatim in its logic: for every item, a scan
+// of every other item for the channel's head and boost, quadratic in the plan.
+// The builder must take items in exactly the order this takes them.
+
+struct reference_scheduler_t
+{
+    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];
+    uint64_t clock_base;
+    uint32_t round_robin;
+    uint32_t num_channels;
+    int packets_per_update;
+    int payload_capacity;
+    uint64_t visits;                                            // the items the picker looked at, the quadratic cost
+};
+
+static const uint64_t reference_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
+static const uint64_t reference_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
+
+static void reference_reset_clocks( struct reference_scheduler_t * scheduler )
+{
+    for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
+        scheduler->level_clock[p] = reference_seed[p];
+    scheduler->clock_base = 0;
+}
+
+static bool reference_writable( const struct rn_packet_item_t * item )
+{
+    return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
+}
+
+static uint64_t reference_effective_clock( const struct reference_scheduler_t * scheduler, int level )
+{
+    const uint64_t clock = scheduler->level_clock[level];
+    return clock > scheduler->clock_base ? clock : scheduler->clock_base;
+}
+
+static int reference_next_in_class( struct reference_scheduler_t * scheduler, const struct rn_packet_item_t * items, int num_items, int send_class, int * out_level )
+{
+    const uint32_t channels = scheduler->num_channels > 0 ? scheduler->num_channels : 1;
+
+    int best = -1;
+    int best_level = 0;
+    uint64_t best_clock = 0;
+    uint32_t best_distance = 0;
+
+    for ( int i = 0; i < num_items; i++ )
+    {
+        scheduler->visits++;
+        if ( items[i].send_class != (uint8_t) send_class || !reference_writable( &items[i] ) )
+            continue;
+
+        bool head = true;
+        int level = items[i].priority;
+        for ( int j = 0; j < num_items; j++ )
+        {
+            scheduler->visits++;
+            if ( j == i || items[j].channel != items[i].channel || items[j].send_class != (uint8_t) send_class || !reference_writable( &items[j] ) )
+                continue;
+            if ( j < i )
+            {
+                head = false;
+                break;
+            }
+            if ( items[j].priority < level )
+                level = items[j].priority;
+        }
+        if ( !head )
+            continue;
+
+        const uint64_t clock = reference_effective_clock( scheduler, level );
+        const uint32_t distance = ( items[i].channel % channels + channels - scheduler->round_robin % channels - 1 ) % channels;
+
+        if ( best < 0 || clock < best_clock || ( clock == best_clock && level < best_level ) ||
+             ( clock == best_clock && level == best_level && distance < best_distance ) )
+        {
+            best = i;
+            best_level = level;
+            best_clock = clock;
+            best_distance = distance;
+        }
+    }
+
+    *out_level = best_level;
+    return best;
+}
+
+static void reference_take_level( struct reference_scheduler_t * scheduler, int level )
+{
+    const uint64_t clock = reference_effective_clock( scheduler, level );
+    scheduler->clock_base = clock;
+    scheduler->level_clock[level] = clock + reference_stride[level];
+}
+
+// BASE's rn_packet_builder_write with no budget (the budget's answers are the
+// other tests' business): the class loop, the packet limits, the fit, the
+// clock step and Tick's reset. The plans below are code 0 (UNRELIABLE), whose
+// record carries its length alone, so the record is the item's bytes.
+
+static int reference_write( struct reference_scheduler_t * scheduler, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads, uint32_t * out_payload_bytes )
+{
+    int packets = 0;
+    const int limit = scheduler->packets_per_update < num_payloads ? scheduler->packets_per_update : num_payloads;
+
+    for ( int p = 0; p < limit; p++ )
+    {
+        struct rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payloads[p], scheduler->payload_capacity );
+
+        uint32_t count = 0;
+        uint32_t records = 0;
+
+        for ( int send_class = ROCKETNET_SEND_CLASS_RETRANSMIT; send_class <= ROCKETNET_SEND_CLASS_UNRELIABLE; send_class++ )
+        {
+            for ( ;; )
+            {
+                int level = 0;
+                const int i = reference_next_in_class( scheduler, items, num_items, send_class, &level );
+                if ( i < 0 )
+                    break;
+
+                if ( records >= ROCKETNET_PACKET_BUILDER_MAX_RECORDS ||
+                     ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count >= ROCKETNET_PACKET_BUILDER_MAX_NUMBERS ) )
+                    goto packet_done;
+
+                if ( items[i].alone && records > 0 )
+                    goto packet_done;
+
+                struct rocketnet_message_record_t record;
+                memset( &record, 0, sizeof( record ) );
+                record.code = items[i].code;
+                record.data = items[i].data;
+                record.bytes = (int) items[i].bytes;
+
+                if ( !rocketnet_message_writer_add( &writer, &record ) )
+                {
+                    items[i].taken = 0;
+                    goto packet_done;
+                }
+
+                items[i].taken = 1;
+                records++;
+
+                if ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS )
+                    count++;
+
+                scheduler->round_robin = items[i].channel;
+                reference_take_level( scheduler, level );
+
+                if ( items[i].alone )
+                    goto packet_done;
+            }
+        }
+
+    packet_done:
+
+        const int payload_bytes = rocketnet_message_writer_finish( &writer );
+        if ( payload_bytes <= 0 )
+            break;
+
+        out_payload_bytes[p] = (uint32_t) payload_bytes;
+        packets++;
+    }
+
+    bool drained = true;
+    for ( int i = 0; i < num_items && drained; i++ )
+        if ( reference_writable( &items[i] ) )
+            drained = false;
+    if ( drained )
+        reference_reset_clocks( scheduler );
+
+    return packets;
+}
+
+static uint32_t plan_random_state;
+
+static uint32_t plan_random()
+{
+    plan_random_state ^= plan_random_state << 13;
+    plan_random_state ^= plan_random_state >> 17;
+    plan_random_state ^= plan_random_state << 5;
+    return plan_random_state;
+}
+
+#define PLAN_MAX_ITEMS          512
+#define PLAN_PAYLOADS           ROCKETNET_PACKET_BUILDER_MAX_PACKETS
+#define PLAN_PAYLOAD_BYTES      1191
+
+static uint8_t plan_data[PLAN_MAX_ITEMS][256];
+static uint8_t plan_builder_frames[PLAN_PAYLOADS][PLAN_PAYLOAD_BYTES + 1];
+static uint8_t plan_reference_frames[PLAN_PAYLOADS][PLAN_PAYLOAD_BYTES + 1];
+static struct rn_packet_item_t plan_builder_items[PLAN_MAX_ITEMS];
+static struct rn_packet_item_t plan_reference_items[PLAN_MAX_ITEMS];
+
+// one seeded random plan: channels below the modulus and a few at or above it
+// (the round robin's distance takes the channel mod the modulus, the channel
+// FIFO the channel itself), the four classes, the four priorities and one out
+// of range, some items already taken or empty, numbered items to reach the
+// packet's number limit, and a few that travel alone. Every record's first two
+// bytes are its index, so two equal frames took the same items in the same
+// order.
+
+static void plan_fill( int num_items, uint32_t channels )
+{
+    for ( int i = 0; i < num_items; i++ )
+    {
+        const uint32_t roll = plan_random() % 100;
+        uint16_t channel = (uint16_t) ( plan_random() % channels );
+        if ( roll < 3 )
+            channel = (uint16_t) ( channels + plan_random() % 3 );
+        const int send_class = (int) ( plan_random() % 4 );
+        const int bytes = 2 + (int) ( plan_random() % 120 );
+        uint8_t * data = plan_data[i];
+        data[0] = (uint8_t) ( i & 0xFF );
+        data[1] = (uint8_t) ( i >> 8 );
+        for ( int b = 2; b < bytes; b++ )
+            data[b] = (uint8_t) ( i + b );
+
+        struct rn_packet_item_t * item = &plan_builder_items[i];
+        builder_item( item, channel, ROCKETNET_MESSAGE_CODE_UNRELIABLE, send_class, data, bytes );
+        item->priority = (uint8_t) ( plan_random() % 4 );
+        if ( plan_random() % 50 == 0 )
+            item->priority = 4;                                 // never taken
+        if ( plan_random() % 40 == 0 )
+            item->taken = 1;                                    // already taken
+        if ( plan_random() % 60 == 0 )
+            item->bytes = 0;                                    // nothing to write
+        if ( plan_random() % 3 == 0 )
+            item->number = (uint64_t) i;                        // numbered: the packet's number limit
+        if ( plan_random() % 30 == 0 )
+            item->alone = 1;
+
+        plan_reference_items[i] = *item;
+    }
+}
+
+// the builder and BASE's picker take every plan's items in the same order:
+// the same frames byte for byte, the same items taken, the same clocks and
+// round robin after every write, write after write until the plan drains.
+
+static void test_packet_builder_matches_reference_order()
+{
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rocketnet_unit_check( arena != NULL );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    plan_random_state = 0x2545F491u;
+
+    uint8_t * builder_frames[PLAN_PAYLOADS];
+    uint8_t * reference_frames[PLAN_PAYLOADS];
+    for ( int p = 0; p < PLAN_PAYLOADS; p++ )
+    {
+        builder_frames[p] = plan_builder_frames[p];
+        reference_frames[p] = plan_reference_frames[p];
+    }
+
+    static const int sizes[] = { 1, 2, 5, 17, 32, 64, 128, 255, 512 };
+    static const uint32_t moduli[] = { 1, 2, 3, 8, 32 };
+    static const int packet_counts[] = { 1, 4, 16 };
+
+    for ( int round = 0; round < 60; round++ )
+    {
+        const int num_items = sizes[round % ( sizeof( sizes ) / sizeof( sizes[0] ) )];
+        const uint32_t modulus = moduli[( round / 3 ) % ( sizeof( moduli ) / sizeof( moduli[0] ) )];
+        const int packets_per_update = packet_counts[round % ( sizeof( packet_counts ) / sizeof( packet_counts[0] ) )];
+
+        rn_packet_builder_t builder;
+        rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, packets_per_update, PLAN_PAYLOAD_BYTES ) );
+        builder.num_channels = round % 7 == 6 ? 0 : modulus;    // 0: every channel one turn, the round robin's modulus 1
+        builder.round_robin = builder.num_channels > 0 ? builder.num_channels - 1 : 0;
+
+        struct reference_scheduler_t reference;
+        memset( &reference, 0, sizeof( reference ) );
+        reference.num_channels = builder.num_channels;
+        reference.round_robin = builder.round_robin;
+        reference.packets_per_update = builder.packets_per_update;
+        reference.payload_capacity = PLAN_PAYLOAD_BYTES;
+        reference_reset_clocks( &reference );
+
+        plan_fill( num_items, modulus + 1 );
+
+        for ( int write = 0; write < 64; write++ )
+        {
+            uint32_t reference_payload_bytes[PLAN_PAYLOADS];
+            const int reference_packets = reference_write( &reference, plan_reference_items, num_items, reference_frames, PLAN_PAYLOADS, reference_payload_bytes );
+            const int builder_packets = rn_packet_builder_write( &builder, plan_builder_items, num_items, builder_frames, PLAN_PAYLOADS );
+
+            rocketnet_unit_check( builder_packets == reference_packets );
+            for ( int p = 0; p < builder_packets; p++ )
+            {
+                rocketnet_unit_check( builder.packet[p].payload_bytes == reference_payload_bytes[p] );
+                rocketnet_unit_check( memcmp( builder_frames[p], reference_frames[p], reference_payload_bytes[p] ) == 0 );
+            }
+            for ( int i = 0; i < num_items; i++ )
+                rocketnet_unit_check( plan_builder_items[i].taken == plan_reference_items[i].taken );
+            for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+                rocketnet_unit_check( builder.level_clock[l] == reference.level_clock[l] );
+            rocketnet_unit_check( builder.clock_base == reference.clock_base );
+            rocketnet_unit_check( builder.round_robin == reference.round_robin );
+
+            if ( builder_packets == 0 )
+                break;
+
+            // the application queues more between updates: a few new items
+            // replace taken ones, so the clocks and the round robin carry over
+            for ( int i = 0; i < num_items; i++ )
+            {
+                if ( plan_builder_items[i].taken && plan_random() % 8 == 0 )
+                {
+                    plan_builder_items[i].taken = 0;
+                    plan_builder_items[i].priority = (uint8_t) ( plan_random() % 4 );
+                    plan_reference_items[i] = plan_builder_items[i];
+                }
+            }
+        }
+    }
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
+REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
