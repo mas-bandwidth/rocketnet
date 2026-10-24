@@ -485,7 +485,16 @@ static void stress_world_create( stress_world_t * world )
 static void stress_world_destroy( stress_world_t * world )
 {
     rn_test_client_stop_and_destroy( world->client );
-    rn_test_server_stop_and_destroy( world->server );
+    // stop completes over updates: the transport sends its disconnect packets
+    // and drains the link simulator's held packets, a bounded number of steps
+    rocketnet_server_stop( world->server );
+    for ( int i = 0; i < 1000 && !rocketnet_server_stopped( world->server ); i++ )
+    {
+        world->time += STRESS_FRAME_SECONDS;
+        rocketnet_server_update( world->server, world->time );
+    }
+    check( rocketnet_server_stopped( world->server ) );
+    rocketnet_server_destroy( world->server );
     stress_side_destroy( &world->client_side );
     stress_side_destroy( &world->server_side );
     rocketnet_public_link_simulator_test_development( 0 );
@@ -555,6 +564,7 @@ static void test_channels_stress_every_channel_delivers()
 
     // from here every allocation would be the frame loop's
     const uint64_t allocations_before = stress_allocations_total.load();
+    const int connect_frames = world->frames;
 
     for ( int round = 0; round < STRESS_ROUNDS; round++ )
     {
@@ -564,7 +574,7 @@ static void test_channels_stress_every_channel_delivers()
         check( rocketnet_client_state( world->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
         check( rocketnet_server_client_connected( world->server, 0 ) );
     }
-    const int send_frames = world->frames;
+    const int send_frames = world->frames - connect_frames;
     const int reliable_receipts = stress_reliable_receipt_sends( &world->client_side );
     for ( int i = 0; i < STRESS_DRAIN_FRAMES; i++ )
     {
@@ -603,11 +613,11 @@ static void test_channels_stress_every_channel_delivers()
     check( server_stats.messages_resent > 0 );
 
     printf( "channels %d rounds %d messages %d each way: client received %llu, server received %llu; "
-            "%d send frames, %d frames in all (%.2f s simulated); resent client %llu server %llu; "
+            "%d connect frames, %d send frames, %d frames in all (%.2f s simulated); resent client %llu server %llu; "
             "packets sent client %llu server %llu\n",
             STRESS_NUM_CHANNELS, STRESS_ROUNDS, STRESS_MESSAGES_PER_SIDE,
             (unsigned long long) world->client_side.messages_received, (unsigned long long) world->server_side.messages_received,
-            send_frames, world->frames, world->time - 1000.0,
+            connect_frames, send_frames, world->frames, world->time - 1000.0,
             (unsigned long long) client_stats.messages_resent, (unsigned long long) server_stats.messages_resent,
             (unsigned long long) client_stats.packets_sent, (unsigned long long) server_stats.packets_sent );
 
