@@ -64,7 +64,7 @@ struct rn_channel_receive_t             // 24 bytes (7.1)
     uint32_t ordered_read;              // next ordering index to deliver
     uint32_t sequenced_watermark;       // lowest sequencing index still deliverable in this epoch
     uint32_t held_sequenced;            // descriptor of the newest held future sequenced message, or RN_DESCRIPTOR_NONE
-    uint32_t pad;                       // the first number of that hold when it is code 4
+    uint32_t held_sequenced_first;      // the first number of that hold when it is code 4
     uint32_t block_in_turn;             // the in-turn code-4 block still collecting fragments, or RN_DESCRIPTOR_NONE
     uint32_t block_in_turn_first;       // that block's first number
 };
@@ -225,7 +225,7 @@ enum
     RN_PART_SENT_INDEX,                 // 16 * 2P
     RN_PART_SENT_REFS,                  // 4 * 16P
     RN_PART_DELIVERIES,                 // 24 (W + Du)
-    RN_PART_SEQUENCED_HOLDS,            // 1432 Ru
+    RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
     RN_PART_RESEND_FIFO,                // 8 W
     RN_PART_SEND_SPANS,                 // B
@@ -374,6 +374,10 @@ struct rn_region_t
     rn_delivery_t * deliveries;
     rn_sequenced_hold_t * sequenced_messages_held;
     rn_sequenced_payload_t * sequenced_message_payloads;
+    uint32_t * sequenced_hold_free_stack;       // free hold indices in the holds part, the top at sequenced_hold_free_count - 1
+    uint32_t sequenced_hold_free_count;         // holds on the free stack: taken in O(1), never scanned for
+    uint32_t * sequenced_holds_delivered;       // delivered (used == 2) hold indices in the holds part, this update's
+    uint32_t sequenced_holds_delivered_count;   // delivered holds the end-of-update pass returns, none when zero
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 

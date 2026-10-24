@@ -8962,6 +8962,17 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
+// the receive buffer sizing cases (functional/server_receive_low_tick.cpp):
+// the server socket's request is the formula's value at its max_clients, the
+// grant is read back and a short grant names the limit to raise. The
+// low-tick measurement (1000 clients at 256 kbps against a server updating at
+// 10 Hz) reads the kernel drop count from procfs, so it is a Linux case; it
+// reports the counts and never gates on them.
+extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
+#endif
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
 extern void windows_server_drops_oversize_datagram_portable_ipv4();
@@ -9520,7 +9531,8 @@ void rocketnet_test_portable_client_pin_selects_portable_pump()
 // the first sendmsg_x with ENOTSUP (not weather), which pauses the pump
 // (ROCKETNET_MSGX_RETRY_SECONDS); the refused chunk finishes per-packet and
 // the second chunk goes the portable loop, so every datagram of the batch is
-// sent and none is counted as a failed send.
+// sent. the refused chunk counts once as a failed send (its delivered prefix
+// is indeterminate) and its replay, which sent everything, counts nothing.
 void rocketnet_test_msgx_client_degrades_without_loss()
 {
     struct msgx_client_env_t env;
@@ -9537,13 +9549,18 @@ void rocketnet_test_msgx_client_degrades_without_loss()
     msgx_client_send_and_collect( &pair, 48 );
     rocketnet_platform_socket_fail_next_sends( pair.client_socket, 0, 0 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before );
+    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before + 1 );
 
     // the paused socket keeps carrying both ways on the portable loop
     msgx_client_send_and_collect( &pair, 48 );
     msgx_client_receive_from_server( &pair, 48 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    msgx_client_pair_destroy( &pair );
+
+    // the refused chunk's one count is the client's only refusal
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( pair.client, ROCKETNET_COUNTER_SEND_FAILED );
+    rocketnet_server_transport_stop( pair.server );
+    rocketnet_server_transport_update( pair.server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair.server );
     msgx_client_env_restore( &env );
 }
 
@@ -9621,6 +9638,9 @@ static bool rocketnet_test_server_pin_allows_io_uring()
 static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "msgx" ); }
 #endif
 
+extern void rocketnet_test_server_stats_creates_no_thread();
+extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
@@ -9633,6 +9653,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
+    { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, NULL },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
@@ -9914,6 +9938,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
+    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

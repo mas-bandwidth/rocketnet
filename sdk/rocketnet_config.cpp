@@ -499,14 +499,30 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
         rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof(value) - 1 );
         return false;
     }
-    if ( found == 0 || value[0] == '\0' )
+    if ( found == 0 )
         return true;
 
-    if ( !rocketnet_config_parse_uint64( value, out ) )
+    if ( value[0] == '\0' )
+    {
+        rocketnet_info( "%s config ignores empty %s (set a value, or unset the variable)", transport_name, env_name );
+        return true;
+    }
+
+    // the value the override displaces, kept before the parse so the
+    // override line names what it replaced: the same audit trail the
+    // table pass writes (rocketnet_config_apply_env_value)
+
+    const uint64_t displaced = *out;
+
+    uint64_t parsed = 0;
+    if ( !rocketnet_config_parse_uint64( value, &parsed ) )
     {
         rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
         return false;
     }
+    *out = parsed;
+
+    rocketnet_info( "%s config override %s=%s (displaces %" PRIu64 ")", transport_name, env_name, value, displaced );
 
     return true;
 }
@@ -890,8 +906,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     {
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value ? value : "auto", ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
         return true;
     }
 
@@ -995,8 +1019,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
     }
 
     return true;

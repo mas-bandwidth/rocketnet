@@ -49,12 +49,15 @@ client in separate terminals:
 ./bin/example_client_server_client
 ```
 
-Both programs use `--port <n>` when supplied and otherwise use port `40000`.
-Give both processes the same port:
+The server binds port `40000` by default, or `--port <n>` when supplied (the
+`ROCKETNET_EXAMPLE_PORT` environment variable sets it too). It writes its
+address and public key to the key file `client_server.keys`, which the client
+reads, so the client takes no port argument. Run both from the same working
+directory:
 
 ```sh
 ./bin/example_client_server_server --port 41234
-./bin/example_client_server_client --port 41234
+./bin/example_client_server_client
 ```
 
 The message exchange is: the client connects,

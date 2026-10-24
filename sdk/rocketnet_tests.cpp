@@ -7154,7 +7154,10 @@ void rocketnet_test_packet_loss_tracker()
 
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+    // a sequence jump this far beyond the last judged one cannot be a packet
+    // stream at the assumed 1500-byte MTU: the update reports its documented
+    // per-update loss cap, not a saturated INT_MAX and not zero
+    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
 }
 
 void rocketnet_test_jitter_tracker()
@@ -7464,7 +7467,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_default_config_internal",
-    "rocketnet_client_light_config",
+    "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
     "rocketnet_client_connect",
@@ -7486,7 +7489,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
-    "rocketnet_server_light_config",
+    "rocketnet_server_light_config_internal",
     "rocketnet_server_required_memory",
     "rocketnet_server_create",
     "rocketnet_server_start",
@@ -7523,7 +7526,7 @@ static const char * rocketnet_test_exports[] =
 static const char * rocketnet_test_public_null_case_exports[] =
 {
     "rocketnet_client_default_config_internal",
-    "rocketnet_client_light_config",
+    "rocketnet_client_light_config_internal",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
@@ -7542,7 +7545,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
-    "rocketnet_server_light_config",
+    "rocketnet_server_light_config_internal",
     "rocketnet_server_create",
     "rocketnet_server_start",
     "rocketnet_server_stop",
@@ -7970,7 +7973,7 @@ void rocketnet_test_public_api_null()
     // is one counted misuse either way
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_light_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 #if ROCKETNET_DEV
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, NULL, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, token, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8012,7 +8015,7 @@ void rocketnet_test_public_api_null()
 
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_light_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, NULL ) == NULL ) );
     RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );

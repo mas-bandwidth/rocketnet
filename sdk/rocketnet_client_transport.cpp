@@ -493,7 +493,13 @@ extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_s
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
 extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
 #else
+static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
+{
+    (void) simulator;
+    return false;
+}
 static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
 {
     (void) simulator; (void) mutex;
@@ -789,9 +795,12 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
 // simulator holds that has come due by now.  A held packet leaves on the
 // thread that owns the simulator: the caller's thread on both paths, since
 // the per-packet path sends there and the ring path's hand-off is there too.
+// A simulator holding nothing drains nothing, so it is skipped without the
+// slot walk, as the server drain does: every development connection owns a
+// simulator, and an all-zero setting holds no packet.
 static void rocketnet_client_link_drain( rocketnet_client_transport_t * transport, double now )
 {
-    if ( !transport->link_simulator )
+    if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
         return;
     rocketnet_address_t from, to;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];

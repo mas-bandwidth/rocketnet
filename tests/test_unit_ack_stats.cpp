@@ -309,3 +309,68 @@ static void test_ack_stats_epoch_invalidation_preserves_storage()
     delete history;
 }
 REGISTER_UNIT_TEST(test_ack_stats_epoch_invalidation_preserves_storage);
+
+#include "rocketnet_replay.h"
+
+// one accepted session packet as both production receive paths take it:
+// replay admits it and advances, then the received statistics record it
+static void stats_accept( rocketnet_ack_endpoint_t * endpoint, struct rocketnet_replay_protection_t * replay,
+                          uint64_t sequence, int wire_bytes, double time )
+{
+    rocketnet_unit_check( !rocketnet_replay_already_received( replay, sequence ) );
+    rocketnet_replay_advance( replay, sequence );
+    rocketnet_ack_endpoint_record_received( endpoint, sequence, wire_bytes, time );
+}
+
+// a previously unseen sequence that replay admits more than one received
+// ring behind the high-water mark shares its slot with a newer counted
+// record: the received statistics refuse it and keep the newer record
+// counted (tla/RNServerStats.tla Write, invariant RetainedIsNewest)
+static void test_ack_received_late_alias_keeps_counted_newer()
+{
+    auto * endpoint = stats_endpoint();
+    struct rocketnet_replay_protection_t replay;
+    memset( &replay, 0, sizeof(replay) );
+
+    stats_accept( endpoint, &replay, 3000, 300, 1000.0 );
+    stats_accept( endpoint, &replay, 3001, 400, 1001.0 );
+    stats_accept( endpoint, &replay, 5000, 500, 1002.0 );
+
+    // the counted window is the older half of the ring behind 5000, and
+    // holds 3000 and 3001
+    const uint64_t base = 5000 - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1;
+    const uint64_t top = base + ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 - 1;
+    rocketnet_unit_check( base == 2953 && top == 3976 );
+    rocketnet_unit_check( 3000 >= base && 3001 <= top );
+
+    // replay admits 952, which shares its received slot with 3000
+    const uint64_t late = 952;
+    rocketnet_unit_check( !rocketnet_replay_already_received( &replay, late ) );
+    rocketnet_unit_check( late % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE == 3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    rocketnet_unit_check( late < base );
+
+    const uint32_t count = endpoint->stats_received_count;
+    const uint64_t bytes = endpoint->stats_received_bytes;
+    const float kbps = endpoint->bandwidth_received_kbps;
+    rocketnet_unit_check( count == 2 && bytes == 700 && kbps > 0.0f );
+
+    stats_accept( endpoint, &replay, late, 100, 1003.0 );
+
+    // refused: the newer record stays in its slot and counted
+    rocketnet_unit_check( endpoint->stats_received_count == count );
+    rocketnet_unit_check( endpoint->stats_received_bytes == bytes );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
+    rocketnet_unit_check( endpoint->received[3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE].sequence == 3000 );
+    rocketnet_unit_check( endpoint->highest_received_sequence == 5000 );
+    stats_update_and_compare_history( endpoint );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
+
+    // the refusal leaves later writes counted
+    stats_accept( endpoint, &replay, 3002, 200, 1004.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 3 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 900 );
+    stats_update_and_compare_history( endpoint );
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_late_alias_keeps_counted_newer );
