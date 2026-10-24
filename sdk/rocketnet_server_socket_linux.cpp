@@ -2720,13 +2720,7 @@ static void pin_thread_to_cpu( int cpu )
         return;
     }
 
-    // A changed online count is a logged refusal in every build, never an abort.
-    const long num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
-    if ( cpu >= num_cpus )
-    {
-        rocketnet_error( "xdp thread not pinned: cpu %d is outside the online count %ld", cpu, num_cpus );
-        return;
-    }
+    // Online CPU ids can have gaps; affinity failure below logs an offline target without asserting on the count.
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
