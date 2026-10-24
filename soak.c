@@ -38,16 +38,18 @@
     uses as its negative control.
 
     THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
-    first client reconnects once it has sent and received one full sweep of
-    payload sizes, so the create, connect, disconnect and destroy paths have
-    each run once; the post-warmup sample is taken when the second client has
-    finished its own first sweep, then one sample every 10 s while a client is
+    warm cycle is the first planned reconnect cycle: 30 s of the first client,
+    long enough for its sequence numbers to wrap every history and window the
+    connection indexes by sequence (so every page of them has been touched),
+    then the disconnect, destroy, create and connect of the second client. The
+    post-warmup sample is taken when the second client has sent one full
+    sweep of payload sizes, then one sample every 10 s while a client is
     connected, and the end sample after the bound, before the teardown. Each
     count prints as "soak resources: <name> start=<n> end=<n> peak=<n>" (fds,
     threads, resident_bytes; handles, threads, private_bytes on Windows); a
     run that ends inside the warm cycle has no post-warmup sample and prints
-    "soak resources: none (the run ended inside the warm cycle)". The planned
-    reconnect cycle after the warm one is every 30 s.
+    "soak resources: none (the run ended inside the warm cycle)", as every
+    run under about 32 s does.
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
@@ -425,7 +427,7 @@ int main( int argc, char ** argv )
 
         // reconnect on a cycle: the connect path is never a rare path
 
-        if ( !client || rocketnet_time() - reconnect_time > 30.0 || ( reconnects == 0 && client_sweeps >= 1 ) )
+        if ( !client || rocketnet_time() - reconnect_time > 30.0 )
         {
             if ( client )
             {
