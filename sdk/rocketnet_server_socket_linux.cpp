@@ -283,6 +283,7 @@ struct rocketnet_server_socket_t
     std::atomic<uint64_t> packet_id{0};
 
     int num_queues;
+    int receive_start_queue; // the next receive_packets call starts at this queue
     rocketnet_server_xdp_socket_t * socket;
 
     rocketnet_server_socket_process_packets_t process_packets;
@@ -2816,8 +2817,12 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
     server_socket->process_packets.num_packets = 0;
 
-    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    const int num_queues = server_socket->num_queues;
+    int filled_queue = -1;
+    // a rotating start: queue 0 is not served first on every call
+    for ( int step = 0; step < num_queues; step++ )
     {
+        const int queue = rocketnet_xdp_drain_queue( server_socket->receive_start_queue, step, num_queues );
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
         // Last call's view has expired. A partly consumed buffer remains
@@ -2844,11 +2849,18 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         }
 
         if ( socket->receive_held_index < 0 ) continue;
+        // the budget already ended on an earlier queue: still recycle this
+        // one, and take no packet from it
+        if ( filled_queue >= 0 )
+            continue;
         rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_held_index];
         for ( uint32_t i = socket->receive_read_index; i < receive_buffer->num_packets; i++ )
         {
             if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+            {
+                filled_queue = queue;
                 break;
+            }
             uint8_t * eth = receive_buffer->eth[i];
             rocketnet_address_t from = receive_buffer->from[i];
             uint8_t * packet_data = receive_buffer->packet_data[i];
@@ -2858,7 +2870,14 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
             rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
             socket->receive_read_index = i + 1;
         }
-    }        
+    }
+    if ( num_queues > 0 )
+    {
+        // the budget ended on filled_queue: the next call starts after it.
+        // a call that did not fill the budget still advances by one.
+        const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
+        server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
+    }
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data )

@@ -189,6 +189,37 @@ static void test_xdp_transport_stats_cpus_are_bounded()
     rocketnet_unit_check( rocketnet_xdp_stats_cpus_fit( ROCKETNET_XDP_STATS_MAX_CPUS ) );
 }
 
+static void test_xdp_transport_receive_drain_rotates_first_queue()
+{
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 1 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 1, 1 ) == 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 2 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 1, 2 ) == 1 );
+    rocketnet_unit_check( rocketnet_xdp_drain_queue( 1, 1, 2 ) == 0 );
+
+    for ( int step = 0; step < 7; step++ )
+    {
+        rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, step, 7 ) == step );
+        rocketnet_unit_check( rocketnet_xdp_drain_queue( 3, step, 7 ) == ( 3 + step ) % 7 );
+    }
+
+    // three queues, each holding more than one call's budget. The call that
+    // starts at S fills on S, so the next call starts at S + 1. Over three
+    // calls every queue is first once.
+    int start = 0;
+    int served_first[3] = { 0, 0, 0 };
+    for ( int call = 0; call < 3; call++ )
+    {
+        const int first = rocketnet_xdp_drain_queue( start, 0, 3 );
+        rocketnet_unit_check( first >= 0 && first < 3 );
+        served_first[first] += 1;
+        start = rocketnet_xdp_drain_queue( first, 1, 3 );
+    }
+    rocketnet_unit_check( served_first[0] == 1 && served_first[1] == 1 && served_first[2] == 1 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_receive_drain_rotates_first_queue );
 REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
