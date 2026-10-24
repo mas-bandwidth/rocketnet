@@ -6,7 +6,7 @@
 #
 #   scripts/soak-per-transport --seconds 120
 #   scripts/soak-per-transport --seconds 1800                 (the nightly)
-#   scripts/soak-per-transport --seconds 120 --cell xdp       (on hulk, by hand)
+#   scripts/soak-per-transport --seconds 120 --cell xdp       (on the XDP machine, by hand)
 #
 # The cells. The server transport is pinned by ROCKETNET_SERVER_TRANSPORT and
 # every client by ROCKETNET_CLIENT_TRANSPORT=portable, as load.c's cells are:
@@ -25,7 +25,7 @@
 #              near end (SOAK_SERVER_ADDRESS) and every client opened in the
 #              far namespace (SOAK_CLIENT_NETNS). Nothing is attached to any
 #              interface outside the guest. XDP runs only on the dedicated XDP
-#              machine (hulk) or the nightly's VM-tier runner; a machine with
+#              machine or the nightly's VM-tier runner; a machine with
 #              no VM tier fails the cell by name.
 #
 # The impairment, at both ends through the env overlay
@@ -51,7 +51,7 @@
 #                    impaired cell; the record is always impaired)
 #   --xdp-memory M   the xdp guest's memory, as vng --memory takes it (default 4G)
 #   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r),
-#                    the runners' path; hulk's kit is /opt/vm-kernels/<version>/vmlinuz)
+#                    the runners' path; a kit may keep it as /opt/vm-kernels/<version>/vmlinuz)
 #
 # Exit status: 0 when every cell run passed, 1 when any failed or was skipped,
 # 2 on a malformed option.
@@ -186,7 +186,11 @@ run_xdp_cell()
         echo 'set -u'
         echo 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
         echo 'ip netns add rnxdpsoak'
-        echo 'ip link add rnxdpsoak0 mtu 1500 type veth peer name rnxdpsoak1 mtu 1500'
+        # the veth pair: the kernel names the far end, found by the near
+        # end's iflink, then renamed
+        echo 'ip link add rnxdpsoak0 mtu 1500 type veth'
+        echo 'far=$(grep -lx "$(cat /sys/class/net/rnxdpsoak0/iflink)" /sys/class/net/*/ifindex | cut -d/ -f5)'
+        echo 'ip link set "$far" name rnxdpsoak1 mtu 1500'
         echo 'ip link set rnxdpsoak1 netns rnxdpsoak'
         echo 'ip addr add 10.77.4.1/24 dev rnxdpsoak0'
         echo 'ip -n rnxdpsoak addr add 10.77.4.2/24 dev rnxdpsoak1'
