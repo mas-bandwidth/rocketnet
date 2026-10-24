@@ -51,8 +51,29 @@
 (* keeps a spent window open for the length of the correction             *)
 (* (FloodWindowBounded).                                                   *)
 (* Spec leaves the flood variables at their initial values.                *)
+(*                                                                         *)
+(* The request-claim table (rocketnet_used_token_history_claim_can_record, *)
+(* _claim_record and _claim_release, sdk/rocketnet_token_tables.cpp) at    *)
+(* the slot grain: ClaimSlots slots, a free list and an order list of live *)
+(* claims.  Request checks the claim and the O(1) capacity rule before the *)
+(* verify and records the claim after it; RequestRefused records and then  *)
+(* releases it (a refusal past the verify, or a same-address request whose *)
+(* live claim it then releases, the release from the middle of the order   *)
+(* list); a mapping swept by Tick at its handshake deadline releases       *)
+(* nothing, its claim expires with it; ClaimRecord reuses the expired     *)
+(* order head directly, matching the table implementation.                *)
+(* ClaimsSpec checks both slots independently of unrelated protocol state. *)
+(* ReleaseToFree FALSE is the code                                        *)
+(* before the free list, without its scan: a release zeroes the deadline  *)
+(* and leaves the slot in place, so the O(1) rule no longer equals the    *)
+(* scan                                                                    *)
+(* (CanRecordMatchesScan).  ReleaseChecksLive FALSE pushes the slot on the *)
+(* free list without unlinking it from its chain, so the released entry   *)
+(* is still found: a second release pushes the slot twice, and a record   *)
+(* of the same token puts it on the order list while it is still on the  *)
+(* free list (FreeAndOrderPartitionSlots).                                 *)
 (***************************************************************************)
-EXTENDS Integers, FiniteSets
+EXTENDS Integers, FiniteSets, Sequences
 
 CONSTANTS
     None, Addrs, Tokens, Expire, Cid, MaxClock, CookieLife, RotatePeriod,
@@ -79,9 +100,12 @@ ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
           gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
-          failCount, failTable, honest, floodVerifies, fclock, windowStart
+          failCount, failTable, honest, floodVerifies, fclock, windowStart,
+          claimSlot, freeList, orderList, claimReplaced
+claimVars == <<claimSlot, freeList, orderList, claimReplaced>>
 tableVars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-               gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
+               gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
+               claimVars>>
 floodVars == <<failCount, failTable, honest, floodVerifies, fclock, windowStart>>
 vars == <<tableVars, floodVars>>
 
@@ -102,6 +126,19 @@ RefuseUnremembered == FALSE
 FailWindow == 2
 FloodMaxClock == 3
 BackwardsRollover == TRUE
+
+\* The request-claim table's small instance (the code sizes it at
+\* ROCKETNET_USED_TOKEN_HISTORY_RATIO x max_clients).  Definitions, not
+\* constants, as RefuseUnremembered is; a reversed witness overrides a
+\* switch with <-.
+ClaimSlots == 1..2
+\* One token exercises claim integration without multiplying the full
+\* protocol state space by the two-slot table's permutations. ClaimsSpec
+\* uses three tokens to exercise reuse by an identifier absent from a full
+\* table; the release witnesses retain their two-token instance.
+ClaimTokens == {"th"}
+ReleaseToFree == TRUE
+ReleaseChecksLive == TRUE
 
 PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
 NextRotate == gen * RotatePeriod
@@ -126,6 +163,84 @@ Used(tk) == HoldUntilExpire /\ AdmLive(tk)
 Fresh(tk) == ~TokExpired(tk) /\ NumFree > 0 /\ admits[tk] = 0 /\ ~(\E s \in slots : s.cid = Cid[tk])
 Live(a) == map[a] # None
 
+\* ---------------------------------------------------------------------------
+\* The request-claim table.  Its state is a record C: C.slot[s] holds the
+\* token, the address and the deadline last written to slot s (a released
+\* slot keeps its token and address, as the code's arrays do; its deadline
+\* is zeroed), C.free the free list (head first), C.order the order list
+\* of claims (head first), C.replaced the ghost that fires when a write
+\* lands on another token's live claim.  The operations are functions of C
+\* so a refusal past the verify composes the record and the release in one
+\* step.  A slot is in its token's chain while it is on the order list;
+\* with ReleaseChecksLive FALSE a released slot stays in its chain.
+EmptyClaim == [tok |-> None, addr |-> None, dl |-> 0]
+SeqSet(q) == {q[i] : i \in 1..Len(q)}
+Remove(q, x) == SelectSeq(q, LAMBDA y : y # x)
+ClaimState == [slot |-> claimSlot, free |-> freeList, order |-> orderList, replaced |-> claimReplaced]
+SetClaimState(C) == /\ claimSlot' = C.slot /\ freeList' = C.free
+                    /\ orderList' = C.order /\ claimReplaced' = C.replaced
+Chained(C, s) == IF ReleaseChecksLive THEN s \in SeqSet(C.order)
+                 ELSE s \in SeqSet(C.order) \/ C.slot[s].tok # None
+\* rocketnet_token_table_find_any on the claim table
+Found(C, tk) == {s \in ClaimSlots : Chained(C, s) /\ C.slot[s].tok = tk}
+LiveAt(C, s) == C.slot[s].dl > clock
+\* rocketnet_used_token_history_claim_check: no live claim on tk from
+\* another address
+ClaimCheckOk(tk, a) == \A s \in Found(ClaimState, tk) : LiveAt(ClaimState, s) => claimSlot[s].addr = a
+\* rocketnet_used_token_history_claim_can_record, the O(1) rule: the token
+\* is in the table, or the free list is not empty, or the order head's
+\* deadline has passed
+CanRecord(tk) == \/ Found(ClaimState, tk) # {}
+                 \/ freeList # <<>>
+                 \/ (orderList # <<>> /\ ~LiveAt(ClaimState, Head(orderList)))
+\* the code before the free list: the same, with a scan over every slot
+CanRecordScan(tk) == \/ Found(ClaimState, tk) # {}
+                     \/ freeList # <<>>
+                     \/ \E s \in ClaimSlots : ~LiveAt(ClaimState, s)
+\* clock + HandshakeDeadline, held at MaxClock + 1: the clock never passes
+\* MaxClock, so every live-or-expired answer is unchanged, and the clamp is
+\* monotone, so it keeps the order list's deadline order
+ClaimDeadline == IF clock + HandshakeDeadline > MaxClock THEN MaxClock + 1 ELSE clock + HandshakeDeadline
+
+\* write slot s for tk at a and move it to the order list's tail
+Write(C, s, tk, a, fl, ol) ==
+    [slot |-> [C.slot EXCEPT ![s] = [tok |-> tk, addr |-> a, dl |-> ClaimDeadline]],
+     free |-> fl,
+     order |-> Append(Remove(ol, s), s),
+     replaced |-> C.replaced \/ (C.slot[s].tok # tk /\ C.slot[s].tok # None
+                                /\ LiveAt(C, s) /\ s \in SeqSet(C.order))]
+
+\* rocketnet_used_token_history_claim_record, called only once CanRecord
+\* holds: the token's own entry (live: a no-op; expired: rewritten and
+\* moved to the tail), else the free list's head, else the order list's
+\* head once its deadline has passed, else (never reached) a refusal.
+ClaimRecord(C, tk, a) ==
+    IF Found(C, tk) # {}
+      THEN LET s == CHOOSE x \in Found(C, tk) : TRUE
+           IN IF LiveAt(C, s) THEN C ELSE Write(C, s, tk, a, C.free, C.order)
+    ELSE IF C.free # <<>>
+      THEN Write(C, Head(C.free), tk, a, Tail(C.free), C.order)
+    ELSE IF C.order # <<>> /\ ~LiveAt(C, Head(C.order))
+      THEN Write(C, Head(C.order), tk, a, C.free, Tail(C.order))
+    ELSE C
+
+\* rocketnet_used_token_history_claim_release: when the entry is found and
+\* its address matches, it leaves its chain and the order list and its
+\* slot is pushed on the free list (ReleaseToFree), or (the code before)
+\* only its deadline is zeroed and the slot stays where it is.  In the
+\* code a slot off every chain is never read until it is written again, so
+\* the fixed code clears it here, which keeps the state space small; the
+\* witnesses keep the stale contents their bugs read.
+ClaimRelease(C, tk, a) ==
+    IF \E s \in Found(C, tk) : C.slot[s].addr = a
+      THEN LET s == CHOOSE x \in Found(C, tk) : C.slot[x].addr = a
+           IN [slot |-> [C.slot EXCEPT ![s] = IF ReleaseToFree /\ ReleaseChecksLive THEN EmptyClaim
+                                                ELSE [C.slot[s] EXCEPT !.dl = 0]],
+               free |-> IF ReleaseToFree THEN <<s>> \o C.free ELSE C.free,
+               order |-> IF ReleaseToFree THEN Remove(C.order, s) ELSE C.order,
+               replaced |-> C.replaced]
+      ELSE C
+
 Init ==
     /\ clock = 0 /\ gen = 1 /\ hasPrev = FALSE /\ prevUntil = 0 /\ verifies = 0
     /\ history = [t \in Tokens |-> None] /\ admitted = [t \in Tokens |-> 0] /\ insertOrder = 0
@@ -135,6 +250,10 @@ Init ==
     /\ lateAdmit = FALSE /\ evictedLive = FALSE /\ churnDenied = FALSE
     /\ failCount = 0 /\ failTable = {} /\ honest = "start" /\ floodVerifies = 0
     /\ fclock = 0 /\ windowStart = 0
+    /\ claimSlot = [s \in ClaimSlots |-> EmptyClaim]
+    /\ freeList = [i \in 1..Cardinality(ClaimSlots) |-> i]
+    /\ orderList = <<>>
+    /\ claimReplaced = FALSE
 
 IsExpired(u) == IF history[u] = None THEN FALSE ELSE history[u].exp <= clock
 
@@ -177,7 +296,12 @@ Bind(tk, a, op) ==
 \* under a cookie of generation g.  The attacker is this quantification:
 \* it presents a captured or shared token from any source, and the gate
 \* is the only thing that has run before it.
-Request(a, tok, g) ==
+\* The rungs a request passes before its verify: the cookie generation,
+\* the expiry, the history from another address, the admitted set (with
+\* HoldUntilExpire), the per-update budget, then the claim from another
+\* address (claim_check) and the claim table's capacity (claim_can_record,
+\* read-only).  Past the verify the claim is recorded (claim_record).
+RequestRungs(a, tok, g) ==
     /\ ~Live(a)
     \* a connected address provokes nothing from the request path
     \* (CONNECTION_REQUEST_ALREADY_CONNECTED)
@@ -186,12 +310,30 @@ Request(a, tok, g) ==
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
        ELSE IF Used(tok) THEN FALSE
        ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
+       ELSE IF tok \in ClaimTokens /\ ~ClaimCheckOk(tok, a) THEN FALSE
+       ELSE IF tok \in ClaimTokens /\ ~CanRecord(tok) THEN FALSE
        ELSE TRUE
     /\ verifies' = verifies + 1
+
+Request(a, tok, g) ==
+    /\ RequestRungs(a, tok, g)
+    /\ IF tok \in ClaimTokens THEN SetClaimState(ClaimRecord(ClaimState, tok, a)) ELSE UNCHANGED claimVars
     /\ IF BindAtRequest THEN Bind(tok, a, FALSE)
        ELSE UNCHANGED <<history, insertOrder, evictedLive>>
     /\ map' = [map EXCEPT ![a] = tok] /\ mapGen' = [mapGen EXCEPT ![a] = g] /\ mapBorn' = [mapBorn EXCEPT ![a] = clock]
     /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit, churnDenied>>
+
+\* A request refused past the verify (the sealed block does not open, the
+\* client id is connected, the server is full, a small-order key, no
+\* mapping): the claim is recorded and released in the same step, and no
+\* mapping is made.
+RequestRefused(a, tok, g) ==
+    /\ tok \in ClaimTokens
+    /\ RequestRungs(a, tok, g)
+    /\ SetClaimState(ClaimRelease(ClaimRecord(ClaimState, tok, a), tok, a))
+    /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
+                   gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
+
 
 \* The response rung: the packet opened under the mapping, so only an
 \* address in Holds[tok] takes this step.  The record runs first (unless
@@ -210,6 +352,7 @@ AdmittedAfterAdd(tk) ==
 
 Response(a) ==
     /\ Live(a)
+    /\ UNCHANGED claimVars
     /\ LET tok == map[a] IN
        /\ a \in Holds[tok]
        /\ IF BindAtRequest THEN UNCHANGED <<history, insertOrder, evictedLive>>
@@ -241,14 +384,14 @@ Response(a) ==
                               prevUntil, verifies, deniedPulse, churnDenied>>
 
 OtherJoins == /\ others < MaxClients /\ NumFree > 0 /\ others' = others + 1
-              /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
+              /\ UNCHANGED <<claimVars, clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
                              gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 OtherLeaves == /\ others > 0 /\ others' = others - 1
-               /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
+               /\ UNCHANGED <<claimVars, clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
                               gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 Disconnect(a) == /\ \E s \in slots : s.addr = a
                  /\ slots' = {s \in slots : s.addr # a}
-                 /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, others,
+                 /\ UNCHANGED <<claimVars, clock, history, admitted, insertOrder, map, mapGen, mapBorn, others,
                                 gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 Tick ==
@@ -266,14 +409,37 @@ Tick ==
          ELSE UNCHANGED <<gen, hasPrev, prevUntil>>
     /\ map' = [a \in Addrs |-> IF Live(a) /\ clock' >= mapBorn[a] + HandshakeDeadline THEN None ELSE map[a]]
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
-                   deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
+                   deniedPulse, admits, lateAdmit, evictedLive, churnDenied, claimVars>>
 
-Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g))
+Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \/ RequestRefused(a, tok, g))
            \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
            \/ OtherJoins \/ OtherLeaves \/ Tick
         /\ UNCHANGED floodVars
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 SpecFair == Spec
+
+\* The focused claim control keeps both slots and all three identifiers,
+\* making an absent identifier available when both slots are occupied.
+\* Holding the unrelated protocol state fixed, it checks all table
+\* operations, including wrong-address and repeated release, and time
+\* advancing through the handshake deadline. The integrated Spec above
+\* still checks ClaimRecord after the request verify and release on refusal.
+ClaimControlOtherVars == <<history, admitted, insertOrder, map, mapGen, mapBorn,
+    slots, others, gen, hasPrev, prevUntil, verifies, deniedPulse, admits,
+    lateAdmit, evictedLive, churnDenied, floodVars>>
+ClaimControlRecord(tk, a) ==
+    /\ ClaimCheckOk(tk, a) /\ CanRecord(tk)
+    /\ SetClaimState(ClaimRecord(ClaimState, tk, a))
+    /\ UNCHANGED <<clock, ClaimControlOtherVars>>
+ClaimControlRelease(tk, a) ==
+    /\ SetClaimState(ClaimRelease(ClaimState, tk, a))
+    /\ UNCHANGED <<clock, ClaimControlOtherVars>>
+ClaimControlTick ==
+    /\ clock < MaxClock /\ clock' = clock + 1
+    /\ UNCHANGED <<claimVars, ClaimControlOtherVars>>
+ClaimsNext == (\E tk \in ClaimTokens, a \in Addrs : ClaimControlRecord(tk, a) \/ ClaimControlRelease(tk, a))
+              \/ ClaimControlTick
+ClaimsSpec == Init /\ [][ClaimsNext]_vars
 
 \* ---------------------------------------------------------------------------
 \* The flood.  rocketnet_signature_verify_budget_allow: while the window's
@@ -413,6 +579,25 @@ InFlightCookieSurvivesRotation ==
     [][(CookieLife < RotatePeriod /\ gen' # gen /\ clock' - clock <= CookieLife)
         => gen \in LiveGens']_vars
 VerifyBudgetRespected == CapVerifyBudget => verifies <= VerifyBudget
+
+\* The request-claim table (sdk/rocketnet_token_tables.cpp).  Every slot is
+\* on exactly one of the free list or the order list, and neither list
+\* holds a slot twice.
+FreeAndOrderPartitionSlots ==
+    /\ SeqSet(freeList) \cap SeqSet(orderList) = {}
+    /\ SeqSet(freeList) \cup SeqSet(orderList) = ClaimSlots
+    /\ Len(freeList) = Cardinality(SeqSet(freeList))
+    /\ Len(orderList) = Cardinality(SeqSet(orderList))
+\* the order list is deadline order, so its head has the earliest deadline
+OrderIsDeadlineOrder ==
+    \A i, j \in 1..Len(orderList) : i < j => claimSlot[orderList[i]].dl <= claimSlot[orderList[j]].dl
+\* a record never lands on another token's live claim
+LiveClaimNeverReplaced == ~claimReplaced
+\* the O(1) capacity answer equals the scan's for every token, including
+\* an identifier absent when both slots are occupied
+CanRecordMatchesScan == \A tk \in Tokens : CanRecord(tk) = CanRecordScan(tk)
+ClaimSafetyInvariants == FreeAndOrderPartitionSlots /\ OrderIsDeadlineOrder
+                         /\ LiveClaimNeverReplaced /\ CanRecordMatchesScan
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :
@@ -421,4 +606,6 @@ CookieRaceResolves == \A a \in Addrs, t \in Tokens :
 SafetyInvariants == TypeOK /\ OneTokenOneLiveConnection /\ ChurnNeverDenied /\ BoundOnlyToOpener /\ NoBindToNonHolder
                     /\ NoLiveHistoryEviction
                     /\ ExpiredNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded
+                    /\ FreeAndOrderPartitionSlots /\ OrderIsDeadlineOrder /\ LiveClaimNeverReplaced
+                    /\ CanRecordMatchesScan
 =============================================================================
