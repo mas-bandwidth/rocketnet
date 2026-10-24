@@ -78,7 +78,6 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `net` | packets in flight | each `[addr, seq, session, genuine, stage, copy]`; `stage` is `"wire"` before the kernel, `"user"` after it passed; `copy` lets a duplicate coexist with its original |
 | `pendingForget`, `pendingMark` | the walk's output | what the next commit applies |
 | `phase` | the update | `"run"` while packets are processed, `"flush"` between the walk and the commit |
-| `settle[a]` | (assumption bookkeeping) | `"released"`, then `"walked"`, then `"clear"` after a Release |
 | `reached[s]` | (ghost) | the highest `highest_opened` session `s` reached |
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
 | `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1) |
@@ -92,9 +91,8 @@ overridden by one witness configuration: `KernelAdvances` (`FALSE`),
 Actions, each against the design sentence it models:
 
 - `Connect(a)`: a new session; sequences restart at 1 and `highest_opened` is
-  0. Enabled only when `settle[a] = "clear"`, that is once a `Walk`, and a
-  `Commit` that applied the forget, have run since the last `Release(a)`
-  (the assumption below).
+  0. It may reconnect while an older delete is still owed, preserving that
+  interleaving rather than suppressing it with a handshake assumption.
 - `ClientSend(a)`: the live session sends its next genuine sequence.
 - `Forge(a, s)`: an attacker spoofing `a` sends any sequence `s`; it never
   opens.
@@ -151,19 +149,14 @@ one of them.
 userspace window or not: a genuine packet the window would refuse is at or
 below `highest_opened`, so refusing it and opening it leave the same state.
 
-## Assumption: HandshakeSpansAnUpdate
+## Reconnect freshness witness
 
-A slot exists only after a connection request, a challenge and a response
-round trip, while the walk and the commit run every server update. So
-between the release of a session from an address and the next connection
-from that address, at least one walk and one commit run. `Connect(a)` is
-enabled only when that has happened. Without it, a reconnect inside one
-update would find the old mark still committed for one update; the
-assumption is what makes the one-update lag safe for a new session. A
-forget the kernel refuses holds `settle[a]` at `"walked"` until the commit
-that lands it: the model's reconnect waits for it, and the real one, which
-does not wait, is dropped in the kernel until that commit. What the model
-pins is that the commit comes: the forget is never lost.
+The retention control deliberately checks ownership of a refused delete. A
+reconnect is allowed before that delete lands. `MCRNXdpReplayBrokenReconnectFreshness.cfg`
+keeps that behavior and expectedly finds `NewSessionNeverDroppedByOldMark`:
+the retained old kernel high-water can reject early packets of the new session.
+That witness is documentation for the separate reconnect-freshness remedy; it
+is not excluded by a settle guard and it does not weaken the retention control.
 
 ## Left out
 
@@ -179,8 +172,9 @@ pins is that the commit comes: the forget is never lost.
 - **Slots and addresses.** A slot is identified with its address. A slot
   whose mapping changes address forgets the old address exactly as a release
   does; a reconnect landing in a different slot is a reconnect here.
-- **Addresses are independent.** Every action touches one address, so the
-  small instance has one.
+- **Addresses are independent.** Every action touches one address. The
+  retention control uses two addresses and one pending-forget entry, so it
+  reaches a full buffer while another unique delete remains owed.
 - **The userspace window's bits.** Only its depth `W` enters, through
   `FreshGenuineNeverDropped`; a genuine packet that reaches userspace opens
   to the same maximum whether the window would accept or refuse it.
@@ -218,6 +212,7 @@ and `KernelNeverWrites` holds.
 | `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 17 |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
+| `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12 |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
@@ -253,11 +248,11 @@ traffic: one spoofed packet would silence a client.
 5. `KernelFilter` on session 2's sequence 1: `3 - 1 >= 2`, dropped against
    session 1's mark.
 
-In the design the walk at step 3 forgets `A1` and the commit deletes the
-entry before session 2 can exist (HandshakeSpansAnUpdate), so session 2's
-first packets pass. At the real window, a client reconnecting from the same
-address and port would lose every packet until its sequence passed the old
-session's high-water minus the window.
+In the design the walk at step 3 queues `A1` and the next successful commit
+deletes the entry. A reconnect can still arrive before that delete lands; the
+separate reconnect-freshness witness records that stale-map behavior. Once the
+delete succeeds, session 2's first packets pass. The loss here is that the
+broken walk never records the delete at all.
 
 ### NarrowWindow, checked by hand against the design
 

@@ -25,7 +25,7 @@
 struct rocketnet_server_replay_sink_t
 {
     void * context;
-    void ( *forget )( void *, const struct rocketnet_address_t * );
+    bool ( *forget )( void *, const struct rocketnet_address_t * );
     void ( *mark )( void *, const struct rocketnet_address_t *, uint32_t high_water );
 };
 

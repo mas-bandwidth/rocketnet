@@ -80,7 +80,7 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 // tried first in the next commit. A failed syscall adds to the commit failure
 // count and logs one debug line naming the call, never a key.
 
-void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
+bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
 
 // The transport accepted receive-view packet view_index for a connection:
 // its source MAC becomes the reply MAC for its address (rocketnet_xdp_frame.h,

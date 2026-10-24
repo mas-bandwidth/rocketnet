@@ -111,8 +111,8 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         if ( forget )
         {
-            sink->forget( sink->context, &slot->marked_address );
-            memset( slot, 0, sizeof(*slot) );
+            if ( sink->forget( sink->context, &slot->marked_address ) )
+                memset( slot, 0, sizeof(*slot) );
         }
     }
 
@@ -135,10 +135,14 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         const uint32_t high_water = (uint32_t) highest_opened;
 
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
+        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
+        // A full pending-forget buffer leaves the old source owed. Do not
+        // overwrite that source with this mapping until the forget was queued.
+        if ( slot->has_mark && !rocketnet_address_equal( &slot->marked_address, address ) )
+            continue;
         if ( slot->has_mark && slot->marked_value == high_water )
             continue;
 
-        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
         sink->mark( sink->context, address, high_water );
         slot->has_mark = 1;
         slot->marked_value = high_water;
@@ -147,9 +151,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 }
 
 #if ROCKETNET_TEST_SEAMS
-static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
+static bool rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
     (*(int *) context)++;
+    return true;
 }
 
 static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}

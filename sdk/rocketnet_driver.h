@@ -104,7 +104,7 @@ struct rocketnet_server_transport_io_operations_t
     void (*prefilter_counters)( void * transport, uint64_t * values );
     // optional, all three or none; main thread only. A transport with a kernel
     // replay map writes it from these and nothing else does.
-    void (*replay_forget)( void * transport, const rocketnet_address_t * address );
+    bool (*replay_forget)( void * transport, const rocketnet_address_t * address );
     void (*replay_mark)( void * transport, const rocketnet_address_t * address, uint32_t high_water );
     void (*replay_commit)( void * transport );
     // optional; main thread only, while the receive view is current. The
