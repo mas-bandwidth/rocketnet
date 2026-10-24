@@ -72,10 +72,13 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
     if ( transport )
     {
         rn_test_client_transport_stop_and_destroy( transport );
-        // a token naming both families may open the driver once per family
-        // it tries (tests/test_unit_client_bind_family.cpp), so an accepted
-        // create closes it at least once
-        check( fake->destroy_calls >= 1 );
+        // the client opens the driver once per family it tries, and closes
+        // each one: the unit host has an IPv6 stack (tests/test.cpp), so a
+        // token naming both families races both and closes the driver twice,
+        // and a token naming one family closes it once
+        // (tests/test_unit_client_bind_family.cpp)
+        const int families_tried = ( ( flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) ? 1 : 0 ) + ( ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) ? 1 : 0 );
+        check( fake->destroy_calls == families_tried );
     }
     else
     {
@@ -105,6 +108,7 @@ static void test_client_transport_refuses_connect_token_port_zero()
 
     // an unflagged family's port is not read
     check( port_zero_client_transport_create( ipv4, 40000, 0 ) == ROCKETNET_STATUS_OK );
+    check( port_zero_client_transport_create( ipv6, 0, 40000 ) == ROCKETNET_STATUS_OK );
 
     // port 1, the smallest port, is a real port
     check( port_zero_client_transport_create( ipv4, 1, 0 ) == ROCKETNET_STATUS_OK );
