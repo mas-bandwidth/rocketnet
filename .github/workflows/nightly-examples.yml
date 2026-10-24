@@ -154,18 +154,42 @@ jobs:
           done
 
   examples-windows:
-    name: windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
+    name: windows
+    # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake, Git Bash,
+    # Python 3.9, Go, .NET; label rocketnet-windows), the runner ci.yml's per-push Windows legs use
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          # MSVC comes through CMake's Visual Studio generator; the job PATH carries cmake, python and Git Bash
+          for tool in cmake python git; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -A x64
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      - name: Run the examples (Windows)
+      - name: Check the examples against the house rules
+        run: python tools/check_examples.py
+
+      - name: Run the examples
         run: python tools/run_examples.py --build build --config Release
+
+      # the backend pair, as on Linux: Go, then C#; a missing toolchain is a TOOL-MISSING line
+      - name: Run the backend examples
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          DOTNET_NOLOGO: 1
+        run: python tools/run_backend_examples.py --build build --config Release

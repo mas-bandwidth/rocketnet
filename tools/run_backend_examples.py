@@ -26,13 +26,18 @@ tests of the backends are `go test` in examples/backend/go and
 built before it runs, so the timing below is the run, not the compile.
 Every process gets a 60-second timeout; the whole run takes seconds.
 
-    python3 tools/run_backend_examples.py --build build [--backend go|csharp]
+A backend whose toolchain (go, dotnet) is not on PATH is one
+"TOOL-MISSING <tool> ..." line; the other backends still run, and the run
+exits 1, so a missing toolchain is never a silent pass.
+
+    python3 tools/run_backend_examples.py --build build [--config Release] [--backend go|csharp]
 """
 
 import argparse
 import base64
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -91,11 +96,23 @@ def backend_environment(extra):
     return env
 
 
+TOOLCHAIN = {"go": "go", "csharp": "dotnet"}
+
+
+def toolchain_missing(name):
+    tool = TOOLCHAIN[name]
+    if shutil.which(tool):
+        return False
+    where = os.environ.get("RUNNER_NAME") or platform.node()
+    print(f"TOOL-MISSING {tool} (any) (not on PATH, backend_{name} not run) on {where}")
+    return True
+
+
 def build_backend(name, outdir):
     """Builds one backend and returns the command line that runs it."""
     if name == "go":
         binary = outdir / ("rocketnet-backend-go" + (".exe" if os.name == "nt" else ""))
-        subprocess.run(["go", "build", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["go", "build", "-buildvcs=false", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=TIMEOUT_SECONDS)
         return [str(binary)]
     output = outdir / "csharp"
     subprocess.run(["dotnet", "build", "Backend", "-c", "Release", "-o", str(output), "--nologo", "-v", "q"],
@@ -280,9 +297,13 @@ def main():
             print(f"FAIL: {name} binary not found under {args.build}", file=sys.stderr)
             return 1
 
+    missing = False
     outdir = Path(tempfile.mkdtemp(prefix="rocketnet_backend_build_"))
     try:
         for name in args.backend or ["go", "csharp"]:
+            if toolchain_missing(name):
+                missing = True
+                continue
             command = build_backend(name, outdir)
             keys = generate_keys(name, command)
             if keys is None:
@@ -296,7 +317,7 @@ def main():
             print(f"PASS backend_{name}_end_to_end")
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
-    return 0
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":
