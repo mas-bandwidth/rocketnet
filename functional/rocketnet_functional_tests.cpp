@@ -4866,7 +4866,14 @@ void rocketnet_test_server_port_zero_transport()
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
+#if ROCKETNET_XDP
         rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+#else
+        // a build with XDP compiled out (no BPF-capable clang, libbpf or
+        // AF_XDP provider at configure) is supported: the rung refuses
+        // cleanly at its own create and never reaches the commit barrier
+        rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
+#endif
 
         // and the rung refusal is a RUNG refusal, not a create refusal:
         // put a discovering rung after it and the ladder falls, the port

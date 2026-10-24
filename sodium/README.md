@@ -128,6 +128,24 @@ AEAD inputs under UBSan. The fixed-vector test executes that call explicitly.
 These are amalgamation adaptations;
 cryptographic arithmetic and protocol encodings are unchanged.
 
+## Reproducing the vendored inputs
+
+The release library is built from two vendored inputs. Each has a check that
+rebuilds it from its pinned sources, and CI runs that check on these legs:
+
+| Input | Reproduced by | Runs on | Does not apply |
+|---|---|---|---|
+| `sodium/sodium.c`, `sodium/sodium.h`: the netcode baseline at `baseline_commit` plus the libsodium release archive, both SHA-256 pinned in `sodium/manifest.json` | `python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check` (`python` on Windows), step "Reproduce the committed sodium pair" | Linux Release (b), macOS Release, Windows Release (b) | none: every platform compiles the pair |
+| the embedded XDP object `server_xdp.o`, built from the sources `cmake/XdpSources.cmake` lists (`server_xdp/server_xdp.c`, `sdk/rocketnet_wire.h`, `sdk/rocketnet_xdp_limits.h`, `sdk/rocketnet_history.h`) | `python3 tools/check_xdp_archive.py`, step "Embedded XDP object is reproducible and current": a byte-identical object from two checkouts, equal to the build tree's embedded copy | Linux Release (a) and Debug | macOS and Windows embed no XDP object; there the same tool checks only that every listed source exists (Windows: `--committed-only`) |
+
+`tests/xdp_host/linux` and `tests/xdp_host/bpf` are test-only headers for the
+host build of the XDP program; no release library compiles them, so they have
+no reproduction check.
+
+The generator reads every input as bytes and decodes it as UTF-8, and matches
+archive member names as POSIX paths, so a Windows checkout reproduces the same
+bytes as Linux and macOS (`.gitattributes` keeps the committed pair LF).
+
 ## Check
 
 ```sh
