@@ -521,3 +521,87 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
 REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
 REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
+
+// A full request-claim table is its own reason, not a mapping failure: the
+// mapping table has room, so only CLAIM_TABLE_FULL moves (standard/TRANSPORT.md
+// t12 rule 9; tla/ReceiveOrder.tla, ClaimCheck).
+static void test_claim_table_full_counts_its_own_counter()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    struct rocketnet_address_t filler_address;
+    check( rocketnet_address_parse( &filler_address, "192.0.2.9:50000" ) );
+
+    int filled = 0;
+    for ( int i = 0; i < ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE; ++i )
+    {
+        uint8_t filler[ROCKETNET_TOKEN_IDENTIFIER_BYTES] = { 0 };
+        filler[0] = 0xa5;
+        filler[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 2] = (uint8_t) ( i >> 8 );
+        filler[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 1] = (uint8_t) i;
+        if ( !rocketnet_used_token_history_claim_record( test.server.used_token_history, filler,
+                                                         &filler_address, 2000.0, 1000.0 ) )
+            break;
+        filled++;
+    }
+    check( filled > 0 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( response_bytes == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] == 0 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    handshake_server_teardown( &test );
+}
+REGISTER_UNIT_TEST( test_claim_table_full_counts_its_own_counter );
+
+// The failed-signature budget rung runs before the token-claim rung: a source
+// that has spent its budget and presents a token claimed by another address is
+// refused for the budget alone (standard/TRANSPORT.md t12 rule 9, steps 2 and
+// 3; tla/ReceiveOrder.tla, the rung order).
+static void test_request_rungs_budget_before_claim()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
+    const uint8_t * signed_data = request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                  ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_connect_token_identifier( identifier, signed_data );
+
+    struct rocketnet_address_t other_address;
+    check( rocketnet_address_parse( &other_address, "198.51.100.8:56789" ) );
+    check( rocketnet_used_token_history_claim_record( test.server.used_token_history, identifier,
+                                                      &other_address, 2000.0, 1000.0 ) );
+
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; ++i )
+        rocketnet_signature_verify_budget_record_failure( &test.server.signature_verify_budget,
+                                                          &test.client_address, ROCKETNET_TEST_CREATE_TS );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( response_bytes == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL] == 0 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    handshake_server_teardown( &test );
+}
+REGISTER_UNIT_TEST( test_request_rungs_budget_before_claim );

@@ -323,6 +323,7 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION",
     "MESSAGE_NOT_RECEIVED",
     "CONNECTION_RESPONSE_PADDING_NOT_ZERO",
+    "CONNECTION_REQUEST_CLAIM_TABLE_FULL",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
