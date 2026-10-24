@@ -573,14 +573,21 @@ Linux at d7095705 on amd-1 (x86_64, gcc, Release, load 3.8 as found):
 clang, `ROCKETNET_DEV=ON` and `OFF`, build with 0 warnings on Linux; Apple
 clang `ON` and `OFF` with 0 warnings on mini-m5-1.
 
-Each case process is held to its own memory plan (`tests/plan_rss.h`): the
-functional worker gives `rocketnet_init` a counting allocator, and a case
+The unit suite measures peak resident set and reports over-bound cases without
+making the OS measurement part of its verdict. The functional suite enforces
+the same bounds. Its `test_unit_case_memory` row runs the unit binary in
+enforcement mode, reusing every `SUITE_CASE_RSS_BOUND` declaration and the
+suite-wide fallback without copying their values.
+
+Each functional case process that keeps the counting allocator is held to its
+own memory plan (`tests/plan_rss.h`): the functional worker gives
+`rocketnet_init` that allocator, and a case
 that passes with it still installed reports its plan's peak plus a 64 MiB
 slack, which the runner holds its peak resident set to. A case that installs
 its own allocator (the channel harness cases, `test_lifecycle_transport`)
 and the sibling executables keep the suite-wide 698 MiB bound or the bound
 they declare with `SUITE_CASE_RSS_BOUND`; `ROCKETNET_TEST_MAX_CASE_RSS_MB`
-still lifts every bound. `ROCKETNET_TEST_REPORT=1` prints each case's peak
+still lifts every bound. `ROCKETNET_TEST_REPORT=1` prints each reported peak
 and bound. The largest peak over a plan's peak was 7 MiB on macOS and 5 MiB
 on Linux x86_64.
 

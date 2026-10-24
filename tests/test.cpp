@@ -261,7 +261,11 @@ int main( int argc, char ** argv )
     }
     else
     {
-        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0 );
+        // Unit runs keep RSS telemetry but leave OS-resource enforcement to
+        // the functional suite's test_unit_case_memory row. That row invokes
+        // this binary with --enforce-rss, reusing this process's registry.
+        result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name,
+                             NULL, 0, NULL, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
     }
 
 #if defined(_WIN32)

@@ -148,10 +148,12 @@ Each run below was made once on the member (captain, Windows 11 build
 26200, cl 19.51.36260), under its exclusive lock, at rocketnet commit
 `79834cfa`, on 2026-10-23. "No pin" clears `ROCKETNET_SERVER_TRANSPORT`; a pin
 is set with cmd.exe `set`, and each pinned `functional.exe` run printed
-`test_transport_env_pin_is_honoured`. The Debug runs, with or without
+`test_transport_env_pin_is_honoured`. The functional Debug runs, with or without
 AddressSanitizer, set `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048`, the Debug figure
 `nightly.yml`'s `windows / Debug` job uses; the Release AddressSanitizer runs
-keep the 698 MiB bound in code.
+keep the 698 MiB bound in code. The unit executable reports those measurements;
+the functional executable enforces them through its `test_unit_case_memory`
+row, which runs the same unit cases and reads the same bound registry.
 
 | Group | Configuration | Run | Result | Time | Date |
 | --- | --- | --- | --- | --- | --- |

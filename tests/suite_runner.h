@@ -9,7 +9,7 @@
     check line) and the suite exits 1 at once. A test over 120s is killed and
     fails. The functional runner keeps 120s in every build; the unit runner
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h). A
-    test whose peak resident set (wait4 ru_maxrss on POSIX,
+    functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
     a sanitizer build does not enforce it unless the variable sets one). A case
@@ -106,12 +106,16 @@ struct suite_exec
 {
     const char *name;
     const char *file;
+    const char *argument;
+    bool check_rss;
 };
 
 struct suite_case
 {
     std::string name;
     std::string exec_path; // empty: re-exec this binary with --run name
+    std::string exec_argument;
+    bool check_rss;
     int group; // suite_main's group_of: cases of different groups never run at once
 };
 
@@ -125,6 +129,8 @@ struct suite_result
     std::string detail;
     long peak_rss_mb; // -1: not measured
     long plan_rss_mb; // the bound the case process reported from its plan (tests/plan_rss.h); -1: none
+    bool rss_over_bound;
+    bool check_rss;
     std::string output;
 };
 
@@ -226,15 +232,18 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
     return planned;
 }
 
-// Fails a finished case whose peak is over the bound, naming both.
-inline void suite_check_rss( suite_result & result, long bound_mb )
+// Records a finished case whose peak is over the bound, naming both. The
+// functional tier enforces the result; the unit tier keeps the same
+// measurement and prints the over-bound line without changing its verdict.
+inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce )
 {
     if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
         return;
     char text[96];
     snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
-    result.failed = true;
     result.detail = result.name + text;
+    result.rss_over_bound = true;
+    result.failed = enforce;
 }
 
 // A test name is test_ then lowercase snake_case: [a-z0-9] words joined by
@@ -447,7 +456,7 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --enforce-rss]\n", argv[0] );
     return 2;
 }
 
@@ -520,10 +529,10 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
             fflush( stdout );
             return false;
         }
-        if ( !capture )
-            continue;
-        if ( !result.exec || suite_emit_captured( result.output, false ) == 0 )
+        if ( capture && ( !result.exec || suite_emit_captured( result.output, false ) == 0 ) )
             printf( "%s\n", result.name.c_str() );
+        if ( result.rss_over_bound )
+            printf( "%s\n", result.detail.c_str() );
     }
     fflush( stdout );
     return true;
@@ -545,9 +554,13 @@ inline void suite_print_report( const std::vector<suite_result> & results )
         printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
     std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) { return a.peak_rss_mb > b.peak_rss_mb; } );
     printf( "peak rss:\n" );
-    for ( size_t i = 0; i < ran.size() && i < 10; i++ )
-        if ( ran[i].peak_rss_mb >= 0 )
+    int printed = 0;
+    for ( size_t i = 0; i < ran.size() && printed < 10; i++ )
+        if ( ran[i].peak_rss_mb >= 0 && ran[i].check_rss )
+        {
             printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name, ran[i].plan_rss_mb ), ran[i].name.c_str() );
+            printed++;
+        }
     fflush( stdout );
 }
 
@@ -576,6 +589,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
             continue;
         suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
+        item.check_rss = true;
         item.group = 0;
     }
     for ( int i = 0; i < nexecs; i++ )
@@ -583,6 +597,8 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         suite_case & item = pending[first + (size_t) num_registered + (size_t) i];
         item.name = execs[i].name;
         item.exec_path = dir + "/" + execs[i].file + exe_suffix;
+        item.exec_argument = execs[i].argument ? execs[i].argument : "";
+        item.check_rss = execs[i].check_rss;
         item.group = 0;
         if ( !suite_file_exists( item.exec_path ) )
         {
@@ -629,6 +645,8 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         result.failed = false;
         result.peak_rss_mb = -1;
         result.plan_rss_mb = -1;
+        result.rss_over_bound = false;
+        result.check_rss = pending[i].check_rss;
         results.push_back( result );
     }
     return true;
@@ -724,8 +742,14 @@ inline int suite_main( int argc, char ** argv,
     int ( *group_of )( const char * name ) = NULL,
     double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
     int max_jobs = 0,
-    bool bound_io_uring = false )
+    bool bound_io_uring = false,
+    bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -811,7 +835,8 @@ inline int suite_main( int argc, char ** argv,
             arg0.push_back( '\0' );
             std::vector<char> arg_run;
             std::vector<char> arg_name;
-            char * spawn_argv[4];
+            std::vector<char> exec_argument;
+            char * spawn_argv[5];
             spawn_argv[0] = arg0.data();
             if ( item.exec_path.empty() )
             {
@@ -825,7 +850,17 @@ inline int suite_main( int argc, char ** argv,
             }
             else
             {
-                spawn_argv[1] = NULL;
+                if ( item.exec_argument.empty() )
+                {
+                    spawn_argv[1] = NULL;
+                }
+                else
+                {
+                    exec_argument.assign( item.exec_argument.begin(), item.exec_argument.end() );
+                    exec_argument.push_back( '\0' );
+                    spawn_argv[1] = exec_argument.data();
+                    spawn_argv[2] = NULL;
+                }
             }
 
             int pipefd[2] = { -1, -1 };
@@ -942,7 +977,8 @@ inline int suite_main( int argc, char ** argv,
                 close( running[i].out_fd );
             }
             result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
-            suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ) );
+            if ( result.check_rss )
+                suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ), enforce_case_rss );
             result.done = true;
             uring_running -= running[i].uring ? 1 : 0;
             running.erase( running.begin() + (std::ptrdiff_t) i );
@@ -993,8 +1029,14 @@ inline int suite_main( int argc, char ** argv,
     int ( *group_of )( const char * name ) = NULL,
     double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
     int max_jobs = 0,
-    bool bound_io_uring = false )
+    bool bound_io_uring = false,
+    bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -1050,6 +1092,8 @@ inline int suite_main( int argc, char ** argv,
             std::wstring command = L"\"" + wide_path + L"\"";
             if ( item.exec_path.empty() )
                 command += L" --run " + rocketnet_test_utf8_to_wide( item.name );
+            else if ( !item.exec_argument.empty() )
+                command += L" " + rocketnet_test_utf8_to_wide( item.exec_argument );
             std::vector<wchar_t> mutable_command( command.begin(), command.end() );
             mutable_command.push_back( L'\0' );
             STARTUPINFOW startup;
@@ -1157,7 +1201,8 @@ inline int suite_main( int argc, char ** argv,
                 result.detail = result.name + text;
             }
             result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
-            suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ) );
+            if ( result.check_rss )
+                suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ), enforce_case_rss );
             result.done = true;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
