@@ -50,7 +50,18 @@ equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP
 coalescing). Its send batch is one synchronous call that returns with every
 datagram sent or counted dropped, so it adds no state to `tla/RNClientIo.tla`.
-On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`.
+On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`. On Windows, `iocp`
+(`sdk/rocketnet_client_iocp_windows.cpp`, pin-only) waits on a completion
+port of its own: wait is `GetQueuedCompletionStatusEx`, wake posts one wake
+completion (at most one is outstanding, and a wake that receive_batch
+dequeues is owed to the next wait, so the wake stays level-triggered), and
+receive_batch copies completed overlapped receives and re-posts each after
+its copy. The kernel owns a posted receive's buffer until its completion is
+dequeued, a state RNClientIo does not have; `tla/RNClientIocp.tla` models it
+(Post, Complete, Dequeue, Drain, Wake, Close, Free): a buffer is never copied
+while posted, destroy frees only when every posted receive is drained, and
+after Close every posted receive completes and drains. Its sends are
+synchronous, as `gso`'s are, and add nothing to RNClientIo.
 
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
