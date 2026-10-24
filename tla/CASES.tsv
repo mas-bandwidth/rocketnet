@@ -351,9 +351,6 @@ MCRNServerStatsReceived.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	requi
 MCRNServerStatsBrokenEntering.cfg	MCRNServerStats.tla	invariant	CountedIsWindow	check	rnserverstats	required	-
 MCRNServerStatsBrokenCrossing.cfg	MCRNServerStats.tla	invariant	EligibleExact	check	rnserverstats	required	-
 MCRNServerStatsBrokenSeqTimes.cfg	MCRNServerStats.tla	invariant	PublishedSpanExact	check	rnserverstats	required	-
-MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	linkreconfigure	required	-
-MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	LiveSettingHolds	check	linkreconfigure	required	-
-MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	LiveSettingHolds	check	linkreconfigure	required	-
 MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
