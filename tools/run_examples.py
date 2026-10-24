@@ -27,7 +27,9 @@ The backend pair (example_backend_server and example_backend_client) is not
 run here: its client takes a token from a backend in examples/backend/, so
 tools/run_backend_examples.py runs it with each backend between the two.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
-line. Prints one PASS example_<name> line per example; exits 1 on a failure.
+line. Prints one PASS example_<name> line per example, or its FAIL lines;
+a failure does not stop the run, so every example has a line, and the run
+exits 1 when any example failed.
 """
 
 import argparse
@@ -296,16 +298,18 @@ def main():
                 return 1
             binaries[member] = binary
 
+    failed = False
     for base, members in groups:
         if len(members) == 2:
             ok = run_pair(base, binaries[members[0]], binaries[members[1]])
         else:
             ok = run_single(base, binaries[members[0]])
         if not ok:
-            return 1
+            failed = True
+            continue
         print(f"PASS example_{base}")
 
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
