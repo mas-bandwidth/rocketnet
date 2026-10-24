@@ -70,6 +70,23 @@
 (* Timeout action, so a stalled other ring leaves destroy waiting forever. *)
 (* The deadline does not bound the join: a driver call stuck inside send  *)
 (* never reaches the thread's stop check (docs/CLIENT-IO.md).             *)
+(*                                                                         *)
+(* The overlapped send (rn-win-client-overlapped-send, docs/CLIENT-IO.md  *)
+(* "The overlapped send"): IoSend posts a slot's send and returns; the    *)
+(* kernel completes the ring's posts later (Complete, an outside event,   *)
+(* ok or with an error: a stop's cancel ends a pending post with an       *)
+(* error, so one action models both).  `sent` is the slots posted.  A     *)
+(* ring is Sent (IoFinishRing) only once its posts have completed, the    *)
+(* I/O thread may wait while they are outstanding and a completion ends   *)
+(* that wait (IoWait, IoWake), and the thread exits only once every post  *)
+(* has completed (IoExit), so nothing is freed while the kernel may read  *)
+(* it (NoFreeBeforeComplete).  A stalled ring's posts complete once stop  *)
+(* cancels them.  Two rings bound the posts in flight to one ring here;   *)
+(* the code's three rings post a second ring behind an outstanding one,   *)
+(* and its in-order reap is pinned by the unit case                       *)
+(* test_client_io_overlapped_ring_sent_on_completion.  SentBeforeComplete  *)
+(* is the defect that marks the ring Sent once every slot is posted, its  *)
+(* witness MCRNClientIoBrokenSentBeforeComplete.cfg.                       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -88,6 +105,12 @@ CONSTANTS NumSlots,            \* slots per send ring
 \* the unconditional io->to[io->rings.fill] = *to; a reversed witness
 \* replaces this definition (DestinationOverwrite <- ...)
 DestinationOverwrite == FALSE
+
+\* defect: IoFinishRing marks a ring Sent once every slot is posted, before
+\* the kernel has completed the posts; MCRNClientIoBrokenSentBeforeComplete.cfg
+\* replaces it (SentBeforeComplete <- SentBeforeCompleteOn)
+SentBeforeComplete == FALSE
+SentBeforeCompleteOn == TRUE
 
 ASSUME NumSlots \in Nat \ {0} /\ BufferCap \in Nat \ {0}
 ASSUME MaxDatagrams \in Nat
@@ -141,9 +164,12 @@ VARIABLES ring,      \* each send ring's state
           addr,      \* protocol.server_address: "zero" once disconnect has reset it
           dest,      \* io->to: each ring's destination
           held,      \* io->to_held: the Filling ring's destination is bound
-          commitTo   \* the address each slot was committed for, or "none"
+          commitTo,  \* the address each slot was committed for, or "none"
+          completed  \* the kernel has completed every posted send of the ring
 
-destVars == <<addr, dest, held, commitTo>>
+\* completed is carried with the destination variables: every action that
+\* leaves the destinations alone leaves it alone too
+destVars == <<addr, dest, held, commitTo, completed>>
 sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, addr, dest, held, commitTo>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 destroyVars == <<destroyWait, now, destroying, dropped, stalled, spinCycle>>
@@ -151,7 +177,7 @@ destroyVars == <<destroyWait, now, destroying, dropped, stalled, spinCycle>>
 vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, destroyWait,
           now, destroying, dropped, stalled, spinCycle, wake, waiting, waitReadable,
           pending, arrived, buf, count, snap, owed, delivered, phase, ioAlive, inCall,
-          lastExec, addr, dest, held, commitTo>>
+          lastExec, addr, dest, held, commitTo, completed>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -178,6 +204,7 @@ TypeOK ==
     /\ dest \in [Rings -> Addresses]
     /\ held \in [Rings -> BOOLEAN]
     /\ commitTo \in [Rings -> [Slots -> Addresses \cup {"none"}]]
+    /\ completed \in [Rings -> BOOLEAN]
 
 Init ==
     /\ ring = [r \in Rings |-> "Filling"]
@@ -203,6 +230,7 @@ Init ==
     /\ dest = [r \in Rings |-> "zero"]
     /\ held = [r \in Rings |-> FALSE]
     /\ commitTo = [r \in Rings |-> [s \in Slots |-> "none"]]
+    /\ completed = [r \in Rings |-> FALSE]
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
 HasExposed    == \E b \in Buffers : buf[b] = "Exposed"
@@ -242,7 +270,7 @@ Commit(s) ==
     /\ commitTo' = [commitTo EXCEPT ![fill][s] = addr]
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
                    waiting, waitReadable, phase, ioAlive>>
-    /\ UNCHANGED <<addr, dest, held>>
+    /\ UNCHANGED <<addr, dest, held, completed>>
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
@@ -269,7 +297,7 @@ HandOffTo(to) ==
     /\ dest' = [dest EXCEPT ![fill] = BoundDest(to)]
     /\ held' = [held EXCEPT ![fill] = FALSE]
     /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
-                   phase, ioAlive, addr, commitTo>>
+                   phase, ioAlive, addr, commitTo, completed>>
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
@@ -293,7 +321,7 @@ DeferTo(to) ==
     /\ dest' = [dest EXCEPT ![fill] = BoundDest(to)]
     /\ held' = [held EXCEPT ![fill] = TRUE]
     /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
-                   waitReadable, phase, ioAlive, addr, commitTo>>
+                   waitReadable, phase, ioAlive, addr, commitTo, completed>>
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
@@ -333,7 +361,7 @@ Disconnect(s) ==
           /\ dest' = [dest EXCEPT ![fill] = BoundDest("server")]
           /\ held' = [held EXCEPT ![fill] = TRUE]
           /\ UNCHANGED <<ring, fill, wake>>
-    /\ UNCHANGED <<sent, ioRing, waiting, waitReadable, phase, ioAlive>>
+    /\ UNCHANGED <<sent, ioRing, waiting, waitReadable, phase, ioAlive, completed>>
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
@@ -359,6 +387,7 @@ Reopen(r) ==
     /\ owner' = [owner EXCEPT ![r] = [s \in Slots |-> "free"]]
     /\ sent' = [sent EXCEPT ![r] = {}]
     /\ commitTo' = [commitTo EXCEPT ![r] = [s \in Slots |-> "none"]]
+    /\ completed' = [completed EXCEPT ![r] = FALSE]
     /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED <<addr, dest, held>>
@@ -522,7 +551,9 @@ ThreadStarted == ~StepDriven \/ StepModeStartsThread
 
 IoReady == ioAlive /\ ~waiting
 
-\* send one slot of the handed-off ring
+\* post one slot's send of the handed-off ring (WSASendTo with an OVERLAPPED
+\* on Windows, rocketnet_client_io_post_ring; the synchronous send elsewhere,
+\* which completes in the call): the call returns at once
 IoSend(r, s) ==
     /\ IoReady
     /\ \/ ioRing = r
@@ -539,11 +570,14 @@ IoSend(r, s) ==
     /\ UNCHANGED recvVars
     /\ UNCHANGED destroyVars
 
-\* every slot sent: the ring is released to the main thread (release store)
+\* every slot posted and every post completed: the ring is released to the
+\* main thread (release store; rocketnet_client_io_reap finishes it and the
+\* next exchange releases it).  Under SentBeforeComplete the posts are enough.
 IoFinishRing(r) ==
     /\ IoReady
     /\ ioRing = r
     /\ \A s \in Slots : owner[r][s] = "io" => s \in sent[r]
+    /\ completed[r] \/ SentBeforeComplete
     /\ ring' = [ring EXCEPT ![r] = "Sent"]
     /\ ioRing' = "none"
     /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
@@ -566,7 +600,27 @@ IoStall(r) ==
     /\ UNCHANGED <<ring, owner, sent, fill, deferred, mainWait, destroyWait,
                    now, destroying, dropped, spinCycle, wake, waiting, waitReadable,
                    pending, arrived, buf, count, snap, owed, delivered,
-                   phase, ioAlive, addr, dest, held, commitTo>>
+                   phase, ioAlive, addr, dest, held, commitTo, completed>>
+
+(* The kernel completes a ring's posted sends, ok or with an error: every
+   slot of a ring in flight is posted, or the ring stalled and stop has
+   cancelled its pending posts (rocketnet_platform_wake_cancel_sends), which
+   then complete with an error.  An outside event, on neither thread. *)
+Complete(r) ==
+    /\ ring[r] = "Sending"
+    /\ sent[r] # {}
+    /\ ~completed[r]
+    /\ \/ \A s \in Slots : owner[r][s] = "io" => s \in sent[r]
+       \/ r \in stalled /\ phase # "Running"
+    /\ completed' = [completed EXCEPT ![r] = TRUE]
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, mainWait,
+                   destroyWait, now, destroying, dropped, stalled, spinCycle,
+                   wake, waiting, waitReadable, pending, arrived, buf, count,
+                   snap, owed, delivered, phase, ioAlive, addr, dest, held,
+                   commitTo>>
+
+\* a ring whose posts are outstanding: posted, not yet completed
+Outstanding(r) == ring[r] = "Sending" /\ sent[r] # {} /\ ~completed[r]
 
 \* read one datagram into the I/O thread's buffer while it has room. Every
 \* arriving datagram becomes a record here, regardless of size, as the code
@@ -625,7 +679,10 @@ IoWait ==
     /\ ~StepDriven
     /\ IoReady
     /\ phase = "Running"
-    /\ ioRing = "none"
+    /\ \/ ioRing = "none"
+       \/ /\ ioRing # "none"
+          /\ \A s \in Slots : owner[ioRing][s] = "io" => s \in sent[ioRing]
+          /\ Outstanding(ioRing)
     /\ \A r \in Rings : ring[r] # "HandedOff"
     /\ ~wake
     /\ ~(count[FillBuffer] > 0 /\ HasFree)
@@ -638,9 +695,12 @@ IoWait ==
     /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered,
                    destroyWait, now, destroying, dropped, stalled, spinCycle>>
 
+\* the wait returns on the wake, on readable when it waits on it, or on the
+\* completion of the posted ring's sends (their event is in the wait set)
 IoWake ==
     /\ ioAlive /\ waiting
-    /\ wake \/ (waitReadable /\ pending > 0)
+    /\ \/ wake \/ (waitReadable /\ pending > 0)
+       \/ ioRing # "none" /\ completed[ioRing]
     /\ waiting' = FALSE
     /\ wake' = FALSE
     /\ UNCHANGED sendVars
@@ -664,6 +724,7 @@ IoExit ==
     /\ phase = "Stopping"
     /\ ioRing = "none"
     /\ \A r \in Rings : ring[r] # "HandedOff"
+    /\ \A r \in Rings : ~Outstanding(r)
     /\ ioAlive' = FALSE
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, waiting, waitReadable, phase>>
@@ -786,13 +847,18 @@ IoThreadNext == OnThread(IoCoreNext)
 CallerStep == OnCaller(IoCoreNext)
 IoNext == IoThreadNext \/ CallerStep
 
+\* the kernel, outside both threads
+CompleteNext == \E r \in Rings : Complete(r)
+
 Next == MainNext \/ IoNext
         \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
+        \/ (CompleteNext /\ UNCHANGED <<inCall, lastExec>>)
         \/ OnMain(WaitTick)
         \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
 
 NextNoDeadline == MainNextNoDeadline \/ IoNext
         \/ (Arrive /\ UNCHANGED <<inCall, lastExec>>)
+        \/ (CompleteNext /\ UNCHANGED <<inCall, lastExec>>)
         \/ OnMain(WaitTick)
         \/ (Done /\ UNCHANGED <<inCall, lastExec>>)
         \/ Spin
@@ -828,6 +894,7 @@ Fairness ==
     /\ WF_vars(OnMain(Stop))
     /\ WF_vars(OnMain(Free))
     /\ WF_vars(OnMain(WaitTick))
+    /\ WF_vars(CompleteNext /\ UNCHANGED <<inCall, lastExec>>)
 
 SpecCommon ==
     /\ Spec
@@ -869,11 +936,20 @@ SpecStepFair ==
 
 (* ---- what the design must keep ---- *)
 
-\* a slot of a ring is never written while the I/O thread owns that ring
+\* the overlapped send: no ring is Sent (so reopened to the game threads)
+\* before the kernel has completed its posts, and the transport is never
+\* freed while a post is outstanding: the kernel may still read the bytes
+NoFreeBeforeComplete ==
+    /\ \A r \in Rings : ring[r] = "Sent" => completed[r]
+    /\ phase = "Freed" => \A r \in Rings : ~Outstanding(r)
+
+\* a slot of a ring is never written while the I/O thread or the kernel
+\* may read that ring
 NoReuseBeforeSent ==
-    \A r \in Rings, s \in Slots :
-        owner[r][s] = "game" => /\ ioRing # r
-                                /\ ring[r] = "Filling"
+    /\ \A r \in Rings, s \in Slots :
+          owner[r][s] = "game" => /\ ioRing # r
+                                  /\ ring[r] = "Filling"
+    /\ NoFreeBeforeComplete
 
 \* every slot a ring sends goes to the destination it was committed with:
 \* a deferred ring keeps the destination its first hand-off attempt bound,

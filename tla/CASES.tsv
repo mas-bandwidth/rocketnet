@@ -183,6 +183,7 @@ MCRNClientIoBrokenHandOffWaits.cfg	MCRNClientIo.tla	invariant	HandOffNeverWaits	
 MCRNClientIoBrokenFullWaitReadable.cfg	MCRNClientIo.tla	invariant	FullWaitsOnWake	check	rnclientio	required	-
 MCRNClientIoBrokenDestroyWaitsForever.cfg	MCRNClientIo.tla	temporal	DestroyCompletes	check	rnclientio	required	-
 MCRNClientIoBrokenDestinationOverwrite.cfg	MCRNClientIo.tla	invariant	SentToCommitted	check	rnclientio	required	-
+MCRNClientIoBrokenSentBeforeComplete.cfg	MCRNClientIo.tla	invariant	NoFreeBeforeComplete	check	rnclientio	required	-
 MCRNEndpoint.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointLive.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointBrokenConfigUnreliable.cfg	MCRNEndpoint.tla	temporal	ConfigVerifiedDespiteFirstLoss	ignore-terminal	rnendpoint	required	-
