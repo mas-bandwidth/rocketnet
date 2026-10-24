@@ -9,17 +9,15 @@
 
         handles        GetProcessHandleCount
         threads        a Toolhelp32 walk of this process's threads
-        heap_bytes     HeapSummary cbAllocated, summed over GetProcessHeaps
+        heap_bytes     HeapSummary cbAllocated on the CRT malloc heap
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
-    These are the Windows counters of tests/process_resources.h
-    and load.c, read the same way, and
-    the comparison is that header's flat rule: the counts are taken after one
+    The counts are taken after one
     warm cycle, so every path the case repeats has run once; at the end the
     handle count must equal its warm count exactly and the thread count must
     not exceed it (the system thread pool retires idle workers of its own, so
-    fewer threads pass; a thread left behind is one more). Heap bytes in use,
-    the Windows form of the POSIX file's mallinfo2 bytes in use, may exceed
+    fewer threads pass; a thread left behind is one more). The CRT heap's
+    bytes in use, the Windows form of the POSIX file's mallinfo2 bytes, may exceed
     the warm count by at most one page for every ten minutes of run, rounded
     up, never less than one page. Private bytes also count the heap's free
     but committed pages, which a heap keeps as it fragments, so they are
@@ -27,8 +25,8 @@
     any mapping left behind by a cycle exceeds. Counts below the warm count
     pass. The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
-    Each case prints one line with the before and after counts and the run
-    time, and fails when a count moved.
+    Each case prints one line with the before and after counts, every heap's
+    allocated bytes and the run time, and fails when a checked count moved.
 
     The cells are the Windows server transports (portable, iocp, rio), each
     with the portable client, and each case is one function per cell:
@@ -58,6 +56,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 
 #include <atomic>
 
@@ -96,6 +95,9 @@ struct windows_resource_counts_t
     int64_t threads;
     int64_t heap_bytes;
     int64_t private_bytes;
+    int heap_count;
+    HANDLE heap_handles[256];
+    int64_t heap_used_bytes[256];
 };
 
 // the run time, from the performance counter: rocketnet_platform_time
@@ -109,14 +111,18 @@ static double windows_run_clock()
     return (double) counter.QuadPart / (double) frequency.QuadPart;
 }
 
-// bytes allocated and not freed, over every heap of the process
-static int64_t windows_heap_bytes()
+// RocketNet's default allocator is the CRT malloc/free pair. Keep every
+// process heap's figure for diagnosis, but judge retained allocations in the
+// CRT heap only: Windows services can own a different heap beyond cleanup.
+static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
 {
     HANDLE heaps[256];
     const DWORD heap_count = GetProcessHeaps( 256, heaps );
     if ( heap_count == 0 || heap_count > 256 )
         return -1;
-    int64_t bytes = 0;
+    const HANDLE library_heap = (HANDLE) _get_heap_handle();
+    counts->heap_count = (int) heap_count;
+    int64_t library_bytes = -1;
     for ( DWORD i = 0; i < heap_count; i++ )
     {
         HEAP_SUMMARY summary;
@@ -124,9 +130,12 @@ static int64_t windows_heap_bytes()
         summary.cb = sizeof( summary );
         if ( !HeapSummary( heaps[i], 0, &summary ) )
             return -1;
-        bytes += (int64_t) summary.cbAllocated;
+        counts->heap_handles[i] = heaps[i];
+        counts->heap_used_bytes[i] = (int64_t) summary.cbAllocated;
+        if ( heaps[i] == library_heap )
+            library_bytes = counts->heap_used_bytes[i];
     }
-    return bytes;
+    return library_bytes;
 }
 
 static int64_t windows_threads()
@@ -158,6 +167,7 @@ static windows_resource_counts_t windows_read_counts()
     counts.threads = -1;
     counts.heap_bytes = -1;
     counts.private_bytes = -1;
+    counts.heap_count = 0;
 
     // the handle count first: the thread walk opens and closes one handle
     DWORD handles = 0;
@@ -165,7 +175,7 @@ static windows_resource_counts_t windows_read_counts()
         counts.handles = (int64_t) handles;
 
     counts.threads = windows_threads();
-    counts.heap_bytes = windows_heap_bytes();
+    counts.heap_bytes = windows_heap_bytes( &counts );
 
     PROCESS_MEMORY_COUNTERS_EX memory;
     memset( &memory, 0, sizeof( memory ) );
@@ -424,11 +434,45 @@ static void windows_case_result( const char * case_name, const windows_cell_t * 
                                  const windows_resource_counts_t * after, double seconds )
 {
     const bool flat = windows_counts_flat( before, after, seconds );
-    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, heap_bytes %lld -> %lld (allowed +%lld), private_bytes %lld -> %lld (allowed under +%lld), %.3fs%s\n",
+    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld), private_bytes %lld -> %lld (allowed under +%lld), %.3fs%s",
             case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) before->threads,
             (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
             (long long) windows_memory_allowance_bytes( seconds ), (long long) before->private_bytes, (long long) after->private_bytes,
             (long long) windows_private_allowance_bytes(), seconds, flat ? "" : " FAIL resource count moved" );
+    const HANDLE library_heap = (HANDLE) _get_heap_handle();
+    const HANDLE process_heap = GetProcessHeap();
+    for ( int i = 0; i < before->heap_count; i++ )
+    {
+        int64_t after_bytes = -1;
+        for ( int j = 0; j < after->heap_count; j++ )
+        {
+            if ( after->heap_handles[j] == before->heap_handles[i] )
+            {
+                after_bytes = after->heap_used_bytes[j];
+                break;
+            }
+        }
+        const char * role = before->heap_handles[i] == library_heap && before->heap_handles[i] == process_heap ? "library/process" :
+                            before->heap_handles[i] == library_heap ? "library" :
+                            before->heap_handles[i] == process_heap ? "process" : "windows";
+        printf( ", heap[%p:%s] %lld -> %lld", before->heap_handles[i], role,
+                (long long) before->heap_used_bytes[i], (long long) after_bytes );
+    }
+    for ( int j = 0; j < after->heap_count; j++ )
+    {
+        bool found = false;
+        for ( int i = 0; i < before->heap_count; i++ )
+        {
+            if ( before->heap_handles[i] == after->heap_handles[j] )
+            {
+                found = true;
+                break;
+            }
+        }
+        if ( !found )
+            printf( ", heap[%p:new] -1 -> %lld", after->heap_handles[j], (long long) after->heap_used_bytes[j] );
+    }
+    printf( "\n" );
     fflush( stdout );
     if ( !flat )
         exit( 1 );

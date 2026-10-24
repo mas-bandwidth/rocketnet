@@ -40,13 +40,16 @@ runs five cases of 1000 cycles over real loopback sockets:
 | `test_<cell>_transport_windows_connect_disconnect_1000` | one client connects to one server and disconnects |
 | `test_<cell>_transport_windows_server_restart_1000` | stop and start one server on its one port, a client reconnecting |
 
-Each case runs one warm cycle, then counts the process's handles
-(`GetProcessHandleCount`), threads (a Toolhelp thread walk) and private bytes
-(`GetProcessMemoryInfo` `PrivateUsage`), runs the 1000 cycles, counts again,
-and prints one line with the before and after counts and the run time. It
-fails when the handle or thread count moved, or when private bytes grew by
-more than one page per ten minutes of run (never less than one page). Same
-host is correctness only: run times are printed, never judged.
+Each case runs one warm cycle, then counts process handles
+(`GetProcessHandleCount`), threads (a Toolhelp thread walk), the CRT heap's
+allocated bytes (`HeapSummary`) and private bytes (`GetProcessMemoryInfo`
+`PrivateUsage`). After 1000 cycles it prints one line with the before and
+after counts, allocated bytes for every process heap, and the run time.
+The CRT heap is RocketNet's default `malloc` allocator; other Windows-owned
+heaps appear in the result for diagnosis. Handles must match, threads must
+not grow, CRT heap growth is limited to one page per ten minutes (at least
+one page), and private-byte growth must stay under one page per cycle.
+Same host is correctness only: run times are printed, never judged.
 
 The portable cells (`test_portable_transport_windows_*_1000`) are registered
 in `./bin/Release/functional.exe`; the iocp and rio cells are in the table and
