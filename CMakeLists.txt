@@ -283,57 +283,11 @@ else()
     add_custom_target(rocketnet_xdp_header)
 endif()
 
+# The SDK's library sources are one list, shared with every application that
+# vendors sdk/ (cmake/RocketnetSources.cmake; tools/check_sdk_sources.py).
+include(cmake/RocketnetSources.cmake)
 set(ROCKETNET_SOURCE
-    sdk/rocketnet.cpp
-    sdk/rocketnet_abi.cpp
-    sdk/rocketnet_api.cpp
-    sdk/rocketnet_ack.cpp
-    sdk/rocketnet_allocator.cpp
-    sdk/rocketnet_window_send.cpp
-    sdk/rocketnet_address.cpp
-    sdk/rocketnet_base64.cpp
-    sdk/rocketnet_client_protocol.cpp
-    sdk/rocketnet_client_gso_linux.cpp
-    sdk/rocketnet_client_slots.cpp
-    sdk/rocketnet_client_transport.cpp
-    sdk/rocketnet_config.cpp
-    sdk/rocketnet_connection_reset.cpp
-    sdk/rocketnet_driver.cpp
-    sdk/rocketnet_driver_builtin.cpp
-    sdk/rocketnet_driver_loopback.cpp
-    sdk/rocketnet_connect_token.cpp
-    sdk/rocketnet_counters.cpp
-    sdk/rocketnet_encryption_map.cpp
-    sdk/rocketnet_fragment.cpp
-    sdk/rocketnet_frame_sync.cpp
-    sdk/rocketnet_gateway_netlink_linux.cpp
-    sdk/rocketnet_hash.cpp
-    sdk/rocketnet_keys.cpp
-    sdk/rocketnet_message.cpp
-    sdk/rocketnet_message_client.cpp
-    sdk/rocketnet_message_server.cpp
-    sdk/rocketnet_endpoint.cpp
-    sdk/rocketnet_slots.cpp
-    sdk/rocketnet_channel.cpp
-    sdk/rocketnet_channel_reliable.cpp
-    sdk/rocketnet_channel_sequenced.cpp
-    sdk/rocketnet_channel_receipts.cpp
-    sdk/rocketnet_packet_builder.cpp
-    sdk/rocketnet_window_receive.cpp
-    sdk/rocketnet_window_ack.cpp
-    sdk/rocketnet_network_simulator.cpp
-    sdk/rocketnet_platform.cpp
-    sdk/rocketnet_protocol.cpp
-    sdk/rocketnet_replay.cpp
-    sdk/rocketnet_server_replay_marks.cpp
-    sdk/rocketnet_server_gso_linux.cpp
-    sdk/rocketnet_server_uring_linux.cpp
-    sdk/rocketnet_server_iocp_windows.cpp
-    sdk/rocketnet_server_rio_windows.cpp
-    sdk/rocketnet_server_protocol.cpp
-    sdk/rocketnet_server_socket_linux.cpp
-    sdk/rocketnet_server_transport.cpp
-    sdk/rocketnet_token_tables.cpp
+    ${ROCKETNET_SDK_SOURCES}
     ${ROCKETNET_TRANSPORT_SOURCES}
 )
 
