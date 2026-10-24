@@ -1095,7 +1095,6 @@ int main( int argc, char ** argv )
            The 100-client slice runs every 10 ms: at 1..100 clients each
            client updates at 100 Hz (25.6 kbps payload; 2.5x budget headroom).
            Intermediate populations follow the number of slices per round. */
-        server_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         server_config.max_fragmented_messages = 1;
         server_config.per_client_send_kbps = 64;
         server_config.num_channels = 8;
@@ -1106,7 +1105,6 @@ int main( int argc, char ** argv )
         server_config.send_queue_messages = 16;
         server_config.packets_in_flight = 16;
 
-        client_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         client_config.max_fragmented_messages = 1;
         client_config.send_kbps = 64;
         client_config.num_channels = 8;

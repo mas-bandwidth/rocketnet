@@ -102,7 +102,6 @@ int main(int argc, char ** argv)
     if (strlen(transport) >= sizeof(config.transport)) return 1;
     snprintf(config.transport, sizeof(config.transport), "%s", transport);
     config.max_clients = number(argv[1]);
-    config.max_payload_bytes = number(argv[2]);
     config.max_fragmented_messages = number(argv[3]);
     config.num_xdp_queues = argc >= 6 ? number(argv[5]) : 0;
     rocketnet_server_memory_plan_t plan;
@@ -117,7 +116,6 @@ int main(int argc, char ** argv)
             return 1;
         endpoint.transport = transport;
         endpoint.max_clients = config.max_clients;
-        endpoint.max_payload_bytes = config.max_payload_bytes;
         endpoint.max_fragmented_messages = config.max_fragmented_messages;
         endpoint.num_xdp_queues = config.num_xdp_queues;
         const size_t endpoint_payload = rocketnet_server_required_memory(&endpoint);
@@ -154,7 +152,7 @@ int main(int argc, char ** argv)
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
         "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
-        transport, config.max_clients, config.max_payload_bytes, config.max_fragmented_messages,
+        transport, config.max_clients, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, config.max_fragmented_messages,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,

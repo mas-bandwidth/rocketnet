@@ -241,7 +241,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 
     rocketnet_client_transport_default_config_current( transport );
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
     {
@@ -313,7 +312,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
-    transport->max_payload_bytes = config->max_payload_bytes;
     transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
@@ -501,7 +499,6 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     struct rocketnet_client_transport_config_t transport;
     rocketnet_client_transport_default_config_current( &transport );
     memcpy( config->packet_filter, transport.packet_filter, sizeof( config->packet_filter ) );
-    config->max_payload_bytes = transport.max_payload_bytes;
     config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
@@ -587,7 +584,7 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
         return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
@@ -1317,7 +1314,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
     config->num_xdp_queues = transport->num_xdp_queues;
     config->num_os_cpus = transport->num_os_cpus;
-    config->max_payload_bytes = transport->max_payload_bytes;
     config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
@@ -1387,7 +1383,7 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-    const int requested_payload = transport->max_payload_bytes > 0 ? transport->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
