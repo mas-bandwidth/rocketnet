@@ -212,6 +212,8 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     // half): room in the region for a message of `bytes` bytes, and the
     // pointer it is written at, once, in place (R3). A refusal for want of
     // room sets send_error (R5); the owner ends the connection with it.
+    // tla/RNOutgoingBuild.tla StartQueued: the start on the queued path, the
+    // message handed its region record rather than a transport frame.
     int type = reliability;
     const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
     if ( route == RN_ENDPOINT_ROUTE_REFUSED )
@@ -314,6 +316,8 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     // tla/RNEndpoint.tla Send, its second half (RNChannel Enqueue's): the
     // message joins its channel's queue in FIFO order and takes its receipt
     // serial (7.4: nonzero for every send). 0 leaves the start pending.
+    // tla/RNOutgoingBuild.tla FinishQueued: the region record's message is
+    // appended to the queue the write pass copies from.
     if ( endpoint->pending_type == -1 || endpoint->pending_in_place )
         return 0;                                               // an in-place start finishes with rn_endpoint_in_place_finish
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
@@ -594,9 +598,10 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
 
 void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now )
 {
-    // RNOutgoingBuild TransportSend's commit: the receipt entry under the
-    // transport's packet id (RNReceipts WritePacket), the budget settled at
-    // the sealed size
+    // tla/RNOutgoingBuild.tla TransportSend: the commit of an in-place
+    // packet the transport sent, the receipt entry under the transport's
+    // packet id (RNReceipts WritePacket), the budget settled at the sealed
+    // size
     if ( endpoint->in_place_receipt )
         rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
@@ -623,7 +628,8 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 {
     // tla/RNEndpoint.tla Send (10.1): start, the one copy, finish. Per-send
     // priority (9.3): MEDIUM is the one level a send takes, and any other is
-    // refused.
+    // refused. tla/RNOutgoingBuild.tla Write: the one copy writes the
+    // message's bytes once at the pointer start returned.
     if ( !data || priority != ROCKETNET_PRIORITY_MEDIUM )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -656,7 +662,8 @@ bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     // tla/RNEndpoint.tla OnPayload (RNChannel OpenPacket, DeliverMessage):
     // layer 2's reader, then each record through the window and the dispatch
     // (13.3). A violation is held for rn_endpoint_error. The CONFIG
-    // comparison (ConfigCompare) runs inside the dispatch.
+    // comparison (ConfigCompare) runs inside the dispatch. OpenAny: the
+    // packet opened is the one the transport hands over, the head of its wire.
     (void) now;
     const uint32_t before = rn_ordered_deliveries( &endpoint->ordered );
     const int result = rn_ordered_receive( &endpoint->ordered, payload, bytes );
@@ -709,7 +716,9 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
-    // receive descriptors return to the region (RNSlots Release's charge)
+    // receive descriptors return to the region (RNSlots Release's charge).
+    // tla/RNOutgoingBuild.tla BeginUpdate: the packet allowance (written)
+    // resets, and queued reliable work is offered first in the next pass.
     // A transport may exhaust its frame capacity before next_packet_bytes
     // reaches the end of the write pass. The next update must offer reliable
     // work first and begin a fresh budget phase while keeping queued records.
@@ -883,6 +892,9 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     // retransmits first, one packet at a time so a frame is started only for
     // a packet that is written, then unreliable records under the
     // connection's budget (R6) and shared per-update packet allowance.
+    // tla/RNOutgoingBuild.tla BeginFlush and EndFlush: an idle pass opens at
+    // its reliable phase, and returning 0 ends it once nothing more may be
+    // sent this update.
     if ( endpoint->packet_written )
         return 0;                                               // the written packet is not yet sent or failed
 
@@ -975,7 +987,11 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 {
     // tla/RNEndpoint.tla WritePacket: the planned packet written by layer 6
     // in place (THE COPIES (a)) into the frame the caller started for
-    // packet_id, whose sent-map entry rn_endpoint_packet_sent commits
+    // packet_id, whose sent-map entry rn_endpoint_packet_sent commits.
+    // WriteAny: the records chosen here end in WritePacket (sent) or
+    // PacketFailed (refused). tla/RNOutgoingBuild.tla SendReliable and
+    // SendUnreliable: the ordered packet of the reliable phase, then the
+    // queued unreliable records copied from their region records.
     (void) capacity;
     (void) packet_id;
     if ( endpoint->packet_written || !payload )
@@ -1131,7 +1147,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
 {
     // tla/RNEndpoint.tla WritePacket, its commit (9.3 step 4, RNSlots Send):
     // the packet enters the sent map under the transport's id, and the
-    // budget is settled at the sealed size
+    // budget is settled at the sealed size. tla/RNOutgoingBuild.tla
+    // TransportSend: the commit of a write-pass packet the transport sent.
     if ( !endpoint->packet_written )
         return;
 
