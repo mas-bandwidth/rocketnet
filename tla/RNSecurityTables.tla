@@ -44,6 +44,12 @@
 (* before 2026-10-20: a full table refused every source it could not       *)
 (* remember, so the honest client was locked out for the window.  FALSE   *)
 (* is the code now: only a source with a recorded failure is refused.     *)
+(* The flood's clock moves forward and steps back (an NTP step, a VM       *)
+(* resume), and the window rolls over when the clock passes it or steps    *)
+(* back before its start.  BackwardsRollover FALSE is the code before      *)
+(* 2026-10-24: the one-sided rollover, under which a clock stepped back    *)
+(* keeps a spent window open for the length of the correction             *)
+(* (FloodWindowBounded).                                                   *)
 (* Spec leaves the flood variables at their initial values.                *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
@@ -73,10 +79,10 @@ ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
           gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
-          failCount, failTable, honest, floodVerifies
+          failCount, failTable, honest, floodVerifies, fclock, windowStart
 tableVars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
                gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
-floodVars == <<failCount, failTable, honest, floodVerifies>>
+floodVars == <<failCount, failTable, honest, floodVerifies, fclock, windowStart>>
 vars == <<tableVars, floodVars>>
 
 \* The failed-signature budget's small instance (sdk/rocketnet_server.h:
@@ -90,6 +96,12 @@ FailSlots == 1
 Forgers == {"F1", "F2"}
 HonestAddr == "H"
 RefuseUnremembered == FALSE
+\* The window (ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS, 10) in
+\* flood clock ticks, the flood clock's range, and the backwards rollover
+\* (a reversed witness overrides BackwardsRollover with <-).
+FailWindow == 2
+FloodMaxClock == 3
+BackwardsRollover == TRUE
 
 PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
 NextRotate == gen * RotatePeriod
@@ -122,6 +134,7 @@ Init ==
     /\ deniedPulse = FALSE /\ admits = [t \in Tokens |-> 0]
     /\ lateAdmit = FALSE /\ evictedLive = FALSE /\ churnDenied = FALSE
     /\ failCount = 0 /\ failTable = {} /\ honest = "start" /\ floodVerifies = 0
+    /\ fclock = 0 /\ windowStart = 0
 
 IsExpired(u) == IF history[u] = None THEN FALSE ELSE history[u].exp <= clock
 
@@ -270,13 +283,24 @@ SpecFair == Spec
 \* the full table does not hold is refused too.  Every request here has
 \* passed the cookie gate and spends one unit of the per-update handshake
 \* work budget (VerifyBudget, ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE),
-\* checked before this gate.  The window does not roll over: the flood
-\* keeps it spent for longer than one honest attempt runs (the handshake
-\* deadline, 5 s, is under the window, 10 s).
+\* checked before this gate.  The flood keeps the window spent for longer
+\* than one honest attempt runs (the handshake deadline, 5 s, is under the
+\* window, 10 s).
+\*
+\* rocketnet_signature_verify_budget_decay runs at the top of both calls:
+\* the window rolls over, clearing the count and the table, when the clock
+\* has passed it or, with BackwardsRollover, stepped back before its start.
+\* CountNow and TableNow are the budget as the call sees it after the decay.
+Rolled == \/ fclock >= windowStart + FailWindow
+          \/ (BackwardsRollover /\ fclock < windowStart)
+CountNow == IF Rolled THEN 0 ELSE failCount
+TableNow == IF Rolled THEN {} ELSE failTable
+WindowNow == IF Rolled THEN fclock ELSE windowStart
+
 FailAllow(a) ==
-    \/ failCount < FailBudget
-    \/ /\ a \notin failTable
-       /\ ~(RefuseUnremembered /\ Cardinality(failTable) >= FailSlots)
+    \/ CountNow < FailBudget
+    \/ /\ a \notin TableNow
+       /\ ~(RefuseUnremembered /\ Cardinality(TableNow) >= FailSlots)
 
 \* a forged request from f: past the work budget and the failure gate, the
 \* verify fails and rocketnet_signature_verify_budget_record_failure runs:
@@ -286,10 +310,11 @@ Forge(f) ==
     /\ floodVerifies < VerifyBudget
     /\ FailAllow(f)
     /\ floodVerifies' = floodVerifies + 1
-    /\ failCount' = IF failCount < FailBudget THEN failCount + 1 ELSE failCount
-    /\ failTable' = IF f \notin failTable /\ Cardinality(failTable) < FailSlots
-                     THEN failTable \cup {f} ELSE failTable
-    /\ UNCHANGED <<honest, tableVars>>
+    /\ windowStart' = WindowNow
+    /\ failCount' = IF CountNow < FailBudget THEN CountNow + 1 ELSE CountNow
+    /\ failTable' = IF f \notin TableNow /\ Cardinality(TableNow) < FailSlots
+                     THEN TableNow \cup {f} ELSE TableNow
+    /\ UNCHANGED <<honest, fclock, tableVars>>
 
 \* the honest client's request: a valid token, so the verify passes and
 \* nothing is recorded; it gets the challenge.  It retransmits at the send
@@ -300,21 +325,36 @@ HonestRequest ==
     /\ FailAllow(HonestAddr)
     /\ floodVerifies' = floodVerifies + 1
     /\ honest' = "challenged"
-    /\ UNCHANGED <<failCount, failTable, tableVars>>
+    \* the allow call ran the decay
+    /\ windowStart' = WindowNow /\ failCount' = CountNow /\ failTable' = TableNow
+    /\ UNCHANGED <<fclock, tableVars>>
 
 \* the response opens under the handshake key: no failure budget applies
 HonestResponse ==
     /\ honest = "challenged"
     /\ honest' = "connected"
-    /\ UNCHANGED <<failCount, failTable, floodVerifies, tableVars>>
+    /\ UNCHANGED <<failCount, failTable, floodVerifies, fclock, windowStart, tableVars>>
 
 \* the top of an update resets the work budget
 FloodUpdate ==
     /\ floodVerifies > 0
     /\ floodVerifies' = 0
-    /\ UNCHANGED <<failCount, failTable, honest, tableVars>>
+    /\ UNCHANGED <<failCount, failTable, honest, fclock, windowStart, tableVars>>
+
+\* the host clock: it moves forward, or is stepped back to any earlier
+\* time (an NTP step, a VM resume).  The timestamp is the unix wall clock
+\* whenever no game clock epoch is configured
+\* (sdk/rocketnet_server_transport.cpp, rocketnet_server_transport_update).
+FloodClockForward ==
+    /\ fclock < FloodMaxClock
+    /\ fclock' = fclock + 1
+    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, tableVars>>
+FloodClockBack ==
+    /\ \E t \in 0..(fclock - 1) : fclock' = t
+    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, tableVars>>
 
 FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/ FloodUpdate
+             \/ FloodClockForward \/ FloodClockBack
 \* the honest request is enabled again after every update while the flood
 \* takes the budget, hence strong fairness for it
 FloodSpec == Init /\ [][FloodNext]_vars
@@ -324,12 +364,22 @@ FloodSpec == Init /\ [][FloodNext]_vars
 \* forging sources keep the failed-signature budget spent and the source
 \* table full.
 HonestConnectsUnderFlood == <>(honest = "connected")
+\* A recorded failure refuses its source for at most the window length of
+\* clock movement in either direction: whenever a source would be refused
+\* now, the window it was recorded in began no later than the clock and
+\* less than one window before it.  BASE's one-sided rollover breaks it on
+\* a backwards step (MCRNSecurityTablesBrokenBackwardsWindow.cfg).
+FloodWindowBounded ==
+    \A a \in Forgers \cup {HonestAddr} :
+        ~FailAllow(a) => (windowStart <= fclock /\ fclock < windowStart + FailWindow)
 \* the work budget bounds the verifies of one update, and the table never
 \* passes its slots
 FloodInvariants == /\ floodVerifies \in 0..VerifyBudget
                    /\ failCount \in 0..FailBudget
                    /\ failTable \subseteq Forgers /\ Cardinality(failTable) <= FailSlots
                    /\ honest \in {"start", "challenged", "connected"}
+                   /\ fclock \in 0..FloodMaxClock /\ windowStart \in 0..FloodMaxClock
+                   /\ FloodWindowBounded
 
 TypeOK ==
     /\ clock \in 0..MaxClock /\ gen \in Gens /\ verifies \in 0..VerifyBudget + 1

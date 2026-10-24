@@ -36,12 +36,17 @@ static void rocketnet_server_connection_id_assigned( struct rocketnet_server_pro
 // the failed-signature-verify budget: see rocketnet_server.h. the window
 // rolls over when the clock passes it, clearing the global count and every
 // per-source count together, so a source that exhausted the budget is refused
-// for the rest of the window and no longer.
+// for the rest of the window and no longer. a clock that steps back before
+// the window's start (an NTP step, a VM resume) starts a fresh window too, so
+// a recorded failure refuses its source for at most the window length of
+// clock movement in either direction (tla/RNSecurityTables.tla
+// FloodWindowBounded).
 
 static void rocketnet_signature_verify_budget_decay( struct rocketnet_signature_verify_budget_t * budget,
                                                      uint64_t current_timestamp )
 {
-    if ( current_timestamp >= budget->window_start + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS )
+    if ( current_timestamp < budget->window_start ||
+         current_timestamp >= budget->window_start + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS )
     {
         budget->window_start = current_timestamp;
         budget->failure_count = 0;
@@ -994,6 +999,7 @@ struct rocketnet_sealed_type_counters_t
     int zero_sequence;
     int already_received;
     int did_not_open;
+    int padding_not_zero;
     int not_connected;
     int bad_ack_block;
     int wrong_opened_size;
@@ -1030,26 +1036,26 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     static const struct rocketnet_sealed_type_counters_t table[6] = {
         { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
-          ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, -1, -1, -1 },
+          ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO, -1, -1, -1 },
         { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE, ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING,
           ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE, ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN, ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE },
         { ROCKETNET_COUNTER_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE, ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING,
           ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE, ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN, ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED, ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED, ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE },
         { ROCKETNET_COUNTER_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE, ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING,
           ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE, ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN, ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED, ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED, ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE },
         { ROCKETNET_COUNTER_ACK_RECEIVED, ROCKETNET_COUNTER_ACK_WRONG_SIZE, ROCKETNET_COUNTER_ACK_NO_MAPPING,
           ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE, ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_ACK_DID_NOT_OPEN, ROCKETNET_COUNTER_ACK_NOT_CONNECTED, ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_ACK_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_ACK_NOT_CONNECTED, ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE },
         { ROCKETNET_COUNTER_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE, ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING,
           ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE, ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN, ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE },
     };
     const int table_index = packet_type == ROCKETNET_CONNECTION_ACK_PACKET ? 4 :
@@ -1184,9 +1190,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         {
             if ( opened[i] != 0 )
             {
+                // the packet opened, so it is authentic: a refusal of its
+                // contents, not a forgery, and the integrity-failure count
+                // does not move (standard/TRANSPORT.md t9 rule 8).
                 rocketnet_spam( "server ignored connection response. padding is not zero" );
-                counters[type_counters->did_not_open]++;
-                rocketnet_server_integrity_failure( server, mapping_index, mapping );
+                counters[type_counters->padding_not_zero]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
         }
@@ -2260,6 +2268,9 @@ void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_
          rocketnet_server_protocol_connection_id( server, client_index ) != connection_id )
         return;
     const int index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+    if ( index < 0 )
+        return;
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );
     if ( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) )
         return;
