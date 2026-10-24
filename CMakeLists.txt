@@ -684,8 +684,10 @@ if(ROCKETNET_BUILD_TESTS)
         add_executable(${rocketnet_stress_target}
             tests/test_channels_stress.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
+        # the link simulator's development switch, and the server's ack stats
+        # worker stepped inline (no OS thread), as in test_wide
         target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
-            ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
+            ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
         target_include_directories(${rocketnet_stress_target} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"

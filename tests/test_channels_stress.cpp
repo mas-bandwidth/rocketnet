@@ -485,16 +485,7 @@ static void stress_world_create( stress_world_t * world )
 static void stress_world_destroy( stress_world_t * world )
 {
     rn_test_client_stop_and_destroy( world->client );
-    // stop completes over updates: the transport sends its disconnect packets
-    // and drains the link simulator's held packets, a bounded number of steps
-    rocketnet_server_stop( world->server );
-    for ( int i = 0; i < 1000 && !rocketnet_server_stopped( world->server ); i++ )
-    {
-        world->time += STRESS_FRAME_SECONDS;
-        rocketnet_server_update( world->server, world->time );
-    }
-    check( rocketnet_server_stopped( world->server ) );
-    rocketnet_server_destroy( world->server );
+    rn_test_server_stop_and_destroy( world->server );
     stress_side_destroy( &world->client_side );
     stress_side_destroy( &world->server_side );
     rocketnet_public_link_simulator_test_development( 0 );
