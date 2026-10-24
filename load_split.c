@@ -477,6 +477,9 @@ static void split_receive_s2c( struct split_result_t * result, struct split_clie
 
 /* Consume every delivery from the update that produced it. The SDK expires
  * unread batches on the next update, including during connection setup. */
+/* tla/SplitStart.tla ShardArm, ShardGo and ShardRun: a shard client takes
+ * ARM, GO and RUN off its receive queue into its startup step, and RUN
+ * arriving while it waits for RUN starts it running (ShardRun). */
 static void split_client_startup_batch( struct split_result_t * result, struct split_client_t * peer,
                                         uint32_t global, uint64_t run_id,
                                         const struct rocketnet_message_batch_t * batch )
@@ -504,7 +507,8 @@ static void split_client_startup_batch( struct split_result_t * result, struct s
 
 /* ARM and GO are answered once the client is connected: its transport hands
  * payloads from before it reports CONNECTED, and a send before then is
- * dropped (tools/load_split_startup.h). */
+ * dropped (tools/load_split_startup.h). tla/SplitStart.tla ShardArm and
+ * ShardGo: the ACK answering ARM and the GO_ACK answering GO. */
 static void split_client_startup_answer( struct split_result_t * result, struct split_client_t * peer,
                                          uint32_t global, uint64_t run_id )
 {
@@ -775,7 +779,11 @@ static int split_server_go_done( const struct split_server_client_t * client ) {
 
 /* Send ARM or GO to every client and wait one server window for every
  * acknowledgement. A client that disconnects before it answers ends the wait
- * at once; either failure names the clients still owed. */
+ * at once; either failure names the clients still owed. tla/SplitStart.tla
+ * ServerArm and ServerGo: ARM or GO sent to every client; ServerAck and
+ * ServerGoAck: each acknowledgement recorded; ServerFail: the window expiring
+ * (split_server_start_update) fails the start, and cleanup ends every
+ * connection. */
 static int split_server_start_phase( struct rocketnet_server_t * server, struct split_server_client_t * clients,
                                      int total, uint64_t run_id, enum split_start_step_t phase,
                                      struct split_result_t * result, struct split_capture_t * capture )
@@ -902,7 +910,10 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
     fflush(stdout);
 
     /* The launcher has a 60-second readiness lease. Once the first client
-     * connects, the established 10-second population deadline applies. */
+     * connects, the established 10-second population deadline applies.
+     * tla/SplitStart.tla Connect: each client connecting, from the first
+     * connect time; ServerFail: the population window expiring fails the
+     * start, and cleanup ends every connection. */
     const double ready_time = rocketnet_time();
     double first_connected = -1.0;
     int all_connected = 0;
@@ -969,7 +980,9 @@ static int split_server_run( int total, int duration, uint64_t run_id, const cha
         }
     }
     /* RUN and all subsequent S2C traffic share an ordered channel. A client
-     * cannot consume traffic before its RUN even if clocks or network lag. */
+     * cannot consume traffic before its RUN even if clocks or network lag.
+     * tla/SplitStart.tla ServerRun: every GO acknowledged, RUN sent to every
+     * client. */
     for ( int i = 0; i < total; ++i )
         if ( !split_server_send(server, clients[i].slot, SPLIT_RUN_MAGIC,
                                 (uint32_t) i, 0, 1, run_id,
@@ -1338,7 +1351,9 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
      * modelled in tla/SplitStart.tla): the shard that connects first waits
      * for the last, and the server decides a start that fails. RUN is emitted only after every shard has
      * acknowledged GO, so machine clock skew never shortens the traffic
-     * interval. */
+     * interval. split_shard_start_update is ShardEnded (a client the
+     * server's failed start disconnected) and ShardTimeout (the shard's own
+     * deadline passing). */
     struct split_shard_start_t start;
     split_shard_start_begin(&start, rocketnet_time(), LOAD_CONNECT_DEADLINE_S,
                             (double) config.reliable_message_timeout_ms / 1000.0);
