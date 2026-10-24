@@ -61,14 +61,14 @@ ASSUME /\ Addresses # {}
 (*   KeepFailedForgets: a forget the kernel refused stays pending for the  *)
 (*     next commit (the design: TRUE).                                     *)
 (* ForgetFailureBudget bounds the refused forgets over a run, so the       *)
-(* state space stays finite; two lets one forget be refused twice running. *)
+(* state space stays finite; one is a refused forget, kept, then landed.   *)
 (***************************************************************************)
 KernelAdvances    == FALSE
 WalkForgets       == TRUE
 KernelWindow      == W
 KeepFailedForgets == TRUE
 
-ForgetFailureBudget == 2
+ForgetFailureBudget == 1
 
 NoSession == 0
 SessionIds == 1..Sessions

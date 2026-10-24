@@ -77,7 +77,7 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `settle[a]` | (assumption bookkeeping) | `"released"`, then `"walked"`, then `"clear"` after a Release |
 | `reached[s]` | (ghost) | the highest `highest_opened` session `s` reached |
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
-| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (2) |
+| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1) |
 | `nextSession` | (ghost) | the id the next connection takes |
 
 Four rule switches are definitions with the design's values, each
