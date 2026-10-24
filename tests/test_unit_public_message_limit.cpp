@@ -265,7 +265,7 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     // is the only limit an unreliable message meets.
     check( message_limit_send_and_receive( server, client, 20000 ) );
     check( 20000 > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    check( client_config.max_message_bytes == 262144 );
+    check( client_config.max_message_bytes == 1048576 );
     check( message_limit_send_and_receive( server, client, client_config.max_message_bytes ) );
     check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, client_config.max_message_bytes + 1 ) == NULL );
 
