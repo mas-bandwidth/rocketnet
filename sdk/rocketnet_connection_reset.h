@@ -34,7 +34,7 @@ struct rn_message_object_t;
     X( RESET, session_nonce ) X( RESET, keys ) X( RESET, stored_response ) \
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
-    X( RESET, next_fragment_payload_id ) X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, accepted_session ) \
+    X( RESET, next_fragment_payload_id ) X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) \
     X( RESET, integrity_failures ) X( RESET, attempt_start_time ) X( RESET, last_send_time ) \
     X( RESET, last_receive_time ) X( RESET, total_deadline_seconds ) X( RESET, timeout_seconds ) \
     X( RESET, state_first_send_time ) X( RESET, rtt_estimate ) X( RESET, rtt_session_sampled ) \
@@ -73,7 +73,7 @@ struct rn_message_object_t;
     X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
     X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) X( RESET, send_fragment_payload_id ) \
-    X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
+    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
     X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \
