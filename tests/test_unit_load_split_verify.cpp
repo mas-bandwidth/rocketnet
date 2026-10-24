@@ -56,12 +56,18 @@ static void test_split_verify_reliable_exactly_once()
     check( split_verify_stream_final( &stream, 5, &result ) );
     check( result.missing == 0 && result.delivered == 5 );
 
-    // planted: one message never delivered (a reliable gap fails, never counts as loss)
-    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, SPLIT_VERIFY_FRAGMENTED );
+    // planted: one message never delivered (an exactly-once gap fails, never counts as loss)
+    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE, SPLIT_VERIFY_FRAGMENTED );
     check( split_verify_test_deliver( &stream, 1 ) == 0 );
     check( split_verify_test_deliver( &stream, 3 ) == 0 );
     check( !split_verify_stream_final( &stream, 3, &result ) );
-    check( result.missing == 1 && result.lost == 0 );
+    check( result.missing == 1 && result.lost == 0 && result.skipped == 0 );
+
+    // planted: the same gap on RELIABLE_WITH_ACK_RECEIPT, fragmented
+    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_FRAGMENTED );
+    check( split_verify_test_deliver( &stream, 2 ) == 0 );
+    check( !split_verify_stream_final( &stream, 2, &result ) );
+    check( result.missing == 1 );
 
     // planted: one message delivered twice
     split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL );
@@ -131,7 +137,24 @@ static void test_split_verify_sequenced_never_older()
     check( stream.stale_deliveries == 1 );
     check( !split_verify_stream_final( &stream, 5, &result ) );
 
-    // planted: the same on RELIABLE_SEQUENCED, fragmented
+    // clean: RELIABLE_SEQUENCED may skip a stale message (2 and 4 dropped by
+    // the receiver); a skip is counted, never a loss or a missing message
+    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, SPLIT_VERIFY_FRAGMENTED );
+    check( split_verify_test_deliver( &stream, 1 ) == 0 );
+    check( split_verify_test_deliver( &stream, 3 ) == 0 );
+    check( split_verify_test_deliver( &stream, 5 ) == 0 );
+    check( split_verify_stream_final( &stream, 5, &result ) );
+    check( result.skipped == 2 && result.missing == 0 && result.lost == 0 );
+
+    // planted: a duplicate on RELIABLE_SEQUENCED (the newest delivered again)
+    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, SPLIT_VERIFY_SMALL );
+    check( split_verify_test_deliver( &stream, 1 ) == 0 );
+    check( split_verify_test_deliver( &stream, 2 ) == 0 );
+    check( split_verify_test_deliver( &stream, 2 ) == 1 );
+    check( stream.duplicates == 1 && stream.stale_deliveries == 0 );
+    check( !split_verify_stream_final( &stream, 2, &result ) );
+
+    // planted: an older message on RELIABLE_SEQUENCED, fragmented
     split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, SPLIT_VERIFY_FRAGMENTED );
     check( split_verify_test_deliver( &stream, 1 ) == 0 );
     check( split_verify_test_deliver( &stream, 2 ) == 0 );
@@ -229,6 +252,29 @@ static void test_split_verify_receipts_match()
     check( split_verify_ledger_outcome( &ledger, 40, ROCKETNET_RECEIPT_STATUS_ACKED ) == 0 );
     check( !split_verify_ledger_final( &ledger, receiver, 0, &result ) );
     check( result.acked_unrecorded == 1 );
+
+    // the per-stream share: two streams in one ledger, each with its own
+    // counts and the bitmap of the sequences ACKED; with no receiver record
+    // (NULL) the ledger is judged on everything but acked_unrecorded
+    split_verify_ledger_init( &ledger, 7, direction );
+    check( split_verify_ledger_send( &ledger, 60, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL, 1 ) == 0 );
+    check( split_verify_ledger_send( &ledger, 61, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_FRAGMENTED, 1 ) == 0 );
+    check( split_verify_ledger_send( &ledger, 62, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL, 2 ) == 0 );
+    check( split_verify_ledger_send( &ledger, 63, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL, 3 ) == 0 );
+    check( split_verify_ledger_outcome( &ledger, 60, ROCKETNET_RECEIPT_STATUS_ACKED ) == 0 );
+    check( split_verify_ledger_outcome( &ledger, 61, ROCKETNET_RECEIPT_STATUS_ACKED ) == 0 );
+    check( split_verify_ledger_outcome( &ledger, 62, ROCKETNET_RECEIPT_STATUS_LOSS ) == 0 );
+    static struct split_verify_ledger_stream_t share;
+    split_verify_ledger_stream( &ledger, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL, &share );
+    check( share.sends == 3 && share.acked == 1 && share.lost == 1 && share.without_outcome == 1 );
+    check( share.acked_seen[0] == ( 1u << 1 ) );
+    split_verify_ledger_stream( &ledger, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_FRAGMENTED, &share );
+    check( share.sends == 1 && share.acked == 1 && share.lost == 0 && share.without_outcome == 0 );
+    check( split_verify_ledger_errors( &ledger ) == 0 );
+    check( !split_verify_ledger_final( &ledger, NULL, 0, &result ) );
+    check( result.without_outcome == 1 && result.acked_unrecorded == 0 );
+    check( split_verify_ledger_outcome( &ledger, 63, ROCKETNET_RECEIPT_STATUS_ACKED ) == 0 );
+    check( split_verify_ledger_final( &ledger, NULL, 0, &result ) );
 
     // planted: a send in a mode with no receipt, and a serial out of order
     split_verify_ledger_init( &ledger, 7, direction );
