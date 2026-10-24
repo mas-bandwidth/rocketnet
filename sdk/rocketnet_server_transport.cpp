@@ -2971,6 +2971,12 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
+        // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+        if ( mapping_index < 0 )
+        {
+            rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
+            return 0;
+        }
         const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         if ( rocketnet_server_link_active( server_transport ) )
         {
@@ -3262,6 +3268,20 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // releases the mapping that holds it
 
     int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, client_index );
+
+    // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping):
+    // the slot still ends, but no burst is staged, since there is no address to send it to
+    if ( mapping_index < 0 )
+    {
+        struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+        rocketnet_server_protocol_note_missing_mapping( protocol );
+        rocketnet_debug( "server disconnected client %d", client_index );
+        protocol->counters->values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
+        protocol->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
+        rocketnet_server_connection_reset( protocol, client_index );
+        return;
+    }
+
     rocketnet_address_t client_address = *rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
 
     // tla/ServerSession.tla DisconnectAll and DrainDisconnectBurst: the slot
