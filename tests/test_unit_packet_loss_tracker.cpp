@@ -129,6 +129,71 @@ static void test_packet_loss_tracker_late_packet_does_not_clobber()
     rocketnet_unit_check( second_phase_lost_packets == 0 );
 }
 
+// A gap longer than the history ring between two updates is still judged.
+// Receive 0..99 and update, then receive 5000..5099 and update. The span the
+// second update judges is longer than HISTORY, so its older slots were
+// overwritten; the tracker judges it by count. The two updates together must
+// report exactly the sequences up to the second update's finish (the highest
+// sequence received less SAFETY) that were never received, counted here from
+// what the test sent. At BASE the overflow branch returned zero and the stall
+// read as no loss.
+static void test_packet_loss_tracker_gap_over_history_counts_lost()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    static bool sent[5100];
+    memset( sent, 0, sizeof( sent ) );
+
+    for ( uint64_t sequence = 0; sequence < 100; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        sent[sequence] = true;
+    }
+
+    const int first = rocketnet_packet_loss_tracker_update( &tracker );
+
+    uint64_t highest = 0;
+    for ( uint64_t sequence = 5000; sequence < 5100; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        sent[sequence] = true;
+        highest = sequence;
+    }
+
+    const int second = rocketnet_packet_loss_tracker_update( &tracker );
+
+    const uint64_t finish = highest - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY;
+    int expected_lost = 0;
+    for ( uint64_t sequence = 0; sequence <= finish; ++sequence )
+    {
+        if ( !sent[sequence] )
+        {
+            expected_lost++;
+        }
+    }
+
+    rocketnet_unit_check( expected_lost > 0 );
+    rocketnet_unit_check( first >= 0 && second >= 0 );
+    rocketnet_unit_check( first + second == expected_lost );
+}
+
+// A burst longer than the history ring with no update between is all
+// received, so the update judging it counts zero lost: counting every
+// unjudged sequence as lost would be wrong in the other direction.
+static void test_packet_loss_tracker_burst_over_history_not_lost()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    for ( uint64_t sequence = 0; sequence < 3000; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+    }
+
+    rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+}
+
 // A send record is written only for a sequence newer than the one its slot
 // holds and within one buffer of the highest sent, at a finite time; anything
 // else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
@@ -252,4 +317,6 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_late_packet_does_not_clobber );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_gap_over_history_counts_lost );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_burst_over_history_not_lost );
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
