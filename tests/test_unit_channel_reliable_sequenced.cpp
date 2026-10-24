@@ -69,6 +69,34 @@ static void test_stale_acked_then_discarded()
 
 REGISTER_UNIT_TEST( test_stale_acked_then_discarded );
 
+// RNChannelTypes!DrainStale: the code-4 twin of the drain refusal. The held
+// record is dropped by the drain, counted stale, and its acknowledged reliable
+// number is released (standard/MESSAGES.md m7.4, m7.3 rule 7).
+static void test_reliable_sequenced_drain_refusal_counts_stale()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t held = 1, ordered = 2;
+    rn_delivery_t out;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0x800000, &held );
+    uint32_t slot, held_slot;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &held_slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 0, 0, &ordered );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.ordered.channels.deliveries == 1 );
+    check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    check( receiver.region->receive_descriptors[held_slot].live == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_reliable_sequenced_drain_refusal_counts_stale );
+
 static void test_shares_the_watermark_with_code_1()
 {
     rs_node_t receiver;
