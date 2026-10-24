@@ -254,18 +254,11 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
-// The request ladder with the caller's mapping lookup for this address:
-// known_mapping_index is find's answer (-1 for none), or
-// ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP and the ladder looks it up itself.
-// Nothing between the caller's lookup and this rung changes the map, so the
-// answer is the one find would give here.
-
 // tla/ReceiveOrder.tla Next
 // tla/ServerConnection.tla ServerRecvRequest
 // tla/RNSecurityTables.tla Request
-static int rocketnet_server_process_connection_request_mapping( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
-                                                 int known_mapping_index,
                                                  const uint8_t * packet_data,
                                                  int packet_bytes,
                                                  uint64_t current_timestamp,
@@ -307,8 +300,7 @@ static int rocketnet_server_process_connection_request_mapping( struct rocketnet
     // mapping is created once and replaced never.
 
     {
-        int existing = known_mapping_index != ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP ?
-                       known_mapping_index : rocketnet_encryption_map_find( server->encryption_map, from );
+        int existing = rocketnet_encryption_map_find( server->encryption_map, from );
         if ( existing != -1 )
         {
             struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
@@ -631,20 +623,6 @@ static int rocketnet_server_process_connection_request_mapping( struct rocketnet
 }
 
 // tla/RNSecurityTables.tla Request
-int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
-                                                 const struct rocketnet_address_t * from,
-                                                 const uint8_t * packet_data,
-                                                 int packet_bytes,
-                                                 uint64_t current_timestamp,
-                                                 double current_time,
-                                                 uint8_t * response_packet,
-                                                 int * response_bytes )
-{
-    return rocketnet_server_process_connection_request_mapping( server, from, ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP,
-                                                                packet_data, packet_bytes, current_timestamp, current_time,
-                                                                response_packet, response_bytes );
-}
-
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
                                                     const struct rocketnet_address_t * from,
                                                     const uint8_t * connection_salt,
@@ -1446,9 +1424,9 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
     }
 
     if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET )
-        return rocketnet_server_process_connection_request_mapping( server, from, known_mapping_index, packet_data, packet_bytes,
-                                                                    current_timestamp, current_time,
-                                                                    response_packet, response_bytes );
+        return rocketnet_server_protocol_process_connection_request( server, from, packet_data, packet_bytes,
+                                                            current_timestamp, current_time,
+                                                            response_packet, response_bytes );
 
     // a server never processes what only a server sends -- denied,
     // challenge, cookie arriving here are reflections or junk
