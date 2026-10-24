@@ -8,6 +8,13 @@
 #include <string.h>
 
 #include "rocketnet_platform.h"
+#include "rocketnet_test_seams.h"
+
+#if ROCKETNET_TEST_SEAMS
+// Unit-library instrumentation only: hold entries visited by the hold take
+// and by the end-of-update pass, per thread; no shipped library carries it.
+thread_local unsigned long long g_sequenced_hold_visit_count = 0;
+#endif
 
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold
 // uses its receive descriptor and ring span; the high bit distinguishes that
@@ -29,6 +36,13 @@ static rn_receive_descriptor_t * rn_sequenced_descriptor( rn_channels_t * channe
          descriptor->code != ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
         return NULL;
     return descriptor;
+}
+
+// tla/RNChannel.tla BuffersBounded: a returned hold rejoins the free stack in O(1).
+static void rn_sequenced_hold_return( rn_region_t * region, uint32_t slot )
+{
+    region->sequenced_messages_held[slot].used = 0;
+    region->sequenced_hold_free_stack[region->sequenced_hold_free_count++] = slot;
 }
 
 static void rn_sequenced_release_number( rn_channels_t * channels, uint64_t number )
@@ -55,7 +69,7 @@ static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot
             rn_sequenced_release_number( channels, (uint64_t) first_number + i );
     }
     else
-        region->sequenced_messages_held[hold].used = 0;
+        rn_sequenced_hold_return( region, hold );
     *slot = RN_DESCRIPTOR_NONE;
 }
 
@@ -367,18 +381,13 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         return ROCKETNET_CHANNEL_DISPATCH_HELD;
     }
 
-    uint32_t slot = RN_DESCRIPTOR_NONE;
-    for ( uint32_t i = 0; i < region->holds; i++ )
-        if ( !region->sequenced_messages_held[i].used )
-        {
-            slot = i;
-            break;
-        }
-    if ( slot == RN_DESCRIPTOR_NONE )
+    // tla/RNChannel.tla BuffersBounded: a free hold is the free stack's top, in O(1).
+    if ( region->sequenced_hold_free_count == 0 )
     {
         rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
+    const uint32_t slot = region->sequenced_hold_free_stack[--region->sequenced_hold_free_count];
     rx->held_sequenced = slot;
 
     rn_sequenced_hold_t * hold = &region->sequenced_messages_held[slot];
@@ -469,6 +478,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
         rn_sequenced_delivery( channels, channel, channels->region->sequenced_message_payloads[slot].data, (int) hold->bytes,
                                ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, RN_DESCRIPTOR_NONE );
         hold->used = 2; // delivered view stays live until RNChannel!EndUpdate
+        channels->region->sequenced_holds_delivered[channels->region->sequenced_holds_delivered_count++] = slot;
     }
     return true;
 }
@@ -478,8 +488,14 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
     if ( !channels )
         return;
     // RNChannel!EndUpdate: only slots whose views expired return to the pool.
-    // The scan walks compact metadata without pulling payload cache lines in.
-    for ( uint32_t i = 0; i < channels->region->holds; i++ )
-        if ( channels->region->sequenced_messages_held[i].used == 2 )
-            channels->region->sequenced_messages_held[i].used = 0;
+    // tla/RNChannel.tla EndUpdate: the pass visits the delivered list only, and does nothing when it is empty.
+    rn_region_t * region = channels->region;
+    for ( uint32_t i = 0; i < region->sequenced_holds_delivered_count; i++ )
+    {
+#if ROCKETNET_TEST_SEAMS
+        g_sequenced_hold_visit_count++;
+#endif
+        rn_sequenced_hold_return( region, region->sequenced_holds_delivered[i] );
+    }
+    region->sequenced_holds_delivered_count = 0;
 }
