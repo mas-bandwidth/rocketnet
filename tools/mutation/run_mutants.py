@@ -215,8 +215,10 @@ class Worker:
             for rel in files:
                 (self.dir / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / rel, self.dir / rel)
+        # a reused tree may hold a mutant's binary: rewrite each target with a fresh
+        # mtime (copy2 would keep the older one and make would skip the rebuild)
         for rel in args.files:
-            shutil.copy2(ROOT / rel, self.dir / rel)
+            (self.dir / rel).write_text((ROOT / rel).read_text())
 
     def build(self):
         cfg = ["cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"] + self.args.cmake_arg
