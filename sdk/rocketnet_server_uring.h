@@ -22,7 +22,9 @@
 // space: with UDP_SEGMENT (probed at create, the gso transport's tier) a run
 // of consecutive staged slots to one destination, equal sizes but for one
 // shorter tail, goes out as one segmented SENDMSG; without it a run is one
-// slot. each send_packets and receive_packets call reaps at most a fixed
+// slot; with UDP_GRO (probed at create, all or nothing) one receive buffer
+// holds a coalesced receive that is split by its stride into the receive
+// bank. each send_packets and receive_packets call reaps at most a fixed
 // completion budget, so a call returns under sustained traffic.
 // tla/RNUringDriver.tla models the send staging, the two receive banks, the
 // per-call budget and destroy; the functions that implement a model action
@@ -53,10 +55,14 @@ struct rocketnet_server_uring_t;
 
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
-// area and the payload, so a buffer is larger than the receive ceiling.
+// area, the UDP_GRO control area and the payload, which with UDP_GRO is one
+// coalesced receive of up to 64 KiB (the 16-bit UDP payload), so a buffer is
+// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create (2 KiB
+// buffers, 8 MiB per queue, before UDP_GRO). memory is spent so that one
+// completion carries a whole coalesced run of datagrams.
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
-#define ROCKETNET_URING_RECV_BUFFER_BYTES                                 2048
+#define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 66 * 1024 )
 
 // the per-call completion budgets: receive_packets takes at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
@@ -104,18 +110,22 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // a segmented send's CQE refused with EINVAL, EIO or EOPNOTSUPP: segmentation is off for the transport from then on
-#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 15
+#define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
+#define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
+#define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
 
 // feature bits reported by rocketnet_server_uring_features: what the create
 // probe found and the transport is using now
 
 #define ROCKETNET_SERVER_URING_FEATURE_SEGMENT                          (1<<0)      // UDP_SEGMENT accepted: send runs go out as segmented SENDMSGs
+#define ROCKETNET_SERVER_URING_FEATURE_GRO                              (1<<1)      // UDP_GRO enabled on every socket: a receive buffer may hold a coalesced run, split by its stride
 
 // create flags: force a probe result off, so the plain tier is testable on
 // kernels where the real probe would say yes (ROCKETNET_SERVER_GSO_DISABLE_SEGMENT
-// for the gso transport)
+// and ROCKETNET_SERVER_GSO_DISABLE_GRO for the gso transport)
 
 #define ROCKETNET_SERVER_URING_DISABLE_SEGMENT                          (1<<0)
+#define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring the transport needs. the probe
