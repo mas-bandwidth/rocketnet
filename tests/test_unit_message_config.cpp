@@ -829,9 +829,13 @@ static void test_message_config_never_received_is_reliable_timeout()
     check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( pair.net->clients[0]->disconnects == 0 );
 
-    // past reliable_timeout: the client ends it
+    // past reliable_timeout: the client ends it. The server's CONFIG went out
+    // in the same update the client's wait began, so both ends reach
+    // reliable_timeout in the same update, and each checks it in its update
+    // (rn_endpoint_tick). The client updates first here so that its own
+    // CONFIG wait, not the server's kick, ends its connection.
     for ( int i = 0; i < 5; i++ )
-        mc_step( &pair, NULL, NULL, 0.1 );
+        mc_step_client_first( &pair, 0.1 );
     check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( pair.net->clients[0]->disconnects == 1 );
 
