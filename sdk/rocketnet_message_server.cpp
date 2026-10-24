@@ -818,8 +818,15 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     if ( unreliable && object->link.start_packet )
     {
         const int eligible = rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time );
-        const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ?
-                           9 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+        int header = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+        if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
+        {
+            // the code 1 header is the record shape's, the same call rn_channels_finish makes
+            struct rocketnet_message_record_t sequenced_shape = {};
+            sequenced_shape.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+            sequenced_shape.channel = (uint32_t) channel;
+            header = rocketnet_message_record_header_bytes( &sequenced_shape );
+        }
         rn_message_packet_build_t * build = &connection->unreliable_build;
         const int room = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
         if ( eligible >= 0 && bytes <= room - header )
@@ -827,7 +834,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             const bool receipt = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
             if ( build->writer.payload &&
                  ( bytes + header > rocketnet_message_writer_space( &build->writer ) ||
-                   ( receipt && build->receipt_count == 16 ) ||
+                   ( receipt && build->receipt_count == RN_MESSAGE_RECEIPT_SERIALS_MAX ) ||
                    !rn_endpoint_in_place_affordable( connection, build->writer.bytes + header + bytes + 1, object->time ) ) )
                 rn_message_flush_unreliable( object, index, false );
             if ( !build->writer.payload )
@@ -1268,7 +1275,11 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
         return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
-    for ( uint32_t k = 0; k < deliveries; k++ )
+    uint32_t cursor = connection->hot->cursors[0];
+    if ( cursor > deliveries )
+        cursor = deliveries;
+    uint32_t k = cursor == 0 ? deliveries - 1 : cursor - 1;
+    for ( uint32_t n = 0; n < deliveries; n++ )
     {
         if ( table[k].data == data && connection->hot->views[k] == RN_MESSAGE_VIEW_HELD )
         {
@@ -1276,6 +1287,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
             connection->hot->held--;
             return true;
         }
+        k = k == 0 ? deliveries - 1 : k - 1;
     }
     return false;
 }
