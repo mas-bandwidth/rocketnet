@@ -452,12 +452,23 @@ Each prints `replayed <n> inputs` and exits 0.
 
 ## The functional suite
 
-`./bin/functional` exercises the built-in transports over loopback. Pin
-`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` to test a
-particular transport pair. The suite also supports a nightly tier through
-`ROCKETNET_TEST_NIGHTLY=1`; the variable is for the test executable and is not
-a library configuration setting. `ROCKETNET_TEST_REPORT=1` prints per-case
-memory use and its bound.
+`./bin/functional` is the per-commit functional gate on the macOS rows of
+`.github/workflows/ci.yml`. `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` adds
+the nightly tier, selected by `rocketnet_functional_test_group` in
+`functional/main.cpp` and the `SUITE_GROUP_NIGHTLY` flag in
+`tests/suite_runner.h`. The nightly tier adds the portable hard-killed-client
+cases, three portable/msgx 1000-client connection combinations, and the
+remaining transport combinations for `test_posix_destroy_under_traffic_100`.
+The ordinary suite keeps the msgx hard-killed-client cases and the msgx/msgx
+1000-client connection case.
+
+The suite runner enforces a memory bound for each case process
+(`tests/suite_runner.h`). Cases using the counting allocator are limited to
+their planned peak plus 64 MiB; other cases use the suite-wide 698 MiB bound
+or a case-specific `SUITE_CASE_RSS_BOUND`. Set
+`ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the bounds, and
+`ROCKETNET_TEST_REPORT=1` to print each case's peak and bound. These variables
+configure the test executable, not the library.
 
 ## Verify a Mac
 

@@ -35,9 +35,6 @@ WILDCARD_ALLOWED = {
      'struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config);'):
         "dual-stack transport case: an ipv4 client of the ipv6 wildcard",
     ("functional/rocketnet_functional_tests.cpp",
-     'void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }'):
-        "msgx dual-stack case: the IPv6 wildcard server accepts an IPv4 client",
-    ("functional/rocketnet_functional_tests.cpp",
      'rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):
         "rio dual-stack case (Windows): ipv4 and ipv6 clients of the ipv6 wildcard",
     ("functional/rocketnet_functional_tests.cpp",
