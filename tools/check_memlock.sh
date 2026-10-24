@@ -24,8 +24,8 @@
 # which ./bin/transport_memory creates a default 4-queue 1000-client io_uring
 # server with the default reassembly slots (0 = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS,
 # the geometry the functional cases create; 16 slots at 1000 clients is refused
-# at create by the memory plan, whatever the limit)
-# server, and fails when that is over the per-case need (the suite runner's
+# at create by the memory plan, whatever the limit),
+# and fails when that is over the per-case need (the suite runner's
 # value is stale for this kernel). It prints the limit, both needs, the
 # runners and PASS, or FAIL and exits 1. Creating the measuring server opens a
 # loopback socket; the script changes no system setting.
