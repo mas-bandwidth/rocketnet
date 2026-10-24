@@ -11,8 +11,8 @@ connect tokens use only the published development keys from
 
 | target | what it drives | seeds | dictionary |
 |---|---|---|---|
-| `rocketnet_fuzz` | the stateless wire parsers: prefilter, fragment header and reassembly, base64, config values (`input[0] & 3` picks one) | `corpus/` | `rocketnet.dict` |
-| `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `rocketnet.dict` |
+| `rocketnet_fuzz` | the stateless wire parsers: prefilter, fragment header and reassembly, base64, config values (`input[0] & 3` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
+| `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
 | `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `rocketnet.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
 | `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `rocketnet.dict` |
@@ -149,7 +149,8 @@ input: the value is refused by the table's range and never clamped.
 
 `rocketnet_fuzz_server_transport`, `rocketnet_fuzz_client_transport`,
 `rocketnet_fuzz_session`, `rocketnet_fuzz_round_trip`,
-`rocketnet_fuzz_token_private` and `rocketnet_fuzz_config` each contain a
+`rocketnet_fuzz_token_private`, `rocketnet_fuzz_config`,
+`rocketnet_fuzz` and `rocketnet_fuzz_message` each contain a
 deterministic seed generator. Set `ROCKETNET_FUZZ_SEED_DIR` and run the
 binary (the libFuzzer build or the replay driver) to use it:
 
@@ -160,7 +161,11 @@ ROCKETNET_FUZZ_SEED_DIR=fuzz/corpus_server_transport ROCKETNET_FUZZ_SEED_FROM=fu
 
 The pair generators record one real handshake and one scripted session
 between the deterministic pair, then turn every recorded packet type into
-seeds. Each seed is replayed through the target before it is written. The
+seeds. The two stateless generators turn the types their own parsers read
+into seeds: `rocketnet_fuzz` writes one seed per packet type the prefilter
+returns, per outcome the reassembly engine reaches, and per base64 and
+config shape, and `rocketnet_fuzz_message` writes one seed per violation
+the decoder names and per code a record carries. Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
