@@ -122,8 +122,6 @@ int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
 // worker and no posted phase has a send outstanding (takes the transport
 // mutex: the main test thread only)
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
-// The bound socket as an integer handle, for getsockopt checks.
-uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 #endif
 
 #if defined(_WIN32)
