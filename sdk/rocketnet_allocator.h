@@ -304,6 +304,10 @@ uint32_t rn_send_store_chunks_needed( int bytes );
 
 void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
 
+// 1 when rn_send_store_alloc of `bytes` would take its chunks now: the one
+// test the allocation itself makes (tla/RNSendStore.tla Alloc's guard); pure
+bool rn_send_store_fits( const rn_send_store_t * store, int bytes );
+
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // the first chunk's handle, or RN_CHUNK_NONE
 
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not an allocated chain's head, nothing changed
@@ -492,6 +496,37 @@ void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, i
 // exhausts the region like rn_region_send_alloc (R5). The descriptor index, or
 // RN_DESCRIPTOR_NONE.
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
+
+// ----------------------------------------------------------------
+//                      the send room decision
+// ----------------------------------------------------------------
+
+// The one decision a send's room is taken by. rn_region_send_alloc and
+// rn_region_send_alloc_span act on it, and the public room query
+// (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
+// reads it, so the query and the send never disagree. Pure, allocation-free,
+// O(1). Checked in the allocation's order: the size, then the sticky
+// exhaustion, then a free descriptor, then the chunks or the span.
+#define RN_SEND_FIT_OK              0   // room: the allocation takes it
+#define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
+#define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)
+#define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation exhausts the region
+#define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation exhausts the region
+
+int rn_region_send_fit_store( const rn_region_t * region, int bytes );
+int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
+
+// A start message's room: a store chunk up to one block stride, a span above
+// it. rn_region_send_take allocates it (rn_region_send_alloc or
+// rn_region_send_alloc_span) and rn_region_send_fit decides it, by the same
+// size rule.
+inline bool rn_region_send_is_span( int bytes )
+{
+    return bytes >= (int) RN_SPAN_MIN_BYTES;
+}
+
+int rn_region_send_fit( const rn_region_t * region, int bytes );
+uint32_t rn_region_send_take( rn_region_t * region, int bytes );
 
 // The bytes of fragment `fragment` of a send, and their length: from the span
 // at fragment * F, or from the single store chunk. NULL for a descriptor not in

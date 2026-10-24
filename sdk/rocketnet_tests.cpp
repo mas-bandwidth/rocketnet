@@ -80,7 +80,7 @@
 extern uint64_t rocketnet_server_cookie_mac_count();
 
 // visit counter for testing: defined in rocketnet_ack.cpp
-extern unsigned long long g_ack_visit_count;
+extern thread_local unsigned long long g_ack_visit_count;
 
 // the ack path's popcount and its portable fallback: defined in rocketnet_ack.cpp
 extern int rocketnet_ack_popcount64( uint64_t v );
@@ -7510,6 +7510,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
     "rocketnet_client_abort_message",
+    "rocketnet_client_can_send_message",
     "rocketnet_client_receive_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
@@ -7540,6 +7541,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
@@ -7562,6 +7564,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
     "rocketnet_client_abort_message",
+    "rocketnet_client_can_send_message",
     "rocketnet_client_receive_messages",
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
@@ -7590,6 +7593,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_server_start_message",
     "rocketnet_server_finish_message",
     "rocketnet_server_abort_message",
+    "rocketnet_server_can_send_message",
     "rocketnet_server_receive_messages",
     "rocketnet_server_receipts",
     "rocketnet_server_set_send_kbps",
@@ -8008,6 +8012,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_abort_message( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_can_send_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_set_send_kbps( NULL, 1000 ) != ROCKETNET_STATUS_OK ) );
@@ -8055,6 +8060,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish_message( NULL, 4 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_abort_message( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_can_send_message( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive_messages( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) != ROCKETNET_STATUS_OK ) );

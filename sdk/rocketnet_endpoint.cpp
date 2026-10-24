@@ -151,24 +151,102 @@ static bool rn_endpoint_reliable_path( const rn_endpoint_t * endpoint, int type 
            rn_channels_reliable_receipt_base( type ) >= 0;
 }
 
+static bool rn_endpoint_unreliable_type( int reliability )
+{
+    return reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+           reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+}
+
+static int rn_endpoint_transport_max( int transport_max_payload_bytes )
+{
+    return transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
+// The route a start message takes to its room, decided once for
+// rn_endpoint_start and for the room query (rn_endpoint_send_room), so the
+// two never disagree. Pure: the start counts each refusal itself.
+#define RN_ENDPOINT_ROUTE_REFUSED       0   // a start pending, a bad channel or size: MESSAGE_SEND_REFUSED
+#define RN_ENDPOINT_ROUTE_TYPE          1   // no such type, or one outside the enabled mask (7.5)
+#define RN_ENDPOINT_ROUTE_OVER_MAX      2   // an unreliable message over max_message_bytes: MESSAGE_UNRELIABLE_SEND_FAILED
+#define RN_ENDPOINT_ROUTE_CHANNELS      3   // the reliable path, rn_channels_start with *out_type
+#define RN_ENDPOINT_ROUTE_UNRELIABLE    4   // the unreliable queue, region room for the bytes
+
+static int rn_endpoint_send_route( const rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, int * out_type )
+{
+    *out_type = reliability;
+    if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
+        return RN_ENDPOINT_ROUTE_REFUSED;
+
+    if ( rn_endpoint_reliable_path( endpoint, reliability ) )
+        return RN_ENDPOINT_ROUTE_CHANNELS;
+
+    if ( !rn_endpoint_unreliable_type( reliability ) ||
+         rn_channels_send_allowed( &endpoint->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
+        return RN_ENDPOINT_ROUTE_TYPE;
+
+    // One size rule refuses only the configured maximum; larger records promote to the reliable twin.
+    if ( (uint32_t) bytes > (uint32_t) endpoint->config->max_message_bytes )
+        return RN_ENDPOINT_ROUTE_OVER_MAX;
+
+    // One packet's record lives in a payload no larger than both the
+    // transport's cap and the message tier's one-packet payload.
+    const int transport_max = rn_endpoint_transport_max( transport_max_payload_bytes );
+    const int record_capacity = transport_max < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    // Reject max+1 before the shared record-size comparison, which uses widened arithmetic.
+    if ( rn_endpoint_unreliable_over_record_capacity( reliability, channel, bytes, record_capacity ) )
+    {
+        // The promotion rule: code 0 to 2, code 1 to 4, and
+        // code 5 to its reliable receipt twin (wire code 2, receipt kept).
+        *out_type = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_RELIABILITY_RELIABLE :
+                    reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED :
+                    ROCKETNET_RELIABILITY_RELIABLE;
+        return RN_ENDPOINT_ROUTE_CHANNELS;
+    }
+
+    return RN_ENDPOINT_ROUTE_UNRELIABLE;
+}
+
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
 {
     // tla/RNEndpoint.tla Send, its first half (RNChannel Enqueue's first
     // half): room in the region for a message of `bytes` bytes, and the
     // pointer it is written at, once, in place (R3). A refusal for want of
     // room sets send_error (R5); the owner ends the connection with it.
-    if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
+    int type = reliability;
+    const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
+    if ( route == RN_ENDPOINT_ROUTE_REFUSED )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+        return NULL;
+    }
+    if ( route == RN_ENDPOINT_ROUTE_TYPE )
+    {
+        // a type outside the enabled mask is refused and counted (7.5)
+        if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
+            rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel );
+        else
+            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+        return NULL;
+    }
+
+    // Keep an unreliable reservation's transport cap so finish applies the
+    // record-size rule to the actual byte count, even when the caller
+    // finishes short.
+    if ( rn_endpoint_unreliable_type( reliability ) )
+        endpoint->max_payload_bytes = rn_endpoint_transport_max( transport_max_payload_bytes );
+
+    if ( route == RN_ENDPOINT_ROUTE_OVER_MAX )
+    {
+        rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
         return NULL;
     }
 
     rn_region_t * region = endpoint->region;
     uint8_t * pointer = NULL;
 
-    if ( rn_endpoint_reliable_path( endpoint, reliability ) )
+    if ( route == RN_ENDPOINT_ROUTE_CHANNELS )
     {
-        pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, reliability, (uint32_t) bytes );
+        pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, type, (uint32_t) bytes );
         if ( !pointer )
         {
             if ( rn_region_exhausted( region ) )
@@ -179,83 +257,56 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         }
         endpoint->pending_descriptor = endpoint->ordered.channels.pending;
     }
-    else if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
-              reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+    else if ( rn_region_exhausted( region ) )
     {
-        if ( rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
-            return NULL;
-        const int transport_max = transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-        // One packet's record lives in a payload no larger than both the
-        // transport's cap and the message tier's one-packet payload.
-        const int record_capacity = transport_max < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-        // Keep the reservation's transport cap so finish applies the rule to
-        // the actual byte count, even when the caller finishes short.
-        endpoint->max_payload_bytes = transport_max;
-        // One size rule refuses only the configured maximum; larger records promote to the reliable twin.
-        const bool over_max = (uint32_t) bytes > (uint32_t) endpoint->config->max_message_bytes;
-        if ( over_max )
-        {
-            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-            return NULL;
-        }
-        // Reject max+1 before the shared record-size comparison, which uses widened arithmetic.
-        const bool promote = rn_endpoint_unreliable_over_record_capacity( reliability, channel, bytes, record_capacity );
-        if ( promote )
-        {
-            // The promotion rule: code 0 to 2, code 1 to 4, and
-            // code 5 to its reliable receipt twin (wire code 2, receipt kept).
-            const int twin = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_RELIABILITY_RELIABLE :
-                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED :
-                             ROCKETNET_RELIABILITY_RELIABLE;
-            pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, twin, (uint32_t) bytes );
-            if ( !pointer )
-            {
-                if ( rn_region_exhausted( region ) )
-                    endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
-                else
-                    rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-                return NULL;
-            }
-            endpoint->pending_descriptor = endpoint->ordered.channels.pending;
-        }
-        else if ( rn_region_exhausted( region ) )
-        {
-            endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
-            return NULL;
-        }
-        else
-        {
-            const uint32_t d = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
-            if ( d == RN_DESCRIPTOR_NONE )
-            {
-                // RNConnectionMemory Exhaust then Kick (R5): the region has no room
-                // for a send it must not drop
-                endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
-                return NULL;
-            }
-            rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-            descriptor->channel = (uint16_t) channel;
-            descriptor->reliability = (uint8_t) reliability;
-            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
-            descriptor->fragments = 1;
-            descriptor->next = RN_DESCRIPTOR_NONE;
-            endpoint->pending_descriptor = d;
-            pointer = rn_region_send_write_pointer( region, d );
-        }
+        endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
+        return NULL;
     }
     else
     {
-        // a type outside the enabled mask is refused (7.5)
-        if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
-            rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel );
-        else
-            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
-        return NULL;
+        const uint32_t d = rn_region_send_take( region, bytes );
+        if ( d == RN_DESCRIPTOR_NONE )
+        {
+            // RNConnectionMemory Exhaust then Kick (R5): the region has no room
+            // for a send it must not drop
+            endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
+            return NULL;
+        }
+        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        descriptor->channel = (uint16_t) channel;
+        descriptor->reliability = (uint8_t) reliability;
+        descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
+        descriptor->fragments = 1;
+        descriptor->next = RN_DESCRIPTOR_NONE;
+        endpoint->pending_descriptor = d;
+        pointer = rn_region_send_write_pointer( region, d );
     }
 
     endpoint->pending_type = reliability;
     endpoint->pending_bytes = (uint32_t) bytes;
     return pointer;
+}
+
+bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
+{
+    // The room query: rn_endpoint_start's route, then the region's decision
+    // (rn_region_send_fit) that its allocation acts on. Pure, O(1).
+    int type = reliability;
+    const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
+    if ( route == RN_ENDPOINT_ROUTE_CHANNELS )
+    {
+        // rn_channels_start's refusals ahead of the room: a start pending, a
+        // type outside the mask (a promotion's twin included)
+        const rn_channels_t * channels = &endpoint->ordered.channels;
+        if ( channels->pending != RN_DESCRIPTOR_NONE ||
+             rn_channels_send_allowed( channels, type, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
+            return false;
+    }
+    else if ( route != RN_ENDPOINT_ROUTE_UNRELIABLE )
+    {
+        return false;
+    }
+    return rn_region_send_fit( endpoint->region, bytes ) == RN_SEND_FIT_OK;
 }
 
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial )
@@ -620,11 +671,14 @@ bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
 {
     // tla/RNEndpoint.tla Tick: the receipts' LOSS sweep (RNReceipts
-    // SweepLoss) and the end of this update's receipt list. The reliable
-    // timeout is checked where today's code checks it, in the write pass's
-    // resend walk (rn_ordered_write, 6.4 "Giving up").
+    // SweepLoss), the end of this update's receipt list, and the reliable
+    // timeout (6.4 "Giving up"). The timeout is checked here, every update,
+    // so a connection whose write pass never reaches its reliable phase (the
+    // transport's send capacity spent, packets_per_update reached) still
+    // ends RELIABLE_TIMEOUT; rn_endpoint_error reports it. The check is O(1).
     rn_window_ack_receipt_sweep( &endpoint->ordered.ack, now );
     rn_window_ack_receipt_end_update( &endpoint->ordered.ack );
+    rn_window_ack_check_timeout( &endpoint->ordered.ack, now );
 }
 
 void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now )

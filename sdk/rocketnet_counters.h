@@ -915,7 +915,7 @@
     X( MESSAGE_BAD_FLAGS, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH: Counts records refused because their length lies outside the record. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_BAD_LENGTH, REFUSAL, NONE ) \
-    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_SIZE: Counts records refused because a reliable or CONTROL record rides a fragmented payload. Unit: occurrences. Class: refusal; family: none. */ \
+    /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_SIZE: Counts records refused because a reliable or CONTROL record rides a fragmented payload, or a record or SINGLE message is longer than max_message_bytes. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_BAD_SIZE, REFUSAL, NONE ) \
     /** @brief ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL: Counts CONTROL records refused because their body is invalid. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_BAD_CONTROL, REFUSAL, NONE ) \

@@ -2382,6 +2382,161 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     rn_arena_destroy( arena );
 }
 
+// ---------------------------------------------------------------------------
+// the room query (rn_message_object_send_room, under
+// rocketnet_client_can_send_message and rocketnet_server_can_send_message):
+// it says no exactly when the start would find no room, a start after a no
+// still ends the connection, and asking changes nothing
+// ---------------------------------------------------------------------------
+
+struct mo_room_case_t
+{
+    const char * name;
+    int reliability;
+    int bytes;
+    int receive_message_buffer_bytes;          // the send spans' size; 0 keeps the small config's
+    int counter;                               // the pool that runs out first
+};
+
+// every reliability and size the query is asked for at each step: each store
+// class, the spans, a promotion, and the refusals
+static const int mo_room_ask_reliabilities[] =
+{
+    ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
+    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, -1, 99,
+};
+static const int mo_room_ask_bytes[] = { -1, 0, 1, 100, 300, 1000, 1152, 1153, 2000, 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES, 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1 };
+static const int mo_room_ask_channels[] = { -1, 0, 3, 4 };
+
+// asks every combination on one object; the whole object block (the object,
+// its connections, receive bookkeeping and every region) and its counters are
+// the same bytes after as before
+static void mo_room_ask_everything( rn_message_object_t * object, int index )
+{
+    check( object->block != NULL );
+    const uint64_t block_bytes = rn_message_object_required_bytes( &object->config, object->num_connections, object->is_server );
+    check( block_bytes > 0 );
+    std::vector<uint8_t> before( (const uint8_t *) object->block, (const uint8_t *) object->block + block_bytes );
+    for ( size_t r = 0; r < sizeof( mo_room_ask_reliabilities ) / sizeof( mo_room_ask_reliabilities[0] ); r++ )
+        for ( size_t b = 0; b < sizeof( mo_room_ask_bytes ) / sizeof( mo_room_ask_bytes[0] ); b++ )
+            for ( size_t c = 0; c < sizeof( mo_room_ask_channels ) / sizeof( mo_room_ask_channels[0] ); c++ )
+                for ( int i = index - 1; i <= index + 1; i++ )
+                    (void) rn_message_object_send_room( object, i, mo_room_ask_channels[c], mo_room_ask_reliabilities[r], mo_room_ask_bytes[b] );
+    check( memcmp( before.data(), object->block, block_bytes ) == 0 );
+}
+
+// one object queues without sending until a start finds no room. Before each
+// start the query is asked (every combination, changing nothing), and its
+// answer for the start is the start's: yes, a pointer; no, NULL with the
+// connection's send error set, and the kick at the next update
+static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side )
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;     // deliberate fixed-pool exhaustion
+    if ( room_case->receive_message_buffer_bytes )
+        config.receive_message_buffer_bytes = room_case->receive_message_buffer_bytes;
+    // both objects live in caller blocks that start zeroed: the ask compares
+    // the whole block, unused bytes included, and bytes nothing wrote would
+    // read as uninitialised under MemorySanitizer (tools/msan_known.txt)
+    const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
+    const uint64_t server_bytes = rn_message_object_required_bytes( &config, MO_MAX_SLOTS, 1 );
+    const uint64_t client_bytes = rn_message_object_required_bytes( &config, 1, 0 );
+    check( server_bytes > 0 && client_bytes > 0 );
+    void * server_allocation = calloc( 1, (size_t) server_bytes + alignment - 1 );
+    void * client_allocation = calloc( 1, (size_t) client_bytes + alignment - 1 );
+    check( server_allocation != NULL && client_allocation != NULL );
+    void * server_block = (void *) ( ( (uintptr_t) server_allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
+    void * client_block = (void *) ( ( (uintptr_t) client_allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
+
+    mo_pair_t pair;
+    memset( &pair, 0, sizeof( pair ) );
+    pair.net = mo_net_new();
+    pair.num_clients = 1;
+    pair.server = mo_server_create( pair.net, &config, MO_MAX_SLOTS, 0, server_block, server_bytes );
+    pair.clients[0] = mo_client_create( pair.net, 0, &config, 0, client_block, client_bytes );
+    check( pair.server && pair.clients[0] );
+    mo_net_connect( pair.net, 0 );
+    pair.time = MO_T0;
+    mo_step( &pair );
+
+    rn_message_object_t * object = server_side ? &pair.server->object : &pair.clients[0]->object;
+    rn_message_connection_t * connection = rn_message_object_connection( object, 0 );
+    const rocketnet_counters_t * counters = server_side ? rocketnet_message_server_counters( pair.server ) : rocketnet_message_client_counters( pair.clients[0] );
+    const int channel = 1;
+
+    int started = 0;
+    bool said_no = false;
+    for ( int step = 0; step < 1000; step++ )
+    {
+        mo_room_ask_everything( object, 0 );
+        const bool room = rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes );
+        check( room == rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
+        check( !rn_region_exhausted( connection->region ) );
+        uint8_t * p = rn_message_object_start( object, 0, channel, room_case->reliability, room_case->bytes );
+        if ( !room )
+        {
+            // a no: the start is still the fatal one, unchanged
+            check( p == NULL );
+            check( rn_region_exhausted( connection->region ) );
+            check( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+            check( !rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
+            said_no = true;
+            break;
+        }
+        check( p != NULL );
+        // while a start is pending the object takes no second one: no room
+        check( !rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
+        mo_fill( p, (uint32_t) started, (uint32_t) room_case->bytes );
+        check( rn_message_object_finish( object, 0, room_case->bytes ) != 0 );
+        started++;
+    }
+    check( said_no );
+    check( started > 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
+    check( mo_counter( counters, room_case->counter ) == 1 );
+
+    // the kick: the connection ends with the reason, and a gone connection has no room
+    if ( server_side )
+    {
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+        check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
+    }
+    else
+    {
+        pair.time += 0.01;
+        (void) rocketnet_message_client_update( pair.clients[0], pair.time );
+        check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    }
+    check( !rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
+    mo_room_ask_everything( object, 0 );
+
+    mo_pair_teardown( &pair );
+    free( client_allocation );
+    free( server_allocation );
+}
+
+static void test_send_room_query_says_no_exactly_when_a_start_exhausts()
+{
+    // the small config: 16 descriptors, a store of 12288 bytes in three
+    // classes, and the spans sized by receive_message_buffer_bytes
+    const mo_room_case_t cases[] =
+    {
+        { "small reliable ordered, the descriptors run out", ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100, 0, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL },
+        { "large-class reliable, the store runs out", ROCKETNET_RELIABILITY_RELIABLE, 1000, 0, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL },
+        { "span reliable with receipt, the spans run out", ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 2000, 8192, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL },
+        { "promoted unreliable, the spans run out", ROCKETNET_RELIABILITY_UNRELIABLE, 2000, 8192, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL },
+    };
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        mo_room_run_case( &cases[i], false );
+        mo_room_run_case( &cases[i], true );
+    }
+}
+
 static int mo_room_lines = 0;
 static int mo_room_crossings = 0;
 static int mo_room_exhausted = 0;
@@ -3218,6 +3373,7 @@ REGISTER_UNIT_TEST( test_unreliable_failed_packet_drops_and_counts_each_record )
 REGISTER_UNIT_TEST( test_unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( test_unreliable_over_a_lossy_link_arrives_intact_at_most_once );
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
+REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts );
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 REGISTER_UNIT_TEST( test_update_time_first_update_not_finite_refused );

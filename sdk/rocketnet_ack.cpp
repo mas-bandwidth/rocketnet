@@ -3,9 +3,6 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Visit counter for testing: increments on each sequence visit during process_block
-unsigned long long g_ack_visit_count = 0;
-
 #include "rocketnet_memory.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
@@ -16,6 +13,13 @@ unsigned long long g_ack_visit_count = 0;
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+
+#if defined(ROCKETNET_ACK_VISIT_TEST_HOOKS)
+// Unit-library instrumentation only: each sequence visit during process_block.
+// Per thread, so independent endpoints on different threads never share it;
+// production and development libraries carry no such state.
+thread_local unsigned long long g_ack_visit_count = 0;
+#endif
 
 // -----------------------------------------
 //                           the ack block
@@ -634,7 +638,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     auto visit = [&]( uint64_t sequence )
     {
+#if defined(ROCKETNET_ACK_VISIT_TEST_HOOKS)
         g_ack_visit_count++;
+#endif
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
         // a set bit names a held, unacknowledged record; a mismatch is a
