@@ -151,6 +151,24 @@ static void test_packet_loss_tracker_burst_over_history_not_lost()
     rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
 }
 
+// A sequence jump beyond any burst a real stream at the assumed MTU can carry
+// is bounded by the tracker's documented per-update cap, not saturated to
+// INT_MAX: the client adds the count to a lifetime total, so a corrupt or
+// renamed sequence must not poison the loss rate. The jump crosses far more
+// than the cap; the update reports exactly the cap.
+static void test_packet_loss_tracker_overflow_loss_is_bounded()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 0 );
+    rocketnet_packet_loss_tracker_update( &tracker );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
+
+    rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
+}
+
 // A send record is written only for a sequence newer than the one its slot
 // holds and within one buffer of the highest sent, at a finite time; anything
 // else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
@@ -308,5 +326,6 @@ REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_gap_over_history_counts_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_burst_over_history_not_lost );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_overflow_loss_is_bounded );
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
 REGISTER_UNIT_TEST( test_jitter_tracker_backwards_stamp_is_not_a_sample );
