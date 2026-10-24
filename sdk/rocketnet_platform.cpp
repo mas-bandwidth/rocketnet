@@ -2390,6 +2390,18 @@ static mach_timebase_info_data_t timebase_info;
 
 static uint64_t time_start;
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+bool rocketnet_platform_mac_primary_interface_matches( const void * primary_interface_name, const void * bsd_name )
+{
+    if ( !primary_interface_name || !bsd_name )
+        return false;
+    if ( CFGetTypeID( (CFTypeRef) primary_interface_name ) != CFStringGetTypeID() ||
+         CFGetTypeID( (CFTypeRef) bsd_name ) != CFStringGetTypeID() )
+        return false;
+    return CFStringCompare( (CFStringRef) primary_interface_name, (CFStringRef) bsd_name, 0 ) == kCFCompareEqualTo;
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 bool rocketnet_platform_init()
 {
     if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
@@ -2417,33 +2429,37 @@ bool rocketnet_platform_init()
     CFPropertyListRef global = dynamic_store ? SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) ) : NULL;
     if ( global )
     {
-        CFStringRef primary_interface_name = (CFStringRef)( CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) ) );
-        CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
-        CFIndex count = interfaces ? CFArrayGetCount( interfaces ) : 0;
-        for ( CFIndex i = 0; i < count; i++ )
-        {   
-            SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)( CFArrayGetValueAtIndex( interfaces, i ) );
-            CFStringRef bsd_name = SCNetworkInterfaceGetBSDName( interface );
-            if ( CFStringCompare( primary_interface_name, bsd_name, 0 ) == kCFCompareEqualTo )
-            {   
-                CFStringRef interface_type = SCNetworkInterfaceGetInterfaceType( interface );
-                if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeEthernet, 0 ) == kCFCompareEqualTo )
+        const void * primary_interface_name = CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) );
+        // Skip the lookup when the dynamic-store entry is missing or malformed.
+        if ( primary_interface_name && CFGetTypeID( (CFTypeRef) primary_interface_name ) == CFStringGetTypeID() )
+        {
+            CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
+            CFIndex count = interfaces ? CFArrayGetCount( interfaces ) : 0;
+            for ( CFIndex i = 0; i < count; i++ )
+            {
+                SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)( CFArrayGetValueAtIndex( interfaces, i ) );
+                CFStringRef bsd_name = SCNetworkInterfaceGetBSDName( interface );
+                if ( rocketnet_platform_mac_primary_interface_matches( primary_interface_name, bsd_name ) )
                 {
-                    connection_type = ROCKETNET_CONNECTION_TYPE_WIRED;
+                    CFStringRef interface_type = SCNetworkInterfaceGetInterfaceType( interface );
+                    if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeEthernet, 0 ) == kCFCompareEqualTo )
+                    {
+                        connection_type = ROCKETNET_CONNECTION_TYPE_WIRED;
+                    }
+                    else if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeIEEE80211, 0 ) == kCFCompareEqualTo )
+                    {
+                        connection_type = ROCKETNET_CONNECTION_TYPE_WIFI;
+                    }
+                    else if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeWWAN, 0 ) == kCFCompareEqualTo )
+                    {
+                        connection_type = ROCKETNET_CONNECTION_TYPE_CELLULAR;
+                    }
+                    break;
                 }
-                else if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeIEEE80211, 0 ) == kCFCompareEqualTo )
-                {
-                    connection_type = ROCKETNET_CONNECTION_TYPE_WIFI;
-                }
-                else if ( CFStringCompare( interface_type, kSCNetworkInterfaceTypeWWAN, 0 ) == kCFCompareEqualTo )
-                {
-                    connection_type = ROCKETNET_CONNECTION_TYPE_CELLULAR;
-                }
-                break;
             }
+            if ( interfaces )
+                CFRelease( interfaces );
         }
-        if ( interfaces )
-            CFRelease( interfaces );
         CFRelease( global );
     }
     if ( dynamic_store )
@@ -2574,7 +2590,8 @@ bool rocketnet_platform_client_dual_stack()
 
 int rocketnet_platform_id()
 {
-    return ROCKETNET_PLATFORM_MAC;
+    // iOS shares this implementation but reports its own build platform.
+    return ROCKETNET_PLATFORM;
 }
 
 int rocketnet_platform_connection_type()
