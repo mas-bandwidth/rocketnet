@@ -368,7 +368,13 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
         for ( int server = 0; server < 2; server++ )
         {
             memset( &guarded, 0xA5, sizeof(guarded) );
+#if ROCKETNET_ASSERTS
+            const int assertions_before_parse = config_ladder_max_assertions;
+#endif
             check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+#if ROCKETNET_ASSERTS
+            check( config_ladder_max_assertions == assertions_before_parse + 1 );
+#endif
             check( guarded.ladder.num_candidates >= 0 );
             check( guarded.ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
             for ( int i = 0; i < guarded.ladder.num_candidates; i++ )
