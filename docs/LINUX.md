@@ -123,16 +123,18 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 (precedence default < struct < env, `BUILDING.md:330-332`;
 `sdk/rocketnet_config.cpp:313-319`). The rules (`sdk/rocketnet_config.h:165-176`):
 
-- A one-element list is a pin: that transport or a loud failure, never a fall.
+- A list with at least one name that is not skipped (below) is a strict pin:
+  those transports in that order, or a loud failure, never a fall to `auto`.
 - A server pin of `portable` is available in both development and production.
 - A longer list is tried in exactly that order; nothing is appended.
 - A known name this platform or endpoint does not have (`gso` for a client) is
   skipped with `transport <name> is not available here. skipped`
-  (`sdk/rocketnet_config.cpp:899-913`); a list whose every name is skipped
+  (`sdk/rocketnet_config.cpp:947-961`); a list whose every name is skipped
   falls to the endpoint's own `auto` with a warning
-  (`sdk/rocketnet_config.cpp:930-941`).
+  (`sdk/rocketnet_config.cpp:969-995`), so one fleet-wide line deploys
+  unchanged to mixed machines (ruled on the #110 review).
 - An unknown name, an empty element, or `auto` inside a list fails create
-  (`sdk/rocketnet_config.cpp:861-878`).
+  (`sdk/rocketnet_config.cpp:909-926`).
 
 Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
 (`sdk/rocketnet_config.cpp:344-375`), for example
