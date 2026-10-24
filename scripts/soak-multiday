@@ -196,6 +196,14 @@ STATUS=$?
 rm -f "$FIFO"
 
 summary
-grep -h '^soak summary: \|^soak finished: \|^soak: ' "$LOG" >> "$SUMMARY"
+# soak's closing lines, oldest log first: a rotation can fall inside them
+LOGS=()
+i=$KEEP_LOGS
+while [ "$i" -ge 1 ]; do
+    [ -f "$LOG.$i" ] && LOGS+=( "$LOG.$i" )
+    i=$(( i - 1 ))
+done
+LOGS+=( "$LOG" )
+grep -h '^soak summary: \|^soak finished: \|^soak: ' "${LOGS[@]}" >> "$SUMMARY"
 echo "soak-multiday: soak exited $STATUS after $(( $( date +%s ) - START )) s" | tee -a "$SUMMARY"
 exit "$STATUS"
