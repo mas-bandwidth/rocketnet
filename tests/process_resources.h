@@ -12,7 +12,8 @@
                  threads         proc_pidinfo PROC_PIDTASKINFO pti_threadnum
                  resident_bytes  proc_pidinfo PROC_PIDTASKINFO pti_resident_size
         Windows  handles         GetProcessHandleCount
-                 threads         a Toolhelp32 walk of this process's threads
+                 threads         a Toolhelp32 walk of this process's threads,
+                                 less the OS's own (process_resources_thread_is_os)
                  private_bytes   GetProcessMemoryInfo PrivateUsage
 
     The Linux and macOS counters are the ones functional/posix_lifecycle_stress.cpp
@@ -167,6 +168,74 @@ static inline int64_t process_resources_resident_bytes( void )
 
 #endif
 
+#if defined(_WIN32)
+// Windows only: 1 when the thread's start address is inside ntdll.dll. Those
+// are the OS's own threads, the thread pool's workers and the parallel
+// loader's, which the OS starts and retires on its own timers (a run sees one
+// exit some seconds after the post-warmup sample). Every thread the library
+// or the program starts begins in their own code, never in ntdll, so the
+// thread count is theirs alone. A thread that cannot be queried counts as the
+// program's.
+
+typedef LONG (WINAPI * process_resources_query_thread_t)( HANDLE thread, int information_class, void * information, ULONG information_bytes, ULONG * returned_bytes );
+
+static inline int process_resources_thread_is_os( DWORD thread_id )
+{
+    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+    if ( !ntdll )
+        return 0;
+    process_resources_query_thread_t query = (process_resources_query_thread_t) (void *) GetProcAddress( ntdll, "NtQueryInformationThread" );
+    if ( !query )
+        return 0;
+    HANDLE thread = OpenThread( THREAD_QUERY_INFORMATION, FALSE, thread_id );
+    if ( !thread )
+        return 0;
+    void * start_address = NULL;
+    const int query_set_win32_start_address = 9; // ThreadQuerySetWin32StartAddress
+    const LONG status = query( thread, query_set_win32_start_address, &start_address, (ULONG) sizeof( start_address ), NULL );
+    CloseHandle( thread );
+    if ( status < 0 || !start_address )
+        return 0;
+    HMODULE start_module = NULL;
+    if ( !GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) start_address, &start_module ) )
+        return 0;
+    return start_module == ntdll;
+}
+
+// Windows only: a Toolhelp32 walk of this process's threads, counting the
+// OS's own (process_resources_thread_is_os) when os is 1 and the rest when
+// os is 0. Returns -1 when the thread list cannot be read.
+
+static inline int64_t process_resources_count_threads( int os )
+{
+    HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+    if ( thread_list == INVALID_HANDLE_VALUE )
+        return -1;
+    THREADENTRY32 entry;
+    entry.dwSize = sizeof( entry );
+    const DWORD self_pid = GetCurrentProcessId();
+    int64_t threads = 0;
+    if ( Thread32First( thread_list, &entry ) )
+    {
+        do
+        {
+            if ( entry.th32OwnerProcessID == self_pid && process_resources_thread_is_os( entry.th32ThreadID ) == os )
+                threads++;
+        } while ( Thread32Next( thread_list, &entry ) );
+    }
+    CloseHandle( thread_list );
+    return threads;
+}
+
+// Windows only: how many of this process's threads are the OS's own, printed
+// beside the counts and never compared
+
+static inline int64_t process_resources_os_threads( void )
+{
+    return process_resources_count_threads( 1 );
+}
+#endif
+
 // reads every count into *resources; returns 1 when all three were read
 
 static inline int process_resources_read( struct process_resources_t * resources )
@@ -180,24 +249,7 @@ static inline int process_resources_read( struct process_resources_t * resources
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
         resources->values[PROCESS_RESOURCES_HANDLES] = (int64_t) handles;
 
-    HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-    if ( thread_list != INVALID_HANDLE_VALUE )
-    {
-        THREADENTRY32 entry;
-        entry.dwSize = sizeof( entry );
-        const DWORD self_pid = GetCurrentProcessId();
-        int64_t threads = 0;
-        if ( Thread32First( thread_list, &entry ) )
-        {
-            do
-            {
-                if ( entry.th32OwnerProcessID == self_pid )
-                    threads++;
-            } while ( Thread32Next( thread_list, &entry ) );
-        }
-        CloseHandle( thread_list );
-        resources->values[PROCESS_RESOURCES_THREADS] = threads;
-    }
+    resources->values[PROCESS_RESOURCES_THREADS] = process_resources_count_threads( 0 );
 
     PROCESS_MEMORY_COUNTERS_EX memory;
     memset( &memory, 0, sizeof( memory ) );

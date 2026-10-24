@@ -100,10 +100,14 @@
     prints as "soak resources: touched <bytes> bytes before the post-warmup
     sample" (or "soak resources: touch not available" where the kernel has
     no MADV_POPULATE_*). Every between-clients sample and every 10 s sample
-    also prints "soak memory: <phase> t=<s> resident_bytes=<n>" and, on
-    Linux, "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup;
-    phase is between (no client alive) or live (a client alive), and only
-    between samples are compared.
+    also prints "soak memory: <phase> t=<s> resident_bytes=<n>
+    library_bytes=<n>", library_bytes being what the library holds through
+    the allocator soak gives rocketnet_init; on Linux it adds
+    "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup, and on
+    Windows "threads=<n> os_threads=<n>", the OS's own threads that the
+    thread count leaves out (process_resources_thread_is_os); phase is
+    between (no client alive) or live (a client alive), and only between
+    samples are compared.
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes on
     Windows); a run that ends inside the warm cycle, as every run under 30 s
@@ -458,17 +462,75 @@ static int soak_server_send( struct rocketnet_server_transport_t * server, int c
     return rocketnet_server_transport_finish_packet( server, &context, payload_size ) > 0;
 }
 
-// one "soak memory:" line: the memory count of *sample and, on Linux, the
-// smaps_rollup Rss and Private_Dirty read now
+// The library's own allocations, counted: rocketnet_init is given an
+// allocator that adds each block's bytes on allocate and takes them away on
+// free, so every memory line can say how much of the process's memory the
+// library holds through its allocator (library_bytes) beside what the OS and
+// the C runtime hold. The library calls it from its own threads too, so the
+// count moves by atomic adds. Each block carries its byte count in a header of
+// SOAK_ALLOCATION_HEADER_BYTES, which keeps malloc's alignment.
+
+#define SOAK_ALLOCATION_HEADER_BYTES 16
+
+static volatile int64_t soak_library_bytes;
+
+static void soak_library_bytes_add( int64_t bytes )
+{
+#if defined(_WIN32)
+    InterlockedExchangeAdd64( (volatile LONG64 *) &soak_library_bytes, (LONG64) bytes );
+#else
+    __atomic_fetch_add( &soak_library_bytes, bytes, __ATOMIC_RELAXED );
+#endif
+}
+
+static int64_t soak_library_bytes_read( void )
+{
+#if defined(_WIN32)
+    return (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &soak_library_bytes, 0, 0 );
+#else
+    return __atomic_load_n( &soak_library_bytes, __ATOMIC_RELAXED );
+#endif
+}
+
+static void * soak_library_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    uint8_t * block = (uint8_t *) malloc( bytes + SOAK_ALLOCATION_HEADER_BYTES );
+    if ( !block )
+        return NULL;
+    memcpy( block, &bytes, sizeof( bytes ) );
+    soak_library_bytes_add( (int64_t) bytes );
+    return block + SOAK_ALLOCATION_HEADER_BYTES;
+}
+
+static void soak_library_free( void * context, void * p )
+{
+    (void) context;
+    if ( !p )
+        return;
+    uint8_t * block = (uint8_t *) p - SOAK_ALLOCATION_HEADER_BYTES;
+    size_t bytes = 0;
+    memcpy( &bytes, block, sizeof( bytes ) );
+    soak_library_bytes_add( -(int64_t) bytes );
+    free( block );
+}
+
+// one "soak memory:" line: the memory count of *sample, the library's own
+// allocated bytes, on Linux the smaps_rollup Rss and Private_Dirty read now,
+// and on Windows how many of the process's threads are the OS's own (never
+// compared; see process_resources_thread_is_os)
 
 static void soak_print_memory( const char * phase, double seconds, const struct process_resources_t * sample )
 {
     int64_t rss = -1;
     int64_t private_dirty = -1;
-    printf( "soak memory: %s t=%.0f %s=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
-            (long long) sample->values[PROCESS_RESOURCES_MEMORY] );
+    printf( "soak memory: %s t=%.0f %s=%lld library_bytes=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
+            (long long) sample->values[PROCESS_RESOURCES_MEMORY], (long long) soak_library_bytes_read() );
     if ( process_resources_smaps( &rss, &private_dirty ) )
         printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
+#if defined(_WIN32)
+    printf( " threads=%lld os_threads=%lld", (long long) sample->values[PROCESS_RESOURCES_THREADS], (long long) process_resources_os_threads() );
+#endif
     printf( "\n" );
     fflush( stdout );
 }
@@ -571,7 +633,7 @@ int main( int argc, char ** argv )
 
     signal( SIGINT, interrupt_handler );
 
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, soak_library_malloc, soak_library_free ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
