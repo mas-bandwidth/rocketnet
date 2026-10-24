@@ -439,9 +439,9 @@ static void stress_world_send_packets( stress_world_t * world )
     world->frames++;
 }
 
+// the world comes value-initialized (new stress_world_t()): every field zero
 static void stress_world_create( stress_world_t * world )
 {
-    memset( world, 0, sizeof( *world ) );
     world->time = 1000.0;
     stress_now = world->time;
     rocketnet_quiet( true );
@@ -556,8 +556,7 @@ static int stress_reliable_receipt_sends( const stress_side_t * side )
 
 static void test_channels_stress_every_channel_delivers()
 {
-    stress_world_t * world = (stress_world_t *) malloc( sizeof( stress_world_t ) );
-    check( world != NULL );
+    stress_world_t * world = new stress_world_t();
     stress_world_create( world );
 
     // from here every allocation would be the frame loop's
@@ -619,7 +618,7 @@ static void test_channels_stress_every_channel_delivers()
             (unsigned long long) client_stats.packets_sent, (unsigned long long) server_stats.packets_sent );
 
     stress_world_destroy( world );
-    free( world );
+    delete world;
     printf( "test_channels_stress_every_channel_delivers\n" );
 }
 
