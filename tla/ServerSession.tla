@@ -38,7 +38,25 @@
 \* before it followed the code; "disconnectallleavesclient" makes
 \* DisconnectAll leave slot 1 connected; "receivewhilestopping" lets the
 \* server read a client packet while STOPPING; "admitwhilestopping" lets
-\* ClientConnects open a mapping while STOPPING.
+\* ClientConnects open a mapping while STOPPING; "disconnectallunbounded"
+\* makes DisconnectAll seal every ended client's whole disconnect burst
+\* inside its one step (the code before rn-mass-disconnect-real-time: 10
+\* seals per client, 10,000 at 1000 clients, in one call).
+\*
+\* The disconnect bursts (sdk/rocketnet_server_transport.cpp,
+\* rocketnet_server_transport_drain_disconnect_bursts): a server-side end of
+\* a CONNECTED slot (disconnect_client, disconnect_all_clients) ends the slot
+\* state in its step and leaves the session's Burst disconnect packets
+\* waiting; each server update has an allowance of SealsPerUpdate seals
+\* (ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE), and SealWaiting is one
+\* update's drain: at the model's scale of one seal an update it seals one
+\* waiting packet, so no update seals past its allowance by construction and
+\* an update with nothing waiting is a stutter. The code's immediate seal of a burst the
+\* allowance still holds whole is this deferral followed by its seals in
+\* the same update. A waiting burst belongs to its ended session, never to
+\* the slot, which a new client may take at once. Stop and destroy seal or
+\* drop every waiting packet (the shutdown path). The ghost overspent is
+\* TRUE once one update sealed more than its allowance.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField
@@ -46,7 +64,20 @@ CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, Unre
 ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot",
                    "resetclearshistory", "sendbeforeconnected", "destroysilent",
                    "reasonacrossrestart", "disconnectallleavesclient",
-                   "receivewhilestopping", "admitwhilestopping"}
+                   "receivewhilestopping", "admitwhilestopping",
+                   "disconnectallunbounded"}
+
+\* The burst and the allowance at the model's scale: one packet a burst,
+\* one packet an update, so two ended clients' bursts outrun one update's
+\* allowance as 1000 clients' 10,000 packets outrun the code's 64
+\* (ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS = 10 and
+\* ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE = 64 in the code, whose
+\* static assert keeps the allowance at least one whole burst). The
+\* smallest scale keeps MCServerSession.cfg, with the STOPPING and read
+\* steps beside the drain, inside its TLC budget.
+Burst == 1
+SealsPerUpdate == 1
+ASSUME SealsPerUpdate >= Burst /\ SealsPerUpdate = 1
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0}
 
 \* One field per row of the per-connection reset inventory; on the server
@@ -96,8 +127,11 @@ Reset(v, i, why) ==
 VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
           collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
-          allBefore, readIn, admitIn
+          allBefore, readIn, admitIn, waiting, overspent
 \* state, slot, kept: the server object
+\* waiting: the disconnect packets each ended session still waits to have
+\*   sealed; overspent: a ghost, TRUE once one update sealed more than
+\*   SealsPerUpdate
 \* link: the session tags of client packets in flight to the server (lossy)
 \* held: session tags the server has read and not yet processed
 \* readIn: the server state of every read; admitIn: the state of every
@@ -112,7 +146,9 @@ VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
 vars == <<state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
           collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
-          allBefore, readIn, admitIn>>
+          allBefore, readIn, admitIn, waiting, overspent>>
+drain == <<waiting, overspent>>
+NoneWaiting == [s \in Sessions |-> 0]
 env == <<link, nextSess, home, tokOf, starts, creates>>
 ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
             priorTokens, readmitted>>
@@ -128,6 +164,7 @@ Init ==
     /\ doubleTok = FALSE /\ observed = {} /\ crossDelivered = {} /\ collateral = {}
     /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {}
     /\ priorTokens = {} /\ readmitted = FALSE /\ droppedIn = {} /\ allBefore = {}
+    /\ waiting = NoneWaiting /\ overspent = FALSE
 
 \* Every path out of a slot's connection: the one Reset(i). sendDisc says
 \* whether the path sends the disconnect burst to a connected client. The
@@ -239,10 +276,20 @@ DisconnectSlot(i) ==
     THEN Clean([slot[i] EXCEPT !.rec = Write(slot[i].rec, DisconnectFields, slot[i].sess)],
                "SERVER_DISCONNECTED")
     ELSE slot[i]
+\* The ended clients' bursts wait (DrainDisconnectBurst): the call does O(1)
+\* work per slot and seals nothing past the update's allowance. The defect
+\* "disconnectallunbounded" seals every ended client's whole burst inside the
+\* call instead.
+EndedInDisconnectAll == {slot[i].sess : i \in {j \in Slots : EndsInDisconnectAll(j)}}
 DisconnectAll ==
     /\ state = "RUNNING"
     /\ \E i \in Slots : slot[i].st # "FREE"
     /\ slot' = [i \in Slots |-> DisconnectSlot(i)]
+    /\ IF Defect = "disconnectallunbounded"
+          THEN /\ overspent' = (overspent \/ Burst * Cardinality(EndedInDisconnectAll) > SealsPerUpdate)
+               /\ UNCHANGED waiting
+          ELSE /\ waiting' = [s \in Sessions |-> IF s \in EndedInDisconnectAll THEN Burst ELSE waiting[s]]
+               /\ UNCHANGED overspent
     /\ lastEnd' = [i \in Slots |-> IF EndsInDisconnectAll(i)
                                   THEN "SERVER_DISCONNECTED" ELSE lastEnd[i]]
     /\ allBefore' = {[slot |-> i, st |-> slot[i].st, sess |-> slot[i].sess] : i \in Slots}
@@ -276,6 +323,7 @@ ClientConnects(i, t) ==
 Establish(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ state = "RUNNING" /\ slot[i].st = "HANDSHAKE"
     /\ LET s == slot[i].sess
            t == tokOf[s]
@@ -298,6 +346,7 @@ Establish(i) ==
 Deny(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ slot[i].st = "HANDSHAKE"
     /\ EndSlot(slot, i, "DENIED", FALSE)
     /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
@@ -307,6 +356,7 @@ Deny(i) ==
 SlotTimeout(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
+    /\ UNCHANGED drain
     /\ slot[i].st \in {"HANDSHAKE", "CONNECTED"}
     /\ EndSlot(slot, i, "TIMED_OUT", FALSE)
     /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
@@ -402,29 +452,66 @@ Lose(s) ==
     /\ UNCHANGED <<state, slot, kept, nextSess, home, tokOf, starts, creates,
                    lastEnd, established, ghosts>>
 
+\* DrainDisconnectBurst, one update's drain: a waiting disconnect packet of
+\* ended session s is sealed within the update's allowance
+\* (rocketnet_server_transport_update calling
+\* rocketnet_server_transport_drain_disconnect_bursts; SealsPerUpdate = 1
+\* here). No slot changes: the slot ended at the disconnect, and may already
+\* hold another client.
+SealWaiting(s) ==
+    /\ state = "RUNNING" /\ waiting[s] > 0
+    /\ waiting' = [waiting EXCEPT ![s] = @ - 1]
+    /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, ghosts, overspent>>
+
 \* Every step but a drop clears droppedIn, and every step but a
-\* DisconnectAll clears allBefore; the fair actions name both too, so that
-\* their fairness conditions name a whole step.
+\* DisconnectAll clears allBefore; the fair actions name both too, and leave
+\* the drain unchanged, so that their fairness conditions name a whole step.
+\* The drain's step, whole: one update's seal.
+SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
+
+\* disconnect_client(i) leaves its burst waiting (the immediate seal of a
+\* burst the allowance holds is this step and its SealWaiting steps); stop
+\* seals every waiting packet on the shutdown path and destroy wipes the
+\* waiting keys, so neither leaves one waiting.
 Next ==
-    \/ /\ \/ Create \/ Start \/ Stop \/ StopCompletes
+    \/ /\ \/ Create \/ Start \/ StopCompletes
           \/ \E i \in Slots : \/ Deny(i) \/ SlotTimeout(i)
-                              \/ ClientLeaves(i) \/ DisconnectClient(i) \/ ServerSend(i)
+                              \/ ClientLeaves(i) \/ ServerSend(i)
           \/ \E s \in Sessions : ClientSend(s) \/ Lose(s)
+       /\ UNCHANGED drain
        /\ droppedIn' = {}
        /\ allBefore' = {}
        /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
-    \/ Destroy /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
+    \/ /\ Stop
+       /\ waiting' = NoneWaiting /\ UNCHANGED overspent
+       /\ droppedIn' = {}
+       /\ allBefore' = {}
+       /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
+    \/ /\ Destroy
+       /\ waiting' = NoneWaiting /\ UNCHANGED overspent
+       /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
+    \/ /\ \E i \in Slots : /\ DisconnectClient(i)
+                           /\ waiting' = [waiting EXCEPT ![slot[i].sess] = Burst]
+       /\ UNCHANGED overspent
+       /\ droppedIn' = {}
+       /\ allBefore' = {}
+       /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     \/ \E i \in Slots : Establish(i) /\ readIn' = readIn /\ held' = held
-    \/ \E i \in Slots : \E t \in Tokens : ClientConnects(i, t) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ held' = held
-    \/ \E s \in Sessions : Read(s) /\ droppedIn' = {} /\ allBefore' = {} /\ admitIn' = admitIn
-    \/ \E s \in Sessions : Deliver(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
-    \/ \E i \in Slots : ServerDropSend(i) /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
+    \/ \E i \in Slots : \E t \in Tokens : ClientConnects(i, t) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ held' = held /\ UNCHANGED drain
+    \/ \E s \in Sessions : Read(s) /\ droppedIn' = {} /\ allBefore' = {} /\ admitIn' = admitIn /\ UNCHANGED drain
+    \/ \E s \in Sessions : Deliver(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ UNCHANGED drain
+    \/ \E i \in Slots : ServerDropSend(i) /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held /\ UNCHANGED drain
     \/ DisconnectAll
+    \/ \E s \in Sessions : SealStep(s)
 
 Spec == Init /\ [][Next]_vars
-\* Fair delivery of the handshake's response and the timers.
+\* Fair delivery of the handshake's response and the timers; the server's
+\* updates keep coming, and each seals a waiting packet while one waits. One
+\* condition over every session suffices: each session ends at most once, so
+\* the packets ever left waiting are finite and every one is sealed.
 Fairness ==
-    \A i \in Slots : WF_vars(Establish(i) \/ Deny(i) \/ SlotTimeout(i))
+    /\ \A i \in Slots : WF_vars(Establish(i) \/ Deny(i) \/ SlotTimeout(i))
+    /\ WF_vars(\E s \in Sessions : SealStep(s))
 LiveSpec == Spec /\ Fairness
 
 TypeOK ==
@@ -444,6 +531,8 @@ TypeOK ==
     /\ priorTokens \subseteq Tokens /\ readmitted \in BOOLEAN
     /\ droppedIn \subseteq SlotStates
     /\ readIn \subseteq ServerStates /\ admitIn \subseteq ServerStates
+    /\ waiting \in [Sessions -> 0..Burst]
+    /\ overspent \in BOOLEAN
 
 \* An occupied slot holds its session; a free one holds none.
 SlotOwnsItsSession == \A i \in Slots :
@@ -515,6 +604,21 @@ ReasonKeptWithinRun == \A i \in Slots :
     slot[i].reason = IF slot[i].st = "CONNECTED" THEN "NONE" ELSE lastEnd[i]
 
 ResetTouchesOnlyItsSlot == collateral = {}
+
+\* No update seals more disconnect packets than its allowance: ending every
+\* client at once is O(1) work per slot in the call, and the bursts leave
+\* over the following updates. MCServerSessionBrokenDisconnectAllUnbounded
+\* expects TLC to violate it.
+DisconnectWorkBounded == ~overspent
+
+\* A burst waits only for a session that ended: the slot of a session still
+\* holding it is no longer that session's.
+WaitingOnlyForEnded == \A s \in Sessions :
+    waiting[s] > 0 => ~(home[s] # 0 /\ slot[home[s]].sess = s)
+
+\* Every waiting disconnect packet is sealed: a burst drains within
+\* Burst * (sessions) / SealsPerUpdate updates, or the stop seals it.
+BurstsDrain == \A s \in Sessions : waiting[s] > 0 ~> waiting[s] = 0
 
 \* One token admits one connection per run: the used-token history is kept
 \* across slot resets within the run and is fresh at each start.
