@@ -8,8 +8,12 @@
 (*  SEND.  A staging of Slots frame slots.  start_packet reserves the     *)
 (*  next slot with one fetch_add (Reserve), finish records the bytes      *)
 (*  (Finish), abort zeroes them (Abort).  send_packets, with the fill     *)
-(*  threads joined, submits one SENDMSG per slot with bytes not yet       *)
-(*  submitted (Submit) and reaps within its budget (Reap).  It resets the *)
+(*  threads joined, submits one SENDMSG per send run of slots with bytes  *)
+(*  not yet submitted (Submit) and reaps within its budget (Reap).  A run  *)
+(*  is one slot, or with UDP_SEGMENT consecutive slots sent as one        *)
+(*  segmented SENDMSG: the run's first slot (its head) names the send,    *)
+(*  and the run's one CQE (KernelComplete of the head) gives every slot   *)
+(*  of the run back.  It resets the *)
 (*  reservation index to 0 only when every send has its CQE (ResetIndex); *)
 (*  otherwise it returns with the index unchanged (SendReturn) and a      *)
 (*  later call retires the rest.  Between Submit and the CQE the kernel   *)
@@ -37,12 +41,14 @@
 (*  outstanding CQE, sends and cancels, before freeing slots, banks and   *)
 (*  the ring (Free).                                                      *)
 (*                                                                         *)
-(* Four rule switches carry the reversed witnesses.  ResetWaitsForReap =  *)
+(* Five rule switches carry the reversed witnesses.  ResetWaitsForReap =  *)
 (* FALSE lets ResetIndex run right after Submit; ReapIntoFill = FALSE     *)
 (* writes reaped receive datagrams into the exposed bank; BoundedReap =   *)
 (* FALSE is the drain until empty: no budget guard on Reap, and a call    *)
 (* ends only with cq empty (receive) or every send reaped (send);         *)
-(* RearmOnReceive = FALSE leaves a multishot that ends disarmed for good. *)
+(* RearmOnReceive = FALSE leaves a multishot that ends disarmed for good; *)
+(* RunRetiredByCqe = FALSE hands a run's slots after its head back to the *)
+(* staging at Submit, while the kernel still reads their frames.          *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -53,19 +59,21 @@ CONSTANTS Slots,              \* send staging slots per phase
           ResetWaitsForReap,  \* ResetIndex waits for every send CQE
           ReapIntoFill,       \* reaped receive datagrams go to the fill bank
           BoundedReap,        \* Reap stops at Budget; a call may return early
-          RearmOnReceive      \* receive_packets re-arms a disarmed multishot
+          RearmOnReceive,     \* receive_packets re-arms a disarmed multishot
+          RunRetiredByCqe     \* a run's slots stay the kernel's until its CQE
 
 ASSUME Slots \in Nat \ {0} /\ Buffers \in Nat \ {0} /\ MaxSteps \in Nat \ {0}
 ASSUME Budget \in Nat \ {0}
 ASSUME ResetWaitsForReap \in BOOLEAN /\ ReapIntoFill \in BOOLEAN
 ASSUME BoundedReap \in BOOLEAN
 ASSUME RearmOnReceive \in BOOLEAN
+ASSUME RunRetiredByCqe \in BOOLEAN
 
 SlotIds == 1..Slots
 BufIds  == 1..Buffers
 Dgs     == 1..MaxSteps
 
-\* completion queue entries: a send CQE names its slot, a receive CQE its
+\* completion queue entries: a send CQE names its run's head slot, a receive CQE its
 \* ring buffer; Term is a multishot CQE without F_MORE, Cancel the CQE of
 \* the cancel SQE destroy submits
 SendCqe(s) == [k |-> "send", x |-> s]
@@ -79,7 +87,8 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           bytes,    \* per slot: finish recorded bytes (abort zeroes them)
           idx,      \* the reservation index
           kown,     \* slots whose frame and msghdr the kernel owns
-          pending,  \* slots submitted by this send_packets, CQE not reaped
+          head,     \* per slot: the head slot of the kernel-owned send carrying it, 0 none
+          pending,  \* heads of sends submitted, CQE not reaped
           sending,  \* the main thread is inside send_packets
           bstate,   \* per ring buffer: Ring, Filled or Copied
           bufdg,    \* per ring buffer: the datagram last filled into it
@@ -95,7 +104,7 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           call,     \* the main thread's call: none, send or recv
           work      \* CQEs the current call has reaped
 
-vars == <<sstate, bytes, idx, kown, pending, sending, bstate, bufdg, copied,
+vars == <<sstate, bytes, idx, kown, head, pending, sending, bstate, bufdg, copied,
           fill, exposed, snap, gen, cq, armed, nextdg, phase, call, work>>
 
 Init ==
@@ -103,6 +112,7 @@ Init ==
     /\ bytes = [s \in SlotIds |-> FALSE]
     /\ idx = 0
     /\ kown = {}
+    /\ head = [s \in SlotIds |-> 0]
     /\ pending = {}
     /\ sending = FALSE
     /\ bstate = [b \in BufIds |-> "Ring"]
@@ -120,7 +130,7 @@ Init ==
     /\ work = 0
 
 RecvVars == <<bstate, bufdg, copied, fill, exposed, snap, gen, armed, nextdg>>
-SendVars == <<sstate, bytes, idx, kown, pending, sending>>
+SendVars == <<sstate, bytes, idx, kown, head, pending, sending>>
 CallVars == <<call, work>>
 
 \* start_packet: one fetch_add takes slot idx + 1; NULL (no step) when full
@@ -130,7 +140,7 @@ Reserve ==
     /\ sstate' = [sstate EXCEPT ![idx + 1] = "Reserved"]
     /\ bytes' = [bytes EXCEPT ![idx + 1] = FALSE]
     /\ idx' = idx + 1
-    /\ UNCHANGED <<kown, pending, sending, cq, phase>>
+    /\ UNCHANGED <<kown, head, pending, sending, cq, phase>>
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
@@ -139,7 +149,7 @@ Finish(s) ==
     /\ sstate[s] = "Reserved"
     /\ sstate' = [sstate EXCEPT ![s] = "Finished"]
     /\ bytes' = [bytes EXCEPT ![s] = TRUE]
-    /\ UNCHANGED <<idx, kown, pending, sending, cq, phase>>
+    /\ UNCHANGED <<idx, kown, head, pending, sending, cq, phase>>
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
@@ -148,31 +158,50 @@ Abort(s) ==
     /\ sstate[s] = "Reserved"
     /\ sstate' = [sstate EXCEPT ![s] = "Finished"]
     /\ bytes' = [bytes EXCEPT ![s] = FALSE]
-    /\ UNCHANGED <<idx, kown, pending, sending, cq, phase>>
+    /\ UNCHANGED <<idx, kown, head, pending, sending, cq, phase>>
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
-\* send_packets, fill threads joined: one SENDMSG per slot with bytes in
-\* 0..min(reserved, size), then submit; the kernel owns those slots
+\* send_packets, fill threads joined: the slots with bytes in
+\* 0..min(reserved, size) cut into send runs, one SENDMSG per run, then
+\* submit; the kernel owns every slot of every run.  H is the set of run
+\* heads: each slot to send belongs to the run of the nearest head at or
+\* below it, so every run is consecutive sending slots (the code also ends
+\* a run at an aborted slot, a longer packet, another destination or a
+\* bound, which picks one of these cuts).  H = out is one SENDMSG per
+\* slot, the plain tier.  Under RunRetiredByCqe = FALSE the slots of a run
+\* after its head go back to the staging at once, as if the segmented send
+\* had copied them, while the kernel still owns their frames
+\* (sdk/rocketnet_server_uring_linux.cpp rocketnet_server_uring_send_packets)
+HeadOf(H, s) == CHOOSE h \in H : h <= s /\ \A g \in H : g <= s => g <= h
+
 Submit ==
     /\ phase = "Running" /\ ~sending /\ call = "none"
     /\ \A s \in SlotIds : sstate[s] # "Reserved"
     /\ LET out == {s \in SlotIds : sstate[s] = "Finished" /\ bytes[s]}
-       IN /\ sstate' = [s \in SlotIds |->
-                           IF s \in out THEN "Kernel" ELSE sstate[s]]
+       IN \E H \in SUBSET out :
+          /\ \A s \in out : \E h \in H : h <= s
+          /\ head' = [s \in SlotIds |-> IF s \in out THEN HeadOf(H, s) ELSE head[s]]
+          /\ sstate' = [s \in SlotIds |->
+                           IF s \in out /\ (RunRetiredByCqe \/ s \in H) THEN "Kernel"
+                           ELSE IF s \in out THEN "Free"
+                           ELSE sstate[s]]
           /\ kown' = kown \cup out
-          /\ pending' = pending \cup out
+          /\ pending' = pending \cup H
     /\ sending' = TRUE
     /\ call' = "send"
     /\ work' = 0
     /\ UNCHANGED <<bytes, idx, cq, phase>>
     /\ UNCHANGED RecvVars
 
-\* the kernel finishes a send (any res, a negative one is SEND_DROPPED):
-\* it gives up the frame and posts the send CQE
+\* the kernel finishes a send (any res, a negative one is SEND_DROPPED for
+\* every packet of the run): it gives up the frames of every slot of the
+\* run at once and posts the run's one send CQE, named by its head
 KernelComplete(s) ==
     /\ s \in kown
-    /\ kown' = kown \ {s}
+    /\ head[s] = s
+    /\ kown' = kown \ {t \in SlotIds : head[t] = s}
+    /\ head' = [t \in SlotIds |-> IF head[t] = s THEN 0 ELSE head[t]]
     /\ cq' = cq \cup {SendCqe(s)}
     /\ UNCHANGED <<sstate, bytes, idx, pending, sending, phase>>
     /\ UNCHANGED RecvVars
@@ -216,9 +245,9 @@ Reap(c) ==
     /\ UNCHANGED call
     /\ cq' = cq \ {c}
     /\ CASE c.k = "send" ->
-              \* frees nothing by itself: the slot is reaped
+              \* frees nothing by itself: the run is reaped
               /\ pending' = pending \ {c.x}
-              /\ UNCHANGED <<sstate, bytes, idx, kown, sending>>
+              /\ UNCHANGED <<sstate, bytes, idx, kown, head, sending>>
               /\ UNCHANGED RecvVars
          [] c.k = "recv" ->
               /\ bstate' = [bstate EXCEPT ![c.x] = "Copied"]
@@ -265,7 +294,7 @@ ResetIndex ==
     /\ sending' = FALSE
     /\ call' = "none"
     /\ work' = 0
-    /\ UNCHANGED <<kown, pending, cq, phase>>
+    /\ UNCHANGED <<kown, head, pending, cq, phase>>
     /\ UNCHANGED RecvVars
 
 \* the other end of send_packets: some send is still without its CQE and
@@ -280,7 +309,7 @@ SendReturn ==
     /\ sending' = FALSE
     /\ call' = "none"
     /\ work' = 0
-    /\ UNCHANGED <<sstate, bytes, idx, kown, pending, cq, phase>>
+    /\ UNCHANGED <<sstate, bytes, idx, kown, head, pending, cq, phase>>
     /\ UNCHANGED RecvVars
 
 \* receive_packets begins: its reaps count against the budget
@@ -336,7 +365,7 @@ Free ==
     /\ kown = {} /\ cq = {} /\ ~armed
     /\ phase' = "Freed"
     /\ sstate' = [s \in SlotIds |-> "Free"]
-    /\ UNCHANGED <<bytes, idx, kown, pending, sending, cq>>
+    /\ UNCHANGED <<bytes, idx, kown, head, pending, sending, cq>>
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
@@ -393,6 +422,7 @@ TypeOK ==
     /\ bytes \in [SlotIds -> BOOLEAN]
     /\ idx \in 0..Slots
     /\ kown \subseteq SlotIds
+    /\ head \in [SlotIds -> 0..Slots]
     /\ pending \subseteq SlotIds
     /\ sending \in BOOLEAN
     /\ bstate \in [BufIds -> {"Ring", "Filled", "Copied"}]
@@ -409,10 +439,11 @@ TypeOK ==
     /\ call \in {"none", "send", "recv"}
     /\ work \in Nat
 
-\* Reserve never returns a slot the kernel owns: a slot held by a fill
-\* thread (reserved or finished) is never one the kernel still owns
+\* Reserve never returns a slot the kernel owns: a slot the staging holds
+\* (free for the next Reserve, reserved or finished by a fill thread) is
+\* never one the kernel still owns, whichever send of a run carries it
 NoReuseWhileKernelOwned ==
-    \A s \in SlotIds : sstate[s] \in {"Reserved", "Finished"} => s \notin kown
+    \A s \in SlotIds : sstate[s] \in {"Free", "Reserved", "Finished"} => s \notin kown
 
 \* the exposed bank never changes between two Swaps: every read of it by
 \* the transport sees the bank the last Swap exposed
