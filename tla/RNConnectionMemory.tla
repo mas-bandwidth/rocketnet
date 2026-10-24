@@ -23,9 +23,10 @@
 (*                  that reason (the server kicks the slot; a client       *)
 (*                  disconnects itself)                                    *)
 (*   Leave(s)       an ordinary disconnect, not from exhaustion            *)
-(*   Reuse(s)       the slot is freed and its region reset                 *)
+(*   Reuse(s)       the slot is freed in O(1); its region is carved by the *)
+(*                  Connect that next takes it (the lazy reset)            *)
 (*                                                                         *)
-(* Reset = FALSE makes Reuse skip the reset; CarryOn = TRUE lets an        *)
+(* Reset = FALSE makes Connect skip the carve; CarryOn = TRUE lets an      *)
 (* exhausted connection keep taking room (Use, UseSpan).  Each must fail;  *)
 (* those are the reversed witnesses.                                       *)
 (***************************************************************************)
@@ -34,7 +35,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS Slots,        \* the server's client slots (one for a client)
           Clients,      \* the clients that may connect
           Capacity,     \* the region's room, in abstract records
-          Reset,        \* Reuse runs rn_region_carve
+          Reset,        \* Connect to a freed slot runs rn_region_carve
           CarryOn       \* an exhausted connection keeps working (broken)
 
 ASSUME Slots # {} /\ Clients # {} /\ Capacity \in Nat \ {0}
@@ -75,13 +76,20 @@ Init ==
     /\ reason = [s \in Slots |-> "none"]
     /\ records = [s \in Slots |-> {}]
 
-\* the transport admits a client to a free slot; the region is as Reuse left it
+\* the transport admits a client to a free slot, and the slot's region is
+\* carved before the client's first record (rn_region_reset at the Observe
+\* that binds the slot, sdk/rocketnet_message_server.cpp; the lazy reset)
 Connect(s, c) ==
     /\ state[s] = "Free"
     /\ c \notin OnSlot
     /\ state' = [state EXCEPT ![s] = "Connected"]
     /\ owner' = [owner EXCEPT ![s] = c]
-    /\ UNCHANGED <<used, exhausted, reason, records>>
+    /\ IF Reset
+         THEN /\ used' = [used EXCEPT ![s] = 0]
+              /\ exhausted' = [exhausted EXCEPT ![s] = FALSE]
+              /\ reason' = [reason EXCEPT ![s] = "none"]
+              /\ records' = [records EXCEPT ![s] = {}]
+         ELSE UNCHANGED <<used, exhausted, reason, records>>
 
 \* rn_region_send_alloc (or a receive placement) finding room
 Use(s) ==
@@ -139,17 +147,14 @@ Leave(s) ==
     /\ reason' = [reason EXCEPT ![s] = Left]
     /\ UNCHANGED <<owner, used, exhausted, records>>
 
-\* rn_region_reset: the slot is freed and its region carved before reuse
+\* rn_message_connection_release: the slot is freed in O(1); its region keeps
+\* what the ended client left, reachable by nothing (no client is on a Free
+\* slot), until the Connect that next takes the slot carves it
 Reuse(s) ==
     /\ state[s] = "Disconnected"
     /\ state' = [state EXCEPT ![s] = "Free"]
     /\ owner' = [owner EXCEPT ![s] = NoClient]
-    /\ IF Reset
-         THEN /\ used' = [used EXCEPT ![s] = 0]
-              /\ exhausted' = [exhausted EXCEPT ![s] = FALSE]
-              /\ reason' = [reason EXCEPT ![s] = "none"]
-              /\ records' = [records EXCEPT ![s] = {}]
-         ELSE UNCHANGED <<used, exhausted, reason, records>>
+    /\ UNCHANGED <<used, exhausted, reason, records>>
 
 Next ==
     \E s \in Slots :
@@ -175,16 +180,24 @@ UsedBounded == \A s \in Slots : used[s] <= Capacity
 ExhaustedReasonNamed ==
     \A s \in Slots : exhausted[s] <=> reason[s] = Exhausted
 
-\* a Free slot is a freshly carved region, so the Connect that takes it sees
-\* used = 0, no exhaustion and no record of the previous client; a connected
-\* slot holds records of its own client only
+\* a Free slot holds no client, so what its region still holds (the lazy
+\* reset) is reachable by nothing; a connected slot holds records of its own
+\* client only, the carve at Connect having removed the previous client's
 ReusedSlotStartsClean ==
     \A s \in Slots :
-        /\ state[s] = "Free" => /\ used[s] = 0
-                                /\ ~exhausted[s]
-                                /\ reason[s] = "none"
-                                /\ records[s] = {}
+        /\ state[s] = "Free" => owner[s] = NoClient
         /\ state[s] = "Connected" => records[s] \subseteq {owner[s]}
+
+\* the Connect that takes a slot sees a freshly carved region: used = 0, no
+\* exhaustion, no reason and no record of the previous client
+ConnectStartsClean ==
+    [][\A s \in Slots :
+          (state[s] = "Free" /\ state'[s] = "Connected") =>
+              /\ used'[s] = 0
+              /\ ~exhausted'[s]
+              /\ reason'[s] = "none"
+              /\ records'[s] = {}
+      ]_vars
 
 \* from exhausted, the slot takes no further room: the steps that change it
 \* are Kick to Disconnected with the reason kept, and a Release that gives

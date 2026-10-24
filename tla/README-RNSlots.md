@@ -75,10 +75,10 @@ objects/API cards.
 | `TransportOpen` | Transport payload batch tagged with the connection at receive time |
 | `TransportAck` | `rocketnet_server_transport_acked_packets` feed, including deferred entries |
 | `BeginUpdate` | Entry check in `rocketnet_server_update`, before the transport mutates prior views |
-| `Observe` | `rn_slots_observe`, followed by `rn_endpoint_reset` on identity change |
+| `Observe` | `rn_slots_observe`, followed by `rn_endpoint_reset` when the slot is bound to a new connection (`RN_SLOTS_RESET`); a slot going free (`RN_SLOTS_DROP`) is released in O(1) by `rn_message_connection_release`, its region left unreachable until that reset (the lazy reset) |
 | `Admit` | `rn_slots_admit` at apply time, then `rn_endpoint_on_acked` or `rn_endpoint_on_payload` |
 | `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason |
-| `ResetFree` | Reset the disconnected endpoint's region before the slot can be reassigned |
+| `ResetFree` | `rn_message_connection_release`: the kicked slot freed in O(1), its views released; its region is carved by the `Observe` that binds the slot again |
 | `Release` | Object message-release operation returns the view's region charge |
 | `RejectUnreleasedUpdate` | Entry check in `rocketnet_server_update` before touching the transport or old views |
 | `EndUpdate` | Return deliveries to the application after processing the current batch |

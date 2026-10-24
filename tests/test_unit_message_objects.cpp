@@ -1946,7 +1946,9 @@ static void test_rnslots_witness_replays()
     }
 
     // Omit reset (ReusedSlotStartsClean): A's record delivered, received and
-    // released; A disconnects; the free slot holds none of A's receive state
+    // released; A disconnects and the slot is freed in O(1), bound to no
+    // connection (the lazy reset); B takes the slot, and the Observe that
+    // binds it carves the region: B's slot holds none of A's receive state
     {
         mo_pair_t pair;
         mo_pair_setup( &pair, 1, &config );
@@ -1961,6 +1963,12 @@ static void test_rnslots_witness_replays()
         mo_step( &pair );
         check( slot->hot->state == RN_MESSAGE_CONNECTION_FREE );
         check( slot->hot->connection_id == 0 );
+        check( pair.server->object.slots.connection_id[0] == 0 );
+        mo_net_connect( pair.net, 0 );                                              // B
+        pair.time += 0.01;
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+        check( slot->hot->connection_id == pair.net->slot_connection[0] );
         check( slot->region->channel_receive[0].ordered_read == 0 );
         uint32_t live = 0;
         for ( uint32_t i = 0; i < slot->region->window; i++ )
