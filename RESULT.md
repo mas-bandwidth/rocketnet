@@ -1,28 +1,28 @@
-RESULT: rn-uring-gso-gro-a sha=97de7865bd9e6360981b88121da469f1ef04b6dd tier: frontier
+RESULT: rn-uring-gso-gro-b sha=HEADSHA tier: frontier
 
-Head: 97de7865bd9e6360981b88121da469f1ef04b6dd
-Branch: sprint/rn-uring-gso-gro-a.w4.g2.e1
-Verdict: done
+Verdict: HOLD
+Head: HEADSHA
+Branch: sprint/rn-uring-gso-gro-b.w4.g2.e1
 
-The code head is 97de7865, the merge of main (221e3bee) into the segmentation branch. That merge does not change sdk/rocketnet_server_uring_linux.cpp, sdk/rocketnet_server_uring.h, sdk/rocketnet_uring_codec.h, tla/RNUringDriver.tla, tla/MCRNUringDriver.tla, tla/MCRNUringDriver.cfg, tla/MCRNUringDriverBrokenFreeRunAtSubmit.cfg, or tla/README-RNUringDriver.md relative to bacbf8ad. The bench print used to count SENDMSG submissions is not in this commit.
+Why HOLD: the branch carries rn-uring-gso-gro-a (newest head ada3673b, merged) because this card builds on its send side, and gro-a has not landed. Until it lands, the diff against main names files outside this card's PATHS: tla/MCRNUringDriver.cfg, tla/MCRNUringDriverBrokenFreeRunAtSubmit.cfg, the four other MCRNUringDriverBroken*.cfg (RunRetiredByCqe = TRUE), and RESULT.md. After gro-a lands, a merge of main removes them and the card can land.
 
-Gate on amd-2 at 97de7865, 2026-10-24T07:15:30Z to 07:23:30Z: gcc Release make, ./bin/test, the three wire cases, test_uring_gso_message_stride_and_tail, ./bin/functional, make ROCKETNET_DEV=OFF, and a clang Release dev rebuild all exited 0. python3 tools/check_tla_coverage.py --all printed COVERAGE OK 105 rows. The new case is absent at 221e3bee, so it was not executed there.
+Carried: attempt 2's local head a1ec49f3 (pushed head 0e21a26f plus the docs commit), merged; then gro-a ada3673b, merged; then main 3a0b... (d18e95df merge). No reader findings were open.
 
-TLC was not re-run. The model files are unchanged since the recorded rows (MCRNUringDriver.cfg PASS, MCRNUringDriverBrokenFreeRunAtSubmit.cfg PASS as an invariant violation of NoReuseWhileKernelOwned).
+Fixed this attempt:
+- MCRNUringDriver.cfg timed out at the 110 s budget once KernelFill could coalesce (exit 124, 184189 distinct at 110 s on hetzner2). The reap now removes the segments it copies from bufdg, and BufferReturnedAfterCopy reads "a returned buffer holds no datagram still to copy": the same rule without per-buffer history. PASS in 53.0 s, 93559 distinct.
+- RUNS.tsv had picked up duplicate stale rows for fragmentsandacks, rnblocks and rnuringdriver from the earlier merges; it is main's rows plus the seven fresh rnuringdriver records (tlacheck merge --keep). groups --stale [] ; check_tla_coverage --all COVERAGE OK 105 rows.
 
-Load, server alone on amd-2 (100.84.43.61), 500 clients on amd-1 and 500 on hulk, ROCKETNET_SERVER_TRANSPORT=io_uring, full, 60 s, aggregate ceiling 80000 kbps. All three runs connected 1000 clients, missed_due_slots=0, delivery PASS, load PASS, bandwidth PASS. timing_verdict=FAIL against the 100 us budget; that budget is not this card's bar. server_send_packets was called 630 times in the traffic-plus-drain window (10 Hz for 63 s).
+TLC (pinned tlacheck 0c97d595, jar 936a2620, hetzner2, workers 2, 110 s; vision was at load 81 on 64 cores): MCRNUringDriver.cfg PASS exit 0; BrokenReturnBeforeSplit exit 12 BufferReturnedAfterCopy (trace Init, Submit, KernelFill(1) with 1..2, Reap copies {1} leaving {2}, ReturnBuffer(1) -> Ring holding 2; checked by hand against rocketnet_server_uring_receive_cqe: io_uring_buf_ring_add follows the segment loop); ResetBeforeReap 12 NoReuseWhileKernelOwned; OneBank 12 ExposedStable; UnboundedReap 12 ReapWithinBudget; NoRearmRetry 13 temporal; FreeRunAtSubmit 12 NoReuseWhileKernelOwned.
 
-- base 221e3bee, run b72898267fb58433, clang Release dev: p50 4392 us, p99 14364 us, max 18056.779 us
-- head 97de7865, run f3eda2cc014ad64a, unmodified clang Release dev binary: p50 4368 us, p99 5539 us, max 6197.578 us
-- head 97de7865, run 950b7aa227fa1e8c, same source plus two integer adds and a destroy-time print: p50 4692 us, p99 6938 us, max 13737.276 us
+Gate, amd-2 at d18e95df (main 2a.. merged): gcc DEV ON make 0 warnings, ./bin/test exit 0 (test_uring_recvmsg_gro_stride runs), ./bin/functional exit 0 (test_io_uring_transport_server_wire_gro_ipv4, _wire_gro_ipv6, _receive_rearms_after_no_buffers run); gcc DEV OFF, clang DEV ON, clang DEV OFF all build exit 0 with 0 warnings; clang ./bin/test exit 0. amd-2 lo has tx-udp-segmentation on, so the wire_gro cases' GRO_BATCHES > 0 assertion is armed there. test_uring_recvmsg_gro_stride does not compile at BASE (no stride parse), so it is red at BASE.
 
-p50 sits between 4.4 ms and 4.7 ms on all three. p99 at head was 5539 us and 6938 us. The one base run's p99 was 14364 us.
+Memory per queue: before 4096 x 2048 B = 8 MiB; after 4096 x 67584 B = 264 MiB (4 default queues: 32 MiB -> 1056 MiB), all allocated at create; pages become resident only where the kernel writes.
 
-SENDMSG submissions are not in the stock receipt. A destroy-time print on the bench binaries, subtracted by the one-client warm server that load_split destroys first, gives the 1000-client server:
+Load (server amd-2 alone, 500 clients amd-1 + 500 hulk, io_uring, full, 60 s, 80000 kbps; shared busy benches, one run each):
+- base 1a2f2c43 run 86be413d06c382b3: server_update p99 40820 us, p50 7567; server_receive_messages p99 173 us; send_packets p99 39821; missed_due_slots 6000, load FAIL, delivery PASS.
+- head b7acfd61 (same uring source as the final head) run c5a2b8f83d0018f4: server_update p99 10184 us, p50 6526; server_receive_messages p99 114 us; send_packets p99 10037; missed_due_slots 0, load PASS, delivery PASS. UDP_SEGMENT yes, UDP_GRO yes.
+Timing FAIL both against the 100 us budget (pre-existing). Not done: receive_packets has no call row in the load_split receipt (it runs inside server_update), and receive CQEs per update are not printed; tools/ is outside PATHS. Under this load each datagram is from a distinct flow, so GRO does not coalesce (inference).
 
-- head: 824642 SENDMSG SQEs, 824642 packets completed, GSO_SENDS 0, GSO_FALLBACKS 0, over 9031 send_packets calls in the whole server life
-- base: 825995 SENDMSG SQEs, 825995 packets completed, over 10145 send_packets calls. Base has no GSO counter; the code submits one SENDMSG per slot
+Proposed roadmap diff (not applied), docs/roadmap.sexp:141 "Receive coalescing by the kernel (UDP_GRO on Linux, URO on Windows), split by stride": cells (- n y n n y n -) -> (- n y y n y n -), add evidence (io_uring "<land sha> test_io_uring_transport_server_wire_gro_ipv4, test_io_uring_transport_server_wire_gro_ipv6 (GRO_BATCHES > 0, byte-exact, in order), test_uring_recvmsg_gro_stride; tla/RNUringDriver.tla Segments"), and drop io_uring from the note.
 
-GSO_SENDS stayed 0, and submissions equal packets, so this load never grouped a run. Each of the 600 traffic ticks offers 1000 messages, one per client, so those leave as about 1000 SENDMSG submissions per traffic flush plus acks, at both revisions. The other send_packets calls are the 1 ms connect and teardown loops. Whole-life submissions per call are 91.3 at head and 81.4 at base because those short calls dilute the average. The UDP_SEGMENT probe logged yes at head before traffic.
-
-Proposed roadmap diff, not applied. docs/roadmap.sexp line 142, "Send segmentation by the kernel (UDP GSO on Linux, USO on Windows), probed with fallback", io_uring cell n to y, evidence naming test_io_uring_transport_server_wire_gso_ipv4, _wire_gso_ipv6 (GSO_SENDS above zero, payloads byte-exact), _wire_plain (GSO_SENDS zero), test_uring_gso_message_stride_and_tail, and this measurement: at 1000 clients full, GSO_SENDS stayed 0 because each flush is one packet per destination. docs/roadmap.sexp and ROADMAP.md were not edited.
+Tool defect: `nsc.sh friend stage` refused "--pg is required" although the wrapper sets NOVA_PG_DSN; passing --pg explicitly worked.
