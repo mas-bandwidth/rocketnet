@@ -123,6 +123,23 @@ table). The files have three origins:
 - **regressions** (`regress_<name>`), minimized findings kept forever (see
   "Replaying a crash").
 
+`corpus_config/regress_config_f80d0030` is the four bytes `f8 0d 00 30`:
+table 2 (the message table, as "client"), field 13
+(`message_resend_delay_max_ms`), mode 0 (the per-endpoint name), value "0".
+It pins the environment overlay's contract for an out-of-range integer: the
+overlay applies the value, the table's range refuses it (10..60000, and zero
+is not "use the default" for this field), and the value is never clamped into
+range. The unit case `test_message_config_resend_delay_max_zero_refused` in
+`tests/test_unit_message_config.cpp` pins the same refusal on the library
+side, with the struct field set directly.
+
+The harness's environment handling is the other half of that contract: at
+`LLVMFuzzerInitialize` every name the tables derive goes through one set and
+one unset, so the C library's environment array has its final size before the
+first input runs. An overlay can then add no name the array has not already
+held, and the per-input heap check ("an overlay leaves the heap as it found
+it") measures what the overlay itself leaves.
+
 ## Seed generators
 
 `rocketnet_fuzz_server_transport`, `rocketnet_fuzz_client_transport`,
