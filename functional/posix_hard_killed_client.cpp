@@ -353,7 +353,7 @@ static void posix_hk_server_address( const posix_hk_cell_t & cell, int port, cha
 {
     if ( posix_hk_is_xdp( cell ) )
     {
-        char host[64];
+        char host[40];
         posix_hk_xdp_host( cell, false, host, sizeof(host) );
         if ( cell.ipv6 )
             snprintf( out, bytes, "[%s]:%d", host, port );
