@@ -67,8 +67,8 @@ extern char **environ;
 // clients") carries larger per-server tables whatever the case's max_clients:
 // the receive arrays and payload batches hold 16 packets for every client
 // the build holds. There the bound is 1.5 times the largest case measured at
-// 10000 clients on a macOS Release build (811 MiB,
-// test_server_stats_worker_late_batch_keeps_modulo_fairness, 2026-10-23),
+// 10000 clients on a macOS Release build (811 MiB, 2026-10-23, a server
+// statistics case since deleted with the background recompute it pinned),
 // so 1217; a build for more than 10000 sets the environment variable.
 #if ROCKETNET_MAX_CLIENTS <= 1000
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
