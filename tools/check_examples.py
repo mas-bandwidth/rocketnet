@@ -2,7 +2,9 @@
 """Check the examples against the house rules.
 
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the published
-development keys as data) and the C standard headers below, and may name only rocketnet_ identifiers that sdk/rocketnet.h declares.
+development keys as data) and the C standard headers below (plus the per-file
+native headers in NATIVE_ALLOWED, each with its reason), and may name only
+rocketnet_ identifiers that sdk/rocketnet.h declares.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -26,6 +28,14 @@ ALLOWED_HEADERS = {
     "stdbool.h",
     "inttypes.h",
     "time.h",       # a development token is stamped now, as a backend stamps it
+}
+
+# Per-file native headers, each with its reason. Every other example stays on
+# the standard headers above.
+NATIVE_ALLOWED = {
+    ("soak.c", "windows.h"): "allocator-callback lock across SDK worker threads (SRWLOCK)",
+    ("soak.c", "pthread.h"): "allocator-callback lock across SDK worker threads (pthread mutex)",
+    ("soak.c", "sys/mman.h"): "Linux MAP_NORESERVE reservation of the preallocated soak arena",
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
@@ -73,7 +83,7 @@ def main():
 
         for match in includes:
             name = match.group(2)
-            if name not in ALLOWED_HEADERS:
+            if name not in ALLOWED_HEADERS and (source_path.name, name) not in NATIVE_ALLOWED:
                 print(f'{rel}:{line_of(source, match.start())}: #include "{name}" is not allowed', file=sys.stderr)
                 source_failed = True
 
