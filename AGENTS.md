@@ -454,6 +454,7 @@ RocketNet has no copying send call: the caller never hands it a finished buffer 
 - The caller serializes or writes the message into that pointer in place.
 - `rocketnet_client_finish_message(client, bytes_written)` and `rocketnet_server_finish_message( server, bytes_written )` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused).
 - `rocketnet_client_abort_message(client)` and `rocketnet_server_abort_message( server )` cancel an open reservation without sending and give its room back.
+- `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )` and `rocketnet_server_can_send_message( server, client_index, channel, reliability, max_bytes )` answer whether that start would be given room now. They change nothing and run in constant time. A start after a `false` still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`.
 - There is no public broadcast call: to send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
 
 Where the returned pointer lies depends on the message:

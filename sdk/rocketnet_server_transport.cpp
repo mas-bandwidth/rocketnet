@@ -220,8 +220,7 @@ struct rocketnet_server_stats_slot_t
     rocketnet_ack_stats_delta_t deltas[2];
     rocketnet_ack_stats_history_t history;       // worker-owned
     uint64_t history_generation;
-    uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
-    uint64_t received_written[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS];
+    rocketnet_ack_stats_validity_t validity;
 };
 
 typedef rocketnet_ack_stats_result_t rocketnet_server_stats_result_t;
@@ -390,9 +389,9 @@ static void rocketnet_server_transport_construct( rocketnet_server_transport_t *
 
 static void rocketnet_server_stats_clear_delta( rocketnet_ack_stats_delta_t * delta )
 {
-    memset(delta->sent_dirty, 0, sizeof(delta->sent_dirty));
-    memset(delta->received_dirty, 0, sizeof(delta->received_dirty));
-    memset(delta->rtt_dirty, 0, sizeof(delta->rtt_dirty));
+    delta->sent_dirty.invalidate();
+    delta->received_dirty.invalidate();
+    delta->rtt_dirty.invalidate();
     delta->reset = false;
 }
 
@@ -405,35 +404,35 @@ static void rocketnet_server_stats_compute( rocketnet_server_stats_slot_t * slot
     rocketnet_ack_stats_history_t * history = &slot->history;
     if ( input->reset || slot->history_generation != input->generation )
     {
-        // Validity owns initialization: an unwritten ring record is never read.
-        // Reset only the compact masks and RTT samples, not 156 KB of history
-        // for every connection that first publishes a stats batch.
-        memset(slot->sent_written, 0, sizeof(slot->sent_written));
-        memset(slot->received_written, 0, sizeof(slot->received_written));
-        memset(history->rtt_history, 0, sizeof(history->rtt_history));
+        // Epoch mismatch makes old records absent; history bytes and validity
+        // bitmaps remain untouched until an actual new record is written.
+        slot->validity.invalidate();
         slot->history_generation = input->generation;
     }
     history->highest_sent = input->values.highest_sent;
     history->highest_received = input->values.highest_received;
     for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
-        if ( input->sent_dirty[i / 64] & (1ull << (i % 64)) )
+        if ( input->sent_dirty.test(i) )
         {
             history->sent[i] = input->values.sent[i];
-            slot->sent_written[i / 64] |= 1ull << (i % 64);
+            slot->validity.sent.set(i);
         }
     for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
-        if ( input->received_dirty[i / 64] & (1ull << (i % 64)) )
+        if ( input->received_dirty.test(i) )
         {
             history->received[i] = input->values.received[i];
-            slot->received_written[i / 64] |= 1ull << (i % 64);
+            slot->validity.received.set(i);
         }
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
-        if ( input->rtt_dirty[i / 64] & (1ull << (i % 64)) )
+        if ( input->rtt_dirty.test(i) )
+        {
             history->rtt_history[i] = input->values.rtt_history[i];
+            slot->validity.rtt.set(i);
+        }
 
     // Read the worker-owned compact history directly. No scratch reset or
     // full-ring copy, and no calculation under the exchange mutex.
-    rocketnet_ack_stats_history_compute(history, output, slot->sent_written, slot->received_written);
+    rocketnet_ack_stats_history_compute(history, output, NULL, NULL, &slot->validity);
 }
 
 static bool rocketnet_server_stats_worker_step( rocketnet_server_stats_worker_t * worker )
@@ -601,13 +600,17 @@ static int rocketnet_server_stats_worker_create( void * context, rocketnet_serve
         rocketnet_server_stats_slot_t * slot = &worker->slots[i];
         for ( int d = 0; d < 2; ++d )
         {
-            rocketnet_server_stats_clear_delta(&slot->deltas[d]);
+            slot->deltas[d].sent_dirty.initialize();
+            slot->deltas[d].received_dirty.initialize();
+            slot->deltas[d].rtt_dirty.initialize();
+            slot->deltas[d].reset = false;
             slot->deltas[d].generation = 1;
             slot->deltas[d].values.highest_sent = 0;
             slot->deltas[d].values.highest_received = 0;
         }
         slot->deltas[0].reset = true;
         slot->history_generation = 0;
+        slot->validity.initialize();
         worker->spares[i] = &slot->deltas[1];
     }
     if ( !rocketnet_platform_mutex_create(&worker->exchange_mutex) )
@@ -1247,7 +1250,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                                        const char * public_address_string,
                                                                                        const struct rocketnet_server_transport_config_t * config,
-                                                                                       double time, int * status );
+                                                                                       double time, int * status,
+                                                                                       const uint64_t * resolved_memory_budget = NULL );
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
                                                                               const struct rocketnet_server_transport_config_t * config,
@@ -1273,10 +1277,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
 }
 
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
+                                                                                  const struct rocketnet_server_transport_config_t * config,
+                                                                                  uint64_t memory_budget_bytes, int * status )
+{
+    rocketnet_assert( config );
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
+}
+
 static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
                                                                            const char * public_address_string,
                                                                            const struct rocketnet_server_transport_config_t * config,
-                                                                           double time, int * status )
+                                                                           double time, int * status,
+                                                                           const uint64_t * resolved_memory_budget )
 {
 #if defined(ROCKETNET_XDP_STAGING_TEST_HOOKS)
     const int manual_override = rocketnet_server_stats_manual_next;
@@ -1327,7 +1340,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the default shape; the caller's struct is the middle layer; the
     // environment overlays both through the config table, every override
     // logged loudly with the value it displaced. validation refuses
-    // loudly and never clamps.
+    // loudly and never clamps. A config the public create already resolved
+    // (resolved_memory_budget set, rocketnet_server_transport_create_resolved)
+    // takes no second environment pass: start uses the config create
+    // validated and sized, whatever the environment says now.
 
     struct rocketnet_server_transport_config_t effective_config;
     if ( config )
@@ -1338,7 +1354,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1504,8 +1520,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    uint64_t memory_budget = 0;
-    if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+    uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
+    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;

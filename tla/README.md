@@ -105,7 +105,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
-| `rnxdpreplay` | 3 | Kernel replay high-water map control and two invariant witnesses |
+| `rnxdpreplay` | 4 | Kernel replay high-water map control and three invariant witnesses |
 | `rnriodriver` | 3 | Windows RIO server transport design: control with two liveness properties and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |

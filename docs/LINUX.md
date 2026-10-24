@@ -429,6 +429,14 @@ library embeds. In a 1536M guest with two isolated CPUs and no clang on
 `PATH`, all 18 cases print `ok`, including `xdp_on_link_reply_reaches_the_peer`
 and `xdp_create_fails_part_way_tears_down`.
 
+The nightly 1,000-client xdp load cell needs a far larger guest: the server
+and its 1,000 default-profile clients share one process, and the plan alone is
+16.96 GiB and the measured peak RSS is 26.1 GiB. The step sizes the guest from
+`LOAD_PLAN_ONLY=1 ./bin/load 1000 60` plus a measured per-client run reserve,
+as `(plan + 1000 * 9848630) * 5 / 4 + 1 GiB` (34G today), so the runner needs
+that much `MemAvailable`; a 16G guest is OOM-killed and a 24G guest is killed at the
+shutdown wipe (`docs/LOAD.md`, "The nightly AF_XDP cell's guest memory").
+
 ## 7. Socket errors and ICMP
 
 Linux reports an ICMP error (port unreachable, host unreachable) to a UDP

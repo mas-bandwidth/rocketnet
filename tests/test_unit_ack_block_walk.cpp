@@ -17,7 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
-extern unsigned long long g_ack_visit_count;
+extern thread_local unsigned long long g_ack_visit_count;
 
 static void rec_sent( struct rocketnet_ack_endpoint_t * ep, uint64_t sequence )
 {

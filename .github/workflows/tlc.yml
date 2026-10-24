@@ -13,7 +13,9 @@ permissions:
 
 concurrency:
   group: tlc-records-${{ github.ref }}
-  cancel-in-progress: true
+  # main never cancels a run in progress: every merge gets a verdict.
+  # Branches and PRs still cancel a superseded run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   stale:

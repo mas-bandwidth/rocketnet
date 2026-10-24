@@ -3,9 +3,6 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Visit counter for testing: increments on each sequence visit during process_block
-unsigned long long g_ack_visit_count = 0;
-
 #include "rocketnet_memory.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
@@ -16,6 +13,13 @@ unsigned long long g_ack_visit_count = 0;
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+
+#if defined(ROCKETNET_ACK_VISIT_TEST_HOOKS)
+// Unit-library instrumentation only: each sequence visit during process_block.
+// Per thread, so independent endpoints on different threads never share it;
+// production and development libraries carry no such state.
+thread_local unsigned long long g_ack_visit_count = 0;
+#endif
 
 // -----------------------------------------
 //                           the ack block
@@ -304,7 +308,7 @@ static inline void rocketnet_ack_stats_record_sent( rocketnet_ack_stats_delta_t 
     projected->acked = record->acked;
     if ( highest_sequence > delta->values.highest_sent )
         delta->values.highest_sent = highest_sequence;
-    delta->sent_dirty[slot >> 6] |= 1ull << ( slot & 63 );
+    delta->sent_dirty.set((int)slot);
 }
 
 static inline void rocketnet_ack_stats_record_received( rocketnet_ack_stats_delta_t * delta,
@@ -318,7 +322,7 @@ static inline void rocketnet_ack_stats_record_received( rocketnet_ack_stats_delt
     projected->wire_bytes = record->wire_bytes;
     if ( highest_sequence > delta->values.highest_received )
         delta->values.highest_received = highest_sequence;
-    delta->received_dirty[slot >> 6] |= 1ull << ( slot & 63 );
+    delta->received_dirty.set((int)slot);
 }
 
 // tla/RNSentHistory.tla Send
@@ -634,7 +638,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     auto visit = [&]( uint64_t sequence )
     {
+#if defined(ROCKETNET_ACK_VISIT_TEST_HOOKS)
         g_ack_visit_count++;
+#endif
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
         // a set bit names a held, unacknowledged record; a mismatch is a
@@ -694,7 +700,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                 {
                     const uint32_t rtt_slot = (uint32_t) ( sequence % ROCKETNET_RTT_HISTORY_SIZE );
                     delta->values.rtt_history[rtt_slot] = endpoint->rtt_history[rtt_slot];
-                    delta->rtt_dirty[rtt_slot >> 6] |= 1ull << ( rtt_slot & 63 );
+                    delta->rtt_dirty.set((int)rtt_slot);
                 }
                 endpoint->has_rtt_sample = 1;
             }
@@ -819,7 +825,8 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
                                          const float * rtt_history, const SentRecord * sent,
                                          const ReceivedRecord * received,
                                          const uint64_t * sent_written, const uint64_t * received_written,
-                                         rocketnet_ack_stats_result_t * result )
+                                         rocketnet_ack_stats_result_t * result,
+                                         const rocketnet_ack_stats_validity_t * validity = NULL )
 {
     // rtt: the minimum over the history of first-ack samples. a sample of
     // exactly zero -- possible only on a held or loopback clock -- is
@@ -831,6 +838,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
         float best = 1e9f;
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
+            if (validity && !validity->rtt.test(i)) continue;
             const float sample = rtt_history[i];
             if ( sample > 0.0f && sample < best )
                 best = sample;
@@ -848,6 +856,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
         int count = 0;
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
+            if (validity && !validity->rtt.test(i)) continue;
             const float sample = rtt_history[i];
             if ( sample > 0.0f )
             {
@@ -881,6 +890,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             if ( sequence > highest_sent )
                 break;
             const SentRecord * record = &sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+            if (validity && !validity->sent.test((int)(sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE))) continue;
             if ( sent_written && !rocketnet_ack_bit( sent_written, sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
                 continue;
             if ( record->sequence != sequence )
@@ -957,6 +967,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             if ( sequence > highest_received )
                 break;
             const ReceivedRecord * record = &received[sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+            if (validity && !validity->received.test((int)(sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE))) continue;
             if ( received_written && !rocketnet_ack_bit( received_written, sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ) )
                 continue;
             if ( record->sequence != sequence )
@@ -985,11 +996,12 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
                                         rocketnet_ack_stats_result_t * result,
-                                        const uint64_t * sent_written, const uint64_t * received_written )
+                                        const uint64_t * sent_written, const uint64_t * received_written,
+                                        const rocketnet_ack_stats_validity_t * validity )
 {
     rocketnet_assert(history && result);
     rocketnet_ack_compute_stats(history->highest_sent, history->highest_received,
-                               history->rtt_history, history->sent, history->received, sent_written, received_written, result);
+                               history->rtt_history, history->sent, history->received, sent_written, received_written, result, validity);
 }
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint )
@@ -1086,8 +1098,8 @@ void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, in
         delta->reset = 1;
         delta->values.highest_sent = 0;
         delta->values.highest_received = 0;
-        memset( delta->sent_dirty, 0, sizeof(delta->sent_dirty) );
-        memset( delta->received_dirty, 0, sizeof(delta->received_dirty) );
-        memset( delta->rtt_dirty, 0, sizeof(delta->rtt_dirty) );
+        delta->sent_dirty.invalidate();
+        delta->received_dirty.invalidate();
+        delta->rtt_dirty.invalidate();
     }
 }

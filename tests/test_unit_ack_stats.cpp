@@ -272,3 +272,40 @@ static void test_ack_stats_history_ignores_unwritten_records()
     delete history;
 }
 REGISTER_UNIT_TEST(test_ack_stats_history_ignores_unwritten_records);
+
+static void test_ack_stats_epoch_invalidation_preserves_storage()
+{
+    rocketnet_stats_epoch_bits_t<2> bits;
+    memset(&bits, 0xA5, sizeof(bits));
+    bits.initialize();
+    bits.set(7); bits.set(90);
+    const uint64_t first = bits.bits[0], second = bits.bits[1];
+    const uint64_t old_epoch = bits.epoch;
+    bits.invalidate();
+    rocketnet_unit_check(bits.epoch == old_epoch + 1 && !bits.test(7) && !bits.test(90));
+    rocketnet_unit_check(bits.bits[0] == first && bits.bits[1] == second);
+    bits.set(8);
+    rocketnet_unit_check(bits.test(8) && !bits.test(7) && !bits.test(90));
+    // Explicit rollover: an ancient epoch-1 tag must never become current.
+    bits.epoch = UINT64_MAX;
+    bits.tags[1] = 1;
+    bits.invalidate();
+    rocketnet_unit_check(bits.epoch == 1 && !bits.test(90));
+    rocketnet_unit_check(bits.bits[1] == second);
+
+    auto * history = new rocketnet_ack_stats_history_t;
+    memset(history, 0xA5, sizeof(*history));
+    history->highest_sent = history->highest_received = 3;
+    history->rtt_history[0] = 20.0f;
+    rocketnet_ack_stats_validity_t valid;
+    valid.initialize();
+    valid.rtt.set(0);
+    rocketnet_ack_stats_result_t result;
+    rocketnet_ack_stats_history_compute(history, &result, NULL, NULL, &valid);
+    rocketnet_unit_check(result.rtt == 20.0f && result.jitter == 0 && result.sent_kbps == 0 && result.received_kbps == 0);
+    valid.invalidate();
+    rocketnet_ack_stats_history_compute(history, &result, NULL, NULL, &valid);
+    rocketnet_unit_check(result.rtt == 0 && result.jitter == 0 && history->rtt_history[0] == 20.0f);
+    delete history;
+}
+REGISTER_UNIT_TEST(test_ack_stats_epoch_invalidation_preserves_storage);
