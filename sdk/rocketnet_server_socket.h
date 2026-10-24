@@ -105,7 +105,7 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters );
 
-// send packets (zero copy)
+// send packets (staged, one copy each way)
 
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id );
 
@@ -115,7 +115,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket );
 
-// receive packets (zero copy)
+// receive packets (staged, one copy each way)
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );
 
