@@ -7,7 +7,8 @@
 
         Linux    fds             the entries of /proc/self/fd
                  threads         the entries of /proc/self/task
-                 resident_bytes  VmRSS from /proc/self/status
+                 resident_bytes  VmRSS from /proc/self/status, after
+                                 glibc has returned free arenas
         macOS    fds             proc_pidinfo PROC_PIDLISTFDS
                  threads         proc_pidinfo PROC_PIDTASKINFO pti_threadnum
                  resident_bytes  proc_pidinfo PROC_PIDTASKINFO pti_resident_size
@@ -54,6 +55,9 @@
 #else
 #include <dirent.h>
 #include <unistd.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #endif
 
 #define PROCESS_RESOURCES_COUNT 3
@@ -120,6 +124,11 @@ static inline int64_t process_resources_count_directory( const char * path )
 
 static inline int64_t process_resources_resident_bytes( void )
 {
+#if defined(__GLIBC__)
+    // A freed client stays in VmRSS until the allocator returns those arenas.
+    // Return them before the read, so the count is memory still held.
+    malloc_trim( 0 );
+#endif
     FILE * file = fopen( "/proc/self/status", "r" );
     if ( !file )
         return -1;
