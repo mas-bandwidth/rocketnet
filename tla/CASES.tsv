@@ -133,6 +133,7 @@ MCRNChannelTypesUnordered.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchan
 MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesBlocks.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenBlockInTurnHeld.cfg	MCRNChannelTypes.tla	invariant	InTurnDeliveredWhenComplete	ignore-terminal	rnchanneltypes	required	-
+MCRNChannelBrokenDrainStaleSilent.cfg	MCRNChannelTypes.tla	invariant	SequencedArrivedAccounted	ignore-terminal	rnchanneltypes	required	-
 MCRNSentHistory.cfg	MCRNSentHistory.tla	pass	-	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenCountEveryUnacked.cfg	MCRNSentHistory.tla	invariant	NoOverflowUnderBoundedLoss	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverRefused	check	rnsenthistory	required	-

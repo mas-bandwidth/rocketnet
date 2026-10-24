@@ -86,6 +86,21 @@ moves there (`Drain`). `InTurnDeliveredWhenComplete` is the observable half:
 turn, that was `Deliverable` when complete and was not delivered.
 `MCRNChannelTypesBlocks.cfg` checks the rule with every shared invariant.
 
+## Drain stale counting
+
+The receiver keeps `sequencedDropped`, a count of sequenced records
+dropped with a counter (stale or superseded). Every sequenced record
+that arrived (a packet opened, or a block fragment arrived:
+`SequencedArrived`) is delivered, held (the future-state slot or the
+in-turn block), superseded or counted: `SequencedArrivedAccounted`
+(m7.4, "nothing is silent"). The drain's stale branch (`DrainStale`, the
+`stale` and `staleTurn` sets at the top of `Drain` and a held delivery
+the watermark refuses) adds the records it releases to that count.
+`Broken = "DrainStaleSilent"` is the drain before the fix in
+`sdk/rocketnet_channel_sequenced.cpp`: it released the hold and counted
+nothing, so a record held at sequencing `0x800000` in a fresh epoch
+vanished with no counter moved.
+
 `Broken = "BlockInTurnHeld"` is the code-4 dispatch of
 `sdk/rocketnet_channel_sequenced.cpp` before the rule: an in-turn block is
 checked against the watermark, then collected in the future-state slot and
@@ -167,6 +182,15 @@ runtime allocation design.
 - `BrokenHoldAllSequenced`: packets 3 and 5 carry successive sequenced
   messages ahead of missing ordered message 1. Keeping both leaves two held
   values on channel 1, violating the one-per-channel `BuffersBounded` rule.
+- `BrokenDrainStaleSilent`: in the `blocks` plan, block 1's first
+  fragment collects in turn, the ordered record then closes its epoch,
+  and the drain's stale branch releases the block without counting it.
+  The record arrived but is neither delivered, held nor counted:
+  `SequencedArrivedAccounted` fails. Checked by hand against the code:
+  an in-turn block whose epoch the ordered delivery closes is released
+  by the drain's stale branch, and the same branch in the C++ drain
+  released a held record the watermark refused with no counter before
+  the fix; both are the one `DrainStale` release in the model.
 - `BrokenBlockInTurnHeld`: block 1 (ordering 0) has its first fragment held
   in turn; block 4 (ordering 1, after the ordered message) arrives and, newer,
   replaces it in the one slot; block 1's second fragment is then superseded by
@@ -183,7 +207,7 @@ input, each branch and returned record is unchanged. This forces eager value
 binding in TLC and avoids repeatedly expanding nested record updates. It
 changes no transition, scheduling rule, loss action, bound or fairness.
 
-All eight healthy scenarios and five reversed witnesses complete with the
+All eight healthy scenarios and six reversed witnesses complete with the
 pinned runner and JAR from `README.md`, on Linux with a 110-second budget
 per shard. Positive cases use two workers; witnesses use one. They retain
 all seven programs, the same arbitrary arrival and ACK timing, original
@@ -192,17 +216,18 @@ exact generated/distinct counts after the evaluation change.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
-| `MCRNChannelTypes.cfg` | 2168240 | 400234 | 76.097 | pass - |
-| `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 0.680 | invariant SequencedNeverBackwards |
-| `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 0.744 | invariant EpochWatermark |
-| `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.648 | invariant ReliableExactlyOnce |
-| `MCRNChannelBrokenHoldAllSequenced.cfg` | 321 | 157 | 0.670 | invariant BuffersBounded |
-| `MCRNChannelBrokenBlockInTurnHeld.cfg` | 366 | 210 | 0.702 | invariant InTurnDeliveredWhenComplete |
-| `MCRNChannelTypesStale.cfg` | 171729 | 37065 | 5.208 | pass - |
-| `MCRNChannelTypesBackwards.cfg` | 21971 | 5927 | 1.976 | pass - |
-| `MCRNChannelTypesReset.cfg` | 56938 | 11595 | 4.734 | pass - |
-| `MCRNChannelTypesHold.cfg` | 102358 | 21795 | 5.164 | pass - |
-| `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 6.569 | pass - |
+| `MCRNChannelTypes.cfg` | 2168240 | 400234 | 97.405 | pass - |
+| `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 1.262 | invariant SequencedNeverBackwards |
+| `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 1.571 | invariant EpochWatermark |
+| `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 1.383 | invariant ReliableExactlyOnce |
+| `MCRNChannelBrokenHoldAllSequenced.cfg` | 321 | 157 | 1.426 | invariant BuffersBounded |
+| `MCRNChannelBrokenBlockInTurnHeld.cfg` | 366 | 210 | 1.238 | invariant InTurnDeliveredWhenComplete |
+| `MCRNChannelBrokenDrainStaleSilent.cfg` | 128 | 80 | 1.299 | invariant SequencedArrivedAccounted |
+| `MCRNChannelTypesStale.cfg` | 171729 | 37065 | 12.566 | pass - |
+| `MCRNChannelTypesBackwards.cfg` | 21971 | 5927 | 5.081 | pass - |
+| `MCRNChannelTypesReset.cfg` | 56938 | 11595 | 21.320 | pass - |
+| `MCRNChannelTypesHold.cfg` | 102358 | 21795 | 19.082 | pass - |
+| `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 16.505 | pass - |
 | `MCRNChannelTypesChannels.cfg` | 99178 | 20995 | 4.774 | pass - |
 | `MCRNChannelTypesBlocks.cfg` | 29805 | 9096 | 1.323 | pass - |
 

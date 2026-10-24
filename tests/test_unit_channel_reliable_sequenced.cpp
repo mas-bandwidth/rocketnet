@@ -67,6 +67,32 @@ static void test_stale_acked_then_discarded()
     rn_arena_destroy( receiver.arena );
 }
 
+static void test_reliable_sequenced_drain_refusal_counts_stale()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t held_payload = 9, ordered = 3;
+    rn_delivery_t out;
+    uint32_t held_slot = RN_DESCRIPTOR_NONE;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0x800000, &held_payload );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &held_slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+    check( receiver.region->receive_descriptors[held_slot].live != 0 );
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    uint32_t ordered_slot = RN_DESCRIPTOR_NONE;
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 0, 0, &ordered );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &ordered_slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.ordered.channels.deliveries == 1 );
+    check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    check( receiver.region->receive_descriptors[held_slot].live == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_reliable_sequenced_drain_refusal_counts_stale );
+
 REGISTER_UNIT_TEST( test_stale_acked_then_discarded );
 
 static void test_shares_the_watermark_with_code_1()

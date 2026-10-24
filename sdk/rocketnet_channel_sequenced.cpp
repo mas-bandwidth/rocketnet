@@ -431,10 +431,18 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     }
 
     rx->held_sequenced = RN_DESCRIPTOR_NONE;
-    if ( !rn_sequenced_room( channels, reliable ) || !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
+    if ( !rn_sequenced_room( channels, reliable ) )
     {
         rx->held_sequenced = slot;
         rn_sequenced_release_hold( channels, rx );
+        return false;
+    }
+    if ( !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
+    {
+        // m7.4 RNChannelTypes!DrainStale: a held record the drain refuses is counted stale, never silent.
+        rx->held_sequenced = slot;
+        rn_sequenced_release_hold( channels, rx );
+        rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         return false;
     }
     if ( reliable )
