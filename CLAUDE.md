@@ -61,7 +61,7 @@ keys. Never weaken the production handshake to make an example convenient.
 - Use `rocketnet_malloc` and `rocketnet_free` for every ordinary allocation,
   including runtime allocation. Document which call allocates and frees it.
 - Pass time into state machines; do not read wall time inside protocol logic.
-- Keep packet parsing bounded and validate every peer-controlled length and
+- Keep packet parsing bounded and validate every remotely controlled length and
   index before use.
 - Keep per-connection reset complete: no payload, replay, ACK, message,
   receipt or secret state may cross a slot reuse.

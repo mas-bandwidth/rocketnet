@@ -4,9 +4,9 @@
 
     Load: single-process many-client load harness driving the public API.
     Stands up one public server (rocketnet_server_t) and N public clients
-    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS = 1000) in one process
-    on loopback, connects every client within 10 seconds, drives the selected
-    profile (the existing one message per client per update in each
+    (rocketnet_client_t, N up to ROCKETNET_MAX_CLIENTS, 1000 by default) in
+    one process on loopback, connects every client within 10 seconds, drives
+    the selected profile (the existing one message per client per update in each
     direction: the client-to-server message rotates through all eight
     reliability modes via client_next_combo, and the server-to-client
     message is reliable-ordered). LOAD_MESSAGES_PER_CLIENT_SECOND optionally
@@ -52,6 +52,9 @@
     when the result is below 2 fds per client plus 64, so `ulimit -n 512`
     fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
+    A -DROCKETNET_MAX_CLIENTS=10000 build runs `LOAD_PROFILE=light load 10000
+    30` nightly (.github/workflows/nightly-max-clients.yml); the default
+    profile's per-client config plans about 183 GB for that server.
 */
 
 /* the title's protocol id: the server config's and every token's */

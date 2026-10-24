@@ -495,7 +495,7 @@ Block ==
 
 \* A session packet carrying the current block.  Every session type carries
 \* one; the standalone ack (type 8) is the one sent for the block alone, and
-\* the standard lets a peer send it whenever freshness is worth a packet.
+\* the standard lets an endpoint send it whenever freshness is worth a packet.
 SendAck ==
     /\ R2D!Send(Block)
     /\ namedEver' = namedEver \cup Block
@@ -660,7 +660,7 @@ Next ==
 (* Fairness.  Tick is weakly fair.  The sends and the receives are         *)
 (* strongly fair: a head that is due infinitely often is received          *)
 (* infinitely often (Link's WireFair for the one deliverable copy), and a  *)
-(* peer with something to send that finds room on the wire infinitely     *)
+(* endpoint with something to send that finds room on the wire infinitely  *)
 (* often sends infinitely often (Capacity is a model-size knob, never a    *)
 (* reason a sender is shut out forever: README-Link.md).  Per link, a link *)
 (* sent on without bound delivers without bound (Link's EventualDelivery   *)

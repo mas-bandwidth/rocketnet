@@ -46,6 +46,14 @@ records are retransmitted until acknowledged or the reliable timeout ends the
 connection. Large messages use bounded fragmentation and reassembly sized at
 create.
 
+A sequenced message in its ordered turn follows one rule whether it is one
+record or a reliable-sequenced block of fragments: it is delivered as soon as
+it is complete and newer than the channel's sequenced watermark; a newer
+in-turn message supersedes an in-turn block still collecting fragments, and
+one no newer is discarded; a held future state never touches it. Only a
+message ahead of its turn is held, at most one per channel, newest wins
+(`tla/RNChannelTypes.tla`, `InTurnOneRule`).
+
 The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
 estimator, and remains within `message_resend_delay_min_ms` and
 `message_resend_delay_max_ms`. `reliable_message_timeout_ms` bounds the complete reliable

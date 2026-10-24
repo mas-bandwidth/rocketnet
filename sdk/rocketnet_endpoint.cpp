@@ -695,7 +695,7 @@ void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
 void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now )
 {
     // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): an endpoint still
-    // waiting for the peer's CONFIG reliable_timeout after its connection
+    // waiting for the remote endpoint's CONFIG reliable_timeout after its connection
     // began ends it as RELIABLE_TIMEOUT. The wait starts at the first update
     // the connection is connected at: the server's from its Observe reset,
     // the client's from the first update its transport reports CONNECTED
@@ -1245,7 +1245,7 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
     // the region's exhaustion, a wire violation (a CONFIG mismatch among
     // them, logged with the field and both values when it was compared) and a
     // reliable message past its timeout, in rn_ordered_decide's order, then
-    // the peer's CONFIG past reliable_timeout (rn_endpoint_config_tick)
+    // the remote endpoint's CONFIG past reliable_timeout (rn_endpoint_config_tick)
     if ( endpoint->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
         return endpoint->send_error;
     const int reason = rn_ordered_decide( &endpoint->ordered );

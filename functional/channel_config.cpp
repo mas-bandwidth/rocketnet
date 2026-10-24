@@ -69,7 +69,7 @@ static void rocketnet_config_print_failure( const char * name, rocketnet_channel
 }
 
 // RNEndpoint OnPayload's CONFIG half (docs/CHANNELS.md 10.3): each endpoint
-// compares the peer's CONFIG body field by field with its own and ends the
+// compares the remote endpoint's CONFIG body field by field with its own and ends the
 // connection with CONFIG_MISMATCH on the first difference. The server object
 // is given a different num_channels before its reset announces its CONFIG, so
 // the two objects on the wire disagree exactly as two differently configured

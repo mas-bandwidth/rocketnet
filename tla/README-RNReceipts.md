@@ -18,7 +18,7 @@ layer implementation exists.
   draft. Reliable numbers remain in `Unacked` after map eviction or loss.
   Reliable retransmission is an abstract choice of any unacked number;
   scheduling/backoff is outside this model. Unreliable records write once.
-- `OpenPacket(pid)` is a peer transport open. `ReceiveAck(pid)` consumes
+- `OpenPacket(pid)` is an open by the remote transport. `ReceiveAck(pid)` consumes
   the transport's acked-packet-id event, and only that event updates
   `acked`. `PacketLost(pid)` supplies the transport lost-id event. A late
   ACK may follow loss; no message-level ACK or second ACK channel exists.

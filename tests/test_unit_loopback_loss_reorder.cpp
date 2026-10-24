@@ -329,7 +329,7 @@ static void test_loopback_transport_drop_every_nth()
         rocketnet_server_transport_stats( pair.server, &sstats );
 
         // Next-update ACKs may add datagrams during either update. Check the
-        // exact cumulative simulator loss after both peers have had that update.
+        // exact cumulative simulator loss after both client and server have had that update.
         rocketnet_client_transport_stats( pair.client, &cstats );
         rocketnet_server_transport_stats( pair.server, &sstats );
 

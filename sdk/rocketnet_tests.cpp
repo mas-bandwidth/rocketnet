@@ -1284,7 +1284,7 @@ void rocketnet_test_crypto_scalarmult()
     rocketnet_check( memcmp( shared_from_client, shared_from_server, 32 ) == 0 );
     rocketnet_check( memcmp( shared_from_client, rocketnet_test_shared_secret, 32 ) == 0 );
 
-    // NEGATIVE: a small-order peer public key is refused. ignoring this
+    // NEGATIVE: a small-order remote public key is refused. ignoring this
     // return is how implementations end up agreeing on an all-zero secret
     // with an attacker who chose the point. the standard makes checking it
     // a MUST on both sides.
@@ -2040,7 +2040,7 @@ void rocketnet_test_connection_keys()
     rocketnet_derive_handshake_keys( &other, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key, rocketnet_test_salt, other_nonce );
     rocketnet_check( memcmp( other.handshake_client_to_server, rocketnet_test_handshake_c2s_key, 32 ) != 0 );
 
-    // NEGATIVE: a small-order peer ephemeral refuses the whole derivation
+    // NEGATIVE: a small-order remote ephemeral refuses the whole derivation
     const uint8_t zero_point[32] = { 0 };
     rocketnet_check( !rocketnet_derive_connection_keys( &other,
                                                         rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
@@ -4112,7 +4112,7 @@ static void rocketnet_test_client_build_response( uint8_t * response, const stru
 
 // Builds a sealed session packet by hand: the fresh 7-byte ack block --
 // largest zero, nothing received, valid on any connection -- then the type
-// data, sealed under the given key. What a peer that has received nothing
+// data, sealed under the given key. What an endpoint that has received nothing
 // on the session sends.
 
 static int rocketnet_test_write_session_packet_salted( uint8_t * packet, uint8_t packet_type, uint64_t sequence,
@@ -4701,7 +4701,7 @@ void rocketnet_test_server_keep_alive_pacing()
 
     // Note what this block actually was: this synthetic client never opened
     // sequence 6 -- it never opened anything. It CLAIMED to, and the server
-    // took the claim, because an ack block is the peer's statement about its
+    // took the claim, because an ack block is the client's statement about its
     // own receive state and no receiver can check it. That is the
     // false-positive direction _Keep-alive generation_ documents, reproduced
     // here deliberately: an over-claiming block latches the pacing regime.
@@ -9136,7 +9136,7 @@ void rocketnet_test_ack_endpoint_processing()
     // the walk is bounded by the retained window, never by the block's
     // claims: a block naming sixteen million sequences below the window is
     // skipped arithmetically -- this returns immediately rather than
-    // iterating what the peer asserts
+    // iterating what the sender asserts
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 20000000; s <= 20000009; s++ )
         rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, 50.0 );
@@ -10145,9 +10145,9 @@ void rocketnet_test_send_history_lossy_long_path()
     rocketnet_free( NULL, path );
 }
 
-void rocketnet_test_send_history_silent_peer_overflows()
+void rocketnet_test_send_history_silent_receiver_overflows()
 {
-    // A peer that never acknowledges: more than a full lap of sends with no
+    // A receiver that never acknowledges: more than a full lap of sends with no
     // ack block coming back. Every eviction replaces a record whose fate is
     // unknown, so each one counts SEND_HISTORY_OVERFLOW, and none is a known
     // loss -- there is no later acknowledgment to say so. Every send is still
@@ -10200,8 +10200,8 @@ void rocketnet_test_send_history_silent_peer_overflows()
 
 void rocketnet_test_send_history_late_ack_before_eviction()
 {
-    // A packet the peer acknowledges late: it is past the loss threshold
-    // (the peer has acknowledged a sequence above it) and still unacked, so
+    // A packet the receiver acknowledges late: it is past the loss threshold
+    // (the receiver has acknowledged a sequence above it) and still unacked, so
     // it is a known loss in waiting -- then it arrives after all and is
     // acknowledged before its lap. Its eviction is a clean write: neither
     // lost nor overflow.
@@ -14094,7 +14094,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
     // P2 (docs/CHANNELS.md section 2): for an unfragmented payload (type 5),
     // an acked packet id means the payload was in exactly one delivered
-    // batch at the peer. Both directions over the in-memory network
+    // batch at the receiver. Both directions over the in-memory network
     // simulator with loss, duplication and reordering, ten thousand packets
     // each way. Every acked id's payload must have been delivered exactly
     // once, and an id whose payload never arrived must never be acked. The
@@ -14278,7 +14278,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (docs/CHANNELS.md section 2): if the peer sends anything in reply
+    // P6 (docs/CHANNELS.md section 2): if the other side of the connection sends anything in reply
     // to a packet this end opened in update j, this end opens the reply in
     // update j+1 or later. A fixed receive batch per update is what makes
     // the claim: update j's batch is closed before any packet that update
@@ -14682,17 +14682,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         rocketnet_check( estimate.sockets == plan.sockets );
         rocketnet_check( estimate.worker_threads == plan.worker_threads );
 
-        // The host plan describes native production resources even when a
-        // unit build runs the stats worker manually. Stats add one worker
-        // and its stack, but their event-only wake adds no network socket.
+        // The host plan describes native production resources: the transport's
+        // own I/O workers and sockets, and nothing for statistics, which run
+        // on the ack path with no thread of their own.
         rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         rocketnet_server_memory_plan_t io_plan = {};
         rocketnet_check( rocketnet_builtin_server_memory_plan( &config, transport, io_plan ) );
         rocketnet_check( estimate.sockets == io_plan.sockets );
-        rocketnet_check( estimate.worker_threads == io_plan.worker_threads + 1 );
+        rocketnet_check( estimate.worker_threads == io_plan.worker_threads );
         rocketnet_check( estimate.thread_stack_bytes ==
-                         ( (uint64_t) io_plan.worker_threads + 1 ) * estimate.thread_stack_bytes_per_thread );
+                         (uint64_t) io_plan.worker_threads * estimate.thread_stack_bytes_per_thread );
 
         if ( strcmp( transport, "xdp" ) == 0 )
         {
@@ -14706,13 +14706,13 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
             rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
         }
-        // portable: its RX and TX workers and the stats worker
+        // portable: its RX and TX workers
         if ( strcmp( transport, "portable" ) == 0 )
-            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 3 &&
-                             estimate.thread_stack_bytes == 3 * estimate.thread_stack_bytes_per_thread );
-        // rio: its I/O worker and the stats worker
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 2 &&
+                             estimate.thread_stack_bytes == 2 * estimate.thread_stack_bytes_per_thread );
+        // rio: its I/O worker
         if ( strcmp( transport, "rio" ) == 0 )
-            rocketnet_check( estimate.worker_threads == 2 );
+            rocketnet_check( estimate.worker_threads == 1 );
         if ( strcmp( transport, "rio" ) == 0 )
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
     }
@@ -14720,17 +14720,17 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // The socket requests and transport stacks scale with the configured
-    // queue count; the GSO transmit worker and the stats worker contribute
-    // one additional fixed stack each.
+    // queue count; the GSO transmit worker contributes one additional fixed
+    // stack.
     {
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_default_config( &config );
         config.num_xdp_queues = 8;
         struct rocketnet_host_memory_estimate_t estimate;
         rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
-        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 10 );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.thread_stack_bytes == 10ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
 #endif
@@ -14908,7 +14908,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_bad_block_refusals", rocketnet_test_ack_bad_block_refusals },
     { "test_ack_asymmetric_rate", rocketnet_test_ack_asymmetric_rate },
     { "test_send_history_lossy_long_path", rocketnet_test_send_history_lossy_long_path },
-    { "test_send_history_silent_peer_overflows", rocketnet_test_send_history_silent_peer_overflows },
+    { "test_send_history_silent_receiver_overflows", rocketnet_test_send_history_silent_receiver_overflows },
     { "test_send_history_late_ack_before_eviction", rocketnet_test_send_history_late_ack_before_eviction },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
     { "test_server_transport_entries_carry_connection_id", rocketnet_test_server_transport_entries_carry_connection_id },
