@@ -3,6 +3,78 @@
 #include "../sdk/rocketnet_driver.h"
 #include "test_unit_registry.h"
 
+// Counts misuse asserts so the refusal cases run in every build, including
+// ones where rocketnet_assert is compiled in.
+static int send_handoff_assert_count = 0;
+
+static void send_handoff_assert_recorder( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    send_handoff_assert_count++;
+}
+
+// tla/SendHandoff.tla Publish needs a filling generation: a publish with no
+// prior acquire refuses and leaves the queue empty instead of queueing -1.
+static void test_send_handoff_publish_without_acquire_refuses()
+{
+    rocketnet_assert_function( send_handoff_assert_recorder );
+    send_handoff_assert_count = 0;
+    rocketnet_send_handoff_t<2> handoff;
+    rocketnet_unit_check(!handoff.publish());
+    rocketnet_unit_check(handoff.count == 0 && handoff.head == 0);
+    rocketnet_unit_check(handoff.filling == -1 && handoff.front() == -1);
+    rocketnet_unit_check(handoff.free[0] && handoff.free[1]);
+    // the assert stays: it fires wherever asserts are compiled in
+    rocketnet_unit_check(send_handoff_assert_count == (ROCKETNET_ASSERTS ? 1 : 0));
+    // after the refusal the handoff still cycles a generation normally
+    const int first = handoff.acquire();
+    rocketnet_unit_check(first >= 0);
+    rocketnet_unit_check(handoff.publish());
+    rocketnet_unit_check(handoff.count == 1 && handoff.front() == first);
+    handoff.retire();
+    rocketnet_unit_check(handoff.count == 0 && handoff.free[first]);
+    rocketnet_assert_function( NULL );
+}
+REGISTER_UNIT_TEST(test_send_handoff_publish_without_acquire_refuses);
+
+// tla/SendHandoff.tla Retire needs a non-empty queue: a retire on an empty
+// queue changes nothing, so count never goes negative.
+static void test_send_handoff_retire_empty_changes_nothing()
+{
+    rocketnet_assert_function( send_handoff_assert_recorder );
+    send_handoff_assert_count = 0;
+    rocketnet_send_handoff_t<2> handoff;
+    // two generations queued and retired leave every queued entry stale
+    for (int cycle = 0; cycle < 2; ++cycle)
+    {
+        rocketnet_unit_check(handoff.acquire() >= 0);
+        rocketnet_unit_check(handoff.publish());
+        handoff.retire();
+    }
+    const int head = handoff.head;
+    rocketnet_unit_check(handoff.count == 0);
+    const int second = handoff.acquire();
+    rocketnet_unit_check(second >= 0);
+    handoff.retire();
+    rocketnet_unit_check(handoff.count == 0 && handoff.head == head);
+    rocketnet_unit_check(handoff.filling == second && handoff.front() == -1);
+    rocketnet_unit_check(!handoff.free[second]);
+    for (int i = 0; i < 2; ++i)
+        if (i != second) rocketnet_unit_check(handoff.free[i]);
+    // the assert stays: it fires wherever asserts are compiled in
+    rocketnet_unit_check(send_handoff_assert_count == (ROCKETNET_ASSERTS ? 1 : 0));
+    // the handoff still publishes and retires the filling generation
+    rocketnet_unit_check(handoff.publish());
+    rocketnet_unit_check(handoff.count == 1 && handoff.front() == second);
+    handoff.retire();
+    rocketnet_unit_check(handoff.count == 0 && handoff.free[second]);
+    rocketnet_assert_function( NULL );
+}
+REGISTER_UNIT_TEST(test_send_handoff_retire_empty_changes_nothing);
+
 // the AF_XDP code is Linux only, so its tests are built there only
 #if defined(__linux__)
 
