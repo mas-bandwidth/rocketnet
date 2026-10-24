@@ -52,15 +52,32 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCK
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
+// UDP segmentation offload (USO) on send. RIOSendEx takes one data buffer,
+// so a run (rocketnet_coalesce_send_run) is copied into a contiguous
+// staging area of a second registered region and posted as one RIOSendEx
+// whose pControlContext carries the run's stride as a UDP_SEND_MSG_SIZE
+// control message; the socket option itself stays 0. Probed at create with
+// fallback: a host that refuses the option, or refuses a live run, sends one
+// datagram per RIOSendEx. A run is at most this many frames and bytes.
+#define ROCKETNET_RIO_USO_MAX_SEGMENTS 64
+#define ROCKETNET_RIO_USO_MAX_SUPER_BYTES 65000
+
+// create flags: force the per-datagram send path
+#define ROCKETNET_RIO_DISABLE_USO 1
+
+// rocketnet_server_rio_features bits
+#define ROCKETNET_RIO_FEATURE_USO 1
+
 struct rocketnet_server_rio_t;
 
 // bind_address is updated with the actual port. IPv6 binds are dual stack
 // and normalize mapped IPv4 sources to IPv4. fail_stage is a constructor test
 // control: 1 after the socket, 2 after the RIO function table, 3 after the
 // region is registered, 4 after the completion queues, 5 after the request
-// queue, 6 after the first posted receive. Production passes zero.
+// queue, 6 after the first posted receive. Production passes zero. flags
+// is ROCKETNET_RIO_DISABLE_USO or zero.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
-    rocketnet_address_t * bind_address, int fail_stage = 0 );
+    rocketnet_address_t * bind_address, int fail_stage = 0, int flags = 0 );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );
@@ -87,10 +104,15 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
     ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
     ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls
+    ROCKETNET_RIO_COUNTER_USO_SENDS,                // RIOSendEx posts that carried more than one packet
+    ROCKETNET_RIO_COUNTER_USO_FALLBACKS,            // live USO runs refused and resent packet by packet
     ROCKETNET_RIO_NUM_COUNTERS
 };
 
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters );
+// the ROCKETNET_RIO_FEATURE_* bits in use now; USO clears itself when a live
+// run is refused
+int rocketnet_server_rio_features( rocketnet_server_rio_t * rio );
 // posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );

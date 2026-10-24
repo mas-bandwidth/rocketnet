@@ -4745,6 +4745,174 @@ void rocketnet_test_server_iocp_uso_wire()
         rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] > 0 );
     rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 }
+
+// the rio transport's USO tier against a plain UDP socket on loopback, as the
+// iocp pair above: tagged packets in, each surfaced byte-exact from the
+// sender's address; then replies in one flush, the first half equal-size
+// same-destination runs (the shape USO coalesces), and the plain socket must
+// receive each as its own datagram, byte-exact and in order
+
+static void rocketnet_test_rio_uso_exchange( rocketnet_server_rio_t * rio, const rocketnet_address_t * bind_address )
+{
+    rocketnet_address_t plain_address;
+    rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * plain = rocketnet_platform_socket_create( NULL, &plain_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( plain );
+    rocketnet_check( plain_address.port != 0 );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    server_address.port = bind_address->port;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < ROCKETNET_IOCP_TEST_PACKETS; i++ )
+    {
+        const int packet_bytes = rocketnet_test_iocp_reply_bytes( i );
+        packet[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            packet[j] = (uint8_t) ( i * 31 + j );
+        rocketnet_platform_socket_send_packet( plain, &server_address, packet, packet_bytes );
+    }
+
+    bool seen[ROCKETNET_IOCP_TEST_PACKETS];
+    memset( seen, 0, sizeof(seen) );
+    int num_seen = 0;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_IOCP_TEST_PACKETS )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+        rocketnet_server_socket_process_packets_t * received = rocketnet_server_rio_process_packets( rio );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            const int tag = received->packet_data[i][0];
+            rocketnet_check( tag < ROCKETNET_IOCP_TEST_PACKETS );
+            rocketnet_check( !seen[tag] );
+            rocketnet_check( received->packet_bytes[i] == rocketnet_test_iocp_reply_bytes( tag ) );
+            rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 && received->from[i].port == plain_address.port );
+            for ( int j = 1; j < received->packet_bytes[i]; j++ )
+                rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 31 + j ) );
+            seen[tag] = true;
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == ROCKETNET_IOCP_TEST_PACKETS );
+
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    const uint64_t sent_before = counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT];
+
+    for ( int i = 0; i < ROCKETNET_IOCP_TEST_PACKETS; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_rio_start_packet( rio, &plain_address, &packet_id );
+        rocketnet_check( frame );
+        const int packet_bytes = rocketnet_test_iocp_reply_bytes( i );
+        uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+        wire[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            wire[j] = (uint8_t) ( i * 47 + j );
+        rocketnet_server_rio_finish_packet( rio, packet_id, frame, packet_bytes );
+    }
+    rocketnet_server_rio_send_packets( rio );
+
+    int next_tag = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && next_tag < ROCKETNET_IOCP_TEST_PACKETS )
+    {
+        rocketnet_server_rio_send_packets( rio );
+        rocketnet_address_t from;
+        const int packet_bytes = rocketnet_platform_socket_receive_packet( plain, &from, packet, (int) sizeof(packet) );
+        if ( packet_bytes <= 0 )
+        {
+            rocketnet_platform_sleep( 0.001 );
+            continue;
+        }
+        rocketnet_check( from.port == bind_address->port );
+        const int tag = packet[0];
+        rocketnet_check( tag == next_tag );                 // in order, each its own datagram
+        rocketnet_check( packet_bytes == rocketnet_test_iocp_reply_bytes( tag ) );
+        for ( int j = 1; j < packet_bytes; j++ )
+            rocketnet_check( packet[j] == (uint8_t) ( tag * 47 + j ) );
+        next_tag++;
+    }
+    rocketnet_check( next_tag == ROCKETNET_IOCP_TEST_PACKETS );
+
+    // every slot retires: a run's one completion counts each packet it carried
+    start = rocketnet_platform_time();
+    do
+    {
+        rocketnet_server_rio_send_packets( rio );
+        rocketnet_server_rio_counters( rio, counters );
+        if ( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] - sent_before >= ROCKETNET_IOCP_TEST_PACKETS )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    } while ( rocketnet_platform_time() - start < 5.0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] - sent_before == ROCKETNET_IOCP_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
+    start = rocketnet_platform_time();
+    while ( rocketnet_server_rio_pending( rio ) != ROCKETNET_RIO_RECEIVES && rocketnet_platform_time() - start < 5.0 )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+
+    rocketnet_platform_socket_destroy( plain );
+}
+
+void rocketnet_test_server_rio_uso_uro_probe()
+{
+    // USO is a probe whose result belongs to the host; the disable flag forces
+    // the per-datagram path, and an exchange works on each. URO is not a rio
+    // feature (TRANSPORTS.md, the RIO server transport)
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+    rocketnet_check( bind_address.port != 0 );
+    const int features = rocketnet_server_rio_features( rio );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_rio_transport_server_uso_uro_probe: this host reports USO %s",
+                      ( features & ROCKETNET_RIO_FEATURE_USO ) ? "yes" : "no" );
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_USO_SENDS] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_USO_FALLBACKS] == 0 );
+    rocketnet_test_rio_uso_exchange( rio, &bind_address );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+
+    rocketnet_address_t plain_address;
+    rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * plain = rocketnet_server_rio_create( NULL, &plain_address, 0, ROCKETNET_RIO_DISABLE_USO );
+    rocketnet_check( plain );
+    rocketnet_check( ( rocketnet_server_rio_features( plain ) & ROCKETNET_RIO_FEATURE_USO ) == 0 );
+    rocketnet_test_rio_uso_exchange( plain, &plain_address );
+    rocketnet_server_rio_counters( plain, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_USO_SENDS] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_USO_FALLBACKS] == 0 );
+    rn_native_backend_stop_and_destroy( plain, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+}
+
+void rocketnet_test_server_rio_uso_wire()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+    const int features = rocketnet_server_rio_features( rio );
+    rocketnet_test_rio_uso_exchange( rio, &bind_address );
+
+    // on the USO tier the equal-size runs must actually have gone out as
+    // segmented sends: the counter is the proof the fast path ran
+
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_rio_transport_server_uso_wire: USO_SENDS %llu, USO_FALLBACKS %llu, PACKETS_SENT %llu",
+                      (unsigned long long) counters[ROCKETNET_RIO_COUNTER_USO_SENDS], (unsigned long long) counters[ROCKETNET_RIO_COUNTER_USO_FALLBACKS],
+                      (unsigned long long) counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] );
+    if ( ( features & ROCKETNET_RIO_FEATURE_USO ) && ( rocketnet_server_rio_features( rio ) & ROCKETNET_RIO_FEATURE_USO ) )
+        rocketnet_check( counters[ROCKETNET_RIO_COUNTER_USO_SENDS] > 0 );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+}
 #endif
 
 void rocketnet_test_server_port_zero_transport()
@@ -9518,6 +9686,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_rio_transport_server_send_full", rocketnet_test_server_rio_send_full, NULL },
     { "test_iocp_transport_server_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe, NULL },
     { "test_iocp_transport_server_uso_wire", rocketnet_test_server_iocp_uso_wire, NULL },
+    { "test_rio_transport_server_uso_uro_probe", rocketnet_test_server_rio_uso_uro_probe, NULL },
+    { "test_rio_transport_server_uso_wire", rocketnet_test_server_rio_uso_wire, NULL },
 #endif
     { "test_server_port_zero_transport", rocketnet_test_server_port_zero_transport, rocketnet_test_server_pin_allows_auto },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

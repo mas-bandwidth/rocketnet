@@ -17,6 +17,7 @@
 
 #include "rocketnet_server_rio.h"
 #include "rocketnet_rio_layout.h"
+#include "rocketnet_coalesce.h"
 #include "rocketnet_platform.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -37,6 +38,22 @@
 #define ROCKETNET_RIO_SEND_PHASES 3
 #define ROCKETNET_RIO_SEND_FRAMES ( ROCKETNET_RIO_SEND_PHASES * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
+
+// The USO region, registered beside the main one only when the probe at
+// create accepts UDP_SEND_MSG_SIZE: per send phase a staging area that holds
+// every byte the phase can stage (a run is copied into it back to back, so a
+// phase's runs never need more than its slots times the receive ceiling),
+// then one control slot per send frame for the UDP_SEND_MSG_SIZE control
+// message of the run whose first frame it is. A phase is reopened only once
+// every send of it retired, so its staging area is never rewritten under a
+// posted run.
+#define ROCKETNET_RIO_USO_PHASE_BYTES ( (uint64_t) ROCKETNET_RIO_SEND_QUEUE_SIZE * ROCKETNET_RECEIVE_CEILING / 64 * 64 + 64 )
+#define ROCKETNET_RIO_USO_CONTROL_BYTES 64
+#define ROCKETNET_RIO_USO_CONTROL_OFFSET ( ROCKETNET_RIO_SEND_PHASES * ROCKETNET_RIO_USO_PHASE_BYTES )
+#define ROCKETNET_RIO_USO_REGION_BYTES ( ( ROCKETNET_RIO_USO_CONTROL_OFFSET + (uint64_t) ROCKETNET_RIO_SEND_FRAMES * ROCKETNET_RIO_USO_CONTROL_BYTES + 4095 ) / 4096 * 4096 )
+
+static_assert( ROCKETNET_RIO_USO_REGION_BYTES <= UINT32_MAX, "RIO_BUF offsets are 32-bit" );
+static_assert( ROCKETNET_RIO_USO_MAX_SUPER_BYTES <= 65507, "a USO run fits one UDP send" );
 
 // regions destroy could not drain and so leaked rather than freed
 static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
@@ -94,6 +111,10 @@ struct rocketnet_server_rio_t
     uint8_t * region = NULL;
     rocketnet_rio_layout_t layout;
     RIO_BUFFERID buffer_id = RIO_INVALID_BUFFERID;
+    // USO: the region of ROCKETNET_RIO_USO_REGION_BYTES, NULL without the feature
+    uint8_t * uso_region = NULL;
+    RIO_BUFFERID uso_buffer_id = RIO_INVALID_BUFFERID;
+    std::atomic<int> features{0};               // ROCKETNET_RIO_FEATURE_*
     RIO_CQ send_cq = RIO_INVALID_CQ;
     RIO_CQ receive_cq = RIO_INVALID_CQ;
     RIO_RQ request_queue = RIO_INVALID_RQ;
@@ -115,6 +136,10 @@ struct rocketnet_server_rio_t
     // run only while main is outside send_packets.
     std::atomic<int> fill{0};
     int * slot_bytes = NULL;                    // [ROCKETNET_RIO_SEND_FRAMES], zero for a free, reserved or aborted slot
+    rocketnet_address_t * slot_to = NULL;       // [ROCKETNET_RIO_SEND_FRAMES], the destination start_packet wrote
+    // [ROCKETNET_RIO_SEND_FRAMES], worker only: the slots the post whose
+    // first slot this is carries (1 per datagram, the run's length for USO)
+    int * slot_run = NULL;
 
     // send, under the mutex: the model's state and sready
     int phase_state[ROCKETNET_RIO_SEND_PHASES] = { ROCKETNET_RIO_PHASE_FILL, ROCKETNET_RIO_PHASE_IDLE, ROCKETNET_RIO_PHASE_IDLE };
@@ -177,6 +202,21 @@ static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, i
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) ( (void) (status), false )
 #endif
 
+// The seam's send faults count datagram posts and datagram completions (its
+// callers stage n packets and expect n refusals), so while one is armed the
+// worker forms no USO run and each fault fails exactly one datagram. The
+// production build has no seam and this is the constant false.
+#if defined(ROCKETNET_RIO_TESTS)
+static bool rocketnet_rio_test_send_faults_armed( rocketnet_server_rio_t * rio )
+{
+    return rio->test_faults[ROCKETNET_RIO_TEST_FAULT_SEND_POST].load( std::memory_order_acquire ) > 0 ||
+           rio->test_faults[ROCKETNET_RIO_TEST_FAULT_SEND_COMPLETION].load( std::memory_order_acquire ) > 0;
+}
+#define ROCKETNET_RIO_TEST_SEND_FAULTS_ARMED( rio ) rocketnet_rio_test_send_faults_armed( rio )
+#else
+#define ROCKETNET_RIO_TEST_SEND_FAULTS_ARMED( rio ) false
+#endif
+
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
 
 // This table exists only in test builds, compiled into the library like the
@@ -210,13 +250,14 @@ static ULONG rocketnet_rio_dequeue( rocketnet_server_rio_t * rio, RIO_CQ cq, RIO
     return rio->rio.RIODequeueCompletion( cq, results, max_results );
 }
 
-static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * data, RIO_BUF * address, DWORD flags, void * request_context )
+static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * data, RIO_BUF * address, DWORD flags, void * request_context,
+                                     RIO_BUF * control = NULL )
 {
 #if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
     if ( rocketnet_rio_test_functions && rocketnet_rio_test_functions->send )
-        return rocketnet_rio_test_functions->send( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
+        return rocketnet_rio_test_functions->send( rio->request_queue, data, data ? 1 : 0, NULL, address, control, NULL, flags, request_context );
 #endif
-    return rio->rio.RIOSendEx( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
+    return rio->rio.RIOSendEx( rio->request_queue, data, data ? 1 : 0, NULL, address, control, NULL, flags, request_context );
 }
 
 static void rocketnet_rio_count( rocketnet_server_rio_t * rio, int counter, uint64_t amount = 1 )
@@ -382,8 +423,17 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     return true;
 }
 
-// RNRioDriver RetireSend: one send completion; the slot is the transport's
-// again. A failed status counts SEND_FAILED.
+// the slots the post whose first slot is index carries: 1 for a datagram,
+// the run's length for a USO run
+static int rocketnet_rio_run_slots( rocketnet_server_rio_t * rio, int index )
+{
+    const int run = rio->slot_run ? rio->slot_run[index] : 1;
+    return run > 1 ? run : 1;
+}
+
+// RNRioDriver RetireSend: one send completion retires its whole post (a
+// USO run retires every slot it carries); the slots are the transport's
+// again. A failed status counts SEND_FAILED once per packet.
 static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORESULT * result )
 {
     const uint64_t context = (uint64_t) result->RequestContext;
@@ -396,13 +446,22 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
         return;
     }
     const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
+    int run = rocketnet_rio_run_slots( rio, index );
+    if ( slot + run > ROCKETNET_RIO_SEND_QUEUE_SIZE )
+        run = ROCKETNET_RIO_SEND_QUEUE_SIZE - slot;
     LONG status = result->Status;
     int injected = 0;
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_COMPLETION, &injected ) )
         status = (LONG) injected;
-    const bool sent = status == 0 && result->BytesTransferred == (ULONG) rio->slot_bytes[index];
-    rocketnet_rio_count( rio, sent ? ROCKETNET_RIO_COUNTER_PACKETS_SENT : ROCKETNET_RIO_COUNTER_SEND_FAILED );
-    rio->slot_bytes[index] = 0;
+    uint64_t run_bytes = 0;
+    for ( int k = 0; k < run; ++k )
+        run_bytes += (uint64_t) rio->slot_bytes[index + k];
+    const bool sent = status == 0 && (uint64_t) result->BytesTransferred == run_bytes;
+    rocketnet_rio_count( rio, sent ? ROCKETNET_RIO_COUNTER_PACKETS_SENT : ROCKETNET_RIO_COUNTER_SEND_FAILED, (uint64_t) run );
+    for ( int k = 0; k < run; ++k )
+        rio->slot_bytes[index + k] = 0;
+    if ( rio->slot_run )
+        rio->slot_run[index] = 0;
     rio->outstanding[phase].fetch_sub( 1, std::memory_order_relaxed );
 }
 
@@ -513,11 +572,15 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     if ( rio->send_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->send_cq );
     if ( rio->receive_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->receive_cq );
     if ( rio->buffer_id != RIO_INVALID_BUFFERID ) rio->rio.RIODeregisterBuffer( rio->buffer_id );
+    if ( rio->uso_buffer_id != RIO_INVALID_BUFFERID ) rio->rio.RIODeregisterBuffer( rio->uso_buffer_id );
     if ( rio->region ) VirtualFree( rio->region, 0, MEM_RELEASE );
+    if ( rio->uso_region ) VirtualFree( rio->uso_region, 0, MEM_RELEASE );
     if ( rio->notify ) CloseHandle( rio->notify );
     if ( rio->wake ) CloseHandle( rio->wake );
     if ( rio->mutex.ok ) rocketnet_platform_mutex_destroy( &rio->mutex );
     rocketnet_free( context, rio->slot_bytes );
+    rocketnet_free( context, rio->slot_to );
+    rocketnet_free( context, rio->slot_run );
     rocketnet_free( context, rio->banks );
     rio->~rocketnet_server_rio_t();
     rocketnet_free( context, rio );
@@ -536,6 +599,8 @@ uint64_t rocketnet_server_rio_allocation_bytes()
         return 0;
     uint64_t bytes = rocketnet_memory_allocations( { sizeof(rocketnet_server_rio_t),
         (uint64_t) ROCKETNET_RIO_SEND_FRAMES * sizeof(int),
+        (uint64_t) ROCKETNET_RIO_SEND_FRAMES * sizeof(rocketnet_address_t),
+        (uint64_t) ROCKETNET_RIO_SEND_FRAMES * sizeof(int),
         (uint64_t) ROCKETNET_RIO_RECEIVE_BANKS * sizeof(rocketnet_rio_bank_t) } );
     if ( !bytes || !rocketnet_memory_add( bytes, 1, rocketnet_platform_thread_allocation_bytes() ) ) return 0;
     return bytes;
@@ -547,7 +612,8 @@ uint64_t rocketnet_server_rio_registered_region_bytes()
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
                                      ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &layout ) )
         return 0;
-    return layout.total_bytes;
+    // the USO region is registered beside it when the host accepts USO
+    return layout.total_bytes + ROCKETNET_RIO_USO_REGION_BYTES;
 }
 
 static bool rocketnet_rio_load_table( SOCKET socket, RIO_EXTENSION_FUNCTION_TABLE * table )
@@ -575,7 +641,7 @@ bool rocketnet_server_rio_available()
 
 static void rocketnet_rio_worker( void * argument );
 
-rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address, int fail_stage )
+rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address, int fail_stage, int flags )
 {
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
     void * storage = rocketnet_malloc( context, sizeof(rocketnet_server_rio_t) );
@@ -597,6 +663,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->slot_bytes = (int*) rocketnet_malloc( context, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
     if ( !rio->slot_bytes ) goto failed;
     memset( rio->slot_bytes, 0, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
+    rio->slot_to = (rocketnet_address_t*) rocketnet_malloc( context, sizeof(rocketnet_address_t) * ROCKETNET_RIO_SEND_FRAMES );
+    rio->slot_run = (int*) rocketnet_malloc( context, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
+    if ( !rio->slot_to || !rio->slot_run ) goto failed;
+    memset( rio->slot_to, 0, sizeof(rocketnet_address_t) * ROCKETNET_RIO_SEND_FRAMES );
+    memset( rio->slot_run, 0, sizeof(int) * ROCKETNET_RIO_SEND_FRAMES );
     rio->banks = (rocketnet_rio_bank_t*) rocketnet_malloc( context, ROCKETNET_RIO_RECEIVE_BANKS * sizeof(rocketnet_rio_bank_t) );
     if ( !rio->banks ) goto failed;
     // RNRioWorker Init: bank 0 fills, every other bank is free
@@ -647,6 +718,37 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
     if ( rio->buffer_id == RIO_INVALID_BUFFERID || fail_stage == 3 ) goto failed;
 
+    // USO probe (UDP_SEND_MSG_SIZE, IPPROTO_UDP socket options, Winsock
+    // reference): a DWORD; non-zero has the stack cut one send into datagrams
+    // of that size. The option is set to 0 here only as the probe and stays
+    // 0: each run carries its stride as a UDP_SEND_MSG_SIZE control message in
+    // RIOSendEx's pControlContext, measured on captain (rn-rio-uso-uro: one
+    // RIOSendEx of 16000 bytes with a 1000-byte control message arrived as
+    // 16 datagrams of 1000), so no socket option is rewritten per run. A
+    // refusal, or a USO region the host will not register, leaves the
+    // per-datagram path.
+    if ( ( flags & ROCKETNET_RIO_DISABLE_USO ) == 0 )
+    {
+        DWORD zero = 0;
+        if ( setsockopt( rio->socket, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char*) &zero, sizeof(zero) ) != SOCKET_ERROR )
+        {
+            rio->uso_region = (uint8_t*) VirtualAlloc( NULL, (SIZE_T) ROCKETNET_RIO_USO_REGION_BYTES, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+            if ( !rio->uso_region )
+            {
+                rocketnet_allocation_refused();
+                goto failed;
+            }
+            rio->uso_buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->uso_region, (DWORD) ROCKETNET_RIO_USO_REGION_BYTES );
+            if ( rio->uso_buffer_id != RIO_INVALID_BUFFERID )
+                rio->features.fetch_or( ROCKETNET_RIO_FEATURE_USO, std::memory_order_relaxed );
+            else
+            {
+                VirtualFree( rio->uso_region, 0, MEM_RELEASE );
+                rio->uso_region = NULL;
+            }
+        }
+    }
+
     // both completion queues notify the worker's one event after RIONotify
     rio->send_cq = rio->rio.RIOCreateCompletionQueue( ROCKETNET_RIO_SEND_FRAMES, &notification );
     if ( rio->send_cq == RIO_INVALID_CQ ) goto failed;
@@ -671,8 +773,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->thread = rocketnet_platform_thread_create( context, rocketnet_rio_worker, rio );
     if ( !rio->thread ) goto failed;
     rocketnet_platform_server_thread_priority( rio->thread );
-    rocketnet_info( "rio transport: port %d, one I/O worker, %d receive slices, %d send frames per phase, %llu registered bytes", bind_address->port,
-                    ROCKETNET_RIO_RECEIVES, ROCKETNET_RIO_SEND_QUEUE_SIZE, (unsigned long long) rio->layout.total_bytes );
+    rocketnet_info( "rio transport: port %d, one I/O worker, %d receive slices, %d send frames per phase, %llu registered bytes, USO %s", bind_address->port,
+                    ROCKETNET_RIO_RECEIVES, ROCKETNET_RIO_SEND_QUEUE_SIZE,
+                    (unsigned long long) ( rio->layout.total_bytes + ( rio->uso_region ? ROCKETNET_RIO_USO_REGION_BYTES : 0 ) ),
+                    ( rio->features.load( std::memory_order_relaxed ) & ROCKETNET_RIO_FEATURE_USO ) ? "yes" : "no (RIOSendEx per datagram)" );
     return rio;
 
 failed:
@@ -700,6 +804,8 @@ uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const
     }
     const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
     rio->slot_bytes[index] = 0;
+    if ( rio->slot_to )
+        rio->slot_to[index] = *to;
     if ( !rocketnet_rio_address_write( to, rio->ipv6, rocketnet_rio_send_address( rio, index ) ) )
     {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
@@ -768,40 +874,160 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
     SetEvent( rio->wake );
 }
 
+// One datagram: the slot's frame by RIOSendEx with RIO_MSG_DEFER. Returns
+// true when posted; an unsuccessful post has no completion, so the slot is
+// free again and counted SEND_FAILED.
+static bool rocketnet_rio_post_datagram( rocketnet_server_rio_t * rio, int phase, int slot )
+{
+    const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
+    RIO_BUF data;
+    data.BufferId = rio->buffer_id;
+    data.Offset = (ULONG) ( rocketnet_rio_send_frame_offset( &rio->layout, index ) + ROCKETNET_FRAME_WIRE_OFFSET );
+    data.Length = (ULONG) rio->slot_bytes[index];
+    RIO_BUF address;
+    address.BufferId = rio->buffer_id;
+    address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
+    address.Length = sizeof(SOCKADDR_INET);
+    if ( rio->slot_run )
+        rio->slot_run[index] = 1;
+    int injected = 0;
+    if ( !ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_POST, &injected ) &&
+         rocketnet_rio_send_call( rio, &data, &address, RIO_MSG_DEFER,
+                                  (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ) ) )
+        return true;
+    rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
+    rio->slot_bytes[index] = 0;
+    if ( rio->slot_run )
+        rio->slot_run[index] = 0;
+    return false;
+}
+
+enum rocketnet_rio_run_result_t
+{
+    ROCKETNET_RIO_RUN_POSTED,       // one RIOSendEx carries the run
+    ROCKETNET_RIO_RUN_FAILED,       // refused for another reason: the run is dropped and counted
+    ROCKETNET_RIO_RUN_REFUSED_USO   // the host refused USO live: the caller sends the run datagram by datagram
+};
+
+// RNRioDriver Post, one run: run slots from slot, each the stride of the
+// first but a shorter tail, copied back to back into the phase's staging
+// area at *staged and posted as one RIOSendEx with RIO_MSG_DEFER, the
+// stride as a UDP_SEND_MSG_SIZE control message in pControlContext (the
+// RIO_CMSG_BUFFER layout of RIOSendEx's reference). The completion retires
+// every slot of the run (rocketnet_rio_retire_send).
+static int rocketnet_rio_post_run( rocketnet_server_rio_t * rio, int phase, int slot, int run, uint64_t * staged )
+{
+    const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
+    const uint64_t base = (uint64_t) phase * ROCKETNET_RIO_USO_PHASE_BYTES + *staged;
+    uint64_t bytes = 0;
+    for ( int k = 0; k < run; ++k )
+    {
+        const int length = rio->slot_bytes[index + k];
+        memcpy( rio->uso_region + base + bytes, rocketnet_rio_frame( rio, index + k ) + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) length );
+        bytes += (uint64_t) length;
+    }
+    rocketnet_assert( *staged + bytes <= ROCKETNET_RIO_USO_PHASE_BYTES );
+
+    uint8_t * control = rio->uso_region + ROCKETNET_RIO_USO_CONTROL_OFFSET + (uint64_t) index * ROCKETNET_RIO_USO_CONTROL_BYTES;
+    // RIO_CMSG_BASE_SIZE and WSA_CMSG_SPACE each round up by less than 16
+    static_assert( sizeof(RIO_CMSG_BUFFER) + sizeof(WSACMSGHDR) + sizeof(DWORD) + 2 * 16 <= ROCKETNET_RIO_USO_CONTROL_BYTES, "a USO control message fits its slot" );
+    memset( control, 0, ROCKETNET_RIO_USO_CONTROL_BYTES );
+    RIO_CMSG_BUFFER * header = (RIO_CMSG_BUFFER*) control;
+    WSACMSGHDR * message = (WSACMSGHDR*) ( control + RIO_CMSG_BASE_SIZE );
+    message->cmsg_len = WSA_CMSG_LEN( sizeof(DWORD) );
+    message->cmsg_level = IPPROTO_UDP;
+    message->cmsg_type = UDP_SEND_MSG_SIZE;
+    const DWORD stride = (DWORD) rio->slot_bytes[index];
+    memcpy( WSA_CMSG_DATA( message ), &stride, sizeof(stride) );
+    header->TotalLength = (ULONG) ( RIO_CMSG_BASE_SIZE + WSA_CMSG_SPACE( sizeof(DWORD) ) );
+
+    RIO_BUF data;
+    data.BufferId = rio->uso_buffer_id;
+    data.Offset = (ULONG) base;
+    data.Length = (ULONG) bytes;
+    RIO_BUF address;
+    address.BufferId = rio->buffer_id;
+    address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
+    address.Length = sizeof(SOCKADDR_INET);
+    RIO_BUF control_buffer;
+    control_buffer.BufferId = rio->uso_buffer_id;
+    control_buffer.Offset = (ULONG) ( ROCKETNET_RIO_USO_CONTROL_OFFSET + (uint64_t) index * ROCKETNET_RIO_USO_CONTROL_BYTES );
+    control_buffer.Length = header->TotalLength;
+
+    rio->slot_run[index] = run;
+    int error = 0;
+    if ( !ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_POST, &error ) )
+    {
+        if ( rocketnet_rio_send_call( rio, &data, &address, RIO_MSG_DEFER,
+                                      (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ), &control_buffer ) )
+        {
+            *staged += ( bytes + 63 ) / 64 * 64;
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_USO_SENDS );
+            return ROCKETNET_RIO_RUN_POSTED;
+        }
+        error = WSAGetLastError();
+    }
+    rio->slot_run[index] = 0;
+    if ( error == WSAEINVAL || error == WSAEOPNOTSUPP )
+    {
+        // as the iocp and gso transports do for a refused live segmented
+        // send: degrade the tier and resend losslessly, never drop the run
+        rocketnet_warn( "rio transport: live USO send refused (Winsock %d). degrading to RIOSendEx per datagram", error );
+        rio->features.fetch_and( ~ROCKETNET_RIO_FEATURE_USO, std::memory_order_relaxed );
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_USO_FALLBACKS );
+        return ROCKETNET_RIO_RUN_REFUSED_USO;
+    }
+    // an unsuccessful post has no completion: the slots are free again
+    rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED, (uint64_t) run );
+    for ( int k = 0; k < run; ++k )
+        rio->slot_bytes[index + k] = 0;
+    return ROCKETNET_RIO_RUN_FAILED;
+}
+
 // RNRioWorker WPost and WCommit: every finished slot of a taken phase by
-// RIOSendEx with RIO_MSG_DEFER, then one RIO_MSG_COMMIT_ONLY. Between post
-// and completion the kernel owns the slot's frame and its address slot.
+// RIOSendEx with RIO_MSG_DEFER, then one RIO_MSG_COMMIT_ONLY. With USO each
+// run the shared rule (rocketnet_coalesce_send_run) finds is one post
+// (RNRioDriver Post: one completion retires the run); a run of one, and
+// every slot without USO, is one post per datagram. Between post and
+// completion the kernel owns the slots' frames and address slots.
 static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count )
 {
     int posted = 0;
-    for ( int slot = 0; slot < count; ++slot )
+    uint64_t staged = 0;
+    int slot = 0;
+    while ( slot < count )
     {
         const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
-        const int bytes = rio->slot_bytes[index];
-        if ( bytes <= 0 )
+        if ( rio->slot_bytes[index] <= 0 )
         {
             rio->slot_bytes[index] = 0;
+            slot++;
             continue;
         }
-        RIO_BUF data;
-        data.BufferId = rio->buffer_id;
-        data.Offset = (ULONG) ( rocketnet_rio_send_frame_offset( &rio->layout, index ) + ROCKETNET_FRAME_WIRE_OFFSET );
-        data.Length = (ULONG) bytes;
-        RIO_BUF address;
-        address.BufferId = rio->buffer_id;
-        address.Offset = (ULONG) rocketnet_rio_send_address_offset( &rio->layout, index );
-        address.Length = sizeof(SOCKADDR_INET);
-        int injected = 0;
-        if ( !ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_SEND_POST, &injected ) &&
-             rocketnet_rio_send_call( rio, &data, &address, RIO_MSG_DEFER,
-                                      (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, phase, (uint32_t) slot ) ) )
-            posted++;
-        else
+        int run = 1;
+        if ( ( rio->features.load( std::memory_order_relaxed ) & ROCKETNET_RIO_FEATURE_USO ) && rio->slot_to && rio->uso_region &&
+             !ROCKETNET_RIO_TEST_SEND_FAULTS_ARMED( rio ) )
+            run = rocketnet_coalesce_send_run( &rio->slot_bytes[index], &rio->slot_to[index], count - slot,
+                                               ROCKETNET_RIO_USO_MAX_SEGMENTS, ROCKETNET_RIO_USO_MAX_SUPER_BYTES );
+        if ( run > 1 )
         {
-            // an unsuccessful post has no completion: the slot is free again
-            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
-            rio->slot_bytes[index] = 0;
+            const int result = rocketnet_rio_post_run( rio, phase, slot, run, &staged );
+            if ( result == ROCKETNET_RIO_RUN_POSTED )
+                posted++;
+            if ( result != ROCKETNET_RIO_RUN_REFUSED_USO )
+            {
+                slot += run;
+                continue;
+            }
+            for ( int k = 0; k < run; ++k )
+                if ( rocketnet_rio_post_datagram( rio, phase, slot + k ) )
+                    posted++;
+            slot += run;
+            continue;
         }
+        if ( rocketnet_rio_post_datagram( rio, phase, slot ) )
+            posted++;
+        slot++;
     }
     rio->outstanding[phase].fetch_add( posted, std::memory_order_relaxed );
     if ( posted > 0 )
@@ -1383,6 +1609,11 @@ rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters )
 {
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i ) counters[i] = rio->counters[i].load( std::memory_order_relaxed );
+}
+
+int rocketnet_server_rio_features( rocketnet_server_rio_t * rio )
+{
+    return rio->features.load( std::memory_order_relaxed );
 }
 
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
