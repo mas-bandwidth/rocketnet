@@ -13,7 +13,7 @@ rio server cells are recorded separately.
 
 - Date (`date -u`): Sat Oct 24 20:10:52 UTC 2026 (exclusive lock taken); the run ended 20:12:08 UTC (76 s)
 - Code head H: dbd4ff5fcf1aff826a3431ffac9abde1ae59c8d0 (main 31d4fbeb merged, plus the nightly job). The commit that adds this record is the only change after H.
-- Machine: the fleet's native Windows 11 machine, x64 (`uname -s` under Git for Windows bash: MINGW64_NT-10.0-26200); MSVC (Visual Studio 18 Community), Release, ROCKETNET_DEV=ON (the default)
+- Machine: the fleet's native Windows 11 machine, x64 (`uname -s` under Git for Windows bash: MINGW64_NT-10.0-26200); MSVC 18 (Community edition), Release, ROCKETNET_DEV=ON (the default)
 - Shell: Git for Windows bash
 - Lock: the machine's exclusive lock (`winlock --exclusive`) for the run; the build ran beforehand in a shared slot; 0 warnings
 - NIC: none; every cell runs over the loopback interface
