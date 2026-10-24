@@ -22,7 +22,10 @@
 #     has passed 0xFFFFFFFF), payloads verified each way, peak resident
 #     memory, how many running checks soak has made and whether every one
 #     held (soak's --assert-every line: conservation, every REFUSAL counter 0,
-#     and the resident check);
+#     the resident check, and that both directions sent since the last check),
+#     then one "soak-multiday counters:" line: every non-zero client and server
+#     transport counter, name=value, from soak's last "soak assert counters:"
+#     line;
 #   - it never restarts soak: a restart would be a second connection and hide
 #     the failure. When soak exits the script prints one last summary line,
 #     copies soak's own "soak summary:" lines (every counter) to
@@ -137,6 +140,7 @@ rotate()
 
 # the last "soak assert:" line's fields, kept for the summaries
 LAST_ASSERT=""
+LAST_COUNTERS=""
 ASSERTS=0
 ASSERTS_FAILED=0
 
@@ -168,6 +172,7 @@ summary()
          "server_highest_sent_sequence ${server_sequence:-0x0} (wrapped $( wrapped "$server_sequence" ))," \
          "client_verified $( field client_verified ), server_verified $( field server_verified )," \
          "peak_resident $( field peak_resident ), asserts ${ASSERTS}, asserts_failed ${ASSERTS_FAILED}" | tee -a "$SUMMARY"
+    echo "soak-multiday counters:${LAST_COUNTERS:- none yet}" | tee -a "$SUMMARY"
 }
 
 NEXT_SUMMARY=$(( START + SUMMARY_EVERY ))
@@ -180,6 +185,8 @@ while IFS= read -r line; do
             LAST_ASSERT="$line"
             ASSERTS=$(( ASSERTS + 1 ))
             case "$line" in *", FAILED") ASSERTS_FAILED=$(( ASSERTS_FAILED + 1 )) ;; esac ;;
+        "soak assert counters:"*)
+            LAST_COUNTERS="${line#soak assert counters:}" ;;
     esac
     if [ "$BYTES" -ge "$ROTATE_BYTES" ]; then
         rotate
