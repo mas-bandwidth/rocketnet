@@ -233,7 +233,7 @@ void rocketnet_address_anonymize( rocketnet_address_t * address )
     {
         address->data.ipv4[3] = 0;
     }
-    else
+    else if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         if ( rocketnet_address_is_ipv4_in_ipv6( address ) )
         {
