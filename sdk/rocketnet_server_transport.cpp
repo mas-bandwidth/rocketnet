@@ -405,14 +405,23 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
             member = "rocketnet_encryption_mapping_control_t.client_index";
     if ( !member && protocol->connection_ids[client_index] != 0 )
         member = "rocketnet_server_protocol_t.connection_ids";
+    bool allocation_failed = false;
     if ( !member )
     {
-        struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) malloc( sizeof(struct rocketnet_ack_endpoint_t) );
-        rocketnet_assert( fresh );
-        rocketnet_ack_endpoint_reset( fresh );
-        if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
+        struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( server->context, sizeof(struct rocketnet_ack_endpoint_t) );
+        if ( !fresh )
+        {
+            // fail closed: without scratch memory the endpoint cannot be checked
             member = "rocketnet_server_acks_t.endpoints";
-        free( fresh );
+            allocation_failed = true;
+        }
+        else
+        {
+            rocketnet_ack_endpoint_reset( fresh );
+            if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
+                member = "rocketnet_server_acks_t.endpoints";
+            rocketnet_free( server->context, fresh );
+        }
     }
     if ( !member && protocol->reassembly->newest_completed[client_index] != 0 )
         member = "rocketnet_reassembly_set_t.newest_completed";
@@ -421,7 +430,12 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         if ( slice[i] != 0 )
             member = "rocketnet_reassembly_set_t.slots";
     if ( member )
-        snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
+    {
+        if ( allocation_failed )
+            snprintf( failure, failure_bytes, "%s[%d]: check could not run (allocation failed)", member, client_index );
+        else
+            snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
+    }
     return member == NULL;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
