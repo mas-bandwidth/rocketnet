@@ -112,7 +112,7 @@ def build_backend(name, outdir):
     """Builds one backend and returns the command line that runs it."""
     if name == "go":
         binary = outdir / ("rocketnet-backend-go" + (".exe" if os.name == "nt" else ""))
-        subprocess.run(["go", "build", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["go", "build", "-buildvcs=false", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=TIMEOUT_SECONDS)
         return [str(binary)]
     output = outdir / "csharp"
     subprocess.run(["dotnet", "build", "Backend", "-c", "Release", "-o", str(output), "--nologo", "-v", "q"],
