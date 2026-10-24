@@ -561,18 +561,18 @@ enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_c
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
-    // Workload: one 1500-byte MTU packet each way every 100 ms.
+    // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
     // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
-    // A message at the one-packet ceiling can take ceil(1415 / 1152) = 2
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
-    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message is not split across packets
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
     config->send_kbps = 256;                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
     config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
     config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
     config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
-    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415: one packet's payload less the form byte
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
     config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
@@ -1394,18 +1394,18 @@ enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_c
     if ( status != ROCKETNET_STATUS_OK )
         return status;
 
-    // Workload: one 1500-byte MTU packet each way every 100 ms.
+    // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
     // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
-    // A message at the one-packet ceiling can take ceil(1415 / 1152) = 2
+    // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
-    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message is not split across packets
+    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
     config->per_client_send_kbps = 256;                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
     config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
     config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
     config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
-    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415: one packet's payload less the form byte
+    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
     config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16

@@ -1420,7 +1420,7 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 }
 
 /// Initializes every config field to its default, then sets the light-client
-/// geometry: one packet per 100 ms in each direction, 10 Hz, with a 256-kbps
+/// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
 /// send budget. Use it in place of rocketnet_client_default_config. It changes
 /// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
 
@@ -1707,7 +1707,7 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 }
 
 /// Initializes every config field to its default, then sets the light-client
-/// geometry: one packet per 100 ms to each client, 10 Hz, with a 256-kbps
+/// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
 /// send budget per client. Use it in place of rocketnet_server_default_config.
 /// The caller still sets its protocol id and backend key. It changes no
 /// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
