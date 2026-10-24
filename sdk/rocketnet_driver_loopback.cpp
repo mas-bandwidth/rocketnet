@@ -186,6 +186,7 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
 
 // The next queue slot, or NULL after counting a drop at the fixed ceiling.
 // All queue storage is allocated at create; traffic never allocates.
+// tla/LoopbackQueue.tla Send: the slot at tail, or the full-queue drop.
 
 static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_endpoint_t * dst )
 {
@@ -195,6 +196,29 @@ static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_end
         return NULL;
     }
     return &dst->packets[dst->tail & ( dst->capacity - 1 )];
+}
+
+// Takes the head datagram off a queue (the caller holds the state mutex).
+// A queue that drains empty starts again at slot 0, so the slots a queue
+// ever writes are bounded by the most datagrams it takes in between two
+// moments it is empty (for a queue drained every update, that update's
+// backlog), not by its whole capacity. A client's queue holds 2048 datagrams
+// of ROCKETNET_RECEIVE_CEILING bytes; with free-running indices one datagram
+// an update walks the tail through every one of them, touching a fresh page
+// of a queue that never holds more than a few (1000 clients: about 1.5 KiB a
+// client an update, until the walk wraps). The order is unchanged: an empty
+// queue has nothing to reorder.
+// tla/LoopbackQueue.tla Receive and Drop: the dequeue, with the restart at
+// empty (RestartAtEmpty); the invariant TouchedWithinBacklog is what it buys.
+static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
+{
+    ++ep->head;
+    --ep->count;
+    if ( ep->count == 0 )
+    {
+        ep->head = 0;
+        ep->tail = 0;
+    }
 }
 
 size_t rocketnet_loopback_queue_bytes( int packets )
@@ -349,6 +373,7 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
     packet->bytes = bytes;
     packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
+    // tla/LoopbackQueue.tla Send
     ++dst->tail;
     ++dst->count;
     rocketnet_platform_mutex_release( &state.mutex );
@@ -385,6 +410,7 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
         slot->bytes = packet.packet_bytes;
         slot->from = loopback_sender_address( sender->bind, *packet.to );
         memcpy( slot->data, packet.packet_data, (size_t) packet.packet_bytes );
+        // tla/LoopbackQueue.tla Send
         ++dst->tail;
         ++dst->count;
     }
@@ -412,16 +438,16 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
         rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
         if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
         {
+            // tla/LoopbackQueue.tla Drop
             ++ep->dropped;
-            ++ep->head;
-            --ep->count;
+            loopback_queue_pop( ep );
             continue;
         }
         from[received] = packet->from;
         bytes[received] = packet->bytes;
         memcpy( data + (size_t) received * (size_t) stride, packet->data, (size_t) packet->bytes );
-        ++ep->head;
-        --ep->count;
+        // tla/LoopbackQueue.tla Receive
+        loopback_queue_pop( ep );
         ++received;
     }
     return received;
@@ -437,16 +463,16 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
     if ( packet->bytes > capacity )
     {
+        // tla/LoopbackQueue.tla Drop
         ++ep->dropped;
-        ++ep->head;
-        --ep->count;
+        loopback_queue_pop( ep );
         return 0;
     }
     *from = packet->from;
     const int bytes = packet->bytes;
     memcpy( data, packet->data, (size_t) bytes );
-    ++ep->head;
-    --ep->count;
+    // tla/LoopbackQueue.tla Receive
+    loopback_queue_pop( ep );
     return bytes;
 }
 
