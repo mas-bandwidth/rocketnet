@@ -460,11 +460,9 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
 {
-    // RNSlots Kick, RNConnectionMemory Kick: the transport ends the connection
-    // now, with the reason recorded; nothing more is sent, delivered or taken
-    // from its region. The region is reset at the next update (ResetFree),
-    // before the transport can hand the slot to another client. Views the
-    // application already holds stay valid until that update.
+    // tla/RNSlots.tla Kick: ends the connection, cancels its pending start, and records the reason.
+    // Nothing more is sent or delivered from its region. Views the application
+    // already holds stay valid until the next update.
     if ( !object || index < 0 || index >= object->num_connections )
         return;
     rn_message_connection_t * connection = &object->connections[index];
@@ -518,10 +516,10 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
     int result = ROCKETNET_UPDATE_OK;
 
-    // RNSlots BeginUpdate, and RejectUnreleasedUpdate: every view handed out
-    // in the last update must be released before this one. A held view is the
-    // application's error: it asserts in a debug build and returns the named
-    // error in release. The views die with the transport's batch either way,
+    // tla/RNSlots.tla BeginUpdate: enters the transport phase once every view from the last update is released.
+    // tla/RNSlots.tla RejectUnreleasedUpdate: a view still held sets the not-released result this update returns.
+    // A held view is the application's error: it asserts in a debug build and returns the named
+    // error. The views die with the transport's batch either way,
     // so they are taken back here and memory never grows from a held view.
     rn_message_object_release_batch( object );            // a batch is released by the update that follows it
     uint32_t held = 0;
@@ -590,9 +588,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         memset( connection->hot->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
         connection->hot->held = 0;
 
-        // RNSlots ResetFree: a kicked connection's region is reset before the
-        // transport's update can give the slot to another client, and the
-        // slots machine sees the slot free until Observe reads the transport
+        // tla/RNSlots.tla ResetFree: a kicked connection's region is cleared before the transport update can give the slot to another client.
         if ( object->hot_connections[i].state == RN_MESSAGE_CONNECTION_KICKED )
         {
             rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
@@ -626,9 +622,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_slots_observe( &object->slots, 0, 0 );
     }
 
-    // RNSlots Observe: the server reads every slot's connection after the
-    // transport's update; a changed connection resets the slot (Connect,
-    // Disconnect)
+    // tla/RNSlots.tla Observe: reads each slot's connection after the transport update and resets a slot whose binding changed.
     if ( object->is_server )
     {
         for ( int i = 0; i < object->num_connections; i++ )
@@ -652,8 +646,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    // RNSlots TransportAck then Admit: the transport's acked packet ids are
-    // the only ack (R1), RNChannel ReceiveAck
+    // tla/RNSlots.tla TransportAck: feeds the transport's acked packet ids to the slot each one was opened on.
     {
         const int * client_index = NULL;
         const uint64_t * packet_ids = NULL;
@@ -674,8 +667,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
     }
 
-    // RNSlots TransportOpen then Admit: each payload through layer 2's reader
-    // into the dispatch (RNChannel OpenPacket, DeliverMessage)
+    // tla/RNSlots.tla TransportOpen: feeds each opened payload to the slot it arrived on (RNChannel OpenPacket, DeliverMessage).
     {
         const int * client_index = NULL;
         uint8_t * const * payload_data = NULL;
@@ -712,6 +704,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
+    // tla/RNSlots.tla EndUpdate: the update returns, and the application then sees this update's views.
     return result;
 }
 
@@ -752,9 +745,8 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
-    // RNSlots Request, RNChannel Enqueue's first half: room in the region for a
-    // message of `bytes` bytes, and the pointer the application writes it at,
-    // once, in place (R3)
+    // tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
+    // tla/RNSlots.tla StartPending: one start stays pending on this slot until finish or abort.
     if ( index < 0 || index >= object->num_connections )
         return NULL;
 
@@ -1053,11 +1045,10 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
     return rn_message_object_finish( object, index, bytes );
 }
 
-// RNChannel WritePacket with RNSendBudget Send, Wait and Drop, for one
-// connection: the endpoint plans each packet (rn_endpoint_next_packet_bytes),
-// the object starts one frame from the transport at a time, the endpoint
-// writes it in place (THE COPIES (a)), and the object finishes it and tells the
-// endpoint whether it left, under the transport's packet id (RNSlots Send).
+// tla/RNSlots.tla Send: writes one requested record into a transport frame under the transport's packet id (RNSlots Send).
+// RNChannel WritePacket with the send budget, for one connection: the endpoint plans the frame
+// (rn_endpoint_next_packet_bytes), the object starts one frame from the transport at a time,
+// the endpoint writes it in place, and the object finishes it.
 
 static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
@@ -1151,6 +1142,7 @@ flush:
 // every other. Ordered and sequenced order holds within each channel of each
 // connection, each connection's channels ordered on their own.
 
+// tla/RNChannel.tla Take: hands the application the next delivery and advances the queue.
 static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t * object, int * out_index, uint32_t * out_entry )
 {
     for ( int i = object->receive_connection; i < object->num_connections; i++ )
@@ -1181,10 +1173,7 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
 
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes )
 {
-    // RNSlots EndUpdate: the update's deliveries go to the application, each a
-    // view -- into the transport's batch, or into the receive ring for a
-    // message held ahead of its turn -- valid until the next update and held
-    // until released
+    // One delivery from the queue, valid until the next update and held until the caller lets it go.
     *data = NULL;
     *bytes = 0;
     if ( index )
@@ -1256,10 +1245,9 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
 
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
 {
-    // RNSlots Release: the view goes back, and with it the region's charge for
-    // the message at the next update's EndUpdate. A release takes the
-    // received message alone; the view is looked for in the connection the
-    // queue is at first, then in every connection that holds one
+    // tla/RNSlots.tla Release: a held view returns, and the region's charge for that message returns with it.
+    // A release takes the received message alone; the view is looked for in the connection the
+    // queue is at first, then in every connection that holds one.
     if ( !data )
         return;
 
