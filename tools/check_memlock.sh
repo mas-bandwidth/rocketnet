@@ -22,6 +22,9 @@
 # overrides it, as it does the suite's). It also measures the per-server need
 # on this kernel: the smallest `ulimit -l` (16 KiB steps, under this limit) at
 # which ./bin/transport_memory creates a default 4-queue 1000-client io_uring
+# server with the default reassembly slots (0 = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS,
+# the geometry the functional cases create; 16 slots at 1000 clients is refused
+# at create by the memory plan, whatever the limit)
 # server, and fails when that is over the per-case need (the suite runner's
 # value is stale for this kernel). It prints the limit, both needs, the
 # runners and PASS, or FAIL and exits 1. Creating the measuring server opens a
@@ -73,7 +76,7 @@ if [ "$limit" = unlimited ]; then
     exit 0
 fi
 
-creates() { bash -c "ulimit -l $1 && \"$probe\" 1000 1416 16 io_uring 0 >/dev/null 2>&1"; }
+creates() { bash -c "ulimit -l $1 && \"$probe\" 1000 1416 0 io_uring 0 >/dev/null 2>&1"; }
 server_kib="not measured (no $probe)"
 if [ -x "$probe" ]; then
     if ! creates "$limit"; then
