@@ -32,9 +32,6 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
     rocketnet_write_bytes( p, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
-// maps a refusal code to its counter, so both receive paths attribute the
-// reason identically and neither invents its own mapping
-
 // The keyed filter value, from STANDARD.md "The keyed filter value":
 // SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
 // packet length as a little-endian uint16, then the four bytes following the
@@ -65,6 +62,9 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
     out_filter_value[2] = hash[2];
     out_filter_value[3] = hash[3];
 }
+
+// maps a refusal code to its counter, so both receive paths attribute the
+// reason identically and neither invents its own mapping
 
 int rocketnet_prefilter_counter( int refusal_code )
 {
@@ -416,10 +416,7 @@ uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
         uint64_t above = ( base + 0x100000000ULL ) | wire_value;
         uint64_t distance = above > expected ? above - expected : expected - above;
         if ( distance < best_distance || ( distance == best_distance && above > best ) )
-        {
             best = above;
-            best_distance = distance;
-        }
     }
 
     return best;
