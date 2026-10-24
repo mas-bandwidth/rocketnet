@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <limits.h>
 
 #define ROCKETNET_ETHERTYPE_IP      0x0800
 #define ROCKETNET_ETHERTYPE_IPV6    0x86DD
@@ -466,6 +467,72 @@ static inline int rocketnet_xdp_drain_queue( int start, int step, int num_queues
 static inline bool rocketnet_xdp_cpu_in_set( int cpu, int set_size )
 {
     return cpu >= 0 && cpu < set_size;
+}
+
+static inline bool rocketnet_xdp_cpu_list_number( const char ** cursor, int * value )
+{
+    if ( **cursor < '0' || **cursor > '9' )
+        return false;
+    *value = 0;
+    do
+    {
+        const int digit = **cursor - '0';
+        if ( *value > ( INT_MAX - digit ) / 10 )
+            return false;
+        *value = *value * 10 + digit;
+        ( *cursor )++;
+    } while ( **cursor >= '0' && **cursor <= '9' );
+    return true;
+}
+
+// Validate the whole kernel CPU list before accepting each thread's pin target.
+static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_list, int num_os_cpus, int num_queues, int * first_missing )
+{
+    if ( first_missing )
+        *first_missing = num_os_cpus;
+    if ( !isolated_list || num_os_cpus < 0 || num_queues <= 0 || num_queues - 1 > INT_MAX - num_os_cpus )
+        return false;
+    for ( int offset = 0; offset < num_queues; offset++ )
+    {
+        const int cpu = num_os_cpus + offset;
+        const char * cursor = isolated_list;
+        bool found = false;
+        for ( ;; )
+        {
+            int first = 0;
+            if ( !rocketnet_xdp_cpu_list_number( &cursor, &first ) )
+                return false;
+            int last = first;
+            if ( *cursor == '-' )
+            {
+                cursor++;
+                if ( !rocketnet_xdp_cpu_list_number( &cursor, &last ) || last < first )
+                    return false;
+            }
+            if ( cpu >= first && cpu <= last )
+                found = true;
+            if ( *cursor == '\n' )
+            {
+                cursor++;
+                if ( *cursor != '\0' )
+                    return false;
+            }
+            if ( *cursor == '\0' )
+                break;
+            if ( *cursor != ',' )
+                return false;
+            cursor++;
+        }
+        if ( !found )
+        {
+            if ( first_missing )
+                *first_missing = cpu;
+            return false;
+        }
+    }
+    if ( first_missing )
+        *first_missing = -1;
+    return true;
 }
 
 // STATS READ: the per-cpu stats map is read into a buffer of

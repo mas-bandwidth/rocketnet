@@ -189,6 +189,30 @@ static void test_xdp_transport_stats_cpus_are_bounded()
     rocketnet_unit_check( rocketnet_xdp_stats_cpus_fit( ROCKETNET_XDP_STATS_MAX_CPUS ) );
 }
 
+static void test_xdp_transport_preflight_refuses_pin_targets_outside_isolated()
+{
+    int missing = -1;
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "1-7", 2, 7, &missing ) );
+    rocketnet_unit_check( missing == 8 );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2-8\n", 2, 7, &missing ) );
+    rocketnet_unit_check( missing == -1 );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-4,6-8", 2, 7, &missing ) );
+    rocketnet_unit_check( missing == 5 );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "1,3,5-6\n", 5, 2, &missing ) );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "6,2-5", 2, 5, &missing ) );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2-4,4-8", 2, 7, NULL ) );
+
+    const char * invalid[] = { "", "\n", "2-", "2-8,", "2-8junk", "8-2", "-2", "+2", "2,,3", "2-8\n9", "2\n,3", "2147483648", "0-99999999999999999999" };
+    for ( size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++ )
+        rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( invalid[i], 2, 1, &missing ) );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( NULL, 2, 1, &missing ) );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "0-8", -1, 1, &missing ) );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "0-8", 2, 0, &missing ) );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "0-8", 2, -1, &missing ) );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2147483647", 2147483647, 2, &missing ) );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2147483647", 2147483647, 1, &missing ) );
+}
+
 static void test_xdp_transport_receive_drain_rotates_first_queue()
 {
     rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 1 ) == 0 );
@@ -220,6 +244,7 @@ static void test_xdp_transport_receive_drain_rotates_first_queue()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_receive_drain_rotates_first_queue );
+REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );

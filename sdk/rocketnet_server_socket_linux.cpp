@@ -809,7 +809,7 @@ static bool rocketnet_server_socket_interface_is_veth( const char * interface_na
     return veth;
 }
 
-bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
+static bool rocketnet_server_socket_preflight_for_cpus( const char * public_address_string, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( public_address_string );
     rocketnet_assert( num_queues >= 1 );
@@ -946,6 +946,22 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     if ( have_isolated && rocketnet_server_socket_count_cpu_list( isolated ) < num_queues )
     {
         rocketnet_warn( "xdp pre-flight: only %d isolated cpus for %d queues (R4 scales with B1): one queue wants one isolated core", rocketnet_server_socket_count_cpu_list( isolated ), num_queues );
+        provisioned = false;
+    }
+
+    // Queue count alone does not prove the configured thread targets are isolated.
+    int first_missing = num_os_cpus;
+    if ( !rocketnet_xdp_pin_targets_isolated( have_isolated ? isolated : "", num_os_cpus, num_queues, &first_missing ) )
+    {
+        rocketnet_warn( "xdp pre-flight: thread pin cpu %d is missing from the isolated set or the list is invalid (R4): align num_os_cpus and queue count with isolcpus=, then run scripts/rocketnet-provision %s %d and reboot", first_missing, interface_name, num_queues );
+        provisioned = false;
+    }
+    char online[1024];
+    if ( !rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/online", online, sizeof(online) ) ||
+         !rocketnet_xdp_pin_targets_isolated( online, num_os_cpus, num_queues, &first_missing ) ||
+         num_os_cpus < 0 || num_os_cpus >= CPU_SETSIZE || num_queues > CPU_SETSIZE - num_os_cpus )
+    {
+        rocketnet_warn( "xdp pre-flight: thread pin targets are offline, unreadable or outside the affinity set (R4): bring the configured cpus online or reduce num_os_cpus and queue count before scripts/rocketnet-provision" );
         provisioned = false;
     }
 
@@ -1181,6 +1197,11 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
+bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
+{
+    return rocketnet_server_socket_preflight_for_cpus( public_address_string, num_queues, 1 );
+}
+
 rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * packet_filter, int num_queues, int num_os_cpus, const char * second_server_address, int * create_status )
 {
     rocketnet_assert( num_queues >= 1 );
@@ -1270,7 +1291,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // is the library's own per-socket work: its BPF program built, loaded
     // and attached, AF_XDP binds, the memlock rlimit.
 
-    if ( !rocketnet_server_socket_preflight( public_address_string, num_queues ) )
+    if ( !rocketnet_server_socket_preflight_for_cpus( public_address_string, num_queues, num_os_cpus ) )
     {
         rocketnet_error( "xdp pre-flight failed: this machine is not provisioned for the XDP data plane (see scripts/rocketnet-provision)" );
         return NULL;
@@ -2699,9 +2720,13 @@ static void pin_thread_to_cpu( int cpu )
         return;
     }
 
-    int num_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
-    rocketnet_assert( cpu < num_cpus );
-    (void) num_cpus; // read only by the assert above
+    // A changed online count is a logged refusal in every build, never an abort.
+    const long num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
+    if ( cpu >= num_cpus )
+    {
+        rocketnet_error( "xdp thread not pinned: cpu %d is outside the online count %ld", cpu, num_cpus );
+        return;
+    }
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
