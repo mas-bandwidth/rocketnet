@@ -295,6 +295,14 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
 
+      # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
+      # on the host at once: the check prints the limit, the per-server need
+      # on this kernel and PASS or FAIL before the suite runs
+      # (tools/check_memlock.sh, docs/LINUX.md section 8).
+      - name: Locked-memory limit covers the io_uring cases
+        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        run: bash tools/check_memlock.sh
+
       - name: Run functional suite (auto ladder — the fall, on Linux)
         if: contains(matrix.leg, 'b')
         run: ./bin/functional
@@ -1129,6 +1137,12 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
+
+      # the same locked-memory check as build-and-test; this leg does not
+      # build transport_memory, so it checks the limit without measuring
+      - name: Locked-memory limit covers the io_uring cases
+        if: matrix.leg == 'functional suite'
+        run: bash tools/check_memlock.sh
 
       - name: Run functional suite under sanitizers
         if: matrix.leg == 'functional suite'
