@@ -573,19 +573,30 @@ if(ROCKETNET_BUILD_TESTS)
         "sdk/rocketnet_counters.h" "sdk/rocketnet_counters.cpp" )
     string( REPLACE ";" "|" ROCKETNET_COUNTER_TEST_SOURCES_LIST "${ROCKETNET_COUNTER_TEST_SOURCES}" )
     string( REPLACE ";" "|" ROCKETNET_COUNTER_SDK_SOURCES_LIST "${ROCKETNET_COUNTER_SDK_SOURCES}" )
-    set_property( SOURCE tests/test_unit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    set_property( SOURCE tests/source_audit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
         "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
-    # The message-vs-packet source scan (test_unit_client_server_say_messages.cpp)
-    # reads sdk client/server files through ROCKETNET_SOURCE_DIR, the same way
-    # the counter audit does.
-    set_property( SOURCE tests/test_unit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    # The source-audit binary runs the repository text audits that used to be
+    # unit cases: they read source, header and doc files through
+    # ROCKETNET_SOURCE_DIR. It is a static gate: it reads files only, opens no
+    # socket and starts no thread. CI runs it on a Linux leg beside
+    # tools/check_client_server_words.py.
+    add_executable(source_audit
+        tests/source_audit_main.cpp
+        tests/source_audit_client_server_say_messages.cpp
+        tests/source_audit_config_env_names.cpp
+        tests/source_audit_counter_classes.cpp
+        tests/source_audit_xdp_filter_host.cpp)
+    set_property( SOURCE tests/source_audit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
-    # The env names audit (test_unit_config_env_names.cpp) reads sdk/rocketnet.h
-    # through ROCKETNET_SOURCE_DIR for the variable names it documents.
-    set_property( SOURCE tests/test_unit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    set_property( SOURCE tests/source_audit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    set_property( SOURCE tests/source_audit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    target_compile_features(source_audit PRIVATE cxx_std_11)
+    rocketnet_warning_floor(source_audit)
+    target_link_libraries(source_audit PRIVATE rocketnet_test_support Threads::Threads)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     rocketnet_warning_floor(test)
@@ -703,10 +714,6 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_warning_floor(rocketnet_xdp_filter_host)
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
-        # test_xdp_transport_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
-        # own source for the counters and the cases that name them.
-        set_property( SOURCE tests/test_unit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-            "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
@@ -824,6 +831,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/rocketnet_functional_tests.cpp
         functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
+        functional/server_receive_low_tick.cpp
         functional/lifecycle_driver.cpp
         functional/cpp_transports.cpp
         functional/live_matrix.cpp
@@ -832,6 +840,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
         functional/posix_socket_errors.cpp
+        functional/process_thread_counts.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)

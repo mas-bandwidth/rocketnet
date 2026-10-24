@@ -7154,7 +7154,10 @@ void rocketnet_test_packet_loss_tracker()
 
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+    // a sequence jump this far beyond the last judged one cannot be a packet
+    // stream at the assumed 1500-byte MTU: the update reports its documented
+    // per-update loss cap, not a saturated INT_MAX and not zero
+    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
 }
 
 void rocketnet_test_jitter_tracker()

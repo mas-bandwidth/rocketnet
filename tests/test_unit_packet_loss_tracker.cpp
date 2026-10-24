@@ -86,6 +86,183 @@ static void test_packet_loss_tracker_reorder_does_not_recount()
     rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
 }
 
+// A gap longer than the history ring between two updates is still judged.
+// Receive 0..99 and update, then receive 5000..5099 and update. The span the
+// second update judges is longer than HISTORY, so its older slots were
+// overwritten; the tracker judges it by count. The two updates together must
+// report exactly the sequences up to the second update's finish (the highest
+// sequence received less SAFETY) that were never received, counted here from
+// what the test sent. At BASE the overflow branch returned zero and the stall
+// read as no loss.
+static void test_packet_loss_tracker_gap_over_history_counts_lost()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    static bool sent[5100];
+    memset( sent, 0, sizeof( sent ) );
+
+    for ( uint64_t sequence = 0; sequence < 100; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        sent[sequence] = true;
+    }
+
+    const int first = rocketnet_packet_loss_tracker_update( &tracker );
+
+    uint64_t highest = 0;
+    for ( uint64_t sequence = 5000; sequence < 5100; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        sent[sequence] = true;
+        highest = sequence;
+    }
+
+    const int second = rocketnet_packet_loss_tracker_update( &tracker );
+
+    const uint64_t finish = highest - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY;
+    int expected_lost = 0;
+    for ( uint64_t sequence = 0; sequence <= finish; ++sequence )
+    {
+        if ( !sent[sequence] )
+        {
+            expected_lost++;
+        }
+    }
+
+    rocketnet_unit_check( expected_lost > 0 );
+    rocketnet_unit_check( first >= 0 && second >= 0 );
+    rocketnet_unit_check( first + second == expected_lost );
+}
+
+// A burst longer than the history ring with no update between is all
+// received, so the update judging it counts zero lost: counting every
+// unjudged sequence as lost would be wrong in the other direction.
+static void test_packet_loss_tracker_burst_over_history_not_lost()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    for ( uint64_t sequence = 0; sequence < 3000; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+    }
+
+    rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+}
+
+// A sequence jump beyond any burst a real stream at the assumed MTU can carry
+// is bounded by the tracker's documented per-update cap, not saturated to
+// INT_MAX: the client adds the count to a lifetime total, so a corrupt or
+// renamed sequence must not poison the loss rate. The jump crosses far more
+// than the cap; the update reports exactly the cap.
+static void test_packet_loss_tracker_overflow_loss_is_bounded()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 0 );
+    rocketnet_packet_loss_tracker_update( &tracker );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
+
+    rocketnet_unit_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
+}
+
+// A packet already judged lost cannot replace a newer, received sequence in
+// the same ring slot. The missing sequence 50 is counted in the first phase;
+// its late arrival changes nothing, so the second phase reports no loss.
+static void test_packet_loss_tracker_late_packet_does_not_clobber()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    int first_phase_lost = 0;
+    for ( uint64_t sequence = 0; sequence <= 1100; ++sequence )
+    {
+        if ( sequence != 50 )
+        {
+            rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        }
+        if ( ( sequence + 1 ) % 10 == 0 )
+        {
+            first_phase_lost += rocketnet_packet_loss_tracker_update( &tracker );
+        }
+    }
+    first_phase_lost += rocketnet_packet_loss_tracker_update( &tracker );
+    rocketnet_unit_check( first_phase_lost == 1 );
+
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 50 );
+
+    int second_phase_lost = 0;
+    for ( uint64_t sequence = 1101; sequence <= 1200; ++sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
+        if ( ( sequence - 1100 ) % 10 == 0 )
+        {
+            second_phase_lost += rocketnet_packet_loss_tracker_update( &tracker );
+        }
+    }
+    second_phase_lost += rocketnet_packet_loss_tracker_update( &tracker );
+    rocketnet_unit_check( second_phase_lost == 0 );
+}
+
+// A replay-valid older sequence can arrive before the first update. It counts
+// as received, but it cannot replace the newer unjudged resident of its slot.
+static void test_packet_loss_tracker_late_alias_before_first_update()
+{
+    rocketnet_packet_loss_tracker_t tracker;
+    rocketnet_packet_loss_tracker_reset( &tracker );
+
+    for ( uint64_t wire_sequence = 1; wire_sequence <= 2000; ++wire_sequence )
+    {
+        if ( wire_sequence != 976 )
+        {
+            rocketnet_packet_loss_tracker_packet_received( &tracker, wire_sequence - 1 );
+        }
+    }
+
+    const int alias_slot = int( 2000 % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
+    rocketnet_unit_check( tracker.received_packets[alias_slot] == 2000 );
+    rocketnet_packet_loss_tracker_packet_received( &tracker, 976 - 1 );
+    rocketnet_unit_check( tracker.received_packets[alias_slot] == 2000 );
+
+    const int first = rocketnet_packet_loss_tracker_update( &tracker );
+    for ( uint64_t wire_sequence = 2001; wire_sequence <= 2030; ++wire_sequence )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &tracker, wire_sequence - 1 );
+    }
+    const int second = rocketnet_packet_loss_tracker_update( &tracker );
+    rocketnet_unit_check( first + second == 0 );
+}
+
+// A long in-order run has no loss at either side of the exact ring boundary.
+// The high-water span, including the safety margin, decides when counting must
+// replace a ring scan because newer margin records have reused older slots.
+static void test_packet_loss_tracker_in_order_ring_boundary_not_lost()
+{
+    static const uint64_t ends[] = { 1000, 1024, 1025, 1030, 1053, 1054, 1055, 1060, 1100 };
+
+    for ( uint64_t n : ends )
+    {
+        rocketnet_packet_loss_tracker_t tracker;
+        rocketnet_packet_loss_tracker_reset( &tracker );
+
+        for ( uint64_t wire_sequence = 1; wire_sequence <= n; ++wire_sequence )
+        {
+            rocketnet_packet_loss_tracker_packet_received( &tracker, wire_sequence - 1 );
+        }
+        const int first = rocketnet_packet_loss_tracker_update( &tracker );
+
+        for ( uint64_t wire_sequence = n + 1; wire_sequence <= n + 30; ++wire_sequence )
+        {
+            rocketnet_packet_loss_tracker_packet_received( &tracker, wire_sequence - 1 );
+        }
+        const int second = rocketnet_packet_loss_tracker_update( &tracker );
+        rocketnet_unit_check( first + second == 0 );
+    }
+}
+
 // A send record is written only for a sequence newer than the one its slot
 // holds and within one buffer of the highest sent, at a finite time; anything
 // else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
@@ -241,5 +418,11 @@ static void test_jitter_tracker_backwards_stamp_is_not_a_sample()
 
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_gap_over_history_counts_lost );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_burst_over_history_not_lost );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_overflow_loss_is_bounded );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_late_packet_does_not_clobber );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_late_alias_before_first_update );
+REGISTER_UNIT_TEST( test_packet_loss_tracker_in_order_ring_boundary_not_lost );
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
 REGISTER_UNIT_TEST( test_jitter_tracker_backwards_stamp_is_not_a_sample );

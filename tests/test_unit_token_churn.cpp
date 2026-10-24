@@ -421,3 +421,234 @@ static void test_response_replay_does_not_refresh_connected_slot()
 }
 
 REGISTER_UNIT_TEST( test_response_replay_does_not_refresh_connected_slot );
+
+// ---------------------------------------------------------------------------
+// The request-claim table in O(1) (sdk/rocketnet_token_tables.cpp;
+// tla/RNSecurityTables.tla, ClaimRecord, ClaimRelease,
+// FreeAndOrderPartitionSlots, LiveClaimNeverReplaced and
+// CanRecordMatchesScan). A released claim goes back on the free list, live
+// claims sit in an order list by deadline, and the capacity test reads the
+// free list and the order list's head: no walk over the table. Each case
+// drives the table directly, with addresses built in memory and time an
+// argument from 1000.0.
+// ---------------------------------------------------------------------------
+
+#define TC_CLAIM_CAPACITY           4
+#define TC_CLAIM_DEADLINE_SECONDS   5.0
+
+static void tc_claim_id( uint8_t * identifier, uint8_t value )
+{
+    memset( identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+    identifier[0] = value;
+    identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 1] = (uint8_t) ( 0xA5 ^ value );
+}
+
+static void tc_claim_addresses( struct rocketnet_address_t * holder, struct rocketnet_address_t * other )
+{
+    check( rocketnet_address_parse( holder, "198.51.100.7:50000" ) );
+    check( rocketnet_address_parse( other, "198.51.100.8:50000" ) );
+}
+
+// four live claims fill the table; releasing two returns both slots, a
+// second release and a release from another address return nothing, and
+// two new tokens take the two free slots while the two unreleased claims
+// still refuse a second address
+
+static void test_claim_release_returns_slot_to_free_list()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    const double now = 1000.0;
+
+    check( rocketnet_used_token_history_claim_free_count( history ) == TC_CLAIM_CAPACITY );
+    uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 6; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+
+    for ( int i = 0; i < 4; i++ )
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    rocketnet_used_token_history_claim_release( history, ids[0], &holder );
+    rocketnet_used_token_history_claim_release( history, ids[1], &holder );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 2 );
+
+    // a second release of a released claim, and a release from an address
+    // that does not hold the claim, change nothing
+    rocketnet_used_token_history_claim_release( history, ids[0], &holder );
+    rocketnet_used_token_history_claim_release( history, ids[2], &other );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 2 );
+
+    check( rocketnet_used_token_history_claim_can_record( history, ids[4], now ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[5], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    // the two unreleased claims still hold their tokens for their address
+    for ( int i = 2; i < 4; i++ )
+    {
+        check( rocketnet_used_token_history_claim_check( history, ids[i], &other, now ) == 0 );
+        check( rocketnet_used_token_history_claim_check( history, ids[i], &holder, now ) == 1 );
+    }
+    // the released tokens hold nothing
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, now ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[1], &other, now ) == 1 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_release_returns_slot_to_free_list );
+
+// a full table, nothing released: once time passes the first claim's
+// deadline, and only that one, a new token takes the order list's head and
+// every other claim stays live for its own address
+
+static void test_claim_expired_slot_reused_from_order_head()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 6; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+
+    for ( int i = 0; i < 4; i++ )
+    {
+        const double at = 1000.0 + (double) i;
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, at + TC_CLAIM_DEADLINE_SECONDS, at ) == 1 );
+    }
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    // past the first claim's deadline (1005.0) only
+    const double later = 1005.0;
+    check( rocketnet_used_token_history_claim_can_record( history, ids[4], later ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &other, later + TC_CLAIM_DEADLINE_SECONDS, later ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    // the first claim's slot went to the new token
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, later ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[4], &holder, later ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[4], &other, later ) == 1 );
+
+    // every other claim is live for its own address and refuses another
+    for ( int i = 1; i < 4; i++ )
+    {
+        check( rocketnet_used_token_history_claim_check( history, ids[i], &holder, later ) == 1 );
+        check( rocketnet_used_token_history_claim_check( history, ids[i], &other, later ) == 0 );
+    }
+
+    // and the table is full of live claims again
+    check( rocketnet_used_token_history_claim_can_record( history, ids[5], later ) == 0 );
+    check( rocketnet_used_token_history_claim_record( history, ids[5], &other, later + TC_CLAIM_DEADLINE_SECONDS, later ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_expired_slot_reused_from_order_head );
+
+// a table full of live claims refuses a new token at both the capacity test
+// and the record, answers yes for a token already in the table, and evicts
+// nothing
+
+static void test_claim_full_of_live_claims_refuses()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    const double now = 1000.0;
+
+    uint8_t ids[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 5; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+
+    for ( int i = 0; i < 4; i++ )
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    check( rocketnet_used_token_history_claim_can_record( history, ids[4], now + 1.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &other, now + 1.0 + TC_CLAIM_DEADLINE_SECONDS, now + 1.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_can_record( history, ids[0], now + 1.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, now + 1.0 + TC_CLAIM_DEADLINE_SECONDS, now + 1.0 ) == 1 );
+
+    // nothing evicted: every claim still refuses another address, and the
+    // refused token holds nothing
+    for ( int i = 0; i < 4; i++ )
+        check( rocketnet_used_token_history_claim_check( history, ids[i], &other, now + 1.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[4], &holder, now + 1.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_full_of_live_claims_refuses );
+
+// The server's time does not go backwards (the transport clamps a step
+// backwards to the last good time) and every deadline is that time plus one
+// fixed handshake deadline, so the order list is deadline order. Should a
+// deadline still arrive out of order at this interface, a later claim that
+// has expired waits behind the live head: its reuse is delayed until the
+// head expires, and the live head is never replaced.
+
+static void test_claim_out_of_order_deadline_delays_reuse_only()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 2 );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t ids[4][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 4; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+
+    check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1010.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[1], &holder, 1003.0, 1000.0 ) == 1 );
+
+    // the second claim has expired, the head has not: reuse waits
+    check( rocketnet_used_token_history_claim_can_record( history, ids[2], 1004.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1009.0, 1004.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1004.0 ) == 0 );
+
+    // once the head expires it is reused first, then the expired claim behind it
+    check( rocketnet_used_token_history_claim_can_record( history, ids[2], 1010.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1015.0, 1010.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1010.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[3], &other, 1015.0, 1010.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[2], &holder, 1010.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_out_of_order_deadline_delays_reuse_only );
+
+// Re-recording an expired identifier moves it behind the remaining claims;
+// the next expired head can then be reused without replacing the renewed one.
+static void test_claim_expired_identifier_moves_to_order_tail()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t ids[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 5; i++ )
+        tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    for ( int i = 0; i < TC_CLAIM_CAPACITY; i++ )
+    {
+        const double at = 1000.0 + (double) i;
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, at + TC_CLAIM_DEADLINE_SECONDS, at ) == 1 );
+    }
+    check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1010.0, 1005.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_can_record( history, ids[4], 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &other, 1011.0, 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1006.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[1], &other, 1006.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_expired_identifier_moves_to_order_tail );

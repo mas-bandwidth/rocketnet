@@ -421,7 +421,10 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     }
 
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    int receive_buffer_size = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    // one update's inbound packets at the full client count: the uring
+    // create does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS
+    // (a request; the kernel charges only what it holds)
+    int receive_buffer_size = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
     {
@@ -448,15 +451,12 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     if ( queue_index == 0 )
     {
-        if ( granted_send < send_buffer_size || granted_receive < receive_buffer_size )
-        {
-            rocketnet_warn( "io_uring transport: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
-                            granted_send, send_buffer_size, granted_receive, receive_buffer_size );
-        }
-        else
-        {
+        if ( granted_send < send_buffer_size )
+            rocketnet_warn( "io_uring transport: socket send buffer granted %d of %d requested bytes (raise net.core.wmem_max)",
+                            granted_send, send_buffer_size );
+        rocketnet_server_receive_buffer_granted( "io_uring", receive_buffer_size, granted_receive );
+        if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )
             rocketnet_info( "io_uring transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
-        }
     }
 
     rocketnet_address_t addr = *bind_address;

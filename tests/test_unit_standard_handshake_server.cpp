@@ -521,3 +521,44 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
 REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
 REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
+
+// A response replaces its request claim with a token binding (t12 rule 9;
+// tla/MCReceiveOrder.tla ResponseBind).
+static void test_claim_released_when_response_binds_token()
+{
+    struct handshake_server_t test;
+    handshake_server_setup( &test );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    handshake_server_build_request( request, "198.51.100.7:56789",
+                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    const int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    struct rocketnet_address_t other;
+    check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
+    check( !rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1000.0 ) );
+    uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                           rocketnet_test_filter_value, 1, NULL,
+                                                           padding, (int) sizeof(padding),
+                                                           ROCKETNET_TEST_PROTOCOL_ID, mapping->connection_salt,
+                                                           mapping->client_ephemeral_public_key,
+                                                           mapping->keys.handshake_client_to_server );
+    check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                      response, &response_bytes, payload, &payload_bytes,
+                                                      &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    check( mapping->control->client_index != -1 );
+    check( rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1000.0 ) );
+    check( !rocketnet_used_token_history_check( test.server.used_token_history, mapping->token_identifier, &other, ROCKETNET_TEST_CREATE_TS ) );
+    handshake_server_teardown( &test );
+}
+REGISTER_UNIT_TEST( test_claim_released_when_response_binds_token );
