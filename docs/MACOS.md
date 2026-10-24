@@ -44,7 +44,10 @@ cmake --build build-debug --parallel 4
 
 Both configurations write their executables and dylibs into the same `bin/`
 (`CMakeLists.txt`, `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
-`CMAKE_LIBRARY_OUTPUT_DIRECTORY`), so `bin/` holds whichever build ran last.
+`CMAKE_LIBRARY_OUTPUT_DIRECTORY`). Before switching configurations in one
+checkout, run `make clean` to remove those shared outputs; otherwise a newer
+binary from another configuration can be mistaken for an up-to-date target.
+Then build the selected configuration and run its tests before switching again.
 
 The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
@@ -500,8 +503,9 @@ for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loo
   done
 done
 
+make clean
 cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-debug --parallel 4
+cmake --build build-debug --clean-first --parallel 4
 ./bin/test
 ```
 
