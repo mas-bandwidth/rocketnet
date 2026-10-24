@@ -85,7 +85,7 @@ struct rn_message_link_t
     // cap. The server's link reads it so a rotation advances only over
     // clients that had a chance to send.
     int (*send_capacity_available)( void * transport );
-    // Connected peers whose next send round must remain available.
+    // Connected clients whose next send round must remain available.
     int (*send_connected_count)( void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots

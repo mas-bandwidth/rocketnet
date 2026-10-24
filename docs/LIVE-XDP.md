@@ -33,6 +33,6 @@ part of this release's contract.
 The client `--matrix` command reports orderly disconnect cycles only. Each cycle
 requests disconnect, observes completion, then destroys the client; its silent
 cycle count stays zero. Skipping an explicit disconnect before destroy was never
-valid evidence of silent peer loss. Use a separate process-kill experiment, such
-as the functional hard-killed-peer test, to qualify that behavior. The synthetic
+valid evidence of silent client loss. Use a separate process-kill experiment, such
+as the functional hard-killed-client test, to qualify that behavior. The synthetic
 `--self-test-result` output tests the report parser and is not a live traffic run.

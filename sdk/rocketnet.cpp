@@ -240,6 +240,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
         case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
         case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION: return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
+        case ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO:        return "CONNECT_TOKEN_PORT_ZERO";
         default:
             break;
     }

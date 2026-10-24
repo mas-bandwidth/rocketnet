@@ -3,16 +3,15 @@
 (* rocketnet: the deterministic simulation test's fault injector for       *)
 (* crash, restart and clock skew (docs/DST.md sections 3 and 7).           *)
 (*                                                                         *)
-(* The injector owns the world around the peers: each peer's phase (up,    *)
-(* crashed, restarting), each client's session generation, the server's    *)
-(* incarnation, each peer's skewed clock, the true time, the fault window  *)
-(* flag, and the packets in the wire tagged with the fields the payload    *)
-(* scheme stamps (docs/DST.md section 2): the session generation (bytes    *)
-(* 6-8) and the server incarnation (byte 9).  The two are separate         *)
-(* counters with separate checks: a receiver accepts a packet only when    *)
-(* its generation equals the receiving session's generation and,           *)
-(* separately, its incarnation equals the receiving session's              *)
-(* incarnation.                                                            *)
+(* The injector owns the world around the endpoints: each endpoint's phase *)
+(* (up, crashed, restarting), each client's session generation, the        *)
+(* server's incarnation, each endpoint's skewed clock, the true time, the  *)
+(* fault window flag, and the packets in the wire tagged with the fields   *)
+(* the payload scheme stamps (docs/DST.md section 2): the session          *)
+(* generation (bytes 6-8) and the server incarnation (byte 9).  The two    *)
+(* are separate counters with separate checks: a receiver accepts a packet *)
+(* only when its generation equals the receiving session's generation and, *)
+(* separately, its incarnation equals the receiving session's incarnation. *)
 (*                                                                         *)
 (* Each session also carries a ghost tag (sid), a number no other session  *)
 (* ever holds: it is the checker's ghost state of docs/DST.md section 3    *)
@@ -31,19 +30,20 @@
 (* untimed here: each is enabled exactly when its session is dead and is   *)
 (* weakly fair.                                                            *)
 (*                                                                         *)
-(* Clocks: true time t counts steps from 0 (the DST's 1000.0).  A peer's   *)
-(* clock is c_p = Offset[p] + Rate[p] * t in units of 1/Scale step, the    *)
-(* integer form of c_p(k) = 1000.0 + o_p + r_p * (t(k) - 1000.0).  The     *)
-(* bound of docs/DST.md section 3, |c_p - t| <= 0.25 + 0.005 * (t - 1000), *)
-(* is |clock[p] - Scale * t| <= OffsetBound + DriftBound * t here.  The    *)
-(* injector keeps a peer's clock across its crash and restart.             *)
+(* Clocks: true time t counts steps from 0 (the DST's 1000.0).  An         *)
+(* endpoint's clock is c_p = Offset[p] + Rate[p] * t in units of 1/Scale   *)
+(* step, the integer form of c_p(k) = 1000.0 + o_p + r_p * (t(k) -         *)
+(* 1000.0).  The bound of docs/DST.md section 3,                          *)
+(* |c_p - t| <= 0.25 + 0.005 * (t - 1000), is                              *)
+(* |clock[p] - Scale * t| <= OffsetBound + DriftBound * t here.  The       *)
+(* injector keeps an endpoint's clock across its crash and restart.        *)
 (*                                                                         *)
 (* Rule switches, each overridden by one reversed witness:                 *)
 (*   FreshOnRestart (design TRUE): a restarted client connects under a     *)
 (*     generation never used; FALSE keeps its old generation.              *)
-(*   CrashSilences (design TRUE): a crash destroys the peer's objects at   *)
-(*     once, so it sends and receives nothing until it is rebuilt; FALSE   *)
-(*     flips the phase but leaves the peer running.                        *)
+(*   CrashSilences (design TRUE): a crash destroys the endpoint's objects  *)
+(*     at once, so it sends and receives nothing until it is rebuilt;      *)
+(*     FALSE flips the phase but leaves the endpoint running.              *)
 (* The receiver's two compares, each a switch (design TRUE) so a probe     *)
 (* can drop one: CompareGeneration and CompareIncarnation.  With one       *)
 (* global generation counter that a server restart does not reset, the     *)
@@ -56,8 +56,8 @@
 EXTENDS Naturals, Integers, FiniteSets
 
 CONSTANTS
-    Clients,          \* the client peers
-    Server,           \* the server peer (peer 0)
+    Clients,          \* the client endpoints
+    Server,           \* the server endpoint (endpoint 0)
     MaxSessions,      \* client sessions over the whole seed
     MaxClientCrashes, \* client crashes per seed
     MaxServerCrashes, \* server crashes per seed
@@ -65,12 +65,12 @@ CONSTANTS
     MaxTime,          \* steps of true time modelled
     MaxInFlight,      \* packets the wire holds at once
     Scale,            \* clock units per step
-    Offset,           \* [Peers -> Int], each peer's clock offset, in clock units
-    Rate,             \* [Peers -> Int], each peer's clock units per step
+    Offset,           \* [Endpoints -> Int], each endpoint's clock offset, in clock units
+    Rate,             \* [Endpoints -> Int], each endpoint's clock units per step
     OffsetBound,      \* the design's offset bound, in clock units
     DriftBound        \* the design's rate bound: |Rate[p] - Scale| <= DriftBound
 
-Peers == Clients \cup {Server}
+Endpoints == Clients \cup {Server}
 
 ASSUME /\ Clients # {}
        /\ Server \notin Clients
@@ -79,7 +79,7 @@ ASSUME /\ Clients # {}
        /\ MaxInFlight \in Nat \ {0}
        /\ Scale \in Nat \ {0}
        /\ OffsetBound \in Nat /\ DriftBound \in Nat
-       /\ Offset \in [Peers -> Int] /\ Rate \in [Peers -> Int]
+       /\ Offset \in [Endpoints -> Int] /\ Rate \in [Endpoints -> Int]
        \* Enough sessions for every reconnect the faults can force: one per
        \* client, one per disconnect and client crash, and one per client for
        \* each server crash.
@@ -104,7 +104,7 @@ SrvRecs  == [c : Clients, gen : Gens, sid : Sids, inc : Nat]
 Packets  == [dir : {"up", "down"}, c : Clients, gen : Gens, inc : Nat, sid : Sids]
 
 VARIABLES
-    phase,        \* [Peers -> Phases]
+    phase,        \* [Endpoints -> Phases]
     cst,          \* [Clients -> CStates], the client's session state
     gen,          \* [Clients -> 0..MaxSessions], the generation of its latest session
     sid,          \* [Clients -> 0..MaxSessions], ghost tag of its latest session
@@ -117,10 +117,10 @@ VARIABLES
     srv,          \* the server's session records
     net,          \* packets in the wire
     t,            \* true time, in steps
-    clock,        \* [Peers -> Int], each peer's skewed clock
+    clock,        \* [Endpoints -> Int], each endpoint's skewed clock
     faults,       \* TRUE in the fault window
     clientCrashes, serverCrashes, disconnects,
-    lastAct,      \* the phase of the peer at the latest send or receive (ghost)
+    lastAct,      \* the phase of the endpoint at the latest send or receive (ghost)
     lastDel       \* the latest delivery: did the packet's ghost tag equal the
                   \* receiving session's (ghost)
 
@@ -128,11 +128,11 @@ vars == <<phase, cst, gen, sid, cinc, restarted, nextGen, nextSid, genFirst,
           incarnation, srv, net, t, clock, faults, clientCrashes, serverCrashes,
           disconnects, lastAct, lastDel>>
 
-\* A peer that runs: up, or any phase when a crash leaves it running.
+\* An endpoint that runs: up, or any phase when a crash leaves it running.
 Running(p) == phase[p] = "up" \/ ~CrashSilences
 
 Init ==
-    /\ phase = [p \in Peers |-> "up"]
+    /\ phase = [p \in Endpoints |-> "up"]
     /\ cst = [c \in Clients |-> "idle"]
     /\ gen = [c \in Clients |-> 0]
     /\ sid = [c \in Clients |-> 0]
@@ -145,7 +145,7 @@ Init ==
     /\ srv = {}
     /\ net = {}
     /\ t = 0
-    /\ clock = [p \in Peers |-> Offset[p]]
+    /\ clock = [p \in Endpoints |-> Offset[p]]
     /\ faults = TRUE
     /\ clientCrashes = 0 /\ serverCrashes = 0 /\ disconnects = 0
     /\ lastAct = "none"
@@ -154,8 +154,8 @@ Init ==
 -----------------------------------------------------------------------------
 (* The injector's own actions.                                             *)
 
-\* A crash destroys the peer's objects at once and sends nothing.  A crash
-\* due while the peer is down is skipped (not enabled).
+\* A crash destroys the endpoint's objects at once and sends nothing.  A crash
+\* due while the endpoint is down is skipped (not enabled).
 Crash(p) ==
     /\ faults
     /\ phase[p] = "up"
@@ -172,7 +172,7 @@ Crash(p) ==
     /\ UNCHANGED <<gen, sid, cinc, restarted, nextGen, nextSid, genFirst,
                    incarnation, net, t, clock, faults, disconnects, lastAct, lastDel>>
 
-\* The down time ends: the injector starts rebuilding the peer.
+\* The down time ends: the injector starts rebuilding the endpoint.
 Restart(p) ==
     /\ phase[p] = "crashed"
     /\ phase' = [phase EXCEPT ![p] = "restarting"]
@@ -180,7 +180,7 @@ Restart(p) ==
                    incarnation, srv, net, t, clock, faults, clientCrashes,
                    serverCrashes, disconnects, lastAct, lastDel>>
 
-\* The peer's objects are built fresh.  The server takes a new incarnation
+\* The endpoint's objects are built fresh.  The server takes a new incarnation
 \* and holds no session; a client starts idle and connects next.
 Rejoin(p) ==
     /\ phase[p] = "restarting"
@@ -195,12 +195,12 @@ Rejoin(p) ==
     /\ UNCHANGED <<gen, sid, cinc, nextGen, nextSid, genFirst, net, t, clock,
                    faults, clientCrashes, serverCrashes, disconnects, lastAct, lastDel>>
 
-\* True time advances one step; each peer's clock moves by its rate.  The
-\* wire runs on true time; clocks run whatever the peer's phase.
+\* True time advances one step; each endpoint's clock moves by its rate.  The
+\* wire runs on true time; clocks run whatever the endpoint's phase.
 Tick ==
     /\ t < MaxTime
     /\ t' = t + 1
-    /\ clock' = [p \in Peers |-> clock[p] + Rate[p]]
+    /\ clock' = [p \in Endpoints |-> clock[p] + Rate[p]]
     /\ UNCHANGED <<phase, cst, gen, sid, cinc, restarted, nextGen, nextSid,
                    genFirst, incarnation, srv, net, faults, clientCrashes,
                    serverCrashes, disconnects, lastAct, lastDel>>
@@ -208,7 +208,7 @@ Tick ==
 \* The fault window closes; every fault has ended inside it.
 EndFaults ==
     /\ faults
-    /\ \A p \in Peers : phase[p] = "up"
+    /\ \A p \in Endpoints : phase[p] = "up"
     /\ faults' = FALSE
     /\ UNCHANGED <<phase, cst, gen, sid, cinc, restarted, nextGen, nextSid,
                    genFirst, incarnation, srv, net, t, clock, clientCrashes,
@@ -348,7 +348,7 @@ Deliver(m) ==
                    serverCrashes, disconnects>>
 
 \* A packet no session takes: refused by the receiver (a stale generation
-\* or incarnation), or received and discarded for a peer that is down.
+\* or incarnation), or received and discarded for an endpoint that is down.
 Refuse(m) ==
     /\ m \in net
     /\ \/ ~Running(Receiver(m))
@@ -360,7 +360,7 @@ Refuse(m) ==
                    serverCrashes, disconnects, lastAct, lastDel>>
 
 Next ==
-    \/ \E p \in Peers : Crash(p) \/ Restart(p) \/ Rejoin(p)
+    \/ \E p \in Endpoints : Crash(p) \/ Restart(p) \/ Rejoin(p)
     \/ Tick \/ EndFaults
     \/ \E m \in net : Lose(m) \/ Deliver(m) \/ Refuse(m)
     \/ \E c \in Clients : Connect(c) \/ Establish(c) \/ Disconnect(c)
@@ -373,7 +373,7 @@ Spec == Init /\ [][Next]_vars
 \* session protocols make progress.  No fairness on crashes, disconnects,
 \* loss, sends or deliveries.
 Fairness ==
-    /\ \A p \in Peers : WF_vars(Restart(p)) /\ WF_vars(Rejoin(p))
+    /\ \A p \in Endpoints : WF_vars(Restart(p)) /\ WF_vars(Rejoin(p))
     /\ \A c \in Clients : WF_vars(Connect(c)) /\ WF_vars(Establish(c))
                           /\ WF_vars(ClientTimeout(c))
     /\ WF_vars(\E r \in srv : ServerTimeout(r))
@@ -385,7 +385,7 @@ LiveSpec == Spec /\ Fairness
 (* Invariants and properties.                                              *)
 
 TypeOK ==
-    /\ phase \in [Peers -> Phases]
+    /\ phase \in [Endpoints -> Phases]
     /\ cst \in [Clients -> CStates]
     /\ gen \in [Clients -> 0..MaxSessions]
     /\ sid \in [Clients -> 0..MaxSessions]
@@ -398,13 +398,13 @@ TypeOK ==
     /\ srv \subseteq SrvRecs
     /\ net \subseteq Packets
     /\ t \in 0..MaxTime
-    /\ clock \in [Peers -> Int]
+    /\ clock \in [Endpoints -> Int]
     /\ faults \in BOOLEAN
     /\ lastAct \in {"none"} \cup Phases
     /\ lastDel \in BOOLEAN
 
-\* A peer that is not up sends nothing and receives nothing.
-CrashedPeerSilent ==
+\* An endpoint that is not up sends nothing and receives nothing.
+CrashedEndpointSilent ==
     lastAct \in {"none", "up"}
 
 \* Every live session's generation was first taken by that session: a
@@ -425,13 +425,13 @@ LiveSessionOnCurrentIncarnation ==
 
 \* Every clock stays inside the design's bound of the true clock.
 SkewBounded ==
-    \A p \in Peers : LET d == clock[p] - Scale * t
+    \A p \in Endpoints : LET d == clock[p] - Scale * t
                      IN -(OffsetBound + DriftBound * t) <= d
                         /\ d <= OffsetBound + DriftBound * t
 
 \* No clock runs backwards.
 ClockMonotone ==
-    [][\A p \in Peers : clock'[p] >= clock[p]]_vars
+    [][\A p \in Endpoints : clock'[p] >= clock[p]]_vars
 
 \* Once the faults stop, every client is up, connected, and held by the
 \* server.
