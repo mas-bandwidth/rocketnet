@@ -81,3 +81,59 @@ transports perform this drain in their shutdown step. Simulator reconfiguration
 is refused after stop. `test_client_simulator_stop_defers_backend_send` and
 `test_client_legacy_receive_defers_contended_handoffs` exercise these boundaries
 without threads, sleeps, or wall-clock deadlines.
+
+## The overlapped send
+
+On Windows the portable client's I/O thread posts its sends instead of
+calling a blocking `sendto`, so the kernel never holds the I/O thread inside
+a send (roadmap row 223; tla/RNClientIo.tla `IoSend`, `Complete`,
+`IoFinishRing`, `NoFreeBeforeComplete`):
+
+- **The interface.** `rocketnet_client_transport_overlapped_t`
+  (`sdk/rocketnet_driver.h:192`) has three calls, `post_send`, `reap_sends`
+  and `cancel_sends`. It is not a member of the operations table, so every
+  table keeps its shape; `rocketnet_client_transport_io_overlapped`
+  (`sdk/rocketnet_driver_builtin.cpp:972`) returns it for the portable client
+  on Windows and NULL for every other backend, which keeps the synchronous
+  `send` and `send_batch`.
+- **Post.** The I/O step takes a ready ring and posts every live slot
+  (`rocketnet_client_io_post_ring`, `sdk/rocketnet_client_io.h:510`): one
+  `WSASendTo` (`WSASend` on the connected socket) with its own `WSAOVERLAPPED`
+  record, which returns 0 or `WSA_IO_PENDING` without waiting
+  (`rocketnet_platform_wake_post_send`, `sdk/rocketnet_platform.cpp:5247`).
+  The ring joins the posted rings in post order with its post count.
+- **Many rings in flight.** The step keeps taking ready rings and posting them
+  while earlier ones are outstanding (`rocketnet_client_io_send_overlapped`,
+  `sdk/rocketnet_client_io.h:578`), so one slow completion never holds back
+  the ring behind it. The earlier prototype held one ring at a time: the ring
+  sat Sending until its last completion, the game thread's next hand-off found
+  no free ring, and the client refused payloads.
+- **Reap in post order.** `reap_sends` returns how many of the oldest posts
+  have completed and stops at the first one still pending
+  (`rocketnet_platform_wake_reap_sends`, `sdk/rocketnet_platform.cpp:5312`);
+  `rocketnet_client_io_reap` (`sdk/rocketnet_client_io.h:539`) takes them from
+  the oldest posted ring first, and a ring goes back to the main thread only
+  once none of its posts is outstanding. An error completion is counted in
+  `SEND_FAILED`.
+- **Preallocated.** The records, three rings of 256 slots
+  (`ROCKETNET_CLIENT_TRANSPORT_MAX_POSTED_SENDS`), are allocated once when the
+  client is created (`rocketnet_platform_wake_reserve_sends`,
+  `sdk/rocketnet_platform.cpp:5217`); nothing is allocated at runtime.
+- **The wait.** While a post is outstanding its completion event joins the
+  wake's `WaitForMultipleObjects` set, so a completion ends the I/O thread's
+  wait like the wake and the socket do (`IoWake`). No new thread, pool or
+  mutex: completions are read on the I/O thread at a point the step chooses.
+- **Stop and destroy.** After stop the step posts every ready ring and stop's
+  final ring, cancels the posts still pending once (`cancel_sends`,
+  `CancelIoEx`), and exits only when every completion has been reaped, so no
+  buffer is released while the kernel may read it. Destroy also cancels and
+  waits for any post still outstanding before it frees the records and closes
+  the socket. A cancelled post is a dropped datagram, as a full send buffer is
+  for the synchronous send.
+
+`test_client_io_overlapped_ring_sent_on_completion`
+(`tests/test_unit_client_io_transport.cpp`) pins it on the fake transport: a
+posted ring is not Sent until its completion is reaped, a second ring is
+posted behind an outstanding one, the oldest ring is released first, and stop
+cancels the pending posts and exits only after reaping them. The measurement
+across the LAN is docs/QUALIFICATION-windows-client-send.md.

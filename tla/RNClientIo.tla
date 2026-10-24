@@ -72,8 +72,10 @@
 (* never reaches the thread's stop check (docs/CLIENT-IO.md).             *)
 (*                                                                         *)
 (* The overlapped send (rn-win-client-overlapped-send, docs/CLIENT-IO.md  *)
-(* "The overlapped send"): IoSend posts a slot's send and returns; the    *)
-(* kernel completes the ring's posts later (Complete, an outside event,   *)
+(* "The overlapped send"): IoSend posts every slot's send of the ring and *)
+(* returns (the post loop is one step of the I/O thread over slots only   *)
+(* it owns, so one action); the kernel completes the ring's posts later   *)
+(* (Complete, an outside event,                                           *)
 (* ok or with an error: a stop's cancel ends a pending post with an       *)
 (* error, so one action models both).  `sent` is the slots posted.  A     *)
 (* ring is Sent (IoFinishRing) only once its posts have completed, the    *)
@@ -552,19 +554,19 @@ ThreadStarted == ~StepDriven \/ StepModeStartsThread
 
 IoReady == ioAlive /\ ~waiting
 
-\* post one slot's send of the handed-off ring (WSASendTo with an OVERLAPPED
-\* on Windows, rocketnet_client_io_post_ring; the synchronous send elsewhere,
-\* which completes in the call): the call returns at once
-IoSend(r, s) ==
+\* take the handed-off ring and post every slot's send (one WSASendTo with an
+\* OVERLAPPED per slot on Windows, rocketnet_client_io_post_ring; the
+\* synchronous send elsewhere, which completes in the call).  The post loop
+\* runs inside one step of the I/O thread and touches only slots that thread
+\* owns, so no other action can observe it half done: one action posts them
+\* all.  The calls return at once; the kernel completes them later (Complete).
+IoSend(r) ==
     /\ IoReady
-    /\ \/ ioRing = r
-       \/ ioRing = "none" /\ ring[r] = "HandedOff"
-    /\ owner[r][s] = "io"
-    /\ s \notin sent[r]
+    /\ ioRing = "none"
+    /\ ring[r] = "HandedOff"
     /\ ioRing' = r
-    /\ ring' = [ring EXCEPT ![r] = IF ring[r] = "HandedOff" THEN "Sending"
-                                    ELSE ring[r]]
-    /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
+    /\ ring' = [ring EXCEPT ![r] = "Sending"]
+    /\ sent' = [sent EXCEPT ![r] = {s \in Slots : owner[r][s] = "io"}]
     /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
                    waitReadable, phase, ioAlive>>
     /\ UNCHANGED destVars
@@ -753,7 +755,7 @@ StepBegin ==
     \* work, so an empty StepBegin/StepEnd cycle cannot starve the wait's
     \* check of Sent and of the deadline
     /\ (destroyWait \/ phase = "Stopping" =>
-           ENABLED (\/ \E r \in Rings, s \in Slots : IoSend(r, s)
+           ENABLED (\/ \E r \in Rings : IoSend(r)
                     \/ \E r \in Rings : IoFinishRing(r)
                     \/ IoPublish \/ IoOwe \/ IoExit))
     /\ inCall' = TRUE
@@ -770,7 +772,7 @@ StepBegin ==
 \* only into the buffer it holds), so receive work does not hold it, and
 \* the wake, which no step mode wait reads, is consumed or left.
 StepWork ==
-    \/ \E r \in Rings, s \in Slots : IoSend(r, s)
+    \/ \E r \in Rings : IoSend(r)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ IoPublish \/ IoOwe \/ IoExit
 
@@ -830,7 +832,7 @@ MainNextNoDeadline ==
     \/ StepBegin \/ StepEnd
 
 IoCoreNext ==
-    \/ \E r \in Rings, s \in Slots : IoSend(r, s)
+    \/ \E r \in Rings : IoSend(r)
     \/ \E r \in Rings : IoFinishRing(r)
     \/ \E r \in Rings : IoStall(r)
     \/ IoReceive \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
@@ -876,7 +878,7 @@ Spec == Init /\ [][Next]_vars
 \* the game calls update every frame (StepBegin), and a step finishes its
 \* ring, its exit and its publish or owe before it returns (StepEnd).
 Fairness ==
-    /\ WF_vars(Exec(\E r \in Rings, s \in Slots : IoSend(r, s)))
+    /\ WF_vars(Exec(\E r \in Rings : IoSend(r)))
     /\ WF_vars(Exec(\E r \in Rings : IoFinishRing(r)))
     /\ WF_vars(Exec(IoReceive))
     /\ WF_vars(Exec(IoPublish))

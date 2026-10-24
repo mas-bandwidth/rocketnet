@@ -25,9 +25,10 @@ implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
   and switches to the other ring when that ring is open (`HandOff`), or,
   when the other ring is still HandedOff or Sending, defers: the committed
   slots stay in the Filling ring and `CLIENT_SEND_DEFERRED` moves (`Defer`,
-  the flag `deferred`). A hand-off never waits. The I/O thread sends each
-  slot (`IoSend`, the ring Sending) and then releases the ring
-  (`IoFinishRing`, Sent). Only a Sent ring is reopened (`Reopen`). `WaitDone`
+  the flag `deferred`). A hand-off never waits. The I/O thread posts the
+  ring's slots (`IoSend`, the ring Sending), the kernel completes them
+  (`Complete`), and then the I/O thread releases the ring (`IoFinishRing`,
+  Sent). Only a Sent ring is reopened (`Reopen`). `WaitDone`
   and `mainWait` exist only for the defect `HandOffWaits`.
 - **The receive handoff.** The I/O thread reads a datagram into its Fill
   buffer while it has room (`IoReceive`, at most `BufferCap`) and, when a
@@ -363,3 +364,56 @@ not by the flag. Two planted defects confirm that the step-mode liveness
 checks are not vacuous: a receive that is only weakly fair, a `StepEnd` that
 may return with the ring it took unsent, and an unfair `StepBegin` (no update
 calls) each fail the temporal properties (exit 13).
+
+## The overlapped send
+
+The Windows client posts its sends (docs/CLIENT-IO.md "The overlapped send",
+rn-win-client-overlapped-send). `IoSend(r)` now takes the handed-off ring and
+posts every slot's send in one action, which returns at once: the code's post
+loop runs inside one step of the I/O thread and touches only slots that
+thread owns, so no other action can observe it half done (it was one action
+per slot before, which only added interleavings). `sent` is the slots
+posted. The
+kernel's completion is a new outside action, `Complete(r)`: once every slot
+the I/O thread owns in ring `r` is posted (or the ring stalled and stop has
+cancelled its pending posts), the ring's posts complete, ok or with an error
+(a cancel ends a pending post with an error, so one action models both), and
+`completed[r]` becomes true. `Complete` is weakly fair: every posted send
+completes or is cancelled. The changes to the existing actions:
+
+- `IoFinishRing` marks a ring Sent only when `completed[r]` holds
+  (`rocketnet_client_io_reap`, `sdk/rocketnet_client_io.h:539`, finishes a
+  ring only once none of its posts is outstanding).
+- `IoWait` may block while the ring it holds is fully posted and outstanding,
+  and `IoWake` returns on its completion (the completion event in the wait
+  set, `sdk/rocketnet_platform.cpp`).
+- `IoExit` requires that no ring has a post outstanding (the step exits only
+  after cancelling and reaping every post).
+- `Reopen` clears `completed[r]` with `sent[r]`.
+
+`NoFreeBeforeComplete` is the new invariant: no ring is Sent before its posts
+have completed, and the transport is never freed while a post is
+outstanding. `NoReuseBeforeSent` now conjoins it, so every committed config
+that checks `NoReuseBeforeSent` (MCRNClientIo.cfg, MCRNClientIoSafety.cfg,
+MCRNClientIoStepDriven.cfg and the live configs) checks it too.
+
+Two rings bound the posts in flight to one ring in the model: while the game
+threads fill one ring only the other can be in flight. The code's three rings
+let the I/O thread post a second ring behind an outstanding one, and its
+in-order reap across rings is pinned by the unit case
+`test_client_io_overlapped_ring_sent_on_completion` rather than by the model.
+
+### `MCRNClientIoBrokenSentBeforeComplete.cfg`
+
+`SentBeforeComplete <- SentBeforeCompleteOn` restores the defect: the ring is
+marked Sent once every slot is posted. TLC (exit 12) names
+`NoFreeBeforeComplete` in four states: the main thread hands off ring A with
+one committed slot (`HandOff`), the I/O thread posts it (`IoSend`, A
+Sending), then finishes A (`IoFinishRing`) with `completed[A]` false, so A is
+Sent while the kernel may still read the slot, and the next hand-off may
+reopen it to the game threads. Checked against the code by hand: the defect
+is `rocketnet_client_io_send_overlapped` giving a ring back in the exchange
+right after `rocketnet_client_io_post_ring`; the code gives back only the
+rings `rocketnet_client_io_reap` reports finished, whose posted count has
+reached zero, and the unit case's check that ring 0 stays the I/O thread's
+until `rocketnet_fake_client_complete` (free_count stays 1) fails if it does.
