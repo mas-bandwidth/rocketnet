@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_route.h"
 #include <atomic>
 #include <limits.h>
@@ -19,6 +20,58 @@
 #include <sched.h>
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// The server receive-buffer formula, shared by every server transport. It is
+// arithmetic only: the transport's configuration decides the request, and the
+// kernel grant is read back where the socket is made.
+int rocketnet_server_receive_buffer_bytes( int max_clients, int update_hz )
+{
+    if ( max_clients < 1 ) max_clients = 1;
+    if ( update_hz < 1 ) update_hz = 1;
+    const uint64_t bytes_per_second = (uint64_t) max_clients * (uint64_t) ROCKETNET_SERVER_RECEIVE_BYTES_PER_CLIENT_PER_SECOND;
+    const uint64_t per_update = ( bytes_per_second + (uint64_t) update_hz - 1 ) / (uint64_t) update_hz;
+    uint64_t request = per_update + per_update * ( ROCKETNET_SERVER_RECEIVE_MARGIN_PERCENT - 100 ) / 100;
+    if ( request < ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ) request = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    request = ( request + 1023 ) / 1024 * 1024;
+    if ( request > (uint64_t) INT_MAX ) return INT_MAX;
+    return (int) request;
+}
+
+// The kernel limit a below-request grant named, for the one warning line.
+static const char * rocketnet_platform_socket_buffer_limit_name( void )
+{
+#if defined(__linux__)
+    return "net.core.rmem_max";
+#elif defined(__APPLE__)
+    return "kern.ipc.maxsockbuf";
+#else
+    return "the kernel socket buffer limit";
+#endif
+}
+
+// Read the grant back after a successful setsockopt and warn once when it is
+// below the request. Linux reports SO_SNDBUF and SO_RCVBUF doubled; other
+// platforms report the value they stored.
+static void rocketnet_platform_log_socket_buffer_grant( int handle, int option, int requested_bytes, const char * direction )
+{
+    int granted = 0;
+#if defined(_WIN32)
+    int length = (int) sizeof( granted );
+#else
+    socklen_t length = sizeof( granted );
+#endif
+    if ( getsockopt( handle, SOL_SOCKET, option, (char*) &granted, &length ) != 0 || length <= 0 )
+        return;
+#if defined(__linux__)
+    granted /= 2;
+#endif
+    if ( granted >= requested_bytes )
+        return;
+    if ( option == SO_RCVBUF )
+        rocketnet_warn( "socket %s buffer granted %d of the %d bytes requested; raise %s", direction, granted, requested_bytes, rocketnet_platform_socket_buffer_limit_name() );
+    else
+        rocketnet_warn( "socket %s buffer granted %d of the %d bytes requested", direction, granted, requested_bytes );
+}
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -745,7 +798,10 @@ static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, i
 {
     int size = requested_bytes;
     if ( setsockopt( handle, SOL_SOCKET, option, (char*)( &size ), sizeof( int ) ) == 0 )
+    {
+        rocketnet_platform_log_socket_buffer_grant( handle, option, requested_bytes, direction );
         return true;
+    }
     while ( size > 1 )
     {
         size /= 2;
@@ -2699,6 +2755,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
+    rocketnet_platform_log_socket_buffer_grant( socket->handle, SO_RCVBUF, receive_buffer_size, "receive" );
 
     // Darwin chooses an ephemeral port for an IPv6 wildcard without checking
     // whether an IPv4 socket already owns that port. Both binds then coexist,
@@ -4631,6 +4688,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         rocketnet_platform_socket_destroy( s );
         return NULL;
     }
+    rocketnet_platform_log_socket_buffer_grant( s->handle, SO_RCVBUF, receive_buffer_size, "receive" );
 
     // bind to port
 

@@ -379,7 +379,7 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
 // requested and the grant reported, the first socket discovering an
 // ephemeral port the rest join, non-blocking, don't-fragment.
 
-static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port )
+static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port, int receive_buffer_size )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
@@ -421,7 +421,6 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     }
 
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    int receive_buffer_size = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
     {
@@ -1172,7 +1171,17 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     return rocketnet_server_uring_create_flags( context, bind_address, num_queues, 0 );
 }
 
+// The receive size is the caller's server sizing request; the driver computes
+// it from the configured population (rocketnet_server_receive_buffer_bytes).
+// The declared entry points keep the historical fixed request.
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags_receive( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int receive_buffer_size );
+
 struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+{
+    return rocketnet_server_uring_create_flags_receive( context, bind_address, num_queues, flags, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+}
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags_receive( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int receive_buffer_size )
 {
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
@@ -1227,7 +1236,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, &bound_port );
+        uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, &bound_port, receive_buffer_size );
         if ( uring->queues[i].fd < 0 )
         {
             rocketnet_server_uring_abort_create( uring );

@@ -861,3 +861,24 @@ sleeping and frees once complete; otherwise it logs and keeps the object. A stal
 worker keeps completion false, so its object and contexts must remain alive.
 Destroy is synchronous after completion; allocator hooks and thread-handle
 cleanup do not have a strict wall-time guarantee.
+
+## Server receive buffer sizing
+
+Every server transport sizes its UDP receive socket from the server config,
+not from a fixed figure. `rocketnet_server_receive_buffer_bytes( max_clients,
+update_hz )` is the one formula: `max_clients * 32,000 bytes/s` (256 kbps per
+client) divided by `update_hz`, plus a 25% margin, floored at 1,000,000 bytes,
+rounded up to a KiB and capped at `INT_MAX`. The server sizes for a 10 Hz
+update, the slowest interval it assumes; a faster update needs less. At 1,000
+clients and 10 Hz the request is 4,000,768 bytes.
+
+The kernel may grant less than the request. Linux reports `SO_RCVBUF` doubled
+and caps the effective buffer at `net.core.rmem_max` (the default is often
+212,992 bytes); macOS caps it at `kern.ipc.maxsockbuf`. When the granted buffer
+is below the request, the server logs one line naming the limit to raise. On
+Linux, keep `net.core.rmem_max` at least the requested value in
+`/proc/sys/net/core/rmem_max` (or `sysctl -w net.core.rmem_max=<bytes>`) for a
+1,000-client, 10 Hz server; otherwise the kernel can drop datagrams that the
+receive banks never see. `net.core.rmem_default` is not the limit for this
+request. The portable and msgx servers, the io_uring server and the Windows
+IOCP server all use the formula; the io_uring server also logs the send grant.

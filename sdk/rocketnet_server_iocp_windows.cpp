@@ -624,7 +624,16 @@ void rocketnet_server_iocp_test_force_flags( int flags )
     rocketnet_iocp_test_forced_flags.store( flags, std::memory_order_relaxed );
 }
 
+// The receive size is the driver's server sizing request; the declared entry
+// point keeps the historical fixed request for the tests and other callers.
+rocketnet_server_iocp_t * rocketnet_server_iocp_create_receive( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags, int receive_buffer_size );
+
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags )
+{
+    return rocketnet_server_iocp_create_receive( context, bind_address, num_workers, fail_stage, flags, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+}
+
+rocketnet_server_iocp_t * rocketnet_server_iocp_create_receive( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags, int receive_buffer_size )
 {
     flags |= rocketnet_iocp_test_forced_flags.load( std::memory_order_relaxed );
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
@@ -645,7 +654,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 
     sockaddr_storage address;
     int address_bytes = rocketnet_iocp_address_write( bind_address, iocp->ipv6, &address );
-    int buffer_bytes = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    int buffer_bytes = receive_buffer_size;
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
@@ -677,6 +686,13 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &enabled, sizeof(enabled) ) == SOCKET_ERROR ) goto failed;
     if ( iocp->ipv6 && setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &v6_only, sizeof(v6_only) ) == SOCKET_ERROR ) goto failed;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
+    {
+        int granted_bytes = 0;
+        int granted_length = (int) sizeof( granted_bytes );
+        if ( getsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (char*) &granted_bytes, &granted_length ) == 0 &&
+             granted_bytes < receive_buffer_size )
+            rocketnet_warn( "iocp transport: socket receive buffer granted %d of %d requested bytes", granted_bytes, receive_buffer_size );
+    }
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;

@@ -8,11 +8,18 @@
 
 // Adapters preserve the existing native backend entry points. New backends
 // can define their operations directly in their own implementation file.
-static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind )
+static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_size )
 {
     return rocketnet_platform_socket_create_with_pump( context, bind,
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
-        ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, name );
+        receive_buffer_size, name );
+}
+// The portable and msgx servers share one receive sizing decision: the
+// configured population at the slowest update interval the server sizes for.
+static int portable_server_receive_buffer_bytes( const rocketnet_server_transport_config_t * config )
+{
+    const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
+    return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_SERVER_RECEIVE_SIZING_HZ );
 }
 // The buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
@@ -386,7 +393,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
         portable_server_cleanup( server );
         return NULL;
     }
-    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, portable_server_receive_buffer_bytes( config->transport ) );
     if ( !server->socket )
     {
         portable_server_cleanup( server );
@@ -847,7 +854,7 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
     struct portable_io_client_t * client = (struct portable_io_client_t*) rocketnet_malloc( context, sizeof( *client ) );
     if ( !client )
         return NULL;
-    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     if ( !client->socket )
     {
         rocketnet_free( context, client );
@@ -922,7 +929,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
-{ return portable_socket_create( context, config->name, bind ); }
+{ return portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ); }
 static void portable_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 { rocketnet_platform_socket_send_packet( (rocketnet_platform_socket_t*) transport, to, data, bytes ); }
 static int portable_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
@@ -1010,6 +1017,9 @@ extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_oper
 
 #include "rocketnet_server_uring.h"
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // sdk/rocketnet_server_uring_linux.cpp:1223
+// Not in rocketnet_server_uring.h: the sizing is the driver's decision, and
+// this entry point keeps the header's declared creates unchanged.
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags_receive( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int receive_buffer_size );
 static void * io_uring_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
@@ -1018,7 +1028,9 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
             config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
         return NULL;
     }
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues );
+    const int max_clients = config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
+    return rocketnet_server_uring_create_flags_receive( context, bind, config->transport->num_xdp_queues, 0,
+        rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_SERVER_RECEIVE_SIZING_HZ ) );
 }
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t*) transport ); }
 static void io_uring_stop( void * transport ) { rocketnet_server_uring_stop( (rocketnet_server_uring_t*) transport ); }
@@ -1127,10 +1139,15 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
-static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
+// Not in rocketnet_server_iocp.h: the sizing is the driver's decision, and
+// this entry point keeps the header's declared create unchanged.
+rocketnet_server_iocp_t * rocketnet_server_iocp_create_receive( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags, int receive_buffer_size );
+static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS );
+    const int max_clients = config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
+    return rocketnet_server_iocp_create_receive( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, 0, 0,
+        rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_SERVER_RECEIVE_SIZING_HZ ) );
 }
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t*) transport ); }
 static void iocp_stop( void * transport )

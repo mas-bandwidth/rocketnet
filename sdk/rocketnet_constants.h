@@ -249,6 +249,26 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_SOCKET_SEND_BUFFER_SIZE                              1000000
 #define ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE                           1000000
 
+// The server receive socket is sized from the population, not by the fixed
+// figure above: one update's inbound bytes at the slowest update interval the
+// server sizes for (10 Hz), at the 256-kbps per-client budget, plus a 25%
+// margin and never below ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE. Linux reports
+// SO_RCVBUF doubled and caps the grant at net.core.rmem_max; macOS caps it at
+// kern.ipc.maxsockbuf. rocketnet_server_receive_buffer_bytes in
+// rocketnet_platform.cpp is the one implementation of this formula.
+
+#define ROCKETNET_SERVER_RECEIVE_BYTES_PER_CLIENT_PER_SECOND           32000
+#define ROCKETNET_SERVER_RECEIVE_SIZING_HZ                                10
+#define ROCKETNET_SERVER_RECEIVE_MARGIN_PERCENT                          125
+
+// The one server receive-socket sizing request, in bytes: max_clients times
+// ROCKETNET_SERVER_RECEIVE_BYTES_PER_CLIENT_PER_SECOND divided by update_hz,
+// plus ROCKETNET_SERVER_RECEIVE_MARGIN_PERCENT, never below
+// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, rounded up to whole KiB and capped at
+// INT_MAX. A value below 1 for either argument reads as 1. Pure arithmetic:
+// no socket, clock, thread or allocation. Every server transport calls it.
+int rocketnet_server_receive_buffer_bytes( int max_clients, int update_hz );
+
 #define ROCKETNET_VALUE_TRACKER_HISTORY                                   1024
 
 #endif // #ifndef ROCKETNET_CONSTANTS_H
