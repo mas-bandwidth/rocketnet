@@ -39,7 +39,7 @@ naming `<struct>.<member>`.
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
-| | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction and public monotonic statistics |
+| | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction and public monotonic statistics; `time` and the caller's raw `raw_time` sample carry the clock across a connection so the next connection resumes from the clamped time (`tla/RNUpdateClock.tla`) |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
 | `rn_message_connection_t` / `rn_endpoint_t` | endpoint region; ordered/reliable queues; descriptors; receive ring; send store; packet, delivery, hold, receipt and resend rings | channel and allocator state | RESET | `rn_endpoint_reset` carves the region fresh |
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |

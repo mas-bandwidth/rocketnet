@@ -355,6 +355,21 @@ void rocketnet_default_free_function( void * context, void * p );
 /** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
+// Internal to the SDK. The three clock owners -- the client transport, the
+// server transport and the message object -- call this once per update, and
+// the client create calls it once with a zero last good time. It keeps the
+// caller's raw sample in *previous_raw beside the clamped time: a forward
+// sample before any backwards step returns the caller's own bits, a backwards
+// sample keeps the last good time and records the raw sample, every later
+// forward sample advances the clamped time by the raw step until the raw
+// sample reaches the clamped time (the offset returns to zero), and a non-finite
+// sample changes neither time. A rejected sample sets *clamped, counts one
+// misuse and fires rocketnet_assert, as the three-argument clamp does.
+// tla/RNUpdateClock.tla models it: actions Forward, Backward and NonFinite,
+// with Monotone and ResumesExactly.
+/** @brief Internal resuming monotonic-time guard used by every update path. @param last_good Previous accepted clamped time in seconds. @param previous_raw In/out slot for the caller's last raw sample in seconds. @param time Candidate raw time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time before any backwards step, otherwise last_good advanced by max(0, time - previous raw). */
+double rocketnet_clamp_update_time_resume( double last_good, double * previous_raw, double time, bool * clamped );
+
 #ifdef __cplusplus
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */

@@ -66,6 +66,50 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
     return time;
 }
 
+// The resuming form every clock owner calls. It keeps the caller's raw sample
+// beside the clamped time, so a backwards step costs zero elapsed time rather
+// than the length of the step. Before the first backwards step the clamped
+// time is the caller's own value, returned bit-identically; after it the
+// clamped time advances by each forward raw step, until a raw sample reaches
+// the clamped time and the offset returns to zero. tla/RNUpdateClock.tla models
+// the rule: Forward, Backward and NonFinite are its actions, Monotone says the
+// clamped time never decreases, and ResumesExactly says a later forward raw
+// step of d advances the clamped time by exactly d.
+
+double rocketnet_clamp_update_time_resume( double last_good, double * previous_raw, double time, bool * clamped )
+{
+    rocketnet_assert( previous_raw );
+
+    if ( clamped )
+        *clamped = false;
+
+    const double previous = *previous_raw;
+    const bool usable = isfinite( time ) && time >= previous;
+
+    if ( !usable )
+    {
+        if ( clamped )
+            *clamped = true;
+        rocketnet_api_misuse_record();
+        rocketnet_assert( usable );
+        if ( isfinite( time ) )
+            *previous_raw = time;                   // a backwards step records the new raw sample
+        return last_good;
+    }
+
+    *previous_raw = time;
+
+    // the offset is exactly 0.0 until the first backwards step, so the common
+    // path is the caller's own bits and never last_good + ( time - raw ). a
+    // raw sample that reaches the clamped time closes the step: the offset is
+    // zero again and the caller's own value is returned.
+
+    if ( last_good == previous || time >= last_good )
+        return time;
+
+    return last_good + ( time - previous );
+}
+
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
@@ -187,6 +231,7 @@ struct rocketnet_client_legacy_receive_state_t
     X( received_packets, rocketnet_client_received_packets_t received_packets )                                      \
     X( receive_buffer, rocketnet_client_receive_buffer_t receive_buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )           \
     X( time, double time ) /* the game's clock, last seen */                                                         \
+    X( raw_time, double raw_time ) /* the caller's raw clock sample beside time (tla/RNUpdateClock.tla) */             \
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
     X( config, struct rocketnet_client_transport_config_t config )                                                   \
@@ -1288,7 +1333,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // is clamped to the initial last good time before anything reads it.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( 0.0, time, &time_clamped );
+    time = rocketnet_clamp_update_time_resume( 0.0, &client_transport->raw_time, time, &time_clamped );
 
     client_transport->config = *config;
     client_transport->time = time;
@@ -2385,7 +2430,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     // loud in a debug build.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( client_transport->time, time, &time_clamped );
+    time = rocketnet_clamp_update_time_resume( client_transport->time, &client_transport->raw_time, time, &time_clamped );
 
     client_transport->packet_leases.reset();
 

@@ -3281,6 +3281,42 @@ static void test_update_time_first_update_not_finite_refused()
     rocketnet_assert_function( saved_assert );
 }
 
+// A backwards caller step costs zero elapsed time, not the length of the
+// step: the object keeps the raw sample beside the clamped time, so the next
+// forward sample resumes from the clamped time (tla/RNUpdateClock.tla
+// ResumesExactly). One step is one counted misuse, as before.
+static void test_message_object_clock_resumes_after_backwards_step()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );                       // objects seeded at MO_T0
+
+    const uint64_t base = rocketnet_api_misuse_count();
+    rocketnet_message_server_t * server = pair.server;
+
+    check( rocketnet_message_server_update( server, 1000.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_server_update( server, 1001.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base );
+    check( server->object.time == 1001.0 );
+
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
+
+    check( rocketnet_message_server_update( server, 990.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( server->object.time == 1001.0 );
+
+    rocketnet_assert_function( saved_assert );
+
+    check( rocketnet_message_server_update( server, 990.5 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( server->object.time == 1001.5 );
+
+    pair.time = 1001.5;
+    mo_pair_teardown( &pair );
+}
+
 // slots are keyed on the transport's connection id (P9a), and each batch entry
 // is admitted by the connection it was received for (P9b): tla/RNSlots.tla
 // NoCrossConnectionApply, NoOwnEntryDropped, ReusedSlotStartsClean, and the
@@ -3727,6 +3763,7 @@ REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts )
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 REGISTER_UNIT_TEST( test_update_time_first_update_not_finite_refused );
+REGISTER_UNIT_TEST( test_message_object_clock_resumes_after_backwards_step );
 REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );

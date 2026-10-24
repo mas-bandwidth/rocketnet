@@ -271,6 +271,7 @@ struct rocketnet_server_transport_t
     int send_capacity;
 
     double time;                                        // the game's clock, last seen
+    double raw_time;                                    // the caller's raw clock sample beside time (tla/RNUpdateClock.tla)
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
     uint64_t game_clock_epoch;                          // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
@@ -1403,6 +1404,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     server_transport->context = context;
     server_transport->time = time;
+    server_transport->raw_time = time;
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
@@ -2069,7 +2071,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // value-initialized transport carries.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( server_transport->time, time, &time_clamped );
+    time = rocketnet_clamp_update_time_resume( server_transport->time, &server_transport->raw_time, time, &time_clamped );
 
     server_transport->packet_leases.reset();
 
