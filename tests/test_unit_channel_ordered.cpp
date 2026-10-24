@@ -2098,6 +2098,78 @@ static void test_ordered_failed_resend_counted_once()
     node_free( a );
 }
 
+// One refused resend at t, then the original packet's late ack: the record is
+// acked, never written again, and the resend that never reached the wire is
+// not counted. Returns the time after the step.
+
+static double refused_resend_then_acked( node_t * a, double t )
+{
+    check( send_message( a, 0, 16 ) != 0 );
+
+    wire_packet_t first[4];
+    check( write_packets( a, t, first, 4 ) == 1 );
+    const double delay = rn_window_ack_class_delay( &a->ordered.ack, false );
+
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    pointers[0] = frames[0];
+    check( rn_ordered_write( &a->ordered, t + delay, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, t + delay );
+
+    std::vector<uint64_t> ids( 1, first[0].id );
+    feed_acks( a, ids, t + delay + 0.001 );
+
+    wire_packet_t out[4];
+    check( write_packets( a, t + delay + 1.0 / 60.0, out, 4 ) == 0 );
+    return t + delay + 2.0 / 60.0;
+}
+
+static void test_ordered_refused_resend_acked_before_retry_not_counted()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    refused_resend_then_acked( a, 1000.0 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+
+    node_free( a );
+}
+
+// Many refused resends acked before their retry leave nothing behind: a later
+// refused resend is still remembered, and counted once when its retry commits.
+
+static void test_ordered_acked_refused_resends_leave_no_entries()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    double t = 1000.0;
+    for ( int i = 0; i < 2 * ROCKETNET_PACKET_BUILDER_PENDING_RESENDS; i++ )
+        t = refused_resend_then_acked( a, t );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+    check( a->ordered.builder.pending_resend_count <= 1 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+    wire_packet_t first[4];
+    check( write_packets( a, t, first, 4 ) == 1 );
+    const double delay = rn_window_ack_class_delay( &a->ordered.ack, false );
+
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    pointers[0] = frames[0];
+    check( rn_ordered_write( &a->ordered, t + delay, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, t + delay );
+
+    wire_packet_t out[4];
+    check( write_packets( a, t + delay + 1.0 / 60.0, out, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+    check( a->ordered.builder.pending_resend_count == 0 );
+
+    node_free( a );
+}
+
 static void test_ordered_block_paced_past_the_timeout_completes()
 {
     // MESSAGES m9.3: a block whose chunks the send budget paces out over three
@@ -2176,6 +2248,8 @@ REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
 REGISTER_UNIT_TEST( test_ordered_failed_resend_counted_once );
+REGISTER_UNIT_TEST( test_ordered_refused_resend_acked_before_retry_not_counted );
+REGISTER_UNIT_TEST( test_ordered_acked_refused_resends_leave_no_entries );
 REGISTER_UNIT_TEST( test_ordered_chunk_timeout_runs_from_its_own_first_send );
 REGISTER_UNIT_TEST( test_ordered_block_paced_past_the_timeout_completes );
 REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );

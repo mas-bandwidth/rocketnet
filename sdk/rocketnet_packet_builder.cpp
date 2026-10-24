@@ -520,10 +520,30 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
         rn_builder_clear_pending_resend( builder, builder->packet[packet_index].numbers[n] );
 }
 
+// A number acked before its retry (the original's late ack) is never written
+// again, so no commit clears it: drop it here, and any number whose slot the
+// window has since reused, so the list never fills with dead entries.
+static void rn_builder_prune_pending_resends( struct rn_packet_builder_t * builder )
+{
+    const rn_region_t * region = builder->region;
+    const uint32_t W = region->window;
+    uint32_t kept = 0;
+    for ( uint32_t i = 0; i < builder->pending_resend_count; i++ )
+    {
+        const uint64_t number = builder->pending_resend[i];
+        const rn_send_number_t * slot = &region->send_numbers[(uint32_t) ( number & ( W - 1 ) )];
+        if ( slot->number != number || slot->acked )
+            continue;
+        builder->pending_resend[kept++] = number;
+    }
+    builder->pending_resend_count = kept;
+}
+
 static void rn_builder_note_refused_resend( struct rn_packet_builder_t * builder, uint64_t number )
 {
     if ( rn_packet_builder_resend_pending( builder, number ) )
         return;
+    rn_builder_prune_pending_resends( builder );
     if ( builder->pending_resend_count >= ROCKETNET_PACKET_BUILDER_PENDING_RESENDS )
         return;
     builder->pending_resend[builder->pending_resend_count++] = number;
