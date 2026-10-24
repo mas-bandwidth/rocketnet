@@ -7506,6 +7506,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_default_config_internal",
+    "rocketnet_client_light_config",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
     "rocketnet_client_connect",
@@ -7527,6 +7528,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
+    "rocketnet_server_light_config",
     "rocketnet_server_required_memory",
     "rocketnet_server_create",
     "rocketnet_server_start",
@@ -7563,6 +7565,7 @@ static const char * rocketnet_test_exports[] =
 static const char * rocketnet_test_public_null_case_exports[] =
 {
     "rocketnet_client_default_config_internal",
+    "rocketnet_client_light_config",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
@@ -7581,6 +7584,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
+    "rocketnet_server_light_config",
     "rocketnet_server_create",
     "rocketnet_server_start",
     "rocketnet_server_stop",
@@ -8008,6 +8012,7 @@ void rocketnet_test_public_api_null()
     // is one counted misuse either way
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 #if ROCKETNET_DEV
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, NULL, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, token, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8049,6 +8054,7 @@ void rocketnet_test_public_api_null()
 
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, NULL ) == NULL ) );
     RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -12709,7 +12715,7 @@ void rocketnet_test_public_config_resolve()
     client.state_change_callback = rocketnet_test_resolve_state_change;
     client.send_kbps = 1234;
     client.num_channels = 7; client.reliable_messages_in_flight = 128; client.receive_message_buffer_bytes = 8192; client.max_message_bytes = 4096;
-    client.send_message_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.packets_per_update = 2;
+    client.send_message_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 160; client.packets_per_update = 2;
     client.unreliable_messages_per_update = 17; client.sequenced_messages_held = 5; client.max_message_receipts = 32; client.message_resend_delay_initial_ms = 200;
     client.message_resend_delay_min_ms = 20; client.message_resend_delay_max_ms = 300; client.reliable_message_timeout_ms = 5000;
     rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
@@ -12719,7 +12725,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change );
     rocketnet_check( kbps == 1234 );
     rocketnet_check( message.num_channels == 7 && message.reliable_messages_in_flight == 128 && message.receive_message_buffer_bytes == 8192 && message.max_message_bytes == 4096 );
-    rocketnet_check( message.send_message_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.packets_per_update == 2 );
+    rocketnet_check( message.send_message_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 160 && message.packets_per_update == 2 );
     rocketnet_check( message.unreliable_messages_per_update == 17 && message.sequenced_messages_held == 5 && message.max_message_receipts == 32 && message.message_resend_delay_initial_ms == 200 );
     rocketnet_check( message.message_resend_delay_min_ms == 20 && message.message_resend_delay_max_ms == 300 && message.reliable_message_timeout_ms == 5000 );
 

@@ -464,6 +464,7 @@ static void rocketnet_ack_stats_sent_clear( struct rocketnet_ack_endpoint_t * en
 
 // moves the sent window from the current high-water mark to highest, before
 // the mark is raised and before the new record is written
+// tla/RNServerStats.tla Slide: moves the sent window to the new high-water mark, removing, crossing and entering records
 static void rocketnet_ack_stats_sent_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
 {
     const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
@@ -655,6 +656,7 @@ static void rocketnet_ack_stats_received_unlink( struct rocketnet_ack_endpoint_t
 // the received counterpart of rocketnet_ack_stats_sent_advance. the
 // received sequence is the remote end's choice: a jump past the window
 // empties it in O(1), and a step is bounded by half the received ring
+// tla/RNServerStats.tla Slide: moves the received window to the new high-water mark, unlinking and linking records
 static void rocketnet_ack_stats_received_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
 {
     const uint64_t ring = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
@@ -761,6 +763,8 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
 
 // tla/RNSentHistory.tla Send
 // tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
+// tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
+// tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
@@ -899,6 +903,8 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
     return id;
 }
 
+// tla/RNServerStats.tla Send: takes any received sequence the remote end chose
+// tla/RNServerStats.tla Write: unlinks the overwritten received record, writes the ring slot and links it
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time )
 {
@@ -1036,6 +1042,7 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 // (tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
 // AckedMeansSurfaced, BurnedNeverNamed)
 // tla/RNSentHistory.tla ReceiveAck
+// tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,
                                     uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
