@@ -395,6 +395,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
     struct rocketnet_server_protocol_t * protocol = &server->protocol;
     rocketnet_assert( client_index >= 0 && client_index < rocketnet_client_slots_max_clients( protocol->client_slots ) );
     const char * member = NULL;
+    const char * detail = "not reset when the connection ended";
     if ( rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
         member = "rocketnet_client_slots_t.connected";
     int iterator = -1;
@@ -405,12 +406,20 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         member = "rocketnet_server_protocol_t.connection_ids";
     if ( !member )
     {
-        struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) malloc( sizeof(struct rocketnet_ack_endpoint_t) );
-        rocketnet_assert( fresh );
-        rocketnet_ack_endpoint_reset( fresh );
-        if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
+        struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( server->context, sizeof(struct rocketnet_ack_endpoint_t) );
+        if ( !fresh )
+        {
+            // fail closed: the endpoint comparison could not run, so the slot is not called clean
             member = "rocketnet_server_acks_t.endpoints";
-        free( fresh );
+            detail = "check could not run (allocation failed)";
+        }
+        else
+        {
+            rocketnet_ack_endpoint_reset( fresh );
+            if ( !rocketnet_ack_endpoint_state_equal( fresh, &protocol->acks->endpoints[client_index] ) )
+                member = "rocketnet_server_acks_t.endpoints";
+            rocketnet_free( server->context, fresh );
+        }
     }
     if ( !member && protocol->reassembly->newest_completed[client_index] != 0 )
         member = "rocketnet_reassembly_set_t.newest_completed";
@@ -419,7 +428,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         if ( slice[i] != 0 )
             member = "rocketnet_reassembly_set_t.slots";
     if ( member )
-        snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
+        snprintf( failure, failure_bytes, "%s[%d]: %s", member, client_index, detail );
     return member == NULL;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
