@@ -507,10 +507,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     }
 
     // the last ring leaves while the transports keep updating; a deferred
-    // hand-off is retried every update (docs/CLIENT-IO.md Reuse only after sent).
-    // The wait is a completion bound, scaled only under emulation (tests/time_scale.h)
+    // hand-off is retried every update (docs/CLIENT-IO.md Reuse only after sent)
     start = rocketnet_platform_time();
-    while ( received < TOTAL && rocketnet_platform_time() - start < 5.0 * ROCKETNET_TEST_CASE_TIME_SCALE )
+    while ( received < TOTAL && rocketnet_platform_time() - start < 5.0 )
     {
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );

@@ -50,7 +50,7 @@ REPLAY_CASE:test_transport_control RUN:1 EXIT:0 SEC:12.3
 REPLAY_END:func_auto:test_transport_control RUN:1
 ```
 
-`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand. Two cases have shown emulation-under-load timing on a fleet bench whose CI runners were busy (host load near 40 on 16 cores): the platform-socket burst case (`test_posix_send_burst`, `functional/posix_socket_errors.cpp`), whose receiver-drain catch-up window between senders is `ROCKETNET_TEST_BURST_CATCHUP_SECONDS`, and the client I/O hand-off case (`test_client_io_linux_handoff_round_trip`), whose final drain wait is 5 seconds. Both pass alone three times of three on each rung in about 3 to 4 seconds. Both waits are completion bounds and are multiplied by `ROCKETNET_TEST_CASE_TIME_SCALE` from `tests/time_scale.h`, which is 1 in a native Release build and 5 under `ROCKETNET_TEST_EMULATED`.
+`EXIT` is the replay's exit status and `SEC` its wall time. A case that passes alone was timing under the other work on the host; a case that fails all three times alone is a defect, and it is fixed at its cause, not by a looser bound. When a failure carries no case name the job prints `REPLAY_NO_CASE_NAME:<suite>` and that case is replayed by hand. The guest kernel's socket buffer ceiling (`net.core.rmem_max`, `net.core.wmem_max`) is the stock 256 KiB, while the fleet hosts that run the native suite grant 4 MiB. With the stock ceiling the platform-socket burst case (`test_posix_send_burst`) loses a few datagrams to receive-queue overflow when the emulator stalls its drain thread while other cases run beside it, although it passes alone three times of three; so the guest script raises both ceilings to 4 MiB before the suites.
 
 By hand, the same three replays are:
 
@@ -67,6 +67,7 @@ The suite's exec cases are their own binaries under `bin/` and take no argument:
 On a Linux host with `qemu-system-s390x`, `cloud-localds`, and `qemu-img`, repeat the verification, the boot, and the in-guest build above. Then, in the guest, from the source tree:
 
 ```
+sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304
 uname -sn
 ./bin/test
 ./bin/functional

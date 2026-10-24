@@ -15,7 +15,6 @@
 */
 
 #include "../tests/native_shutdown.h"
-#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
@@ -1294,7 +1293,7 @@ void rocketnet_test_posix_send_burst()
         // loss the send path cannot see, and this case prices the send path
 
         const uint64_t expected = (uint64_t) ( sender_index + 1 ) * POSIX_BURST_PACKETS - drops;
-        const double catch_up = rocketnet_platform_time() + ROCKETNET_TEST_BURST_CATCHUP_SECONDS;
+        const double catch_up = rocketnet_platform_time() + 2.0;
         while ( drain.received < expected && rocketnet_platform_time() < catch_up )
             rocketnet_platform_sleep( 0.0005 );
     }

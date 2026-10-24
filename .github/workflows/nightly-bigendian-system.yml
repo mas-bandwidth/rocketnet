@@ -188,6 +188,12 @@ jobs:
           "${SSH[@]}" bash -s << 'GUEST'
           set +e
           cd ~/src
+          # The guest kernel's socket buffer ceiling is the stock 256 KiB, so
+          # the 8 MiB receive buffer the suite asks for is clamped and a
+          # receiver that the emulator stalls for a moment overflows. The
+          # fleet hosts that run the native suite grant 4 MiB; give the guest
+          # the same ceiling so it runs the suite on the same terms.
+          sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304
           uname -sn
           date -u
           rc=0
