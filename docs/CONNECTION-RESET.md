@@ -21,7 +21,7 @@ naming `<struct>.<member>`.
 |---|---|---|---|---|
 | `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
-| | `token`, `signed_fields`, `server_address` | parsed attempt and peer | RESET | belongs to one attempt |
+| | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
 | | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
@@ -35,7 +35,7 @@ naming `<struct>.<member>`.
 | | current record verdict and sequence | input record | RESET | no record is live after reset |
 | `rocketnet_reassembly_set_t` | `slots[0]`, `newest_completed[0]` | fragment slots and stale watermark | RESET | partial payloads never cross sessions |
 | | geometry, arenas and delivered capacity | fixed allocation | KEEP | client object storage |
-| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new peer starts with no packet history |
+| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
@@ -100,7 +100,7 @@ observes the transport connection-id change.
 The client and encryption mapping reset `accepted_session` independently of
 `replay_session`. ACK eligibility never survives connection reuse. The client
 keeps `defer_payload_acks`, because message-layer ACK admission is a transport
-binding policy, not state learned from the previous peer.
+binding policy, not state learned from the previous remote endpoint.
 
 ## Reset state without clearing bulk storage
 

@@ -894,7 +894,7 @@ BothFamiliesConnect ==
      /\ ConfiguredFamilies = {"ipv4", "ipv6"})
       => (\A c \in Clients : <>(cstate[c] = 4))
 
-\* neither peer is left waiting for a packet nobody will send again: a
+\* neither side is left waiting for a packet nobody will send again: a
 \* half-open mapping is established or dies, and an unacknowledged slot is
 \* acknowledged or released
 ServerNotStranded ==

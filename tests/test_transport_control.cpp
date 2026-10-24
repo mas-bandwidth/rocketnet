@@ -144,7 +144,7 @@ static void finish_packet(void * p, uint64_t, uint8_t * frame, int)
     record(f, &f->reserved_to, frame + ROCKETNET_FRAME_WIRE_OFFSET); ++f->used;
 }
 static void abort_packet(void * p, uint64_t, uint8_t *) { ++((control_fixture_t*)p)->aborts; }
-static void peer_accepted(void * p, int view_index)
+static void client_accepted(void * p, int view_index)
 {
     auto * f = (control_fixture_t*)p;
     CHECK(f->num_accepted < 4);
@@ -613,13 +613,13 @@ static void test_staged_link_address_hooks()
     // tells the transport about the accepted packet only. Then the transport
     // refuses every start for want of a link-layer destination: the
     // transport counts SEND_NO_LINK_ADDRESS, never SEND_RING_FULL, and sends
-    // nothing. Mutation that must bite: drop the peer_accepted call, or the
+    // nothing. Mutation that must bite: drop the client_accepted call, or the
     // unreachable test in the start wrapper; a check below goes red. Time
     // is an argument; the clock starts at 1000.0.
     auto * f = new control_fixture_t(); f->capacity = 16;
     rocketnet_server_transport_io_operations_t operations;
     auto * server = make_server(f, &operations, 1, true);
-    operations.peer_accepted = peer_accepted;
+    operations.client_accepted = client_accepted;
     auto * protocol = &server->protocol;
     const double time = 1000.0;
     protocol->connection_ids[0] = ++protocol->next_connection_id;

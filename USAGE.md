@@ -394,7 +394,7 @@ times without sleeping. Once complete it joins any remaining thread handle and
 wipes/frees resources synchronously; if the worker has not exited it logs a
 second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy
-returns. A completion query does not free the object or promise peer receipt.
+returns. A completion query does not free the object or promise receipt by the other side of the connection.
 
 ## Frame loop
 
@@ -525,7 +525,7 @@ memory is full, or the start would be dropped or refused (not CONNECTED, a
 message already open, a bad argument). The query does not soften the rule
 above: a start after a `false` still ends the connection with
 `MESSAGE_MEMORY_EXHAUSTED`. Ask, and hold the message back until room returns
-as the peer acknowledges messages.
+as the remote endpoint acknowledges messages.
 
 The query changes no state, counts nothing, allocates nothing and runs in
 constant time. Only start message and update take room, so a `true` answer

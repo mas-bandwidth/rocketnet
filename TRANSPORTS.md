@@ -229,7 +229,7 @@ completion, joins that one client thread, and releases backend-owned work.
 
 ## ICMP errors
 
-A UDP send to a peer that died hard comes back as ICMP port or host
+A UDP send to a remote endpoint that died hard comes back as ICMP port or host
 unreachable. A BSD stack reports such an error to the next receive or send on a
 connected socket as ECONNREFUSED, EHOSTUNREACH or ENETUNREACH. A client's
 portable or msgx socket is connected to its one server
@@ -245,8 +245,8 @@ pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
 receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
-contract: one peer's death never stalls or degrades another peer's traffic.
-The functional cases in functional/posix_hard_killed_peer.cpp hold this per
+contract: one client's death never stalls or degrades another client's traffic.
+The functional cases in functional/posix_hard_killed_client.cpp hold this per
 transport cell, and an injected-errno seam covers each receive arm. The macOS
 cells are the portable and msgx servers with the portable and msgx clients;
 the seam cases are macOS only. The Linux cells are the portable, gso and
@@ -338,7 +338,7 @@ three send phases and four receive banks are implemented in
 
 ## Windows connection reset
 
-When a UDP send reaches a port no socket holds, the peer's stack answers with
+When a UDP send reaches a port no socket holds, the remote host's stack answers with
 an ICMP port unreachable. Winsock, unlike other stacks, reports that answer to
 the sending socket's next receive as `WSAECONNRESET` (or `WSAENETRESET` for a
 network unreachable), and an overlapped or registered receive completes with
@@ -575,7 +575,7 @@ returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
 DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
 reads the stats map back after each frame. It needs root, or CAP_BPF and
 CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
-`xdp_on_link_reply_reaches_the_peer`, attaches the program to a veth pair and
+`xdp_on_link_reply_reaches_the_client`, attaches the program to a veth pair and
 runs the example server and client across it, so it skips outside a
 virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
@@ -591,7 +591,7 @@ vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irq
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
-that peer address that the transport accepted for a connection on this
+that client address that the transport accepted for a connection on this
 interface, and the gateway's MAC for an address with none learned. With no
 default route the server still starts, a direct response to an unlearned
 address goes to the source MAC of the frame it answers, and any other reply
@@ -693,7 +693,7 @@ client, with a minimum of 256 slots. A lower test capacity exercises contention.
 The message send pass starts after the last served connection and offers one
 frame per connection per round. Full capacity leaves queued reliable work due
 for the next update. In-place unreliable writes use only surplus capacity above
-a complete round of connected peers; otherwise they join the queue so application call order cannot
+a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path.
 

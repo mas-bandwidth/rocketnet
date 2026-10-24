@@ -437,7 +437,7 @@ class RenderTest( unittest.TestCase ):
                      "1000 clients over the LAN, every guarantee checked (soak matrix)", "Sanitizers per transport",
                      "Sanitizers (ASan, UBSan, TSan; MSVC ASan on Windows)", "Leaks (LSan, the leaks tool, App Verifier's leak layer)",
                      "libFuzzer (corpus replay and fuzz runs; clang-cl on Windows)", "Lifecycle stress (init/term, create/destroy, restart, destroy under traffic)",
-                     "Hard-killed peer never stalls receive", "Receipt loss reported after its own deadline",
+                     "Hard-killed client never stalls receive", "Receipt loss reported after its own deadline",
                      "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x",
                      "Source format in the netcode style (clang-format check)",
                      "TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models)",
@@ -471,7 +471,7 @@ class RenderTest( unittest.TestCase ):
                       "Sanitizers (ASan, UBSan, TSan; MSVC ASan", "Leaks (LSan, the leaks tool, App Verifier", "libFuzzer", "clang-cl",
                       "Toolchain matrix (MSVC, clang-cl", "Xcode universal", "gcc and clang", "Soak under impairment",
                       "Transport matrix, every cell fifty times", "1000 light clients (10 Hz, 1 packet per update)",
-                      "1000 clients over the LAN", "Hard-killed peer never stalls receive", "Lifecycle stress", "Socket error paths",
+                      "1000 clients over the LAN", "Hard-killed client never stalls receive", "Lifecycle stress", "Socket error paths",
                       "SIO_UDP_CONNRESET", "Nightlies", "Live XDP test", "Holistic review: six", "Frama-C",
                       "Main API calls under 0.1 ms each, Release, under load", "Security pass: per-client resource exhaustion",
                       "Send budget: packets_per_update 256 at 60 Hz, receive sized at least 2x" ):
