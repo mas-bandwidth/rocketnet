@@ -38,9 +38,6 @@
 #define ROCKETNET_RIO_SEND_FRAMES ( ROCKETNET_RIO_SEND_PHASES * ROCKETNET_RIO_SEND_QUEUE_SIZE )
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 
-// regions destroy could not drain and so leaked rather than freed
-static std::atomic<uint64_t> rocketnet_rio_leaked_regions{0};
-
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
 
@@ -532,11 +529,6 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     rocketnet_free( context, rio );
 }
 
-uint64_t rocketnet_server_rio_leaked_regions()
-{
-    return rocketnet_rio_leaked_regions.load( std::memory_order_relaxed );
-}
-
 uint64_t rocketnet_server_rio_allocation_bytes()
 {
     rocketnet_rio_layout_t layout;
@@ -592,8 +584,6 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_server_rio_t * rio = new (storage) rocketnet_server_rio_t();
     rio->context = context;
     rio->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
-    rio->next[0].store( 0, std::memory_order_relaxed );
-    rio->next[1].store( 0, std::memory_order_relaxed );
 
     SOCKADDR_INET address;
     int address_bytes = 0;
@@ -665,7 +655,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->receive_cq = rio->rio.RIOCreateCompletionQueue( ROCKETNET_RIO_RECEIVES, &notification );
     if ( rio->receive_cq == RIO_INVALID_CQ || fail_stage == 4 ) goto failed;
 
-    // the request queue holds every send of both phases plus every receive
+    // the request queue holds every send of every phase plus every receive
     rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, ROCKETNET_RIO_RECEIVES, 1, ROCKETNET_RIO_SEND_FRAMES, 1,
                                                          rio->receive_cq, rio->send_cq, NULL );
     if ( rio->request_queue == RIO_INVALID_RQ || fail_stage == 5 ) goto failed;
