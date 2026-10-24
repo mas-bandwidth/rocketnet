@@ -66,6 +66,13 @@ inline void rocketnet_packet_loss_tracker_packet_received( rocketnet_packet_loss
 
     sequence++;
 
+    // a sequence update has already judged is neither stamped nor counted: its
+    // slot may hold the received, not yet judged sequence HISTORY above it
+    if ( sequence <= tracker->last_packet_processed )
+    {
+        return;
+    }
+
     const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
 
     tracker->received_packets[index] = sequence;
