@@ -29,6 +29,57 @@
 #define ROCKETNET_IPV4_VERSION_IHL  0x45
 #define ROCKETNET_IPV6_VERSION       0x60
 
+// MAC PARSE: one strict link-layer address parse. Accepts exactly 17
+// characters after a single trailing newline is stripped: six hex pairs
+// separated by ':' or '.'. Returns false, leaving mac untouched, for
+// anything else.
+
+static inline int rocketnet_xdp_mac_hex_digit( char c )
+{
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
+    if ( c >= 'A' && c <= 'F' )
+        return c - 'A' + 10;
+    return -1;
+}
+
+static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t mac[6] )
+{
+    if ( !text || !mac )
+        return false;
+
+    size_t length = strlen( text );
+    if ( length > 0 && text[length - 1] == '\n' )
+        length--;
+    if ( length != 17 )
+        return false;
+
+    for ( size_t i = 0; i < length; ++i )
+    {
+        if ( ( i % 3 ) == 2 )
+        {
+            if ( text[i] != ':' && text[i] != '.' )
+                return false;
+        }
+        else if ( rocketnet_xdp_mac_hex_digit( text[i] ) < 0 )
+        {
+            return false;
+        }
+    }
+
+    uint8_t parsed[6];
+    for ( size_t i = 0; i < 6; ++i )
+    {
+        const int high = rocketnet_xdp_mac_hex_digit( text[3 * i] );
+        const int low = rocketnet_xdp_mac_hex_digit( text[3 * i + 1] );
+        parsed[i] = (uint8_t) ( ( high << 4 ) | low );
+    }
+    memcpy( mac, parsed, sizeof(parsed) );
+    return true;
+}
+
 // the frame header length per family: ethernet + (IPv4 or IPv6) + UDP.
 // the flush copies a payload to this offset before the build writes the
 // headers in front of it.
