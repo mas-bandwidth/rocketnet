@@ -3195,7 +3195,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     rocketnet_server_connection_reset( protocol, client_index );
 }
 
-// tla/ServerSession.tla DrainDisconnectBurst: at most max_seals waiting
+// tla/ServerSession.tla DrainDisconnectBurst, each seal one SealStep: at most max_seals waiting
 // disconnect packets are sealed into send frames, one per waiting burst per
 // pass in ring order, so a burst's packets leave at consecutive sequences as
 // the immediate burst's do. A burst whose last packet is sealed leaves the
