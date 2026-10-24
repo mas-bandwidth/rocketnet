@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - name: Model coverage rows are true
         shell: bash
-        run: python3 tools/check_tla_coverage.py --all
+        run: python3 tools/check_tla_coverage.py --all --actions
       - name: Coverage checker tests pass
         shell: bash
         run: python3 tools/test_check_tla_coverage.py
