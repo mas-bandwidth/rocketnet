@@ -2293,6 +2293,9 @@ void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_
          rocketnet_server_protocol_connection_id( server, client_index ) != connection_id )
         return;
     const int index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+    if ( index < 0 )
+        return;
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );
     if ( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) )
         return;

@@ -64,7 +64,7 @@ struct rn_channel_receive_t             // 24 bytes (7.1)
     uint32_t ordered_read;              // next ordering index to deliver
     uint32_t sequenced_watermark;       // lowest sequencing index still deliverable in this epoch
     uint32_t held_sequenced;            // descriptor of the newest held future sequenced message, or RN_DESCRIPTOR_NONE
-    uint32_t pad;                       // the first number of that hold when it is code 4
+    uint32_t held_sequenced_first;      // the first number of that hold when it is code 4
     uint32_t block_in_turn;             // the in-turn code-4 block still collecting fragments, or RN_DESCRIPTOR_NONE
     uint32_t block_in_turn_first;       // that block's first number
 };
