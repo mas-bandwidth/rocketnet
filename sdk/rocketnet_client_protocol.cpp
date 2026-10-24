@@ -183,7 +183,11 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     rocketnet_assert( connect_token );
     rocketnet_assert( client->counters );
 
-    // a connect always begins a fresh attempt from the start: fresh salt,
+    // tla/ClientConnection.tla AppConnect permits only disconnected or failure states.
+    if ( client->state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        return 0;
+
+    // an accepted connect begins a fresh attempt from the start: fresh salt,
     // fresh ephemeral, sequences at one. recovery is this same path.
 
     rocketnet_client_connection_reset( client );

@@ -346,17 +346,6 @@ int rocketnet_message_client_receive( struct rocketnet_message_client_t * client
     return rn_message_object_receive( &client->object, NULL, channel, data, bytes );
 }
 
-int rocketnet_message_client_receive_channel( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes )
-{
-    if ( !rocketnet_api_null_guard( client ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( data ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( bytes ) )
-        return 0;
-    return rn_message_object_receive_channel( &client->object, 0, channel, data, bytes );
-}
-
 int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client, struct rocketnet_message_batch_t * messages )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( messages ) )

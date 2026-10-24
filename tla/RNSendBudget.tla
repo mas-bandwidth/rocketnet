@@ -46,6 +46,15 @@
 (*                         load the refill is spent every update before a  *)
 (*                         reliable item larger than one tick's refill     *)
 (*                         fits.  Fails EveryReliableEventuallySent.       *)
+(*   RefundOnFail = FALSE  a packet the transport refuses at finish keeps  *)
+(*                         the charge it was admitted at.  Fails           *)
+(*                         FailedSendCostsNothing.                         *)
+(*                                                                         *)
+(* A failed send (SendFailed) is the transport refusing a packet the       *)
+(* writer charged: its finish returns no wire bytes.  The charge is        *)
+(* refunded whole (settle with actual 0), a reliable item is queued again  *)
+(* as a retransmit and an unreliable one is counted failed.  Failures are  *)
+(* bounded by MaxFail.                                                     *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -60,7 +69,9 @@ CONSTANTS
     MaxRel,         \* reliable items that ever arrive (finite arrivals)
     MaxLoss,        \* transport packet losses, at most
     CheckBudget,    \* TRUE: send only what fits (FALSE: BrokenOverspend)
-    ReliableFirst   \* TRUE: the class order (FALSE: BrokenUnreliableFirst)
+    ReliableFirst,  \* TRUE: the class order (FALSE: BrokenUnreliableFirst)
+    RefundOnFail,   \* TRUE: a failed send is refunded whole (FALSE: BrokenNoRefund)
+    MaxFail         \* sends the transport refuses at finish, at most
 
 ASSUME /\ W \in Nat \ {0, 1} /\ Rate \in Nat \ {0}
        /\ MaxPkt \in Nat \ {0}
@@ -71,6 +82,7 @@ ASSUME /\ W \in Nat \ {0, 1} /\ Rate \in Nat \ {0}
        /\ Depth \in Nat /\ Depth >= MaxPkt
        /\ UPerTick \in Nat /\ MaxRel \in Nat /\ MaxLoss \in Nat
        /\ CheckBudget \in BOOLEAN /\ ReliableFirst \in BOOLEAN
+       /\ RefundOnFail \in BOOLEAN /\ MaxFail \in Nat
 
 \* the largest capped rate SetKbps accepts. A definition, not a constant, so
 \* the existing witness configurations need no new line.
@@ -106,10 +118,13 @@ VARIABLES
     orderBad,   \* ghost: a send took a class while a higher class waited
     dropBad,    \* ghost: an unreliable drop happened although it fit
     uncapped,   \* TRUE: this connection's budget does not apply
-    uncapBad    \* ghost: an uncapped connection dropped or waited by the budget
+    uncapBad,   \* ghost: an uncapped connection dropped or waited by the budget
+    fails,      \* sends the transport refused at finish so far
+    failBad     \* ghost: a failed send left tokens or cur other than before it
 
 vars == << tokens, hist, cur, phase, rtx, rel, unrel, nextRel, inflight,
-           acked, losses, drops, orderBad, dropBad, uncapped, uncapBad >>
+           acked, losses, drops, orderBad, dropBad, uncapped, uncapBad,
+           fails, failBad >>
 
 Classes == << "rtx", "rel", "unrel" >>
 Order == IF ReliableFirst THEN << "rtx", "rel", "unrel" >>
@@ -152,6 +167,7 @@ TypeOK ==
     /\ losses \in 0..MaxLoss /\ drops \in 0..DropCap
     /\ orderBad \in BOOLEAN /\ dropBad \in BOOLEAN
     /\ uncapped \in BOOLEAN /\ uncapBad \in BOOLEAN
+    /\ fails \in 0..MaxFail /\ failBad \in BOOLEAN
 
 Init ==
     /\ tokens = Depth
@@ -164,6 +180,7 @@ Init ==
     /\ losses = 0 /\ drops = 0
     /\ orderBad = FALSE /\ dropBad = FALSE
     /\ uncapped = FALSE /\ uncapBad = FALSE
+    /\ fails = 0 /\ failBad = FALSE
 
 (***************************************************************************)
 (* Tick(run): one update.  refill(now): tokens += Rate, capped at Depth.   *)
@@ -185,7 +202,7 @@ Tick(run) ==
                  \/ UNCHANGED << rel, nextRel >>
          ELSE /\ UNCHANGED << phase, unrel, rel, nextRel >>
     /\ UNCHANGED << rtx, inflight, acked, losses, drops, orderBad, dropBad,
-                    uncapped, uncapBad >>
+                    uncapped, uncapBad, fails, failBad >>
 
 (***************************************************************************)
 (* Send: can_send(wire_bytes) then spend(wire_bytes) for the head of the   *)
@@ -212,7 +229,45 @@ Send ==
                     /\ unrel' = unrel - 1
                     /\ UNCHANGED << rtx, rel, inflight >>
     /\ UNCHANGED << hist, phase, nextRel, acked, losses, drops, dropBad,
-                    uncapped, uncapBad >>
+                    uncapped, uncapBad, fails, failBad >>
+
+(***************************************************************************)
+(* SendFailed: the head of the next class is admitted and charged as Send  *)
+(* charges it, then the transport refuses the packet at finish and nothing *)
+(* leaves.  With RefundOnFail the whole charge is settled back (settle     *)
+(* with actual 0), so tokens and cur are as they were.  A reliable item is *)
+(* queued again as a retransmit, first; an unreliable one is counted       *)
+(* failed and gone.  In the code: rn_endpoint_packet_failed,               *)
+(* rn_endpoint_in_place_failed and rn_message_flush_unreliable's failure   *)
+(* branch.                                                                 *)
+(***************************************************************************)
+SendFailed ==
+    /\ phase = "send"
+    /\ AnyQueued
+    /\ fails < MaxFail
+    /\ LET c == NextClass
+           s == SizeOf(c)
+           chargedTokens == IF Bypass THEN tokens ELSE Max(0, tokens - s)
+           chargedCur == IF Bypass THEN cur ELSE cur + s
+       IN /\ Fits(c)
+          /\ tokens' = IF RefundOnFail THEN chargedTokens + (tokens - chargedTokens)
+                                       ELSE chargedTokens
+          /\ cur' = IF RefundOnFail THEN chargedCur - (chargedCur - cur)
+                                    ELSE chargedCur
+          /\ failBad' = (failBad \/ tokens' # tokens \/ cur' # cur)
+          /\ orderBad' = (orderBad \/ HigherQueued(c))
+          /\ CASE c = "rtx" ->
+                    UNCHANGED << rtx, rel, unrel >>
+               [] c = "rel" ->
+                    /\ rtx' = << Head(rel) >> \o rtx
+                    /\ rel' = Tail(rel)
+                    /\ UNCHANGED unrel
+               [] c = "unrel" ->
+                    /\ unrel' = unrel - 1
+                    /\ UNCHANGED << rtx, rel >>
+    /\ fails' = fails + 1
+    /\ UNCHANGED << hist, phase, nextRel, inflight, acked, losses, drops,
+                    dropBad, uncapped, uncapBad >>
 
 (***************************************************************************)
 (* Drop: the next class is unreliable and its head does not fit: dropped   *)
@@ -229,7 +284,7 @@ Drop ==
     /\ dropBad' = (dropBad \/ UnrelSize <= AvailUnrel)
     /\ uncapBad' = (uncapBad \/ uncapped)
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, nextRel, inflight,
-                    acked, losses, orderBad, uncapped >>
+                    acked, losses, orderBad, uncapped, fails, failBad >>
 
 (***************************************************************************)
 (* EndUpdate: nothing more can be sent: every queue is empty, or the next  *)
@@ -246,7 +301,7 @@ EndUpdate ==
     /\ dropBad' = (dropBad \/ (unrel > 0 /\ UnrelSize <= AvailUnrel))
     /\ uncapBad' = (uncapBad \/ (uncapped /\ AnyQueued))
     /\ UNCHANGED << tokens, hist, cur, rtx, rel, nextRel, inflight, acked,
-                    losses, orderBad, uncapped >>
+                    losses, orderBad, uncapped, fails, failBad >>
 
 (***************************************************************************)
 (* Ack(r): the transport acks the packet that carried r (R1).              *)
@@ -257,7 +312,8 @@ Ack(r) ==
     /\ inflight' = inflight \ {r}
     /\ acked' = acked \cup {r}
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, unrel, nextRel,
-                    losses, drops, orderBad, dropBad, uncapped, uncapBad >>
+                    losses, drops, orderBad, dropBad, uncapped, uncapBad,
+                    fails, failBad >>
 
 Lose(r) ==
     /\ r \in inflight
@@ -266,7 +322,8 @@ Lose(r) ==
     /\ rtx' = Append(rtx, r)
     /\ losses' = losses + 1
     /\ UNCHANGED << tokens, hist, cur, phase, rel, unrel, nextRel, acked,
-                    drops, orderBad, dropBad, uncapped, uncapBad >>
+                    drops, orderBad, dropBad, uncapped, uncapBad, fails,
+                    failBad >>
 
 (* SetKbps(k): the runtime override. 0 or lower uncaps, a positive value up  *)
 (* to MaxKbps caps (a fresh bucket when it was uncapped), above the maximum  *)
@@ -286,12 +343,14 @@ SetKbps(k) ==
        \/ /\ k > MaxKbps
           /\ UNCHANGED << tokens, hist, cur, uncapped >>
     /\ UNCHANGED << phase, rtx, rel, unrel, nextRel, inflight, acked,
-                    losses, drops, orderBad, dropBad, uncapBad >>
+                    losses, drops, orderBad, dropBad, uncapBad, fails,
+                    failBad >>
 
 Next ==
     \/ \E run \in BOOLEAN : Tick(run)
     \/ \E k \in 0..(MaxKbps + 1) : SetKbps(k)
     \/ Send
+    \/ SendFailed
     \/ Drop
     \/ EndUpdate
     \/ \E r \in 1..MaxRel : Ack(r) \/ Lose(r)
@@ -332,6 +391,10 @@ UnreliableDroppedOnlyOverBudget == ~dropBad
 
 \* retransmits and ordered progress, then new reliable, then unreliable
 ClassOrder == ~orderBad
+
+\* a send the transport refused at finish costs the bucket nothing: tokens
+\* and the window's bytes are as they were before it
+FailedSendCostsNothing == ~failBad
 
 \* LIVE: with a positive budget and finite reliable arrivals, every reliable
 \* item that arrives is eventually sent and its carrying packet acked
