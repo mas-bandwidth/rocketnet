@@ -182,6 +182,81 @@ static void test_address_to_string_without_port_each_type()
 }
 
 // ---------------------------------------------------------------------------
+// rocketnet_address_to_string and rocketnet_address_to_string_without_port
+// render every address form exactly: IPv4 and IPv6 with and without a port,
+// the longest forms, an IPv4-mapped IPv6 address, and NONE (with and without
+// a port). These strings are pinned so that folding the two functions onto
+// one formatting helper changes no output.
+// ---------------------------------------------------------------------------
+
+struct address_to_string_case_t
+{
+    const char * input;             // parsed text, or NULL for a zeroed NONE address
+    uint16_t none_port;             // the port set on the NONE address
+    const char * with_port;         // expected rocketnet_address_to_string
+    const char * without_port;      // expected rocketnet_address_to_string_without_port
+};
+
+static const struct address_to_string_case_t k_address_to_string_cases[] =
+{
+    { "203.0.113.10:40000",                            0,     "203.0.113.10:40000",                              "203.0.113.10" },
+    { "203.0.113.10",                                  0,     "203.0.113.10",                                    "203.0.113.10" },
+    { "255.255.255.255:65535",                         0,     "255.255.255.255:65535",                           "255.255.255.255" },
+    { "0.0.0.0:1",                                     0,     "0.0.0.0:1",                                       "0.0.0.0" },
+    { "[2001:db8::1]:40000",                           0,     "[2001:db8::1]:40000",                             "2001:db8::1" },
+    { "2001:db8::1",                                   0,     "2001:db8::1",                                     "2001:db8::1" },
+    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0,   "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",       0,     "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",         "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "[::ffff:192.0.2.1]:40000",                      0,     "[::ffff:192.0.2.1]:40000",                        "::ffff:192.0.2.1" },
+    { "::ffff:192.0.2.1",                              0,     "::ffff:192.0.2.1",                                "::ffff:192.0.2.1" },
+    { "[::1]:1",                                       0,     "[::1]:1",                                         "::1" },
+    { NULL,                                            0,     "NONE",                                            "NONE" },
+    { NULL,                                            40000, "NONE",                                            "NONE" },
+};
+
+static void test_address_to_string_forms_pinned()
+{
+    const int count = (int) ( sizeof(k_address_to_string_cases) / sizeof(k_address_to_string_cases[0]) );
+    for ( int i = 0; i < count; ++i )
+    {
+        const struct address_to_string_case_t & c = k_address_to_string_cases[i];
+
+        struct rocketnet_address_t address;
+        memset( &address, 0, sizeof(address) );
+        if ( c.input )
+        {
+            rocketnet_unit_check( rocketnet_address_parse( &address, c.input ) );
+        }
+        else
+        {
+            address.port = c.none_port;
+        }
+
+        char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+
+        memset( buffer, 'x', sizeof(buffer) );
+        const char * with_port = rocketnet_address_to_string( &address, buffer );
+        if ( with_port != buffer || strcmp( with_port, c.with_port ) != 0 )
+        {
+            printf( "address case %d to_string was \"%s\", expected \"%s\"\n", i, with_port, c.with_port );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( with_port == buffer );
+        rocketnet_unit_check( strcmp( with_port, c.with_port ) == 0 );
+
+        memset( buffer, 'x', sizeof(buffer) );
+        const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
+        if ( without_port != buffer || strcmp( without_port, c.without_port ) != 0 )
+        {
+            printf( "address case %d to_string_without_port was \"%s\", expected \"%s\"\n", i, without_port, c.without_port );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( without_port == buffer );
+        rocketnet_unit_check( strcmp( without_port, c.without_port ) == 0 );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // the vendored Wycheproof files load and hold the counts, id range, result
 // set and tallies at the pin, and every hex field the sibling cards read
 // decodes.
@@ -297,5 +372,6 @@ REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
 REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
+REGISTER_UNIT_TEST( test_address_to_string_forms_pinned );
 REGISTER_UNIT_TEST( test_wycheproof_files_load_and_count );
 REGISTER_UNIT_TEST( test_wycheproof_reader_refuses_malformed_json );
