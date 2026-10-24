@@ -3256,6 +3256,10 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 // rocketnet_platform_socket_pump above reads the pause on its caller's
 // thread, so msgx_down_until is only loaded and stored atomically (relaxed:
 // it orders nothing else).
+//
+// tla/RNMsgxPause.tla ObserveExpired loads an expiry the clock has already
+// passed. Probe is this function finding 0, so the batch attempt is the
+// re-probe. ClearIfUnchanged is the compare-and-swap below.
 
 #if defined(ROCKETNET_MSGX_TEST_HOOKS)
 static thread_local void (*rocketnet_msgx_before_expiry_clear)( rocketnet_platform_socket_t * ) = NULL;
@@ -3275,6 +3279,8 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 #endif
         // TX and RX may re-probe concurrently. Clear only the expired value
         // observed here: a fresh pause published by the other worker wins.
+        // tla/RNMsgxPause.tla ClearIfUnchanged: store 0 only while the slot
+        // still holds the expiry this load observed.
         double cleared = 0.0;
         if ( __atomic_compare_exchange( &socket->msgx_down_until, &down_until, &cleared,
                                         false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
@@ -3303,6 +3309,7 @@ bool rocketnet_msgx_test_pause_expiry_race()
 }
 #endif
 
+// tla/RNMsgxPause.tla Pause: publish now plus the retry window.
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
     rocketnet_msgx_set_down_until( socket, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
@@ -3779,8 +3786,10 @@ void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * th
 
 void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * thread )
 {
-    // IMPORTANT: If you are developing for mac or ios you can adjust the affinity and priority for the server thread here.
-    // SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow sets it (flow_platform.cpp:1638-1644)
+    // No macOS server transport calls this. Only the gso, iocp and rio
+    // transports call rocketnet_platform_server_thread_priority, and none of
+    // those is a macOS server, so tuning affinity or priority here does not
+    // change a macOS server thread.
     rocketnet_platform_network_thread_priority( thread );
 }
 
