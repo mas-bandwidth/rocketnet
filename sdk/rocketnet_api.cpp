@@ -575,7 +575,7 @@ enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_c
     config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
     config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
     config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
     config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
@@ -1429,7 +1429,7 @@ enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_c
     config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
     config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
     config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; minimum is 16
+    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
     config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
     config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
     config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
