@@ -2136,20 +2136,20 @@ static void test_ordered_refused_resend_acked_before_retry_not_counted()
     node_free( a );
 }
 
-// Many refused resends acked before their retry leave nothing behind: a later
-// refused resend is still remembered, and counted once when its retry commits.
+// Many refused resends acked before their retry count nothing. A later resend
+// refused twice in a row stays a resend, and is counted once when the packet
+// that carries it is sent.
 
-static void test_ordered_acked_refused_resends_leave_no_entries()
+static void test_ordered_refused_resends_counted_only_when_sent()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
     node_t * a = node_new( &config, 4 );
 
     double t = 1000.0;
-    for ( int i = 0; i < 2 * ROCKETNET_PACKET_BUILDER_PENDING_RESENDS; i++ )
+    for ( int i = 0; i < 256; i++ )
         t = refused_resend_then_acked( a, t );
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
-    check( a->ordered.builder.pending_resend_count <= 1 );
 
     check( send_message( a, 0, 16 ) != 0 );
     wire_packet_t first[4];
@@ -2161,11 +2161,14 @@ static void test_ordered_acked_refused_resends_leave_no_entries()
     pointers[0] = frames[0];
     check( rn_ordered_write( &a->ordered, t + delay, pointers, 1 ) == 1 );
     rn_ordered_packet_failed( &a->ordered, 0, t + delay );
+    check( rn_ordered_write( &a->ordered, t + delay + 1.0 / 60.0, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, t + delay + 1.0 / 60.0 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
 
     wire_packet_t out[4];
-    check( write_packets( a, t + delay + 1.0 / 60.0, out, 4 ) == 1 );
+    check( write_packets( a, t + delay + 2.0 / 60.0, out, 4 ) == 1 );
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
-    check( a->ordered.builder.pending_resend_count == 0 );
+    check( write_packets( a, t + delay + 3.0 / 60.0, out, 4 ) == 0 );
 
     node_free( a );
 }
@@ -2249,7 +2252,7 @@ REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
 REGISTER_UNIT_TEST( test_ordered_failed_resend_counted_once );
 REGISTER_UNIT_TEST( test_ordered_refused_resend_acked_before_retry_not_counted );
-REGISTER_UNIT_TEST( test_ordered_acked_refused_resends_leave_no_entries );
+REGISTER_UNIT_TEST( test_ordered_refused_resends_counted_only_when_sent );
 REGISTER_UNIT_TEST( test_ordered_chunk_timeout_runs_from_its_own_first_send );
 REGISTER_UNIT_TEST( test_ordered_block_paced_past_the_timeout_completes );
 REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );

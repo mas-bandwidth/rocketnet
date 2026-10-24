@@ -1300,10 +1300,6 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
         {
             item->resend = unsent ? 0 : 1;
-            // a refused resend is due now (last_send < 0) and still a resend:
-            // the commit of the retry is the one send that reached the wire
-            if ( !item->resend && rn_packet_builder_resend_pending( &ordered->builder, slot->number ) )
-                item->resend = 1;
             plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
             plan->count++;
         }
@@ -1425,9 +1421,11 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         return 0;
 
     // 3. Packets (9.3), under the send budget (R6)
-    const int written = rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
-
-    return written;
+    // 4. A resend is counted when the packet carrying it is sent, at
+    // rn_packet_builder_commit, never here: a refused packet's resends are
+    // counted by the packet that carries them out. The delay never backs off
+    // (6.4, RNResendTiming).
+    return rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
 }
 
 void rn_ordered_commit( struct rn_ordered_t * ordered, int packet_index, uint64_t packet_id, double now )
