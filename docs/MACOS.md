@@ -397,6 +397,52 @@ libFuzzer"); `make` builds the four replay binaries:
 Each prints `replayed <n> inputs` and exits 0. Running libFuzzer on macOS:
 **pending.**
 
+## The functional suite: per-commit and nightly tiers, the memory bound
+
+`./bin/functional` (Release) is the per-commit gate on the macOS rows of
+`.github/workflows/ci.yml`. `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` adds
+the nightly tier, which `.github/workflows/nightly.yml` runs on the same
+darwin runner (job "macos / Release functional nightly tier"). The tier is
+chosen in `functional/main.cpp` (`rocketnet_functional_test_group`, the
+`SUITE_GROUP_NIGHTLY` flag of `tests/suite_runner.h`); no case checks less in
+either tier:
+
+- `test_posix_hard_killed_client_portable_*` (four cells): each waits out
+  the real 10 s token timeout. The four `msgx` server cells stay per commit.
+- `test_posix_connect_disconnect_1000_{portable_portable,portable_msgx,msgx_portable}`:
+  `msgx_msgx` stays per commit.
+- `test_posix_destroy_under_traffic_100` runs its `msgx`/`msgx` pair per
+  commit and all four pairs in the nightly tier.
+
+Two causes made the suite slow, and both are fixed rather than moved: the
+bundled sodium wiped memory with its volatile byte loop on Darwin until
+`CMakeLists.txt` defined `HAVE_MEMSET_S` (server create/destroy x1000 went
+from 73.7 s to 23.7 s), and the 8-slot server of
+`test_posix_connect_disconnect_1000` kept 64 used tokens, so every 64th
+connect waited about 4.5 s for one to expire; its server has 128 slots.
+
+Measured on mini-m5-1 (Apple M5 Pro, Darwin 27.2, Release, host load 3 to 7
+as found, the rocketnet-macos runner sharing the host), one run each:
+
+| run | main 830c5437 | this tree |
+|---|---|---|
+| `./bin/functional` | 202.7 s, 204 s | 49 s |
+| `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | (no tier) | 71 s |
+| `test_posix_connect_disconnect_1000_msgx_msgx` alone | 76.5 s, 15 connects of about 4.5 s | 5.6 s to 10.2 s, none over 1 s |
+| `test_posix_server_create_destroy_1000` | 73.7 s | 23.7 s |
+| `test_posix_destroy_under_traffic_100` | 35.7 s | 6.3 s (msgx/msgx), 24.7 s (nightly, four pairs) |
+
+Each case process is held to its own memory plan (`tests/plan_rss.h`): the
+functional worker gives `rocketnet_init` a counting allocator, and a case
+that passes with it still installed reports its plan's peak plus a 64 MiB
+slack, which the runner holds its peak resident set to. A case that installs
+its own allocator (the channel harness cases, `test_lifecycle_transport`)
+and the sibling executables keep the suite-wide 698 MiB bound or the bound
+they declare with `SUITE_CASE_RSS_BOUND`; `ROCKETNET_TEST_MAX_CASE_RSS_MB`
+still lifts every bound. `ROCKETNET_TEST_REPORT=1` prints each case's peak
+and bound. The largest peak over a plan's peak was 7 MiB on macOS and 5 MiB
+on Linux x86_64.
+
 ## Verify a Mac
 
 Run these in order from the checkout, one at a time; each exits 0. Builds and

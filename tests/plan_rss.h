@@ -54,9 +54,13 @@
 // the line a case process prints to report its bound, then the bound in MiB
 #define PLAN_RSS_LINE "plan_rss_bound_mb="
 
-// The slack: the largest peak resident set over the plan's peak, measured
-// over every case of ./bin/functional and its nightly tier, Release, on macOS
-// arm64 and Linux x86_64, with room over it (the measurement: docs/MACOS.md).
+// The slack, measured 2026-10-23 over every case that reported its plan,
+// Release: the largest peak resident set over the plan's peak was 7 MiB on
+// macOS arm64 (mini-m5-1, ./bin/functional and its nightly tier,
+// test_posix_send_burst) and 5 MiB on Linux x86_64 (amd-1, ./bin/functional,
+// test_gso_transport_server_probe). Most cases peak far under their plan,
+// whose pages are not all touched. 64 MiB leaves room for a Debug build's
+// larger image, which was not measured (docs/MACOS.md).
 #define PLAN_RSS_SLACK_MB 64
 
 // Blocks of at least this many bytes are mapped from the OS and unmapped at
