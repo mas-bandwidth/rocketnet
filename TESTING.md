@@ -58,8 +58,9 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | App Nap and timer coalescing keep client timing | macOS | ✅ |
 | MemorySanitizer (msan.yml) | Linux | ✅ |
 | Big-endian system build and suites | Linux | planned for the final deliverable |
+| io_uring functional cases bounded by RLIMIT_MEMLOCK: io_uring slots = floor(RLIMIT_MEMLOCK soft limit / per-case need), capped at the job count; per-case need 4096 KiB after kernel 6.8, 128 KiB on 6.8 and older; a limit under one case fails the suite naming the limit; tools/check_memlock.sh checks the runner limit (runners x per-case need) before the Linux functional suites | Linux | planned for the final deliverable |
 | Live XDP test (an XDP server, a client on every test machine) | Linux | planned for the final deliverable |
-| complete | 4 of 6 | 67% |
+| complete | 4 of 7 | 57% |
 
 ## Historical preview-1 baseline: tests per transport
 
