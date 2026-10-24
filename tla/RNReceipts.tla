@@ -22,8 +22,13 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Fragments have independent numbers but share their message's serial.
 \* Outcomes are ghost emission history; ring is the bounded application queue.
 \* Dropping its oldest event is counted and never permits a second emission.
-CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReliableTimeout,
-          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss
+\* RTO is the adaptive resend delay estimate; ReceiptDeadline is the fixed
+\* receipt deadline, the endpoint's maximum resend delay
+\* (message_resend_delay_max_ms), which the estimate never exceeds.
+CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptDeadline, ReliableTimeout,
+          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenEarlyLoss
+
+ASSUME RTO \in Nat /\ ReceiptDeadline \in Nat /\ RTO <= ReceiptDeadline
 
 Serials == 1..3
 ReceiptSerials == 2..3
@@ -162,11 +167,15 @@ EmitAck(s) ==
 
 \* Per-update deadline sweep, one eligible descriptor at a time. Its tombstone
 \* (outcomes) suppresses a late ACK even while the map's reliable references live.
+\* LOSS waits for the fixed ReceiptDeadline, never the moving RTO estimate. The
+\* one exception is sent-map eviction: an evicted entry can never be acknowledged,
+\* so it reports LOSS at once. BrokenEarlyLoss is the old rule, a sweep at RTO.
+LossDue(s) == IF BrokenEarlyLoss THEN age[<<s,0>>] >= RTO ELSE age[<<s,0>>] >= ReceiptDeadline
 SweepLoss(s) ==
  /\ live /\ s \in Issued /\ outcomes[s] = <<>> /\ ~Complete(s)
  /\ Parts(s) \cap sentNums # {}
  /\ (EffectiveKind(s) = 5 \/ BrokenReliableLoss)
- /\ (age[<<s,0>>] >= RTO \/ s \in evicted)
+ /\ (LossDue(s) \/ s \in evicted)
  /\ outcomes' = [outcomes EXCEPT ![s] = <<"LOSS">>]
  /\ ring' = AddRing(s,"LOSS")
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
@@ -232,6 +241,10 @@ BlockAckedOnlyWhenAllFragmentsAcked == \A s \in ReceiptSerials :
  Has(s,"ACKED") /\ EffectiveKind(s) \in {2,4,6,7} => Complete(s)
 ReceiptRingBounded == Len(ring) <= ReceiptCapacity
 UnreliableNeverResent == \A s \in ReceiptSerials : EffectiveKind(s)=5 => writes[s] <= 1
+\* A LOSS outcome means no acknowledgement arrived within the receipt deadline,
+\* except for an entry evicted from the sent map (the one named exception).
+LossOnlyAfterDeadline == \A s \in ReceiptSerials :
+    Has(s,"LOSS") => (age[<<s,0>>] >= ReceiptDeadline \/ s \in evicted)
 ReceiptProgress == \A s \in ReceiptSerials : (s \in Issued) ~> (outcomes[s] # <<>> \/ ~live)
 
 \* The transport eventually resolves each occupied slot by packet ACK or

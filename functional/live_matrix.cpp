@@ -945,13 +945,13 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                 {
                     rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_client_send_fits( m->client, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_client_send_fits( m->client, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 else
                 {
                     rn_message_server_send_fits( m->server, 0, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_server_send_fits( m->server, 0, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
                 const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
                 printf( "disconnect %s region: store_c0=%llu/%llu store_c1=%llu/%llu spans=%llu/%llu free_messages=%u "
@@ -1129,7 +1129,6 @@ void live_message_matrix_loopback()
 
     m->live.seed = 0x5EED0001u;
     m->live.max_message_bytes = (uint32_t) m->message_config.max_message_bytes;
-    m->live.max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );

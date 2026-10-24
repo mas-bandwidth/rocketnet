@@ -3115,9 +3115,17 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
    every block fragment is acknowledged.
 3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
-   when its carrying packet is acknowledged and LOSS when it is lost, refused
-   by the send budget, or expires without an acknowledgement. These outcomes
-   are API semantics and are not carried on the wire.
+   when its carrying packet is acknowledged. It reports LOSS when it is
+   refused by the send budget or by the transport, at once, since it was
+   never sent; and otherwise only when no acknowledgement arrived by its
+   receipt deadline. The receipt deadline is the packet's send time plus the
+   sender's maximum resend delay (`message_resend_delay_max_ms`), a fixed
+   bound that does not move with the adaptive resend delay. A sender MUST NOT
+   report LOSS for a sent type-5 message before its receipt deadline, with
+   one exception: when the sender's sent-packet map evicts the entry that
+   carries the message, the message can no longer be acknowledged and the
+   sender reports LOSS at the eviction. These outcomes are API semantics and
+   are not carried on the wire.
 
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)

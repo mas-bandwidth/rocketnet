@@ -452,7 +452,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
-// tla/RNReceipts.tla WritePacket
+// tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -553,6 +553,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // Processes one acked transport sequence `packet_id` at time `now`
 // (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
+// tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -677,14 +678,19 @@ void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
-    // RNReceipts SweepLoss: sent order makes the first unexpired entry the
-    // stopping point. Reliable references remain in the map for late ACKs.
+    // tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: a type-5 receipt is
+    // LOSS only once its packet's receipt deadline has passed. The deadline is
+    // the fixed maximum resend delay (message_resend_delay_max_ms), never the
+    // adaptive resend delay, so an ACK that arrives after the RTO estimate but
+    // inside the deadline still reports ACKED. Sent order and a fixed deadline
+    // make the first unexpired entry the stopping point. Reliable references
+    // remain in the map for late ACKs.
     if ( ack->receipt_sweep < ack->pkt_head )
         ack->receipt_sweep = ack->pkt_head;
     while ( ack->receipt_sweep < ack->pkt_tail )
     {
         rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
-        if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay )
+        if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay_max )
             break;
         if ( entry->packet_id != 0 )
             rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );
@@ -755,6 +761,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 }
 
 // Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
+// tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );

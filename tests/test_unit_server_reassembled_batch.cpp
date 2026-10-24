@@ -99,7 +99,7 @@ static bool srb_payload_matches( const uint8_t * data, int client, int k )
 static void test_server_reassembled_batch_holds_legitimate_load()
 {
     const int num_slots = ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int max_payload_bytes = ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
 
     // the server protocol at the default geometry, its reassembly sized
     // exactly as the server transport sizes it at create
@@ -339,7 +339,6 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
         rocketnet_server_transport_default_config( &config );
         config.max_clients = 1;
         config.max_fragmented_messages = 8;
-        config.max_payload_bytes = 70000;
         check( rocketnet_server_transport_required_memory( &config, "portable" ) != 0 );
 
         struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create_delivered( NULL, 1, 8, 70000, capacity, bytes );
