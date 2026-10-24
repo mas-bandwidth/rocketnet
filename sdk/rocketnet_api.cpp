@@ -717,6 +717,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
         if ( !base )
         {
+            rocketnet_error( "client create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;
@@ -1666,6 +1667,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         if ( !base )
         {
             sodium_memzero( &transport, sizeof( transport ) );
+            rocketnet_error( "server create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;

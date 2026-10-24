@@ -95,9 +95,6 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
-// Historical diagnostic retained for internal consumers. Pending shutdowns
-// now retain their caller-owned handle until completion rather than leaking.
-uint64_t rocketnet_server_rio_leaked_regions();
 
 #if defined(ROCKETNET_RIO_TESTS)
 // The fault seam, compiled only into the test executable. The next count

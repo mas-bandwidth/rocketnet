@@ -9,12 +9,15 @@
 (* per tick (Budget = 2 per window), a bucket of Depth = 2 (one maximum    *)
 (* packet), reliable items of 2 bytes (larger than one tick's refill),     *)
 (* unreliable items of 1 byte arriving up to 2 per update, 2 reliable      *)
-(* arrivals and 1 transport loss.  The two reversed witnesses:             *)
+(* arrivals, 1 transport loss and 1 refused finish (MaxFail, refunded      *)
+(* whole: RefundOnFail TRUE).  The reversed witnesses:                     *)
 (*   MCRNSendBudgetBrokenOverspend.cfg        CheckBudget   NeverOverspend *)
 (*   MCRNSendBudgetBrokenUnreliableFirst.cfg  ReliableFirst                *)
 (*                                     EveryReliableEventuallySent         *)
 (*   MCRNSendBudgetBrokenUncapped.cfg   UncapHonoured <- BrokenUncap       *)
 (*                                     UncappedNeverDropsOrWaits           *)
+(*   MCRNSendBudgetBrokenNoRefund.cfg   RefundOnFail                       *)
+(*                                     FailedSendCostsNothing              *)
 (***************************************************************************)
 EXTENDS RNSendBudget
 
@@ -25,6 +28,6 @@ BrokenUncap == FALSE
 SafetyInvariants ==
     /\ TypeOK /\ NeverOverspend /\ ReliableNeverDropped
     /\ UnreliableDroppedOnlyOverBudget /\ ClassOrder
-    /\ UncappedNeverDropsOrWaits
+    /\ UncappedNeverDropsOrWaits /\ FailedSendCostsNothing
 
 =============================================================================
