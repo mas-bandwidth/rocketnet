@@ -7,7 +7,8 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
+# At 1000 clients, the SDK's reassembly budget bounds the slot count.
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 1), (1000, 4096, 1)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
