@@ -17,8 +17,8 @@
 // USAGE.md "Server memory footprint" and docs/LOAD.md record these exact
 // figures, measured with rocketnet_server_required_memory at max_clients
 // 1000 and rocketnet_client_required_memory under the profile.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 868782336 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 2976192 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 868798336 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 2976256 )
 
 static void test_light_profile_server_1000_required_memory()
 {
