@@ -3310,8 +3310,8 @@ static void test_message_object_clock_resumes_after_backwards_step()
     rocketnet_assert_function( saved_assert );
 
     check( rocketnet_message_server_update( server, 990.5 ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_api_misuse_count() == base + 1 );
     check( server->object.time == 1001.5 );
+    check( rocketnet_api_misuse_count() == base + 1 );
 
     pair.time = 1001.5;
     mo_pair_teardown( &pair );
