@@ -62,6 +62,7 @@ MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRe
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimBeforeSignature.cfg	MCReceiveOrder.tla	invariant	ClaimOnlyAfterSignature	check	receiveorder	required	-
+MCReceiveOrderBrokenClaimOutlivesMapping.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
