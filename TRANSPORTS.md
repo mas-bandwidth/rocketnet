@@ -38,9 +38,7 @@ A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 always selects it, but `auto` never chooses it. The loopback transport is the
 one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
-and be pin-only on the other: the `gso` client is pin-only
-(`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
-server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
+and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
@@ -60,9 +58,26 @@ and `rocketnet_server_uring_leaked_transports` are internal transport helpers
 A client transport fills `rocketnet_client_transport_io_operations_t`
 (`sdk/rocketnet_driver.h`) and runs on the client I/O thread of
 [docs/CLIENT-IO.md](docs/CLIENT-IO.md): the I/O thread owns the socket, and the
-game thread hands it rings of sealed packets through the N-buffer handoff. The
-client ladder is `portable` on every platform and `msgx` on macOS, ahead of
-portable there. `msgx` and `portable` share one client table, and the pump is
+game thread hands it rings of sealed packets through the N-buffer handoff.
+
+The client's `auto` order ranks the native client first and `portable` last on
+every OS; `portable` is the fallback:
+
+| OS | client `auto` order (client rank) |
+|---|---|
+| Linux | `gso` (10), `portable` (30) |
+| macOS | `msgx` (10), `portable` (30) |
+| Windows | `portable` (30); `iocp` has no client operations yet (rn-client-iocp-windows), so its client rank is 0 |
+| other | `portable` (30) |
+
+`loopback` is pin-only on the client too. A native client whose create refuses
+is logged once (`client transport gso refused. trying the next candidate`) and
+the ladder falls to `portable`, logging the grant with the refusals it passed;
+a create that fails for want of memory ends the create instead. A pin is
+honoured exactly: a pinned client that refuses fails the create with
+`ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, never the next client in the
+order. `tests/test_unit_client_transport_ranking.cpp` pins the order, the
+fallback and the pins. `msgx` and `portable` share one client table, and the pump is
 the socket's, chosen at create from the transport name: `msgx` the Darwin
 `sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
 the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
