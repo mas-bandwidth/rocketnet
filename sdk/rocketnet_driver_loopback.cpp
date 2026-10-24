@@ -46,8 +46,19 @@ struct rocketnet_loopback_state_t
     rocketnet_platform_mutex_t mutex;
     rocketnet_loopback_endpoint_t endpoints[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
     std::atomic<uint64_t> send_failures[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
+    // the live endpoint bound on each (family, port), as its table index plus
+    // one: create refuses a second endpoint of a family on a port, so a
+    // datagram's destination is one lookup, not a walk of the table
+    uint16_t bound[2][65536];
     uint16_t next_port;
 };
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_MAX_ENDPOINTS < 65535, "an endpoint's table index plus one fits the bound table" );
+
+static uint16_t * loopback_bound_entry( rocketnet_loopback_state_t & state, int type, uint16_t port )
+{
+    return &state.bound[type == ROCKETNET_ADDRESS_IPV6 ? 1 : 0][port];
+}
 
 struct rocketnet_loopback_state_init_t
 {
@@ -137,24 +148,28 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
 
 // the endpoint a datagram reaches: one bound to this address, or to the
 // wildcard of this family, on this port. an IPv4 datagram also reaches a
-// dual-stack endpoint bound to the IPv6 wildcard on that port.
+// dual-stack endpoint bound to the IPv6 wildcard on that port. Create refuses
+// a second endpoint of one family on one port, so each is one lookup in
+// state.bound.
 
 static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loopback_state_t & state, const rocketnet_address_t & to )
 {
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+    if ( to.type != ROCKETNET_ADDRESS_IPV4 && to.type != ROCKETNET_ADDRESS_IPV6 )
+        return NULL;
+    const uint16_t same = *loopback_bound_entry( state, to.type, to.port );
+    if ( same )
     {
-        rocketnet_loopback_endpoint_t & e = state.endpoints[i];
-        if ( e.live && e.bind.port == to.port && e.bind.type == to.type &&
-             ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
+        rocketnet_loopback_endpoint_t & e = state.endpoints[same - 1];
+        if ( e.live && ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
             return &e;
     }
     if ( to.type == ROCKETNET_ADDRESS_IPV4 )
     {
-        for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+        const uint16_t dual = *loopback_bound_entry( state, ROCKETNET_ADDRESS_IPV6, to.port );
+        if ( dual )
         {
-            rocketnet_loopback_endpoint_t & e = state.endpoints[i];
-            if ( e.live && e.bind.port == to.port && e.bind.type == ROCKETNET_ADDRESS_IPV6 &&
-                 loopback_is_wildcard( e.bind ) )
+            rocketnet_loopback_endpoint_t & e = state.endpoints[dual - 1];
+            if ( e.live && loopback_is_wildcard( e.bind ) )
                 return &e;
         }
     }
@@ -265,6 +280,7 @@ static void * loopback_create( void * context, rocketnet_address_t * bind, int q
     ep->count = 0;
     ep->capacity = (uint32_t) queue_packets;
     ep->live = true;
+    *loopback_bound_entry( state, bind->type, bind->port ) = (uint16_t) ( slot + 1 );
     return ep;
 }
 
@@ -284,6 +300,9 @@ static void loopback_destroy( void * transport )
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
+    uint16_t * bound = loopback_bound_entry( state, ep->bind.type, ep->bind.port );
+    if ( *bound == (uint16_t) ( ep - state.endpoints + 1 ) )
+        *bound = 0;
     rocketnet_free( ep->context, ep->packets );
     memset( ep, 0, sizeof( *ep ) );
 }
