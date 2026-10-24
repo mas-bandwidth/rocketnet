@@ -148,9 +148,14 @@ the create log line names each feature as yes or no.
   probes `UDP_SEGMENT` at create as the server does; a refused probe is the
   plain tier, one datagram per message. A live `EINVAL`, `EIO` or `EOPNOTSUPP`
   on a segmented message moves the client to the plain tier for good and
-  resends from that message's first datagram, so no datagram is lost. The
-  client receives with `recvmmsg`; `UDP_GRO` on the client is
-  rn-client-gso-linux-b.
+  resends from that message's first datagram, so no datagram is lost. On
+  receive the client turns `UDP_GRO` on at create (a refused probe is the
+  plain tier, the platform's `recvmmsg`); each `recvmmsg` then takes one
+  message into a 64 KiB coalesce buffer allocated at create, and
+  `rocketnet_coalesce_split` cuts it at the `UDP_GRO` stride into the I/O
+  thread's receive slots, in arrival order. Segments past the receive
+  buffer's room are dropped and counted; a truncated control area or a
+  short `UDP_GRO` cmsg is one counted fault and the message one datagram.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
   `UDP_SEND_MSG_SIZE` socket option, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the

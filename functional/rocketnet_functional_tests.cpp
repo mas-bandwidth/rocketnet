@@ -5706,11 +5706,14 @@ void rocketnet_test_server_gso_wire_dual_stack()
 // payloads both ways so every client send batch is runs that leave as
 // UDP_SEGMENT messages (the segmented-message count proves the path ran), and
 // every payload byte-exact, none lost, none twice. segment false is the plain
-// tier: the probe is skipped and no message is segmented.
+// tier: both probes are skipped, no message is segmented and receive is the
+// platform's recvmmsg. server_transport "gso" sends UDP_SEGMENT runs, which
+// loopback delivers whole to the client's UDP_GRO socket, so the client's GRO
+// batch count proves the receive split ran.
 
 #include "rocketnet_client_gso.h"
 
-static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment )
+static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -5719,10 +5722,11 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    snprintf( server_config.transport, sizeof(server_config.transport), "portable" );
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", server_transport );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), server_transport ) == 0 );
 
     char server_address[64];
     snprintf( server_address, sizeof(server_address), "%s:%d", server_host, rocketnet_server_transport_port( server ) );
@@ -5735,7 +5739,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     snprintf( client_config.transport, sizeof(client_config.transport), "gso" );
 
     rocketnet_client_gso_test_disable_segment.store( !segment );
+    rocketnet_client_gso_test_disable_gro.store( !segment );
     const uint64_t segment_messages_before = rocketnet_client_gso_test_segment_messages_sent.load();
+    const uint64_t gro_batches_before = rocketnet_client_gso_test_gro_batches.load();
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -5853,7 +5859,14 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     else
         rocketnet_check( segment_messages == 0 );
 
+    const uint64_t gro_batches = rocketnet_client_gso_test_gro_batches.load() - gro_batches_before;
+    if ( strcmp( server_transport, "gso" ) == 0 && segment )
+        rocketnet_check( gro_batches > 0 );
+    if ( !segment )
+        rocketnet_check( gro_batches == 0 );
+
     rocketnet_client_gso_test_disable_segment.store( false );
+    rocketnet_client_gso_test_disable_gro.store( false );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
@@ -5877,6 +5890,13 @@ void rocketnet_test_gso_client_wire_plain()
     // the plain tier over the same wire: no UDP_SEGMENT, one datagram per
     // sendmmsg message. the fallback tier is never the untested tier.
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
+}
+
+void rocketnet_test_gso_client_wire_gro()
+{
+    // the gso server sends each frame's equal-sized packets to the one client
+    // as UDP_SEGMENT runs: the client receives them coalesced and splits them
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso" );
 }
 
 void rocketnet_test_server_gso_send_overflow()
@@ -9575,6 +9595,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_client_transport_wire_ipv4", rocketnet_test_gso_client_wire_ipv4, NULL },
     { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
+    { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
