@@ -86,6 +86,33 @@ static void test_base64_decode_data_never_returns_negative()
 }
 
 // ---------------------------------------------------------------------------
+// rocketnet_base64_encode_data refuses an encoded length over INT_MAX.
+//
+// The return is an int, so an encoded length above INT_MAX cannot be
+// returned whole. 3 * 2^29 input bytes encode to exactly 2^31 characters,
+// INT_MAX + 1. The test cannot allocate 2 GB, so it relies on the refusal
+// touching nothing: the input and output are 16 bytes each and output_size
+// claims SIZE_MAX, so a guard that reads or writes a byte walks off both
+// buffers. At head it returns -1 with the output untouched.
+// ---------------------------------------------------------------------------
+
+static void test_base64_encode_refuses_length_over_int_max()
+{
+    uint8_t input[16];
+    memset( input, 0x5A, sizeof(input) );
+    char output[16];
+    memset( output, 0x7E, sizeof(output) );
+
+    const size_t input_length = (size_t) 3 * ( (size_t) 1 << 29 );     // encodes to 2^31 characters
+
+    const int result = rocketnet_base64_encode_data( input, input_length, output, SIZE_MAX );
+
+    rocketnet_unit_check( result == -1 );
+    rocketnet_unit_check( output[0] == 0x7E );
+    rocketnet_unit_check( output[15] == 0x7E );
+}
+
+// ---------------------------------------------------------------------------
 // the longest bracketed IPv6 address with a port fits the buffer.
 // ---------------------------------------------------------------------------
 
@@ -179,6 +206,84 @@ static void test_address_to_string_without_port_each_type()
     const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
     rocketnet_unit_check( none_text == buffer );
     rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// rocketnet_address_anonymize touches only the data of the type it names: a
+// NONE address keeps every data byte and loses only its port, while IPv4,
+// mapped IPv6 and plain IPv6 are cut exactly as before.
+// ---------------------------------------------------------------------------
+
+static void test_address_anonymize_leaves_other_types_untouched()
+{
+    struct rocketnet_address_t none;
+    memset( &none, 0, sizeof(none) );
+    none.type = ROCKETNET_ADDRESS_NONE;
+    memset( &none.data, 0xA5, sizeof(none.data) );
+    none.port = 7;
+    rocketnet_address_anonymize( &none );
+    const uint8_t * none_bytes = (const uint8_t*) &none.data;
+    for ( size_t i = 0; i < sizeof(none.data); ++i )
+    {
+        if ( none_bytes[i] != 0xA5 )
+        {
+            printf( "anonymized NONE address data byte %d was 0x%02x, expected 0xa5\n", (int) i, none_bytes[i] );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( none_bytes[i] == 0xA5 );
+    }
+    rocketnet_unit_check( none.port == 0 );
+    rocketnet_unit_check( none.type == ROCKETNET_ADDRESS_NONE );
+
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+
+    struct rocketnet_address_t ipv4;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
+    rocketnet_address_anonymize( &ipv4 );
+    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv4, buffer ), "203.0.113.0" ) == 0 );
+
+    struct rocketnet_address_t mapped;
+    rocketnet_unit_check( rocketnet_address_parse( &mapped, "[::ffff:203.0.113.10]:40000" ) );
+    rocketnet_address_anonymize( &mapped );
+    rocketnet_unit_check( mapped.type == ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_unit_check( mapped.data.ipv6[5] == 0xFFFF );
+    rocketnet_unit_check( mapped.data.ipv6[6] == 0xCB00 );
+    rocketnet_unit_check( mapped.data.ipv6[7] == 0x7100 );
+    rocketnet_unit_check( mapped.port == 0 );
+
+    struct rocketnet_address_t ipv6;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8:1:2:3:4:5:6]:40000" ) );
+    rocketnet_address_anonymize( &ipv6 );
+    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv6, buffer ), "2001:db8:1:2::" ) == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// the widest IPv4 text, with and without its port, comes back whole from
+// rocketnet_address_to_string and rocketnet_address_to_string_without_port.
+// ---------------------------------------------------------------------------
+
+static void test_address_to_string_ipv4_widest_is_complete()
+{
+    struct rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "255.255.255.255:65535" ) );
+
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    const char * with_port = rocketnet_address_to_string( &address, buffer );
+    if ( strcmp( with_port, "255.255.255.255:65535" ) != 0 )
+    {
+        printf( "widest ipv4 rendering was \"%s\", expected \"255.255.255.255:65535\"\n", with_port );
+        fflush( stdout );
+    }
+    rocketnet_unit_check( with_port == buffer );
+    rocketnet_unit_check( strcmp( with_port, "255.255.255.255:65535" ) == 0 );
+
+    const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
+    rocketnet_unit_check( without_port == buffer );
+    rocketnet_unit_check( strcmp( without_port, "255.255.255.255" ) == 0 );
+
+    address.port = 0;
+    const char * zero_port = rocketnet_address_to_string( &address, buffer );
+    rocketnet_unit_check( strcmp( zero_port, "255.255.255.255" ) == 0 );
 }
 
 // ---------------------------------------------------------------------------
@@ -294,8 +399,11 @@ static void test_wycheproof_reader_refuses_malformed_json()
 }
 
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
+REGISTER_UNIT_TEST( test_base64_encode_refuses_length_over_int_max );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
 REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
+REGISTER_UNIT_TEST( test_address_anonymize_leaves_other_types_untouched );
+REGISTER_UNIT_TEST( test_address_to_string_ipv4_widest_is_complete );
 REGISTER_UNIT_TEST( test_wycheproof_files_load_and_count );
 REGISTER_UNIT_TEST( test_wycheproof_reader_refuses_malformed_json );
