@@ -4,7 +4,7 @@
 */
 
 // The gso transport's client side: sendmmsg with UDP_SEGMENT on send, recvmmsg
-// on receive. See sdk/rocketnet_client_gso.h for the shape, docs/CLIENT-IO.md
+// with UDP_GRO on receive. See sdk/rocketnet_client_gso.h for the shape, docs/CLIENT-IO.md
 // for the I/O thread it runs under (tla/RNClientIo.tla, tla/RNBufferHandoff.tla).
 
 #include "rocketnet_internal.h"
@@ -28,6 +28,10 @@
 #define UDP_SEGMENT 103
 #endif
 
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
 static int rocketnet_client_gso_kernel_sendmmsg( void *, int socket, struct mmsghdr * messages, unsigned int num_messages )
 {
     return sendmmsg( socket, messages, num_messages, 0 );
@@ -41,15 +45,37 @@ static int rocketnet_client_gso_kernel_segment_probe( void *, int socket )
     return setsockopt( socket, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) );
 }
 
+static int rocketnet_client_gso_kernel_recvmmsg( void *, int socket, struct mmsghdr * messages, unsigned int num_messages )
+{
+    return recvmmsg( socket, messages, num_messages, MSG_DONTWAIT, NULL );
+}
+
+static int rocketnet_client_gso_kernel_gro_enable( void *, int socket )
+{
+    int one = 1;
+    return setsockopt( socket, IPPROTO_UDP, UDP_GRO, &one, sizeof(one) );
+}
+
+// the context is the platform socket: its family decides the dual stack rule
+static bool rocketnet_client_gso_kernel_read_address( void * context, const struct sockaddr_storage * storage, rocketnet_address_t * from )
+{
+    return rocketnet_platform_mmsg_read_sockaddr( (rocketnet_platform_socket_t*) context, storage, from );
+}
+
 const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls =
 {
     rocketnet_client_gso_kernel_sendmmsg,
     rocketnet_client_gso_kernel_segment_probe,
+    rocketnet_client_gso_kernel_recvmmsg,
+    rocketnet_client_gso_kernel_gro_enable,
+    rocketnet_client_gso_kernel_read_address,
 };
 
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 std::atomic<bool> rocketnet_client_gso_test_disable_segment{false};
 std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent{0};
+std::atomic<bool> rocketnet_client_gso_test_disable_gro{false};
+std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches{0};
 #endif
 
 bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_client_gso_syscalls_t * syscalls, void * syscall_context, int socket, bool probe_segment )
@@ -66,7 +92,20 @@ bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_cl
     gso->segment_messages_sent = 0;
     gso->segment_refusals = 0;
     gso->packet_send_failures.store( 0, std::memory_order_relaxed );
+    gso->gro = false;
+    gso->receive_syscalls = 0;
+    gso->packets_received = 0;
+    gso->gro_batches = 0;
+    gso->gro_cmsg_faults = 0;
+    gso->gro_packets_dropped = 0;
     return gso->segment;
+}
+
+bool rocketnet_client_gso_init_receive( rocketnet_client_gso_t * gso, bool probe_gro )
+{
+    rocketnet_assert( gso );
+    gso->gro = probe_gro && gso->syscalls->gro_enable( gso->syscall_context, gso->socket ) == 0;
+    return gso->gro;
 }
 
 // Builds the messages for packets [first, num_packets) of the chunk: one
@@ -206,6 +245,142 @@ void rocketnet_client_gso_send_batch( rocketnet_client_gso_t * gso, const rocket
 }
 
 // ---------------------------------------------------------------------------
+// The receive path
+
+int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int message_bytes, uint64_t * faults )
+{
+    rocketnet_assert( header );
+    rocketnet_assert( faults );
+    if ( header->msg_flags & MSG_CTRUNC )
+    {
+        *faults += 1;
+        return message_bytes;
+    }
+    struct msghdr * walk = const_cast<struct msghdr*>( header ); // CMSG_NXTHDR only reads it
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( walk ); cmsg != NULL; cmsg = CMSG_NXTHDR( walk, cmsg ) )
+    {
+        if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
+        {
+            *faults += 1;
+            return message_bytes;
+        }
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
+            {
+                *faults += 1;
+                return message_bytes;
+            }
+            int segment_bytes;
+            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
+            return segment_bytes;
+        }
+    }
+    return message_bytes;
+}
+
+// the receive errors that are weather, as the platform's receive reads them:
+// skip and keep draining, a bounded number of times per call
+static bool rocketnet_client_gso_receive_weather( int error )
+{
+    return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+}
+
+#define ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES 8
+
+int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( from );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_stride > 0 );
+    rocketnet_assert( packet_bytes );
+    rocketnet_assert( max_packets > 0 );
+
+    int total = 0;
+    int weather = 0;
+    while ( total < max_packets )
+    {
+        // a message can hold up to the kernel's segment count: past the first,
+        // one is read only while all of it fits, and the rest wait in the
+        // socket for the next call
+        if ( total > 0 && max_packets - total < ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS )
+            break;
+
+        struct msghdr * header = &gso->receive_message.msg_hdr;
+        memset( &gso->receive_message, 0, sizeof(gso->receive_message) );
+        gso->receive_iovec.iov_base = gso->coalesce_buffer;
+        gso->receive_iovec.iov_len = sizeof(gso->coalesce_buffer);
+        header->msg_name = &gso->receive_name;
+        header->msg_namelen = sizeof(gso->receive_name);
+        header->msg_iov = &gso->receive_iovec;
+        header->msg_iovlen = 1;
+        header->msg_control = gso->receive_control.bytes;
+        header->msg_controllen = sizeof(gso->receive_control.bytes);
+
+        errno = 0;
+        const int result = gso->syscalls->recvmmsg( gso->syscall_context, gso->socket, &gso->receive_message, 1 );
+        gso->receive_syscalls++;
+        if ( result < 0 )
+        {
+            const int error = errno;
+            if ( rocketnet_client_gso_receive_weather( error ) && weather++ < ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES )
+                continue;
+            if ( error != EAGAIN && error != EWOULDBLOCK )
+                rocketnet_debug( "gso client recvmmsg failed with error %d", error );
+            return total;
+        }
+        if ( result == 0 )
+            return total;
+
+        // a zero-length datagram or a source the socket does not speak is
+        // not delivered, as the platform's batch receive has it
+        const int message_bytes = (int) gso->receive_message.msg_len;
+        if ( message_bytes <= 0 )
+            continue;
+        rocketnet_address_t source;
+        if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
+            continue;
+
+        int segment_bytes = rocketnet_client_gso_gro_segment_bytes( header, message_bytes, &gso->gro_cmsg_faults );
+        int num_segments = rocketnet_coalesce_split( message_bytes, segment_bytes, gso->segment_offsets, gso->segment_lengths,
+                                                     ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS );
+        if ( num_segments < 0 )
+        {
+            // a stride that cuts more segments than the kernel ever coalesces
+            // is a fault: the message is one datagram
+            gso->gro_cmsg_faults++;
+            num_segments = rocketnet_coalesce_split( message_bytes, 0, gso->segment_offsets, gso->segment_lengths, 1 );
+        }
+        if ( num_segments > 1 )
+        {
+            gso->gro_batches++;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+            rocketnet_client_gso_test_gro_batches.fetch_add( 1, std::memory_order_relaxed );
+#endif
+        }
+
+        for ( int s = 0; s < num_segments; s++ )
+        {
+            if ( total >= max_packets )
+            {
+                gso->gro_packets_dropped += (uint64_t) ( num_segments - s );
+                break;
+            }
+            const int bytes = gso->segment_lengths[s];
+            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
+            memcpy( packet_data + (size_t) total * (size_t) packet_stride, gso->coalesce_buffer + gso->segment_offsets[s], (size_t) copy_bytes );
+            from[total] = source;
+            packet_bytes[total] = bytes;
+            total++;
+            gso->packets_received++;
+        }
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------------------
 // The client transport operations: the socket and the wake are the
 // platform's, as the portable client has them; send_batch is the gso path.
 
@@ -253,8 +428,15 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     if ( rocketnet_client_gso_test_disable_segment.load( std::memory_order_relaxed ) )
         probe_segment = false;
 #endif
-    const bool segment = rocketnet_client_gso_init( &client->gso, &rocketnet_client_gso_kernel_syscalls, NULL, client->socket->handle, probe_segment );
-    rocketnet_info( "gso client: UDP_SEGMENT %s", segment ? "yes" : "no (plain sendmmsg)" );
+    const bool segment = rocketnet_client_gso_init( &client->gso, &rocketnet_client_gso_kernel_syscalls, client->socket, client->socket->handle, probe_segment );
+
+    bool probe_gro = true;
+#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+    if ( rocketnet_client_gso_test_disable_gro.load( std::memory_order_relaxed ) )
+        probe_gro = false;
+#endif
+    const bool gro = rocketnet_client_gso_init_receive( &client->gso, probe_gro );
+    rocketnet_info( "gso client: UDP_SEGMENT %s, UDP_GRO %s", segment ? "yes" : "no (plain sendmmsg)", gro ? "yes" : "no (plain recvmmsg)" );
     return client;
 }
 
@@ -299,10 +481,17 @@ static void rocketnet_client_gso_send_batch_operation( void * transport, const r
     rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
 }
 
-// RNClientIo IoReceive (docs/CLIENT-IO.md The I/O step): recvmmsg
-static int rocketnet_client_gso_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+// RNClientIo IoReceive (docs/CLIENT-IO.md The I/O step): recvmmsg through the
+// coalesce buffer, split at the GRO stride, when UDP_GRO is on (connected or
+// not: a GRO socket's message may be coalesced, which the platform's slot
+// sized batch would truncate); the platform's recvmmsg otherwise. Either way
+// one synchronous call that fills the slots it was given: no new state for
+// the I/O model.
+static int rocketnet_client_gso_receive_batch_operation( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    if ( client->gso.gro )
+        return rocketnet_client_gso_receive_batch( &client->gso, from, packet_data, packet_stride, packet_bytes, max_packets );
     return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
 }
 
@@ -338,7 +527,7 @@ static bool rocketnet_client_gso_connect( void * transport, const rocketnet_addr
 const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations =
 {
     rocketnet_client_gso_create, rocketnet_client_gso_destroy, rocketnet_client_gso_send, rocketnet_client_gso_receive,
-    rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
+    rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch_operation, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
     rocketnet_client_gso_send_failures, rocketnet_client_gso_connect
 };
 

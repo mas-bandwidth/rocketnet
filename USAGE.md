@@ -335,6 +335,26 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 It prints `1000 clients: 13417470272`, `1 client: 15525696`, `2 clients: 28941056`
 and `delta: 13415360` on this SDK revision.
 
+A light-client server uses `rocketnet_server_light_config`, which fills the
+defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
+client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
+per-client send budget is 256 kbps (256 / 120 = 2.13). A message holds one
+packet's payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes), and
+`max_fragmented_messages` is 1. Over the 10,000 ms reliable timeout left at
+its default, that rate is 100 messages; a 1,415-byte message can take two
+window numbers, so the reliable window is 256. The receive buffer is 142,400
+bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
+packets in flight are 256, each update may send 4 packets and 4 unreliable
+messages, 100 sequenced messages are held, 128 receipts are kept, and there
+are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
+reports 955,710,336 bytes (about 0.96 GB, 955,710 bytes per slot on average).
+The matching `rocketnet_client_light_config` makes
+`rocketnet_client_required_memory` report 3,063,168 bytes.
+
+Both figures are the SDK's create block only. They exclude the transport
+allocations made at connect and start, native resources, and process
+overhead. The default profile remains the stock acceptance.
+
 ```c
 #include "rocketnet.h"
 
