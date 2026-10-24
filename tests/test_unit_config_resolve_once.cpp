@@ -334,10 +334,22 @@ REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
 // ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more
 // auto-eligible transports than that must be refused loudly in a release
 // build, not written past candidates: the count is bounded by a real check,
-// not by an assert that NDEBUG removes.
+// not by an assert that NDEBUG removes. An assert-enabled build also fires
+// parse's num_available bound once per call; the hook counts it and returns,
+// so the real check below it is exercised in every build.
+static int ladder_candidates_asserts = 0;
+
+static void ladder_candidates_assert_hook( const char *, const char *, const char *, int )
+{
+    ladder_candidates_asserts++;
+}
+
 static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( ladder_candidates_assert_hook );
+    ladder_candidates_asserts = 0;
     const int num_available = ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1;
     int available[ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1];
     for ( int i = 0; i < num_available; i++ )
@@ -367,6 +379,12 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
                 check( guarded.canary[i] == 0xA5 );
         }
     }
+    rocketnet_assert_function( saved_assert );
+#if ROCKETNET_ASSERTS
+    check( ladder_candidates_asserts == 4 );
+#else
+    check( ladder_candidates_asserts == 0 );
+#endif
     rocketnet_quiet( 0 );
 }
 REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );
