@@ -873,6 +873,59 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
 
+// The slot check allocates its scratch ack endpoint through the library
+// allocator, so a failed allocation is the caller's hook returning NULL and the
+// check fails closed, naming the member it could not compare, instead of
+// writing through NULL in a Release build where rocketnet_assert is compiled out.
+static bool reset_allocation_fails;
+
+static void * reset_allocation_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( reset_allocation_fails )
+        return NULL;
+    return malloc( bytes );
+}
+
+static void reset_allocation_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, reset_allocation_malloc, reset_allocation_free ) == ROCKETNET_STATUS_OK );
+    reset_allocation_fails = false;
+
+    rocketnet_message_server_t * server = reset_loopback_server_create( 1000.0 );
+    check( server );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( server );
+    const int client_index = 0;
+    char failure[256];
+
+    check( rocketnet_server_transport_slot_clean_for_test( transport, client_index, failure, sizeof(failure) ) );
+    check( failure[0] == '\0' );
+
+    reset_allocation_fails = true;
+    const bool clean = rocketnet_server_transport_slot_clean_for_test( transport, client_index, failure, sizeof(failure) );
+    reset_allocation_fails = false;
+    if ( clean )
+    {
+        printf( "reset: slot check passed with its scratch allocation failing\n" );
+        fflush( stdout );
+    }
+    check( !clean );
+    check( strstr( failure, "rocketnet_server_acks_t.endpoints" ) != NULL );
+    check( strstr( failure, "(allocation failed)" ) != NULL );
+
+    rn_test_message_server_stop_and_destroy( server );
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_connection_reset_slot_clean_fails_closed_on_allocation_failure );
+
 
 // The client ends the connection itself, by its own timeout: the server goes
 // silent and only the client runs. The transport state a connection leaves
