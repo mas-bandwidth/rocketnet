@@ -8,7 +8,6 @@
 */
 
 #include "rocketnet_internal.h"
-#include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
 #include "../tests/plan_rss.h"
@@ -23,6 +22,10 @@ int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
 int rocketnet_functional_run_named( const char * name );
+
+// the allocator context rocketnet_init was given, NULL after rocketnet_term
+// (sdk/rocketnet.cpp; declared for Linux in rocketnet_platform.h)
+extern void * rocketnet_global_context;
 
 static int rocketnet_functional_worker( const char * name )
 {
