@@ -19,12 +19,12 @@
 // connect or start, stop or disconnect, again, destroy) for the largest
 // transport the default ladder can grant, so it differs by platform and by
 // ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
-// bound is the figure this test read at rn-no-alloc-after-create.w9 (merge of
-// f61bb5d9 and main c662672e, with the thread record change): rocketnet_server_required_memory at
-// max_clients 1000 and rocketnet_client_required_memory under the profile,
-// Release, on hetzner2 (Linux x86-64, io_uring and XDP built), mini-m5
-// (macOS arm64) and captain (Windows x64, MSVC). A host whose ladder grants
-// fewer transports reports less; the check is at most.
+// bound is the figure this test read, Release, for
+// rocketnet_server_required_memory at max_clients 1000 and
+// rocketnet_client_required_memory under the profile: on Linux x86-64 with
+// io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
+// host whose ladder grants fewer transports reports less; the check is at
+// most.
 #if defined(_WIN32)
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) WINDOWS_SERVER_DEV_ON )
