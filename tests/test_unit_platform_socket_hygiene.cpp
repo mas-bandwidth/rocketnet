@@ -15,6 +15,7 @@
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_platform.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -229,6 +230,65 @@ static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
 #endif
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
+
+// A weather errno that repeats (a lasting mbuf shortage keeps returning
+// ENOBUFS) must not spin a drain: each receive arm bounds its weather skips
+// per call and returns. The seam answers every receive with the errno; the
+// socket has no descriptor and nothing is opened.
+
+static int platform_socket_hygiene_weather_drain( bool msgx, int max_packets )
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof(socket) );
+    socket.handle = -1;
+    socket.msgx = msgx;
+
+    struct rocketnet_address_t from[128];
+    int packet_bytes[128];
+    static uint8_t packet_data[128 * 64];
+
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( ENOBUFS, 1000000 );
+    const int received = rocketnet_platform_socket_receive_packets( &socket, from, packet_data, 64, packet_bytes, max_packets );
+    rocketnet_unit_check( received == 0 );
+    const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
+    rocketnet_platform_inject_receive_errno_for_testing( 0 );
+    return remaining;
+}
+
+static void test_platform_receive_weather_drain_is_bounded()
+{
+    // the per-packet arm returns after a bounded number of weather skips
+    const int budgets[] = { 1, 8, 128 };
+    for ( int max_packets : budgets )
+        rocketnet_unit_check( platform_socket_hygiene_weather_drain( false, max_packets ) == 1000000 - max_packets );
+}
+
+static void test_platform_single_receive_weather_drain_is_bounded()
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof(socket) );
+    socket.handle = -1;
+    struct rocketnet_address_t from;
+    uint8_t packet_data[64];
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( ENOBUFS, 1000000 );
+    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof(packet_data) );
+    const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
+    rocketnet_platform_inject_receive_errno_for_testing( 0 );
+    rocketnet_unit_check( received == 0 );
+    rocketnet_unit_check( remaining == 1000000 - 64 );
+}
+
+static void test_platform_msgx_receive_weather_drain_is_bounded()
+{
+    // the msgx arm (msgx set, no pause) returns after at most max_packets skips
+    const int budgets[] = { 1, 8, 128 };
+    for ( int max_packets : budgets )
+        rocketnet_unit_check( platform_socket_hygiene_weather_drain( true, max_packets ) == 1000000 - max_packets );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
+
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_timeval );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_sleep_split );
@@ -236,3 +296,9 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_platform_receive_weather_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_msgx_receive_weather_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_single_receive_weather_drain_is_bounded );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
