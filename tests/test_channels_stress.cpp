@@ -73,7 +73,7 @@
 #define STRESS_MAX_MESSAGE_BYTES        ( STRESS_HEADER_BYTES + STRESS_MAX_PATTERN_BYTES )
 #define STRESS_FRAME_SECONDS            0.01
 #define STRESS_DRAIN_FRAMES             3000
-#define STRESS_RECEIPTS_PER_CALL        4096
+#define STRESS_RECEIPTS_PER_UPDATE      65536      // max_message_receipts
 
 // the link simulator on both ends: one-way latency, jitter (which reorders),
 // loss and duplication, from the transports' fixed simulator seeds
@@ -132,7 +132,7 @@ static void stress_message_config( int * num_channels, int * reliable_messages_i
     *packets_in_flight = 16384;
     *packets_per_update = 1024;
     *unreliable_messages_per_update = 65536;
-    *max_message_receipts = 65536;
+    *max_message_receipts = STRESS_RECEIPTS_PER_UPDATE;
 }
 
 static void stress_client_config( rocketnet_client_test_config_t * config, int channels, double (*clock)( void * ) )
@@ -263,7 +263,7 @@ struct stress_side_t
     int num_receipt_sends;
     int reliable_receipts_acked;
     int unreliable_receipts_resolved;
-    struct rocketnet_receipt_t * receipt_buffer;    // [STRESS_RECEIPTS_PER_CALL]
+    struct rocketnet_receipt_t * receipt_buffer;    // [STRESS_RECEIPTS_PER_UPDATE]
 };
 
 static void stress_side_create( stress_side_t * side, int which )
@@ -273,7 +273,7 @@ static void stress_side_create( stress_side_t * side, int which )
     side->received = (uint8_t *) calloc( (size_t) STRESS_MESSAGES_PER_SIDE, 1 );
     side->last_round = (int *) malloc( sizeof( int ) * (size_t) STRESS_NUM_CHANNELS );
     side->receipt_sends = (stress_receipt_send_t *) malloc( sizeof( stress_receipt_send_t ) * (size_t) STRESS_MESSAGES_PER_SIDE );
-    side->receipt_buffer = (struct rocketnet_receipt_t *) malloc( sizeof( struct rocketnet_receipt_t ) * STRESS_RECEIPTS_PER_CALL );
+    side->receipt_buffer = (struct rocketnet_receipt_t *) malloc( sizeof( struct rocketnet_receipt_t ) * STRESS_RECEIPTS_PER_UPDATE );
     check( side->received && side->last_round && side->receipt_sends && side->receipt_buffer );
     for ( int c = 0; c < STRESS_NUM_CHANNELS; c++ )
         side->last_round[c] = -1;
@@ -410,27 +410,19 @@ static void stress_world_frame( stress_world_t * world )
     for ( const struct rocketnet_message_batch_t * batch = rocketnet_client_receive_messages( world->client ); batch != NULL;
           batch = rocketnet_client_receive_messages( world->client ) )
         stress_side_receive_batch( &world->client_side, batch, false );
-    for ( ;; )
-    {
-        const int count = rocketnet_client_receipts( world->client, world->client_side.receipt_buffer, STRESS_RECEIPTS_PER_CALL );
-        check( count >= 0 );
-        if ( count == 0 )
-            break;
-        stress_side_receipts( &world->client_side, world->client_side.receipt_buffer, count );
-    }
+    // receipts stay until the next update and a read does not consume them:
+    // one read per update, into a buffer that holds the whole queue
+    const int client_receipts = rocketnet_client_receipts( world->client, world->client_side.receipt_buffer, STRESS_RECEIPTS_PER_UPDATE );
+    check( client_receipts >= 0 && client_receipts <= STRESS_RECEIPTS_PER_UPDATE );
+    stress_side_receipts( &world->client_side, world->client_side.receipt_buffer, client_receipts );
 
     rocketnet_server_update( world->server, world->time );
     for ( const struct rocketnet_message_batch_t * batch = rocketnet_server_receive_messages( world->server ); batch != NULL;
           batch = rocketnet_server_receive_messages( world->server ) )
         stress_side_receive_batch( &world->server_side, batch, true );
-    for ( ;; )
-    {
-        const int count = rocketnet_server_receipts( world->server, 0, world->server_side.receipt_buffer, STRESS_RECEIPTS_PER_CALL );
-        check( count >= 0 );
-        if ( count == 0 )
-            break;
-        stress_side_receipts( &world->server_side, world->server_side.receipt_buffer, count );
-    }
+    const int server_receipts = rocketnet_server_receipts( world->server, 0, world->server_side.receipt_buffer, STRESS_RECEIPTS_PER_UPDATE );
+    check( server_receipts >= 0 && server_receipts <= STRESS_RECEIPTS_PER_UPDATE );
+    stress_side_receipts( &world->server_side, world->server_side.receipt_buffer, server_receipts );
 }
 
 static void stress_world_send_packets( stress_world_t * world )
