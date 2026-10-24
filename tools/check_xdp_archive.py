@@ -81,9 +81,29 @@ def multiarch():
                           encoding="utf-8").stdout.strip()
 
 
-def embed(root, output, xxd, clang):
+# The default ROCKETNET_MAX_CLIENTS (sdk/rocketnet.h, CMakeLists.txt).
+DEFAULT_MAX_CLIENTS = 1000
+
+
+def build_max_clients(build):
+    """The ROCKETNET_MAX_CLIENTS a build tree embedded its object with: the
+    fourth line of generated/xdp-build-settings.txt (CMakeLists.txt), or the
+    default when there is no build tree."""
+    if build is None:
+        return DEFAULT_MAX_CLIENTS
+    settings = build / "generated/xdp-build-settings.txt"
+    if not settings.exists():
+        return DEFAULT_MAX_CLIENTS
+    lines = settings.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 4 or not lines[3].strip().isdigit():
+        raise RuntimeError(f"{settings} names no ROCKETNET_MAX_CLIENTS")
+    return int(lines[3].strip())
+
+
+def embed(root, output, xxd, clang, max_clients):
     subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
                     f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={multiarch()}",
+                    f"-DMAX_CLIENTS={max_clients}",
                     "-P", str(root / "cmake/EmbedXdp.cmake")],
                    check=True, encoding="utf-8", env=utf8_env())
     data = (output / "server_xdp.o").read_bytes()
@@ -133,6 +153,8 @@ def main():
         xxd, clang = shutil.which("xxd"), shutil.which("clang")
         if not xxd or not clang:
             raise SystemExit("xxd and clang with the BPF target are required for the object checks")
+        build = args.build or (work if (work / "generated/rocketnet_server_xdp.h").exists() else None)
+        max_clients = build_max_clients(build.resolve() if build is not None else None)
 
         objects = []
         for index, (mtime, umask) in enumerate([(1_000_000_000, 0o022), (1_700_000_000, 0o077)]):
@@ -144,7 +166,7 @@ def main():
                 time.sleep(1.1)
             previous_umask = os.umask(umask)
             try:
-                objects.append(embed(root, directory / f"generated {index}", xxd, clang))
+                objects.append(embed(root, directory / f"generated {index}", xxd, clang, max_clients))
             finally:
                 os.umask(previous_umask)
         if objects[0] != objects[1]:
@@ -160,7 +182,7 @@ def main():
         filter_source.write_text(filter_source.read_text(encoding="utf-8")
                                  + "\nchar rocketnet_xdp_stale_probe[] SEC(\".rodata\") = \"stale\";\n",
                                  encoding="utf-8")
-        stale = embed(changed, directory / "generated changed", xxd, clang)
+        stale = embed(changed, directory / "generated changed", xxd, clang, max_clients)
         probe = directory / "probe build"
         (probe / "generated").mkdir(parents=True)
         shutil.copyfile(directory / "generated changed/rocketnet_server_xdp.h", probe / "generated/rocketnet_server_xdp.h")
@@ -174,7 +196,6 @@ def main():
             raise RuntimeError("a changed source compiled to the same object")
         print("test_xdp_object_stale_is_red")
 
-        build = args.build or (work if (work / "generated/rocketnet_server_xdp.h").exists() else None)
         if build is not None:
             check_fresh(build.resolve(), objects[0])
             print(f"test_xdp_object_current ({build})")
