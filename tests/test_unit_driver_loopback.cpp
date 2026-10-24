@@ -1230,6 +1230,142 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     printf( "test_loopback_transport_server_batch_drops_packet_larger_than_stride\n" );
 }
 
+// A loopback queue that drains empty starts again at slot 0 (the dequeue of
+// tla/LoopbackQueue.tla, RestartAtEmpty), on the receive and the drop paths
+// of both endpoint kinds; a backlog that never empties keeps its order
+// across the wrap of the ring. No socket, no thread, no clock.
+
+static void loopback_queue_indices_check( void * instance, uint32_t head, uint32_t tail )
+{
+    uint32_t h = 0xFFFFFFFFu;
+    uint32_t t = 0xFFFFFFFFu;
+    rocketnet_loopback_test_queue_indices( instance, &h, &t );
+    rocketnet_unit_check( h == head );
+    rocketnet_unit_check( t == tail );
+}
+
+static void loopback_queue_message( uint8_t * data, uint32_t sequence )
+{
+    data[0] = (uint8_t) ( sequence & 0xFF );
+    data[1] = (uint8_t) ( ( sequence >> 8 ) & 0xFF );
+    data[2] = (uint8_t) ( ( sequence >> 16 ) & 0xFF );
+    data[3] = 0x5A;
+}
+
+static void test_loopback_queue_restarts_at_slot_zero_when_empty()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+    rocketnet_address_t server_address, client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+    rocketnet_address_t to_server = server_address;
+    set_ipv4_loopback( to_server );
+    rocketnet_address_t to_client = client_address;
+    set_ipv4_loopback( to_client );
+
+    rocketnet_address_t from;
+    uint8_t message[4];
+    uint8_t buffer[64];
+
+    // three datagrams to the client, received in order: the drained queue is back at slot 0
+    for ( uint32_t i = 0; i < 3; ++i )
+    {
+        loopback_queue_message( message, 100 + i );
+        rocketnet_platform_send_t packet = { &to_client, message, (int) sizeof( message ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    loopback_queue_indices_check( client.instance, 0, 3 );
+    for ( uint32_t i = 0; i < 3; ++i )
+    {
+        loopback_queue_message( message, 100 + i );
+        rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, (int) sizeof( buffer ) ) == (int) sizeof( message ) );
+        rocketnet_unit_check( memcmp( buffer, message, sizeof( message ) ) == 0 );
+    }
+    loopback_queue_indices_check( client.instance, 0, 0 );
+
+    // one more is written to slot 0 and received intact
+    loopback_queue_message( message, 200 );
+    {
+        rocketnet_platform_send_t packet = { &to_client, message, (int) sizeof( message ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    loopback_queue_indices_check( client.instance, 0, 1 );
+    memset( buffer, 0, sizeof( buffer ) );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, (int) sizeof( buffer ) ) == (int) sizeof( message ) );
+    rocketnet_unit_check( memcmp( buffer, message, sizeof( message ) ) == 0 );
+    loopback_queue_indices_check( client.instance, 0, 0 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, (int) sizeof( buffer ) ) == 0 );
+
+    // a datagram dropped as larger than the receive buffer also empties the queue to slot 0
+    {
+        loopback_queue_message( message, 300 );
+        rocketnet_platform_send_t packet = { &to_client, message, (int) sizeof( message ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, 2 ) == 0 );
+    loopback_queue_indices_check( client.instance, 0, 0 );
+
+    // a backlog of one or two that never empties keeps its order across the wrap
+    const uint32_t wrap_messages = (uint32_t) ROCKETNET_LOOPBACK_QUEUE_PACKETS + 37;
+    loopback_queue_message( message, 0 );
+    {
+        rocketnet_platform_send_t packet = { &to_client, message, (int) sizeof( message ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+    }
+    for ( uint32_t i = 1; i <= wrap_messages; ++i )
+    {
+        uint8_t next[4];
+        loopback_queue_message( next, i );
+        rocketnet_platform_send_t packet = { &to_client, next, (int) sizeof( next ) };
+        server.operations->send_batch( server.instance, &packet, 1 );
+        loopback_queue_message( message, i - 1 );
+        rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, (int) sizeof( buffer ) ) == (int) sizeof( message ) );
+        rocketnet_unit_check( memcmp( buffer, message, sizeof( message ) ) == 0 );
+    }
+    loopback_queue_indices_check( client.instance, wrap_messages, wrap_messages + 1 );
+    loopback_queue_message( message, wrap_messages );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buffer, (int) sizeof( buffer ) ) == (int) sizeof( message ) );
+    rocketnet_unit_check( memcmp( buffer, message, sizeof( message ) ) == 0 );
+    loopback_queue_indices_check( client.instance, 0, 0 );
+
+    // the server queue: a batch receive and a batch drop (larger than the stride) both restart it
+    for ( uint32_t i = 0; i < 2; ++i )
+    {
+        loopback_queue_message( message, 400 + i );
+        client.operations->send( client.instance, &to_server, message, (int) sizeof( message ) );
+    }
+    loopback_queue_indices_check( server.instance, 0, 2 );
+    rocketnet_address_t froms[2];
+    int bytes[2] = { 0, 0 };
+    uint8_t batch[2 * 8];
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, froms, batch, 8, bytes, 2 ) == 2 );
+    for ( uint32_t i = 0; i < 2; ++i )
+    {
+        loopback_queue_message( message, 400 + i );
+        rocketnet_unit_check( bytes[i] == (int) sizeof( message ) );
+        rocketnet_unit_check( memcmp( batch + i * 8, message, sizeof( message ) ) == 0 );
+    }
+    loopback_queue_indices_check( server.instance, 0, 0 );
+    loopback_queue_message( message, 500 );
+    client.operations->send( client.instance, &to_server, message, (int) sizeof( message ) );
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, froms, batch, 2, bytes, 2 ) == 0 );
+    loopback_queue_indices_check( server.instance, 0, 0 );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
+    printf( "test_loopback_queue_restarts_at_slot_zero_when_empty\n" );
+}
+
 // This fake starts with a known completed input queue. It tests the server's
 // bounded drain independently of any asynchronous client's send completion.
 struct server_queued_budget_t { int remaining; };
@@ -1291,5 +1427,6 @@ REGISTER_UNIT_TEST( test_server_connects_after_junk_from_many_sources );
 REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_staged_loop );
 REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_portable_loop );
 REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_than_stride );
+REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
 #include "test_unit_driver_results_checked.cpp"

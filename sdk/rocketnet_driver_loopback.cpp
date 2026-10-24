@@ -80,6 +80,14 @@ static rocketnet_loopback_state_t & loopback_state()
 #if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
 static bool loopback_test_send_contention = false;
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
+
+void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail )
+{
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) instance;
+    rocketnet_platform_mutex_guard( &loopback_state().mutex );
+    *head = ep->head;
+    *tail = ep->tail;
+}
 #endif
 
 static bool loopback_try_send_lock( rocketnet_loopback_state_t & state )
