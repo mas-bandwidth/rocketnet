@@ -255,13 +255,21 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         if: runner.os == 'macOS'
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
+            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             cmake --build build --target "fuzz_replay_${harness}" --parallel 2
           done
           ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
           ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
           ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
           ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+          ./bin/fuzz_replay_rocketnet_fuzz_token_private fuzz/corpus_token_private/*
+          ./bin/fuzz_replay_rocketnet_fuzz_round_trip fuzz/corpus_round_trip/*
+          ./bin/fuzz_replay_rocketnet_fuzz_config fuzz/corpus_config/*
+          ./bin/fuzz_replay_rocketnet_fuzz_server_transport fuzz/corpus_server_transport/*
+          ./bin/fuzz_replay_rocketnet_fuzz_client_transport fuzz/corpus_client_transport/*
+          ./bin/fuzz_replay_rocketnet_fuzz_session fuzz/corpus_session/*
 
       - name: Run unit tests
         if: contains(matrix.leg, 'b')
@@ -717,13 +725,21 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
+            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
           done
           ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
           ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_token_private.exe fuzz/corpus_token_private/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_round_trip.exe fuzz/corpus_round_trip/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_config.exe fuzz/corpus_config/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_server_transport.exe fuzz/corpus_server_transport/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_client_transport.exe fuzz/corpus_client_transport/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_session.exe fuzz/corpus_session/*
 
       # ---- leg (a): the suite as the runner executes it ----
 
@@ -1287,7 +1303,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # THE NDEBUG LEG: the same four fuzzers compiled with -DNDEBUG, so every
+  # THE NDEBUG LEG: every fuzzer under fuzz/ compiled with -DNDEBUG, so every
   # assertion in the harnesses is compiled out, and the corpora replayed. The
   # fuzz oracles deliberately do not rely on assert -- each fires its own
   # fprintf/abort helper (rocketnet_fuzz_require) -- so a bound that only
@@ -1295,7 +1311,7 @@ jobs:
   # it. This leg is what keeps those oracles NDEBUG-proof.
 
   fuzz-smoke-ndebug:
-    name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
+    name: fuzz smoke NDEBUG (every fuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 3
     steps:
@@ -1347,9 +1363,11 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet_dev --parallel
 
-      - name: Build the four fuzzers with NDEBUG
+      - name: Build every fuzzer with NDEBUG
         run: |
-          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message; do
+          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
+                   rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -1367,6 +1385,12 @@ jobs:
           ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
           ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
           ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
+          ./bin/rocketnet_fuzz_token_private_ndebug fuzz/corpus_token_private/*
+          ./bin/rocketnet_fuzz_round_trip_ndebug fuzz/corpus_round_trip/*
+          ./bin/rocketnet_fuzz_config_ndebug fuzz/corpus_config/*
+          ./bin/rocketnet_fuzz_server_transport_ndebug fuzz/corpus_server_transport/*
+          ./bin/rocketnet_fuzz_client_transport_ndebug fuzz/corpus_client_transport/*
+          ./bin/rocketnet_fuzz_session_ndebug fuzz/corpus_session/*
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the

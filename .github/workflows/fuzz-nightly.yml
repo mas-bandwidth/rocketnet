@@ -10,9 +10,16 @@
 # ONE INSTRUMENTED LIBRARY, MANY TARGETS: the sdk is built once with
 # fuzzer-no-link coverage plus asan+ubsan, and each target links the harness
 # against that archive -- one parallel build instead of recompiling the whole
-# sdk per target, exactly as ci.yml's fuzz-smoke does. The three targets are
-# the one-binary stateless parser sweep (the smoke's own binary, run long
-# here), the connect token ladder, and the stateful receive path.
+# sdk per target, exactly as ci.yml's fuzz-smoke does. The targets are every
+# harness under fuzz/ (fuzz/README.md's table): the one-binary stateless
+# parser sweep (the smoke's own binary, run long here), the message decoder,
+# the connect token ladder and its private layouts, the stateful receive
+# path, the wire round trip, the env config overlay, and the three pair
+# targets (server transport, client transport, scripted session).
+#
+# TIME BUDGET: each leg fuzzes max_total_time seconds (900 by default) after
+# a few minutes of build; timeout-minutes: 45 bounds a wedged leg. A manual
+# dispatch longer than about 35 minutes per target must raise it.
 
 name: Fuzz (nightly)
 
@@ -33,6 +40,7 @@ jobs:
   fuzz:
     name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -40,12 +48,20 @@ jobs:
         # each row is a harness source under fuzz/ and the seed-corpus and
         # persisted-corpus directories that feed it. the stateless sweep keeps
         # its historic name (rocketnet_fuzz) and its historic seed dir
-        # (fuzz/corpus); the two stateful targets carry their own.
+        # (fuzz/corpus); every other target carries its own. dict is the
+        # target's own dictionary under fuzz/dict/ where it has one, else the
+        # shared wire dictionary, as oss-fuzz/build.sh picks.
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message"}'
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
       group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -118,10 +134,10 @@ jobs:
           set -euo pipefail
           mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
           T="${{ github.event.inputs.max_total_time || '900' }}"
-          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with the wire dictionary"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
-            -dict=fuzz/rocketnet.dict \
+            -dict="${{ fromJSON(matrix.leg).dict }}" \
             -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
 
       # libFuzzer writes a reproducer to the working dir on a crash; keep it.
@@ -154,15 +170,22 @@ jobs:
   fuzz-macos:
     name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message"}'
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
       group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -243,10 +266,10 @@ jobs:
           set -euo pipefail
           mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
           T="${{ github.event.inputs.max_total_time || '900' }}"
-          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with the wire dictionary"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
-            -dict=fuzz/rocketnet.dict \
+            -dict="${{ fromJSON(matrix.leg).dict }}" \
             -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
