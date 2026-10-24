@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#include "../tests/plan_rss.h"
 #include "../tests/suite_runner.h"
 #include "../tests/portable_crt.h"
 
@@ -22,6 +23,10 @@ int rocketnet_functional_test_count();
 const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
 int rocketnet_functional_run_named( const char * name );
+
+// the allocator context rocketnet_init was given, NULL after rocketnet_term
+// (sdk/rocketnet.cpp; declared for Linux in rocketnet_platform.h)
+extern void * rocketnet_global_context;
 
 static int rocketnet_functional_worker( const char * name )
 {
@@ -47,7 +52,10 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    // the SDK's bytes are counted, so the process is held to its plan
+    // (tests/plan_rss.h): it reports that bound when the case passed with the
+    // counter still installed, and keeps the suite-wide bound otherwise
+    if ( rocketnet_init( NULL, plan_rss_malloc, plan_rss_free ) != ROCKETNET_STATUS_OK )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -55,6 +63,12 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
     const int result = rocketnet_functional_run_named( name );
+    // a case that ended the library or re-initialised it with a context of
+    // its own installed its own allocator, which may hold that context: it is
+    // not called. Otherwise one probe allocation names the installed allocator
+    if ( result == 0 && rocketnet_library_initialized() && rocketnet_global_context == NULL &&
+         plan_rss_installed( rocketnet_malloc, rocketnet_free ) )
+        plan_rss_report();
     rocketnet_term();
     fflush( stdout );
     return result;
@@ -66,6 +80,13 @@ int rocketnet_posix_hard_killed_client_test_group( const char * name );
 #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
 // Preserve suite ordering. All cases run serially, including sibling binaries.
+//
+// The nightly tier on macOS (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1):
+// the hard-killed client cells on the portable server, each of which waits
+// out the real 10 s token timeout, and the connect/disconnect x1000 pairs
+// other than msgx/msgx. The msgx cells of each stay on every commit, as does
+// the msgx/msgx pair of destroy-under-traffic, whose case runs the other three
+// pairs only in the nightly tier (functional/posix_lifecycle_stress.cpp).
 static int rocketnet_functional_test_group( const char * name )
 {
 #if defined(__APPLE__)
@@ -75,6 +96,14 @@ static int rocketnet_functional_test_group( const char * name )
     // flood and every assertion intact, but run it apart from those cases.
     if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
         return 3;
+    static const char * const nightly[] = {
+        "test_posix_hard_killed_client_portable_",
+        "test_posix_connect_disconnect_1000_portable_",
+        "test_posix_connect_disconnect_1000_msgx_portable",
+    };
+    for ( const char * prefix : nightly )
+        if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
+            return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
