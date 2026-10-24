@@ -132,7 +132,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 | `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
-| `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
+| `rnclientio` | 24 | Client I/O thread design: the full threaded instance split by obligation (one safety case and 13 liveness cases, each one property or one conjunct of one), the step-driven mode at one slot (invariants and liveness) and its nine invariants at the full instance, six invariant witnesses, one temporal witness and the step-mode witness |
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
 | `rnxdpreplay` | 4 | Kernel replay high-water map control and three invariant witnesses |
@@ -147,6 +147,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `splitstart` | 4 | The load_split start barrier (docs/LOAD_SPLIT.md): the one-deadline shard rule as control, and reversed witnesses for the per-phase rule it replaced and the deadline without the reliable timeout term (`ServerIsTheAuthority`) and for a completed start (`NotAllRunning`) |
 | `rnportablerx` | 6 | The portable/msgx server receive worker (README-RNPortableRx.md): controls at three and two banks (invariants and two liveness properties, no wait timeout) and four reversed witnesses: a full producer overwritten (`ExactDelivery`), a consumer returned before it is read (`ExactDelivery`), the stop wake before quit (`StopCompletes`) and no wake on a returned bank (`EveryDatagramDelivered`) |
 | `rnrioworker` | 8 | The RIO transport's I/O worker (README-RNRioWorker.md): a safety control for both directions, receive and send liveness controls, a two-bank backpressure control, and four reversed witnesses: a phase reopened before it is idle (`FillPhaseOwnedByMain`), an unbounded dequeue (`ExactDelivery`), exit before the drain (`FreedOnlyWhenDrained`) and no wake on a returned bank (`EveryDatagramConsumed`) |
+| `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
 
 The 50-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
