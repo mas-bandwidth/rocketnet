@@ -255,6 +255,9 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     int * response_bytes );
 
 // tla/ReceiveOrder.tla Next
+// tla/ReceiveOrder.tla RefuseStep: a rung the request fails returns its
+// refusal there, releasing a claim it wrote; AdvanceStep: a rung it passes
+// moves it to the next, the cheap rungs before the crypto ones.
 // tla/ServerConnection.tla ServerRecvRequest
 // tla/RNSecurityTables.tla Request
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
@@ -623,6 +626,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 }
 
 // tla/RNSecurityTables.tla Request
+// tla/ReceiveOrder.tla AcceptStep: past the last rung the request's address
+// gets its mapping (rocketnet_encryption_map_add).
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
                                                     const struct rocketnet_address_t * from,
                                                     const uint8_t * connection_salt,
@@ -999,7 +1004,11 @@ struct rocketnet_sealed_type_counters_t
 // opened (ROCKETNET_RECEIVE_CEILING bytes, the caller's): an accepted
 // payload is delivered where it opened, *out_payload pointing at its type
 // data inside opened, so its plaintext is written once.
-
+// tla/ServerConnection.tla ServerRecvSession: a sealed session packet opens
+// only under its mapping's keys and only for a mapping with a slot; a
+// keep-alive confirms the slot, a disconnect releases it with the mapping.
+// tla/RNSecurityTables.tla Disconnect: that release frees the client's slot
+// (rocketnet_server_connection_reset).
 static int rocketnet_server_process_sealed_packet( struct rocketnet_server_protocol_t * server,
                                                    const struct rocketnet_address_t * from,
                                                    int known_mapping_index,
@@ -2187,6 +2196,10 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 }
 
 // tla/ServerConnection.tla ServerAppDisconnect
+// tla/ServerConnection.tla ServerDiscCopy: each of the burst's
+// ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS copies is written here.
+// tla/RNSecurityTables.tla Disconnect: the slot is released with its mapping
+// (rocketnet_server_connection_reset).
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
                                          int client_index,
                                          uint8_t * out_packets,
