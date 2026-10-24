@@ -14,6 +14,7 @@
 
 #include "test_unit_registry.h"
 #include "fake_client_driver.h"
+#include "client_io_rig.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -46,9 +47,7 @@ struct client_io_decrypt_fixture_t
 {
     rocketnet_fake_client_transport_io_t fake;
     rocketnet_client_transport_io_t transport;
-    uint8_t ring[2][ROCKETNET_FRAME_STRIDE];
-    int counts[2];
-    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
+    rocketnet_client_io_rig_t * rig;
     client_io_decrypt_test_clock_t clock;
     rocketnet_client_io_t io;
     rocketnet_counters_t counters;
@@ -65,22 +64,9 @@ static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
     rocketnet_address_t bind = {};
     check( rocketnet_client_transport_io_open( &rocketnet_fake_client_operations_io, &f->fake, &config, &bind, &f->transport ) );
 
-    memset( f->ring, 0, sizeof( f->ring ) );
-    f->counts[0] = 0;
-    f->counts[1] = 0;
-    rocketnet_client_io_ring_view_t views[2];
-    for ( int i = 0; i < 2; i++ )
-    {
-        views[i].data = f->ring[i];
-        views[i].frame_stride = ROCKETNET_FRAME_STRIDE;
-        views[i].wire_offset = ROCKETNET_FRAME_WIRE_OFFSET;
-        views[i].wire_bytes = (const uint8_t *) &f->counts[i];
-        views[i].wire_bytes_stride = sizeof( int );
-    }
-    f->buffers[0] = new rocketnet_client_receive_buffer_t;
-    f->buffers[1] = new rocketnet_client_receive_buffer_t;
+    f->rig = rocketnet_client_io_rig_create();
     f->clock.now = 1000.0;
-    rocketnet_client_io_init( &f->io, &f->transport, &views[0], &views[1], f->buffers, client_io_decrypt_test_time, &f->clock );
+    rocketnet_client_io_rig_init( f->rig, &f->io, &f->transport, client_io_decrypt_test_time, &f->clock );
 
     memset( &f->counters, 0, sizeof( f->counters ) );
     rocketnet_client_protocol_init( &f->client, &f->counters );
@@ -100,8 +86,7 @@ static void client_io_decrypt_setup( client_io_decrypt_fixture_t * f )
 static void client_io_decrypt_teardown( client_io_decrypt_fixture_t * f )
 {
     rocketnet_client_transport_io_close( &f->transport );
-    delete f->buffers[0];
-    delete f->buffers[1];
+    rocketnet_client_io_rig_destroy( f->rig );
 }
 
 // update's PublishKeys at the challenge, from the protocol's own fields

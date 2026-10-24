@@ -25,9 +25,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// One endpoint's queue: the server-wide send staging, since the server's
+// endpoint receives from every client (2048 at 1000 clients).
 enum
 {
-    ROCKETNET_LOOPBACK_QUEUE_PACKETS = 2048
+    ROCKETNET_LOOPBACK_QUEUE_PACKETS = ROCKETNET_SERVER_SEND_STAGING_PACKETS
 };
 
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_LOOPBACK_QUEUE_PACKETS & ( ROCKETNET_LOOPBACK_QUEUE_PACKETS - 1 ) ) == 0,

@@ -61,6 +61,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
+// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
+// the reuseport hash spreads clients over the queues, and the most queues
+// stage two packets for every client (BUILDING.md, "Maximum clients")
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
+                         "the GSO queues together can stage two packets for every client" );
+
 // recvmmsg geometry: how many kernel messages one call drains, and how big
 // one message's buffer is. with GRO on, one message is a coalesced run of
 // same-flow segments up to the kernel's coalescing budget (~64KB), so the

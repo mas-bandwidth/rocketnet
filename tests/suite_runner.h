@@ -23,6 +23,7 @@
 
 #include "portable_crt.h"
 #include "time_scale.h"
+#include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -61,7 +62,19 @@ extern char **environ;
 // (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value.
+//
+// A build for more clients (-DROCKETNET_MAX_CLIENTS, BUILDING.md "Maximum
+// clients") carries larger per-server tables whatever the case's max_clients:
+// the receive arrays and payload batches hold 16 packets for every client
+// the build holds. There the bound is 1.5 times the largest case measured at
+// 10000 clients on a macOS Release build (811 MiB,
+// test_server_stats_worker_late_batch_keeps_modulo_fairness, 2026-10-23),
+// so 1217; a build for more than 10000 sets the environment variable.
+#if ROCKETNET_MAX_CLIENTS <= 1000
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+#else
+#define ROCKETNET_TEST_MAX_CASE_RSS_MB 1217
+#endif
 
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
