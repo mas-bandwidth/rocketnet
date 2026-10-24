@@ -106,7 +106,7 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           pending,  \* heads of sends submitted, CQE not reaped
           sending,  \* the main thread is inside send_packets
           bstate,   \* per ring buffer: Ring, Filled or Copied
-          bufdg,    \* per ring buffer: the datagrams last filled into it
+          bufdg,    \* per ring buffer: the datagrams filled into it not yet in a bank
           copied,   \* datagrams copied out into a bank
           fill,     \* the fill bank
           exposed,  \* the exposed bank the transport reads
@@ -286,7 +286,10 @@ Reap(c) ==
                       /\ UNCHANGED exposed
                  ELSE /\ exposed' = exposed \cup CopiedSegments(bufdg[c.x])
                       /\ UNCHANGED fill
-              /\ UNCHANGED <<bufdg, snap, gen, armed, nextdg>>
+              \* the copied segments leave the buffer: what remains is the
+              \* datagrams still to copy, none once every segment is in
+              /\ bufdg' = [bufdg EXCEPT ![c.x] = @ \ CopiedSegments(@)]
+              /\ UNCHANGED <<snap, gen, armed, nextdg>>
               /\ UNCHANGED SendVars
          [] c.k = "term" ->
               \* the multishot ended. while running, the CQE handler's one-shot
@@ -481,9 +484,11 @@ ExposedStable ==
     exposed = snap
 
 \* a buffer is back in the ring only after every datagram it carried is in
-\* a bank: with UDP_GRO, after the copy of its last segment
+\* a bank: with UDP_GRO, after the copy of its last segment.  bufdg holds
+\* only the datagrams still to copy, so a returned buffer holds none (and a
+\* returned buffer keeps no history, which keeps the state space small)
 BufferReturnedAfterCopy ==
-    \A b \in BufIds : bstate[b] = "Ring" => bufdg[b] \subseteq copied
+    \A b \in BufIds : bstate[b] = "Ring" => bufdg[b] = {}
 
 \* Freed only with no kernel owned slot, no filled buffer and an empty cq
 FreedOnlyWhenDrained ==

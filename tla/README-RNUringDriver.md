@@ -23,9 +23,11 @@ contents:
   `send_packets` or an earlier one, whose CQE has not been reaped yet.
   `sending` is true while the main thread is inside `send_packets`.
 - **Receive.** Each ring buffer is in one of three states: `Ring`, `Filled`
-  or `Copied`. `bufdg` is the set of datagrams last filled into each
-  buffer: one, or with `UDP_GRO` a coalesced run of up to `Segments` of
-  them in the one buffer and the one CQE.
+  or `Copied`. `bufdg` is the set of datagrams filled into each buffer
+  and not yet copied into a bank: one, or with `UDP_GRO` a coalesced run of
+  up to `Segments` of them in the one buffer and the one CQE; the reap
+  removes what it copies, so a returned buffer holds none and keeps no
+  history.
   `copied` is the set of datagrams copied out into a bank. The banks are
   `fill` and `exposed`, each a set of datagram ids. `snap` is the exposed
   bank as the last Swap left it, and `gen` is the exposed generation.
@@ -322,8 +324,9 @@ the reap of a coalesced buffer copies its first segment and marks the
 buffer copied. TLC printed the trace to `BufferReturnedAfterCopy`: Init;
 `Submit` (a send_packets call with nothing staged begins); `KernelFill(1)`
 with both datagrams, bufdg = <<1..2, {}>>; `Reap(RecvCqe(1))`, copied =
-{1}, buffer 1 `Copied`; `ReturnBuffer(1)`: buffer 1 is `Ring` with
-datagram 2 not in `copied`, and the invariant fails (exit 12).
+{1}, bufdg = <<{2}, {}>>, buffer 1 `Copied`; `ReturnBuffer(1)`: buffer 1
+is `Ring` still holding datagram 2, not yet in a bank, and the invariant
+fails (exit 12).
 
 By hand, against the code: rocketnet_server_uring_receive_cqe loops over
 every segment rocketnet_coalesce_split cut from the buffer, copying each
