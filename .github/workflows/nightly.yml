@@ -44,6 +44,10 @@
 #                           and the whole functional suite once per cell on
 #                           an AddressSanitizer build: the matrix runs each
 #                           cell once, and a one-in-fifty flake needs fifty.
+#
+#   macos / transport       every cell of ci.yml's macOS transport family
+#   cells x50               matrix fifty times in a row on the fleet's
+#                           Apple-silicon runner, for the same reason.
 
 name: nightly
 
@@ -216,6 +220,51 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: transport-cells-repeat-${{ matrix.ref }}
+          path: build/transport-cells-repeat
+          if-no-files-found: ignore
+
+  # THE MACOS TRANSPORT CELLS, FIFTY TIMES IN A ROW. The same script as the
+  # Linux job above, on the fleet's Apple-silicon runner (rocketnet-macos):
+  # it reads ci.yml's TRANSPORT_MATRIX_MACOS step (never a copy), so every
+  # macOS cell -- portable/portable, portable/msgx, msgx/portable, msgx/msgx
+  # and loopback/loopback -- runs each of its cases fifty times in a row,
+  # IPv4, IPv6 and an IPv4 client of a dual-stack server in each
+  # (test_loopback_transport_udp, test_loopback_transport_ipv6,
+  # test_transport_dual_stack_ipv4_client), with the matrix's pins and pass
+  # rule. One CELL line per case; a failure is reported with its first log,
+  # never retried. docs/runs/macos-transport-cells-50x.md records a run.
+
+  macos-transport-cells-repeat:
+    name: macos / transport cells x50
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-macos-transport-cells-repeat-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Build Release
+        run: make -j4
+
+      - name: Every macOS transport cell, fifty times in a row
+        timeout-minutes: 15
+        shell: bash
+        run: scripts/transport-cells-repeat --runs 50
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-transport-cells-repeat-${{ matrix.ref }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 

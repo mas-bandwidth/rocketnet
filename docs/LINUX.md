@@ -223,9 +223,14 @@ stay in the completion queue for a later call and are counted
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
-  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
-  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB;
-  on kernel 6.8 they create at 64 KiB. These are single-server measurements.
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 16 io_uring 0'`:
+  on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
+  (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
+  for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are
+  single-server measurements. The probe uses 4 clients because the ring and the
+  provided buffers are fixed per queue and do not grow with `max_clients`, and
+  the transport's operator memory budget (section 10) refuses a 1000-client
+  16-slot geometry before any ring is created (`tools/check_memlock.sh`).
   On kernel 7.0, io_uring charges locked pages across processes of the same
   user and checks that total against the creating process's limit
   ([kernel accounting](https://github.com/torvalds/linux/blob/v7.0/io_uring/rsrc.c#L36-L52)).
@@ -520,7 +525,51 @@ under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 `io_uring` needs some, kernel-dependent (section 5). An 8192 KiB limit covers
 the single-server measurements in section 10, but is not a concurrency budget.
 Check the running process's soft and hard limits in `/proc/<pid>/limits`, and
-budget for all io_uring servers running under that user. For systemd services,
+budget for all io_uring servers running under that user.
+
+**The functional suite and the CI runners.** Measured on kernel 7.0.0-38
+(amd-1, 2026-10-23) with `ulimit -l` steps: a single io_uring case passes
+alone at 464 to 656 KiB, and a create and destroy loop needs more, since a
+destroyed ring's pages are released by kernel work after the loop moves on
+(`test_io_uring_transport_posix_server_create_destroy_1000` at 2064 KiB,
+`test_io_uring_transport_posix_server_restart_same_port_100` at 2048 KiB). At
+the fleet runners' 8192 KiB, 26 io_uring cases started at once (each of 13
+cases twice, `./bin/functional --run <case>`) refused 5 at create with
+`Cannot allocate memory`. So `./bin/functional` bounds the io_uring cases it
+runs at once to `floor(RLIMIT_MEMLOCK soft limit / per-case need)`, capped at
+its one job, where the per-case need is 4096 KiB on kernels after 6.8 and
+128 KiB on 6.8 and older (`tests/suite_runner.h`,
+`ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB` overrides it); a limit under one case
+fails the suite before any case runs, naming the limit. A suite cannot see the
+other processes of its user, so every CI runner of the user on a host shares
+the budget: `tools/check_memlock.sh`, which CI runs before the functional
+suite on the Linux legs, prints the limit, the per-server need on this kernel
+and PASS when the limit is at least the user's runners times the per-case
+need, else FAIL. **The runner limit is 1048576 KiB (`LimitMEMLOCK=1G`)** on
+every fleet host whose kernel is after 6.8; a host already higher (the 6.8
+hosts carry about 8 to 16 GiB) keeps its limit. The same 26 cases at once,
+with the fleet's other work of that user on the host, refused 5 at 8192 KiB
+in each of two runs, 6 at 65536 KiB in one of five runs, and none at
+1048576 KiB in three runs (2026-10-23, amd-1; the only failures there were
+the two copies of `test_io_uring_transport_server_probe` taking one port).
+The kernel's count is invisible from user space, so the limit is sized well
+past the formula. Set it on the runner services and on the user manager that
+starts them, since a user service cannot exceed its manager's hard limit:
+
+```
+# /etc/systemd/system/user@<uid>.service.d/memlock.conf
+[Service]
+LimitMEMLOCK=1G
+
+# ~/.config/systemd/user/nova-runner-.service.d/memlock.conf
+# (a prefix drop-in: every nova-runner-*.service of that user)
+[Service]
+LimitMEMLOCK=1G
+```
+
+then `systemctl daemon-reload`, `systemctl --user daemon-reload`, and in a
+maintenance window `systemctl restart user@<uid>.service` (it restarts the
+runners) and confirm `Max locked memory` in `/proc/<runner pid>/limits`. For systemd services,
 `LimitMEMLOCK=` controls this limit. A user service cannot raise its hard limit
 above the user manager's; configure `user@<uid>.service` when that inherited
 limit is too small. See [systemd's resource-limit documentation](https://www.freedesktop.org/software/systemd/man/systemd.exec.html#Process%20Properties).
