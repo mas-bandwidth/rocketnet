@@ -111,10 +111,12 @@ if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q '^CMAKE_CXX_FLAGS:.*-DROCKETNET_F
     exit 1
 fi
 if [ ! -f "$BUILD/CMakeCache.txt" ]; then
+    # macOS's bash 3.2 treats an empty "${a[@]}" as unbound under set -u,
+    # so the generator is expanded only when ninja set it
     GENERATOR=()
     command -v ninja >/dev/null 2>&1 && GENERATOR=(-G Ninja)
     echo "configuring $BUILD with coverage instrumentation"
-    $SLOT cmake -S . -B "$BUILD" "${GENERATOR[@]}" -DCMAKE_BUILD_TYPE=Debug \
+    $SLOT cmake -S . -B "$BUILD" ${GENERATOR[@]+"${GENERATOR[@]}"} -DCMAKE_BUILD_TYPE=Debug \
         -DROCKETNET_BUILD_TESTS=ON -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=ON \
         -DROCKETNET_XDP=OFF -DROCKETNET_HARDEN=OFF \
         -DCMAKE_C_FLAGS="$COVFLAGS" -DCMAKE_CXX_FLAGS="$COVFLAGS" >"$OUT/configure.log" 2>&1
