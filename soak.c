@@ -440,6 +440,7 @@ int main( int argc, char ** argv )
                 soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
                 rocketnet_sleep( 0.05 );
                 rocketnet_server_transport_update( server, rocketnet_time() );
+                rocketnet_server_transport_send_packets( server );
                 counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
                 soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
                 rn_native_client_transport_stop_and_destroy( client );
@@ -518,6 +519,11 @@ int main( int argc, char ** argv )
 
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
+
+        // flush what the update staged (the handshake's replies, the
+        // disconnects): a buffered transport, xdp, sends only at a flush
+
+        rocketnet_server_transport_send_packets( server );
 
         const int client_state = rocketnet_client_transport_state( client );
         if ( client_state < 0 || ( connected && client_state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) )
@@ -620,6 +626,7 @@ int main( int argc, char ** argv )
         {
             rocketnet_client_transport_update( client, rocketnet_time() );
             rocketnet_server_transport_update( server, rocketnet_time() );
+            rocketnet_server_transport_send_packets( server );
             client_state = rocketnet_client_transport_state( client );
             rocketnet_sleep( 0.001 );
         }
@@ -667,6 +674,7 @@ int main( int argc, char ** argv )
         }
         rocketnet_sleep( 0.05 );
         rocketnet_server_transport_update( server, rocketnet_time() );
+        rocketnet_server_transport_send_packets( server );
         counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
         soak_accumulate_counters( client_counters, rocketnet_client_transport_counters( client ) );
         rn_native_client_transport_stop_and_destroy( client );
