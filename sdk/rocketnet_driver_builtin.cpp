@@ -281,22 +281,47 @@ enum portable_rx_step_t
 // One pass of the RX worker loop, without its waits (tla/RNPortableRx.tla WTop,
 // publish and WRead). Quit is read at the top of every pass, so a stop that
 // sets quit before its wake (QuitBeforeWake) always ends the worker.
+//
+// The worker appends the packets it reads to its producer bank and hands the
+// bank to main when a free bank is available. A refused publish (no free bank)
+// keeps the packets in the producer: the worker goes on draining the socket,
+// so the traffic that arrives between two updates waits in the bank and not
+// in the kernel's receive buffer, where it would be dropped.
 static portable_rx_step_t portable_rx_step( portable_server_t * server )
 {
     if ( server->quit.load( std::memory_order_acquire ) )
         return PORTABLE_RX_EXIT;
-    if ( !portable_rx_publish( server ) )
-    {
-#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
-        server->test_rx_full_waits.fetch_add( 1, std::memory_order_relaxed );
-#endif
-        return PORTABLE_RX_WAIT_FULL;
-    }
     portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
-    bank->count = rocketnet_platform_socket_receive_packets( server->socket,
-        bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, server->rx_capacity );
-    if ( bank->count < 0 ) bank->count = 0;
-    return bank->count > 0 ? PORTABLE_RX_AGAIN : PORTABLE_RX_WAIT_IDLE;
+    if ( bank->count > 0 )
+    {
+        if ( portable_rx_publish( server ) )
+        {
+            // the published bank went to main; the worker reads into the free
+            // bank that took its place
+            bank = &server->rx_bank[server->rx_producer];
+        }
+        else
+        {
+            if ( bank->count >= server->rx_capacity )
+            {
+                // a full producer takes no more packets and no free bank came:
+                // the worker stops reading the socket
+#if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
+                server->test_rx_full_waits.fetch_add( 1, std::memory_order_relaxed );
+#endif
+                return PORTABLE_RX_WAIT_FULL;
+            }
+        }
+    }
+    const int got = rocketnet_platform_socket_receive_packets( server->socket,
+        bank->from + bank->count, &bank->data[bank->count][0], ROCKETNET_RECEIVE_CEILING,
+        bank->bytes + bank->count, server->rx_capacity - bank->count );
+    if ( got > 0 )
+    {
+        bank->count += got;
+        return PORTABLE_RX_AGAIN;
+    }
+    return PORTABLE_RX_WAIT_IDLE;
 }
 
 #if defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)

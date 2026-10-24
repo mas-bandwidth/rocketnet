@@ -225,6 +225,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     uint64_t payloads_received = 0;
     uint64_t payload_bytes_received = 0;
     uint64_t receive_queue_peak_bytes = 0;
+    double server_update_seconds = 0.0;
     while ( rocketnet_platform_time() - traffic_start < server_receive_low_tick_traffic_seconds )
     {
         const double now = rocketnet_platform_time();
@@ -261,7 +262,9 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             const server_receive_low_tick_udp_row_t row = server_receive_low_tick_udp_row( port );
             if ( row.receive_queue_bytes > receive_queue_peak_bytes )
                 receive_queue_peak_bytes = row.receive_queue_bytes;
+            const double update_start = rocketnet_platform_time();
             rocketnet_server_transport_update( server, time );
+            server_update_seconds += rocketnet_platform_time() - update_start;
             ++server_updates;
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; ++i )
@@ -292,14 +295,14 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     printf( "server_receive_low_tick update_hz=%d clients=%d traffic_seconds=%.1f server_updates=%llu "
             "wire_packets=%llu wire_bytes=%llu wire_bytes_per_update=%llu payloads=%llu payload_bytes=%llu "
             "per_client_wire_kbps=%.1f receive_queue_peak_bytes=%llu kernel_receive_drops=%llu "
-            "clients_connected=%d server_connected=%d status=%s\n",
+            "server_update_seconds=%.3f clients_connected=%d server_connected=%d status=%s\n",
             update_hz, max_clients, server_receive_low_tick_traffic_seconds, (unsigned long long) server_updates,
             (unsigned long long) wire_packets, (unsigned long long) wire_bytes,
             (unsigned long long) ( server_updates ? wire_bytes / server_updates : 0 ),
             (unsigned long long) payloads_received, (unsigned long long) payload_bytes_received,
             (double) wire_bytes * 8.0 / ( server_receive_low_tick_traffic_seconds * 1000.0 * max_clients ),
             (unsigned long long) receive_queue_peak_bytes, (unsigned long long) kernel_drops,
-            clients_connected, server_connected,
+            server_update_seconds, clients_connected, server_connected,
             ( kernel_drops == 0 && clients_connected == max_clients && server_connected == max_clients ) ? "PASS" : "FAIL" );
     fflush( stdout );
 
