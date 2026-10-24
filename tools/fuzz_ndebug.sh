@@ -133,14 +133,18 @@ LIB="$BUILD/librocketnet_dev.a"
 
 # 2. prove the library is NDEBUG: every sdk/ compile line carries -DNDEBUG,
 # and no library object references the assert callback.
-sdk_lines=$(grep '"command"' "$BUILD/compile_commands.json" | grep -c '/sdk/' || true)
-sdk_ndebug=$(grep '"command"' "$BUILD/compile_commands.json" | grep '/sdk/' | grep -c -- '-DNDEBUG' || true)
+# (awk reads the whole file: an early-exit grep -m1 would SIGPIPE the
+# pipeline under pipefail)
+lib_commands=$(awk '/"command"/ && /rocketnet_dev\.dir\// && /\/sdk\//' "$BUILD/compile_commands.json")
+sdk_lines=$(printf '%s\n' "$lib_commands" | grep -c . || true)
+sdk_ndebug=$(printf '%s\n' "$lib_commands" | grep -c -- ' -DNDEBUG ' || true)
 if [ "$sdk_lines" -eq 0 ] || [ "$sdk_lines" -ne "$sdk_ndebug" ]; then
-    echo "NDEBUG-LIBRARY FAIL: $sdk_ndebug of $sdk_lines sdk/ compile lines carry -DNDEBUG" >&2
+    echo "NDEBUG-LIBRARY FAIL: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG" >&2
     exit 1
 fi
-echo "NDEBUG-LIBRARY compile: $sdk_ndebug of $sdk_lines sdk/ compile lines carry -DNDEBUG"
-grep '"command"' "$BUILD/compile_commands.json" | grep -m1 '/sdk/rocketnet.cpp' | sed 's/^ *"command": *//' | tee "$OUT/logs/ndebug-compile-line.txt"
+echo "NDEBUG-LIBRARY compile: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG"
+printf '%s\n' "$lib_commands" | awk '!shown && /\/sdk\/rocketnet\.cpp"/ { sub(/^ *"command": */, ""); print; shown = 1 }' \
+    | tee "$OUT/logs/ndebug-compile-line.txt"
 referencing=$(nm -A "$LIB" 2>/dev/null | grep -E ' U .*rn_assert_function' || true)
 if [ -n "$referencing" ]; then
     echo "NDEBUG-LIBRARY FAIL: library objects still reference rn_assert_function:" >&2
