@@ -1266,6 +1266,43 @@ static void test_rio_destroy_commits_deferred_sends()
     printf("test_rio_transport_destroy_commits_deferred_sends\n");
 }
 
+// Stop sends the handed burst and also seals a finished fill phase.
+static void test_rio_transport_stop_sends_handed_burst()
+{
+    CHECK(rocketnet_server_rio_available());
+    for ( int handed = 1; handed >= 0; --handed )
+    {
+        rocketnet_address_t bind;
+        rocketnet_server_rio_t * rio = rio_open(&bind);
+        rocketnet_address_t client_address;
+        rocketnet_platform_socket_t * client = fault_client(&client_address);
+        rocketnet_server_rio_test_hold_send(rio, true);
+        const int round = ++fault_round & 0xFF;
+        const uint64_t failed = rio_counter(rio, ROCKETNET_RIO_COUNTER_SEND_FAILED);
+        const uint64_t sent = rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT);
+        rio_stage(rio, &client_address, round, 10);
+        if ( handed )
+            wait_until( "RIO burst handed", [&]() {
+                rocketnet_server_rio_send_packets(rio);
+                return rocketnet_server_rio_test_handed_phases(rio) == 1;
+            } );
+        rocketnet_server_rio_stop(rio);
+        rocketnet_server_rio_test_hold_send(rio, false);
+        wait_until( "RIO stopped after handed sends", [&]() { return rocketnet_server_rio_stopped(rio); } );
+        const int received = fault_client_receive(client, round, 10);
+        printf("RIO stop burst: received=%d sent=%llu failed=%llu\n", received,
+               (unsigned long long) (rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT) - sent),
+               (unsigned long long) (rio_counter(rio, ROCKETNET_RIO_COUNTER_SEND_FAILED) - failed));
+        CHECK(received == 10);
+        CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_SEND_FAILED) == failed);
+        CHECK(rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT) - sent == 10);
+        CHECK(rocketnet_server_rio_pending(rio) == 0);
+        rn_native_backend_stop_and_destroy(rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
+        rocketnet_platform_socket_destroy(client);
+    }
+    printf("test_rio_transport_stop_sends_handed_burst\n");
+}
+
 // A stop-time commit refusal must leave the request queue usable. Stop
 // returns at once; the I/O worker retries the commit on each stop pass and
 // closes the socket and drains only after a commit succeeds, so stopped stays
@@ -1445,6 +1482,7 @@ static void test_windows_send_failures_counted()
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
+    { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
