@@ -286,7 +286,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     live_link_pair_teardown( &pair );
 }
 
-static void public_link_simulator_check_fields(const struct rocketnet_config_field_t * fields, int num_fields )
+static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
 {
     int found_loss = 0;
     int found_latency = 0;
