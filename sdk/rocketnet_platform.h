@@ -479,6 +479,17 @@ uint64_t rocketnet_platform_receive_empties( void );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// true when the primary interface name from the dynamic store's IPv4 state
+// (a CFStringRef passed as const void *) names the same interface as a BSD
+// name (a CFStringRef passed as const void *). False when either is NULL or
+// the primary interface name is not a CFString, so neither ever reaches
+// CFStringCompare, which does not accept NULL.
+bool rocketnet_platform_mac_primary_interface_matches( const void * primary_interface_name, const void * bsd_name );
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 /**
  * @brief Counts the datagrams this socket's sends dropped.
  *
