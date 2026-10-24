@@ -336,7 +336,10 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 // drop is counted on the socket that made it, so a caller can price what the
 // kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
 // buffer, a refused destination). Atomic: the client's I/O thread and the
-// main thread both read.
+// main thread both read. send_failures counts each dropped datagram, and a
+// refused sendmsg_x chunk once (its delivered prefix is indeterminate);
+// send_replay_failures counts the refusals of that chunk's per-packet replay,
+// which may resend datagrams the kernel had already delivered.
 
 static inline void rocketnet_platform_note_send_failure( rocketnet_platform_socket_t * socket )
 {
@@ -347,6 +350,12 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
 {
     rocketnet_assert( socket );
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
+}
+
+uint64_t rocketnet_platform_socket_send_replay_failures( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+    return rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
 }
 
 // Test-only receive seam, compiled into the unit suite's hook library only
@@ -776,6 +785,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->send_replay_failures = 0;
     socket->connected = false;
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
@@ -2635,6 +2645,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->send_replay_failures = 0;
     socket->connected = false;
 
     socket->msgx = false;
@@ -2969,13 +2980,18 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     return true;
 }
 
-void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
+// The per-packet send. A refusal counts in *failures: send_failures for an
+// ordinary send, send_replay_failures for the replay of a refused sendmsg_x
+// chunk (rocketnet_platform_socket_send_packets).
+
+static void rocketnet_platform_darwin_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes, volatile uint64_t * failures )
 {
     rocketnet_assert( socket );
     rocketnet_assert( input_to );
     rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+    rocketnet_assert( failures == &socket->send_failures || failures == &socket->send_replay_failures );
 
 #if defined(ROCKETNET_PLATFORM_SEND_SEAM)
     int injected_error = 0;
@@ -2985,7 +3001,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
         rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-        rocketnet_platform_note_send_failure( socket );
+        rocketnet_platform_atomic_add_u64( failures, 1 );
         return;
     }
 #endif
@@ -3015,7 +3031,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-            rocketnet_platform_note_send_failure( socket );
+            rocketnet_platform_atomic_add_u64( failures, 1 );
         }
     }
     else
@@ -3032,7 +3048,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-                rocketnet_platform_note_send_failure( socket );
+                rocketnet_platform_atomic_add_u64( failures, 1 );
             }
         }
         else
@@ -3040,6 +3056,12 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             rocketnet_error( "invalid address. could not send packet" );
         }
     }
+}
+
+void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
+{
+    rocketnet_assert( socket );
+    rocketnet_platform_darwin_send_packet( socket, input_to, packet_data, packet_bytes, &socket->send_failures );
 }
 
 // UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors). a
@@ -3482,8 +3504,16 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             // destination, a full buffer) stays on the msgx pump for the
             // next chunk; anything else pauses the pump for
             // ROCKETNET_MSGX_RETRY_SECONDS and this call finishes portable.
+            // the counts: the refused chunk counts ONCE in send_failures
+            // (its fate is indeterminate), and each refusal of the replay
+            // counts in send_replay_failures, never in send_failures, since
+            // a replayed message may already have reached the wire. a full
+            // buffer (EAGAIN, ENOBUFS) that refused the chunk usually refuses
+            // its replay too, delivered prefix included.
 
             const int error = errno;
+
+            rocketnet_platform_note_send_failure( socket );
 
             if ( result == 0 && error == 0 )
             {
@@ -3505,7 +3535,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];
-                rocketnet_platform_socket_send_packet( socket, send->to, send->packet_data, send->packet_bytes );
+                rocketnet_platform_darwin_send_packet( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
             }
             offset = count;
         }
@@ -4561,6 +4591,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     s->context = context;
     s->send_failures = 0;
+    s->send_replay_failures = 0;
     s->connected = false;
 
     rocketnet_assert( address );

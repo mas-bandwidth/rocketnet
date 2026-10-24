@@ -960,13 +960,20 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
     for ( int e = 0; e < 2; e++ )
     {
         // a batch whose every send call fails: all eight are dropped and
-        // counted, the pump stays as it was, nothing arrives
+        // counted, the pump stays as it was, nothing arrives. portable
+        // counts eight refused sends; msgx counts the refused chunk once
+        // and the eight refused sends of its replay apart
 
+        const bool batch = strcmp( pump, "msgx" ) == 0;
         const uint64_t before = rocketnet_platform_socket_send_failures( socket );
+        const uint64_t replay_before = rocketnet_platform_socket_send_replay_failures( socket );
         rocketnet_platform_socket_fail_next_sends( socket, 64, errors[e] );
         rocketnet_platform_socket_send_packets( socket, sends, 8 );
         rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
-        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == 8 );
+        const uint64_t failed = batch ? 1 : 8;
+        const uint64_t replay_failed = batch ? 8 : 0;
+        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == failed );
+        posix_check( rocketnet_platform_socket_send_replay_failures( socket ) - replay_before == replay_failed );
         posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
         rocketnet_platform_sleep( 0.01 );
         posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
@@ -974,7 +981,8 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
         // the next batch goes: all eight arrive, nothing more is counted
 
         rocketnet_platform_socket_send_packets( socket, sends, 8 );
-        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == 8 );
+        posix_check( rocketnet_platform_socket_send_failures( socket ) - before == failed );
+        posix_check( rocketnet_platform_socket_send_replay_failures( socket ) - replay_before == replay_failed );
         int received = 0;
         const double deadline = rocketnet_platform_time() + 5.0;
         while ( received < 8 && rocketnet_platform_time() < deadline )
@@ -1048,6 +1056,7 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         posix_server_sends_drained( &pair );
 
         const uint64_t failures_before = rocketnet_platform_socket_send_failures( pair.server_socket );
+        const uint64_t replay_failures_before = rocketnet_platform_socket_send_replay_failures( pair.server_socket );
         const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
         // every send call of this update fails: eight payloads and anything
@@ -1066,8 +1075,23 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         posix_server_sends_drained( &pair );
         rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
 
+        // portable counts each refused send; msgx counts each refused chunk
+        // once and the refused sends of its replay apart, so the replay
+        // carries the eight payloads there
+
         const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before;
-        posix_check( dropped >= 8 );
+        const uint64_t replay_dropped = rocketnet_platform_socket_send_replay_failures( pair.server_socket ) - replay_failures_before;
+        if ( strcmp( server_pump, "msgx" ) == 0 )
+        {
+            posix_check( dropped >= 1 );
+            posix_check( replay_dropped >= 8 );
+            posix_check( replay_dropped >= dropped );
+        }
+        else
+        {
+            posix_check( dropped >= 8 );
+            posix_check( replay_dropped == 0 );
+        }
         const uint64_t transport_failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
         posix_check( transport_failed - transport_failed_before == dropped );
         posix_check( strcmp( rocketnet_platform_socket_pump( pair.server_socket ), server_pump ) == 0 );
@@ -1100,6 +1124,7 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         }
         rocketnet_server_transport_send_packets( pair.server );
         posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before == dropped );
+        posix_check( rocketnet_platform_socket_send_replay_failures( pair.server_socket ) - replay_failures_before == replay_dropped );
 
         int arrived = 0;
         const double deadline = rocketnet_platform_time() + 5.0;
@@ -1122,9 +1147,9 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         tag += 8;
         posix_pair_check_connected( &pair );
 
-        printf( "  seam %s %s server=%s: dropped and counted %llu, transport SEND_FAILED +%llu, pump %s, resumed 8/8\n",
+        printf( "  seam %s %s server=%s: dropped and counted %llu, replay refusals %llu, transport SEND_FAILED +%llu, pump %s, resumed 8/8\n",
                 errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", server_transport_io,
-                (unsigned long long) dropped, (unsigned long long) ( transport_failed - transport_failed_before ),
+                (unsigned long long) dropped, (unsigned long long) replay_dropped, (unsigned long long) ( transport_failed - transport_failed_before ),
                 rocketnet_platform_socket_pump( pair.server_socket ) );
         fflush( stdout );
     }
@@ -1132,12 +1157,65 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
     posix_pair_destroy( &pair );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// test_msgx_send_replay_refusals_counted_apart: a refused sendmsg_x chunk
+// counts once in send_failures, and each refusal of its per-packet replay
+// counts in send_replay_failures. the first injected refusal hits the
+// sendmsg_x chunk, the next N the N replayed sends.
+
+static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
+{
+    const int num_packets = 8;
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                                      ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, "msgx" );
+    posix_check( socket != NULL );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+
+    uint8_t packets[num_packets][64];
+    struct rocketnet_platform_send_t sends[num_packets];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        memset( packets[i], i + 1, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
+    const uint64_t replay_failures_before = rocketnet_platform_socket_send_replay_failures( socket );
+
+    rocketnet_platform_socket_fail_next_sends( socket, 1 + num_packets, ENOBUFS );
+    rocketnet_platform_socket_send_packets( socket, sends, num_packets );
+    rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+
+    const uint64_t failures = rocketnet_platform_socket_send_failures( socket ) - failures_before;
+    const uint64_t replay_failures = rocketnet_platform_socket_send_replay_failures( socket ) - replay_failures_before;
+    printf( "  ipv%d msgx: chunk refusals %llu, replay refusals %llu\n", ipv6 ? 6 : 4, (unsigned long long) failures, (unsigned long long) replay_failures );
+    fflush( stdout );
+    posix_check( failures == 1 );
+    posix_check( replay_failures == (uint64_t) num_packets );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 void rocketnet_test_posix_transport_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         posix_transport_send_seam_cell( ipv6, "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        test_msgx_send_replay_refusals_counted_apart( ipv6 );
         posix_transport_send_seam_cell( ipv6, "msgx", "msgx" );
 #endif
     }
