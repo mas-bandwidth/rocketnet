@@ -432,6 +432,31 @@ as found, the rocketnet-macos runner sharing the host), one run each:
 | `test_posix_server_create_destroy_1000` | 73.7 s | 23.7 s |
 | `test_posix_destroy_under_traffic_100` | 35.7 s | 6.3 s (msgx/msgx), 24.7 s (nightly, four pairs) |
 
+At d7095705 (this tree merged with main 7a025861, which since #538 runs every
+functional case serially), five `./bin/functional` runs on mini-m5-1, one
+after another, each started once the host's 1-minute load was under 4 (the
+rocketnet-macos runner and other bench jobs still share the host, so load
+rose during runs):
+
+| run | exit | wall time | load before (1, 5, 15 min) |
+|---|---|---|---|
+| 1 | 0 | 167.6 s | 2.30 5.89 8.07 |
+| 2 | 0 | 170.0 s | 3.80 5.98 7.40 |
+| 3 | 0 | 169.0 s | 3.69 5.87 6.82 |
+| 4 | 0 | 172.0 s | 3.61 5.95 6.82 |
+| 5 | 0 | 171.3 s | 3.92 5.78 6.59 |
+
+5 of 5 pass; the slowest is 172.0 s, not under 60 s: the 49 s above was the
+parallel suite, before main made it serial. An earlier run started at load 9
+(not counted) failed `test_posix_connect_disconnect_1000_msgx_msgx` at
+`functional/posix_lifecycle_stress.cpp:1108`, the 5 s
+`posix_wait_server_empty` after a disconnect.
+
+Linux at d7095705 on amd-1 (x86_64, gcc, Release, load 3.8 as found):
+`./bin/test` exit 0 (16 s), `./bin/functional` exit 0 (193 s). gcc and
+clang, `ROCKETNET_DEV=ON` and `OFF`, build with 0 warnings on Linux; Apple
+clang `ON` and `OFF` with 0 warnings on mini-m5-1.
+
 Each case process is held to its own memory plan (`tests/plan_rss.h`): the
 functional worker gives `rocketnet_init` a counting allocator, and a case
 that passes with it still installed reports its plan's peak plus a 64 MiB
