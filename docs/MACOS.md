@@ -13,19 +13,10 @@ in [PLATFORMS.md](PLATFORMS.md); this page does not widen them.
 
 ## What is supported
 
-The supported row is macOS 27 on arm64 with Apple Clang, transports `portable`
-and `msgx` (`docs/PLATFORMS.md`, the table). CI runs it on a self-hosted
-Apple-silicon runner labelled `rocketnet-macos`, as a Debug row and a Release
-row (`.github/workflows/ci.yml`, the `macos-15` entries of the
-`build-and-test` matrix, whose `runner` is
-`self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
-macOS nightly rows: soak, frame budget and examples
-(`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
-`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is a
-nightly row: the examples nightly builds the library and the suites universal
-(arm64 and x86_64) and runs the x86_64 slice under Rosetta 2
-(`docs/PLATFORMS.md`; `nightly-examples.yml`, the step "Build universal and
-run the x86_64 slice under Rosetta 2"; the recipe is in `BUILDING.md`).
+The supported row is macOS 27 on arm64 with Apple Clang and the `portable` and
+`msgx` transports. Continuous integration builds and tests that configuration;
+nightly coverage also includes x86_64 under Rosetta 2. The support tiers are
+listed in [PLATFORMS.md](PLATFORMS.md).
 
 ## Build
 
@@ -33,7 +24,7 @@ The tools are Apple clang from the Command Line Tools, `cmake` 3.20 or later,
 `make`, `xxd` and Python 3; libsodium is vendored (`BUILDING.md`;
 `CMakeLists.txt`, `cmake_minimum_required`). CI's macOS dependency step checks
 for `cmake clang c++ xxd python3` (`.github/workflows/ci.yml`, "Check the
-fleet's build dependencies are present").
+build dependencies are present").
 
 Release, through the Makefile:
 
@@ -398,7 +389,7 @@ whole-suite run is not hit. Inside `lldb`, `settings set target.env-vars ROCKETN
 ## Sanitizers and leaks
 
 `.github/workflows/nightly-macos-sanitizers.yml` runs nightly and on dispatch
-on the `rocketnet-macos` runner with Apple clang (`/usr/bin/clang`, the system
+with Apple clang (`/usr/bin/clang`, the system
 toolchain), in three legs, each in its own job and its own build directory:
 
 - **asan+ubsan**: Debug with `-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer`, the flags of ci.yml's
@@ -459,57 +450,14 @@ libFuzzer"); `make` builds the four replay binaries:
 
 Each prints `replayed <n> inputs` and exits 0.
 
-## The functional suite: per-commit and nightly tiers, the memory bound
+## The functional suite
 
-`./bin/functional` (Release) is the per-commit gate on the macOS rows of
-`.github/workflows/ci.yml`. `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` adds
-the nightly tier, which `.github/workflows/nightly.yml` runs on the same
-macOS runner (job "macos / Release functional nightly tier"). The tier is
-chosen in `functional/main.cpp` (`rocketnet_functional_test_group`, the
-`SUITE_GROUP_NIGHTLY` flag of `tests/suite_runner.h`); no case checks less in
-either tier:
-
-- `test_posix_hard_killed_client_portable_*` (four cells): each waits out
-  the real 10 s token timeout. The four `msgx` server cells stay per commit.
-- `test_posix_connect_disconnect_1000_{portable_portable,portable_msgx,msgx_portable}`:
-  `msgx_msgx` stays per commit.
-- `test_posix_destroy_under_traffic_100` runs its `msgx`/`msgx` pair per
-  commit and all four pairs in the nightly tier.
-
-Two causes made the suite slow, and both are fixed rather than moved: the
-bundled sodium wiped memory with its volatile byte loop on Darwin until
-`CMakeLists.txt` defined `HAVE_MEMSET_S` (server create/destroy x1000 went
-from 73.7 s to 23.7 s), and the 8-slot server of
-`test_posix_connect_disconnect_1000` kept 64 used tokens, so every 64th
-connect waited about 4.5 s for one to expire; its server has 128 slots.
-
-On an Apple M5 Pro, Release, with other jobs sharing the host, the changes
-above took `test_posix_connect_disconnect_1000_msgx_msgx` alone from 76.5 s
-(15 connects of about 4.5 s) to 5.6 to 10.2 s with none over 1 s,
-`test_posix_server_create_destroy_1000` from 73.7 s to 23.7 s, and
-`test_posix_destroy_under_traffic_100` from 35.7 s to 6.3 s (24.7 s for all
-four pairs in the nightly tier). The functional suite runs every case
-serially; five consecutive `./bin/functional` runs each took 168 to 172 s,
-and all passed. A run started while the host's 1-minute load was 9 failed
-`test_posix_connect_disconnect_1000_msgx_msgx` at the 5 s
-`posix_wait_server_empty` after a disconnect, so a timed case run on a
-loaded Mac is rerun alone before it is read as a defect.
-
-On Linux x86_64 (gcc, Release) `./bin/test` takes about 16 s and
-`./bin/functional` about 193 s. gcc and clang, with `ROCKETNET_DEV` `ON` and
-`OFF`, build with 0 warnings on Linux, and Apple clang `ON` and `OFF` with 0
-warnings on macOS.
-
-Each case process is held to its own memory plan (`tests/plan_rss.h`): the
-functional worker gives `rocketnet_init` a counting allocator, and a case
-that passes with it still installed reports its plan's peak plus a 64 MiB
-slack, which the runner holds its peak resident set to. A case that installs
-its own allocator (the channel harness cases, `test_lifecycle_transport`)
-and the sibling executables keep the suite-wide 698 MiB bound or the bound
-they declare with `SUITE_CASE_RSS_BOUND`; `ROCKETNET_TEST_MAX_CASE_RSS_MB`
-still lifts every bound. `ROCKETNET_TEST_REPORT=1` prints each case's peak
-and bound. The largest peak over a plan's peak was 7 MiB on macOS and 5 MiB
-on Linux x86_64.
+`./bin/functional` exercises the built-in transports over loopback. Pin
+`ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` to test a
+particular transport pair. The suite also supports a nightly tier through
+`ROCKETNET_TEST_NIGHTLY=1`; the variable is for the test executable and is not
+a library configuration setting. `ROCKETNET_TEST_REPORT=1` prints per-case
+memory use and its bound.
 
 ## Verify a Mac
 
@@ -565,28 +513,10 @@ How to read them:
   rerun that one case with `./bin/functional --run <case>` before reading it
   as a defect, and report it either way.
 
-## Nightly jobs on macOS
+## Nightly coverage
 
-Every macOS nightly runs on a self-hosted Apple-silicon runner (labels
-`self-hosted, macOS, ARM64, rocketnet-macos`), one job at a time. Run a job by
-hand from a checkout on a Mac, one command at a time, and record the wall time
-of each step.
-
-| Job | Workflow | By hand |
-|---|---|---|
-| `soak-macos` | `.github/workflows/nightly-soak.yml` | `make && ./bin/test && ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000 && ./bin/soak_sim 10000000 && ./bin/soak 200000` |
-| `macos-frame-budget` | `.github/workflows/nightly-frame-budget.yml` | `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target client_main_thread_cost --parallel 4 && python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only` |
-| `fuzz-macos` | `.github/workflows/fuzz-nightly.yml` | the job's steps: LLVM clang with libFuzzer, `cmake -B build-fuzz` instrumented, one target per leg |
-| `coverage-macos` | `.github/workflows/fuzz-nightly.yml` | `CC=clang CXX=clang++ tools/fuzz_coverage.sh` |
-| `examples-macos` | `.github/workflows/nightly-examples.yml` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 |
-| `macos-transport-cells-repeat` | `.github/workflows/nightly.yml` | `make -j4 && scripts/transport-cells-repeat --runs 50` |
-| `macos-functional-nightly` | `.github/workflows/nightly.yml` | `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` |
-| `sanitizers-macos` | `.github/workflows/nightly-macos-sanitizers.yml` | the three legs under "Sanitizers and leaks" |
-
-The frame-budget script voids a run (`VOID load=... cores=...`) whose 1-minute
-load is above cores / 4, so a busy Mac reports `VOID` rather than a number. A
-run of the transport-cells job is recorded in
-`docs/runs/macos-transport-cells-50x.md`.
+The macOS nightly checks add soak behavior, frame-budget measurement, fuzz
+corpus replay, and example builds to the regular build and test coverage.
 
 ### The resolver
 
