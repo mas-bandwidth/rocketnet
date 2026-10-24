@@ -23,6 +23,37 @@ of its user, so every CI runner of the user on a host shares the budget:
 Linux legs, checks the limit covers the runners' io_uring cases. See
 [`docs/LINUX.md`](docs/LINUX.md) sections 5 and 8 and `tests/suite_runner.h`.
 
+<!-- The next section is hand-written for the Windows lifecycle stress (rn-win-lifecycle-1000x); its source of truth is functional/windows_lifecycle_stress.cpp. -->
+
+## Windows lifecycle stress
+
+`functional/windows_lifecycle_stress.cpp` is the Windows form of
+`functional/posix_lifecycle_stress.cpp`. A table of cells pairs each Windows
+server transport (portable, iocp, rio) with the portable client, and each cell
+runs five cases of 1000 cycles over real loopback sockets:
+
+| case | cycle |
+|---|---|
+| `test_<cell>_transport_windows_init_term_1000` | `rocketnet_term` then `rocketnet_init` |
+| `test_<cell>_transport_windows_server_create_destroy_1000` | create and destroy one server |
+| `test_<cell>_transport_windows_client_create_destroy_1000` | create and destroy one client |
+| `test_<cell>_transport_windows_connect_disconnect_1000` | one client connects to one server and disconnects |
+| `test_<cell>_transport_windows_server_restart_1000` | stop and start one server on its one port, a client reconnecting |
+
+Each case runs one warm cycle, then counts the process's handles
+(`GetProcessHandleCount`), threads (a Toolhelp thread walk) and private bytes
+(`GetProcessMemoryInfo` `PrivateUsage`), runs the 1000 cycles, counts again,
+and prints one line with the before and after counts and the run time. It
+fails when the handle or thread count moved, or when private bytes grew by
+more than one page per ten minutes of run (never less than one page). Same
+host is correctness only: run times are printed, never judged.
+
+The portable cells (`test_portable_transport_windows_*_1000`) are registered
+in `./bin/Release/functional.exe`; the iocp and rio cells are in the table and
+registered by rn-win-lifecycle-1000x-native. On other platforms the file
+builds empty. Run one with `./bin/Release/functional.exe --run <name>` under
+`winlock --exclusive` on the Windows bench.
+
 ## Preview-2 exact-head qualification
 
 Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/roadmap/render.py)
