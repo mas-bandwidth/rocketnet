@@ -166,8 +166,11 @@ CC=clang CXX=clang++ FUZZ_COV_JOBS=4 tools/fuzz_coverage.sh rocketnet_fuzz_sessi
 ```
 
 The comment at the top of the script lists its variables (`FUZZ_COV_ITERS`,
-`FUZZ_COV_BUILD`, `FUZZ_COV_OUT`, `FUZZ_COV_JOBS`, `FUZZ_COV_SETUP`, `SLOT`,
-`LLVM_PROFDATA`, `LLVM_COV`). By default the pair targets count only what
+`FUZZ_COV_BUILD`, `FUZZ_COV_OUT`, `FUZZ_COV_JOBS`, `FUZZ_COV_SETUP`,
+`FUZZ_COV_SUMMARY`, `SLOT`, `LLVM_PROFDATA`, `LLVM_COV`). Set
+`FUZZ_COV_SUMMARY=<file>` to append the per-area table to that file as a
+Markdown table (the job summary in CI), e.g.
+`FUZZ_COV_SUMMARY=$GITHUB_STEP_SUMMARY`. By default the pair targets count only what
 inputs reach, not their one-time create and connect. To get a comparable
 before and after number for a change, run it the same way on both commits.
 On Linux the script adds `-mllvm -runtime-counter-relocation`, which
@@ -207,6 +210,16 @@ commit the minimized input to its corpus as `regress_<name>`.
 - `fuzz-nightly.yml` builds the libFuzzer targets, restores each target's
   growing corpus from the cache, runs a bounded campaign
   (`max_total_time`, 900 s by default) and uploads any reproducer.
+- `fuzz-nightly.yml` also runs the same ten-target matrix under
+  MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
+  sodium included, is built with the MSan flags and the instrumented libc++
+  headers, exactly as `tools/run_msan.sh` does, and each target links
+  `-fsanitize=fuzzer,memory` with origin tracking and the instrumented
+  libc++ (`/opt/msan-libcxx-<clang version>`; a runner without it fails with
+  a TOOL-MISSING line). Any MemorySanitizer report fails that leg.
+- After the matrix, one `coverage` job per OS (Linux and macOS) runs
+  `tools/fuzz_coverage.sh` over every target and appends its per-area table
+  as Markdown to the job summary (`FUZZ_COV_SUMMARY=$GITHUB_STEP_SUMMARY`).
 
 ## OSS-Fuzz (prepared, not submitted)
 
