@@ -95,7 +95,6 @@ static const char * const counters_base_names[] =
     "CONNECTION_RESPONSE_NO_MAPPING",
     "CONNECTION_RESPONSE_ZERO_SEQUENCE",
     "CONNECTION_RESPONSE_DID_NOT_OPEN",
-    "CONNECTION_RESPONSE_PADDING_NOT_ZERO",
     "CONNECTION_RESPONSE_ALREADY_CONNECTED",
     "CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED",
     "CONNECTION_RESPONSE_ADMITTED_SET_FULL",
@@ -323,6 +322,7 @@ static const char * const counters_appended_names[] =
     "CLIENT_RECEIVE_FOREIGN_SOURCE",
     "XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION",
     "MESSAGE_NOT_RECEIVED",
+    "CONNECTION_RESPONSE_PADDING_NOT_ZERO",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -351,7 +351,7 @@ static bool counters_is_received( int counter )
 
 static void test_counters_every_counter_has_a_class()
 {
-    check( COUNTERS_NUM_BASE == 216 );
+    check( COUNTERS_NUM_BASE == 215 );
     check( ROCKETNET_NUM_COUNTERS == COUNTERS_NUM_BASE + COUNTERS_NUM_APPENDED );
     check( rocketnet_num_counters() == ROCKETNET_NUM_COUNTERS );
 

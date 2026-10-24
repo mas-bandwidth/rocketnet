@@ -2115,7 +2115,10 @@ a row marked server or client applies only at that end.
     associated data of [t9 Packet protection](#t9). A packet that does not
     open, or whose expected handshake plaintext size is not exact, is
     `DID_NOT_OPEN`; this check alone increments the integrity-failure count
-    that [t14 Replay protection](#t14) bounds.
+    that [t14 Replay protection](#t14) bounds. A connection response that
+    opens and whose padding is not all zero is
+    `CONNECTION_RESPONSE_PADDING_NOT_ZERO`; it opened, so it does not
+    increment the integrity-failure count.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
 15. For session types, a receiver MUST read and validate the ack block at
@@ -3727,7 +3730,6 @@ The registry of counters, in index order, is:
 | `CONNECTION_RESPONSE_NO_MAPPING` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_ZERO_SEQUENCE` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_DID_NOT_OPEN` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
-| `CONNECTION_RESPONSE_PADDING_NOT_ZERO` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_ALREADY_CONNECTED` | `expected` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_ADMITTED_SET_FULL` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
@@ -3951,6 +3953,7 @@ The registry of counters, in index order, is:
 | `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION` | `refusal` | `none` |
 | `MESSAGE_NOT_RECEIVED` | `refusal` | `none` |
+| `CONNECTION_RESPONSE_PADDING_NOT_ZERO` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4073,7 +4076,7 @@ b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00 a4 58 a7 b3 00 00 00
+f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa 00 21 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

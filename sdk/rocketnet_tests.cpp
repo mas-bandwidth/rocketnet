@@ -5778,9 +5778,8 @@ void rocketnet_test_integrity_limit()
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal": an exact-size check runs before the
         // lookup). two such: one too short to carry a tag, one that would
-        // open to the wrong size. the class
-        // still filed as DID_NOT_OPEN is a response that opens to non-zero
-        // padding.
+        // open to the wrong size. the response that opens to non-zero
+        // padding is filed as PADDING_NOT_ZERO, and it is not a forgery.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
         memset( short_response, 0x5A, sizeof(short_response) );
         uint8_t * sp = short_response;

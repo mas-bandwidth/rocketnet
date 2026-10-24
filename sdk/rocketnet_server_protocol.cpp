@@ -1186,10 +1186,13 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             rocketnet_server_integrity_failure( server, mapping_index, mapping );
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
-         for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
+        for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
         {
             if ( opened[i] != 0 )
             {
+                // the packet opened, so it is authentic: a refusal of its
+                // contents, not a forgery, and the integrity-failure count
+                // does not move (standard/TRANSPORT.md t9 rule 8).
                 rocketnet_spam( "server ignored connection response. padding is not zero" );
                 counters[type_counters->padding_not_zero]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
