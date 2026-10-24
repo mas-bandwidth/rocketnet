@@ -158,10 +158,10 @@ static inline double rn_window_ack_chunk_resend_delay( const rn_window_ack_t * a
     return ack->resend_delay < cap ? ack->resend_delay : cap;
 }
 
-// Whether the number in send_numbers slot `slot_index` is a chunk of a block:
+// Whether the number in send_numbers slot `number_index` is a chunk of a block:
 // its send descriptor is in use with more than one fragment (docs/CHANNELS.md
 // 8). It picks the number's resend FIFO and delay.
-bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_index );
+bool rn_window_ack_number_is_chunk( const rn_window_ack_t * ack, uint32_t number_index );
 
 // The delay of the FIFO a slot is in: rn_window_ack_chunk_resend_delay for a
 // chunk, rn_window_ack_resend_delay otherwise.
@@ -174,7 +174,7 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 // (a slot of the same FIFO), or at that FIFO's head when `after` is
 // RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
 // ones already waiting, ahead of every number that was sent.
-void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
+void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t number_index );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;

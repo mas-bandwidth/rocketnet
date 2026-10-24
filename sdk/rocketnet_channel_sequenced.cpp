@@ -41,7 +41,7 @@ static void rn_sequenced_release_number( rn_channels_t * channels, uint64_t numb
 
 // A hold is a slot (held_sequenced or block_in_turn) and the first number of
 // its code-4 span (pad or block_in_turn_first).
-static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
+static void rn_sequenced_release_handle( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
 {
     const uint32_t hold = *slot;
     if ( hold == RN_DESCRIPTOR_NONE )
@@ -61,12 +61,12 @@ static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot
 
 static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->pad );
+    rn_sequenced_release_handle( channels, &rx->held_sequenced, rx->pad );
 }
 
 static void rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->block_in_turn, rx->block_in_turn_first );
+    rn_sequenced_release_handle( channels, &rx->block_in_turn, rx->block_in_turn_first );
 }
 
 static void rn_sequenced_count( rn_channels_t * channels, int counter )
@@ -316,13 +316,13 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     if ( current != RN_DESCRIPTOR_NONE )
     {
         const bool held_reliable = rn_sequenced_reliable_hold( current );
-        const uint32_t held_slot = current & ~RN_SEQUENCED_RELIABLE_HOLD;
-        const uint32_t held_ordering = held_reliable ? region->receive_descriptors[held_slot].ordering : region->sequenced_messages_held[current].ordering;
-        const uint32_t held_sequencing = held_reliable ? region->receive_descriptors[held_slot].sequencing : region->sequenced_messages_held[current].sequencing;
+        const uint32_t held_entry = current & ~RN_SEQUENCED_RELIABLE_HOLD;
+        const uint32_t held_ordering = held_reliable ? region->receive_descriptors[held_entry].ordering : region->sequenced_messages_held[current].ordering;
+        const uint32_t held_sequencing = held_reliable ? region->receive_descriptors[held_entry].sequencing : region->sequenced_messages_held[current].sequencing;
         const uint32_t gap = ( ordering - held_ordering ) & ROCKETNET_MESSAGE_U24_MASK;
         const uint32_t sequence_gap = ( sequencing - held_sequencing ) & ROCKETNET_MESSAGE_U24_MASK;
         const bool continuation = reliable && record->block && held_reliable && gap == 0 && sequence_gap == 0 &&
-            region->receive_descriptors[held_slot].block_count > 0;
+            region->receive_descriptors[held_entry].block_count > 0;
         if ( gap >= ( 1u << 23 ) || ( gap == 0 && ( sequence_gap >= ( 1u << 23 ) || ( sequence_gap == 0 && !continuation ) ) ) )
         {
             if ( reliable )

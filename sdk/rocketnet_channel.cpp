@@ -147,7 +147,7 @@ static void rn_held_erase( rn_region_t * region, uint32_t index )
 // reaches dispatch without that is filled in here from the record, so dispatch
 // stands alone. NULL when the slot is live under a different number.
 
-static rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot )
+static rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_descriptor_index )
 {
     rn_region_t * region = channels->region;
     const uint32_t slot = record->number & ( region->window - 1 );
@@ -170,7 +170,7 @@ static rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channel
         descriptor->block_count = 0;
         descriptor->live = 1;
     }
-    *out_slot = slot;
+    *out_descriptor_index = slot;
     return descriptor;
 }
 
@@ -1374,15 +1374,15 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // every number of the message joins the resend set, due now; the ones
         // this update has room for are also planned into packets now
         // (in its class's FIFO: a block's numbers are chunks)
-        uint32_t * last_unsent = rn_window_ack_slot_is_chunk( ack, (uint32_t) ( first & ( region->window - 1 ) ) ) ? &last_unsent_chunk : &last_unsent_small;
+        uint32_t * last_unsent = rn_window_ack_number_is_chunk( ack, (uint32_t) ( first & ( region->window - 1 ) ) ) ? &last_unsent_chunk : &last_unsent_small;
         for ( uint32_t i = 0; i < numbers; i++ )
         {
-            const uint32_t slot_index = (uint32_t) ( ( first + i ) & ( region->window - 1 ) );
-            rn_window_ack_park( ack, *last_unsent, slot_index );
-            *last_unsent = slot_index;
+            const uint32_t number_index = (uint32_t) ( ( first + i ) & ( region->window - 1 ) );
+            rn_window_ack_park( ack, *last_unsent, number_index );
+            *last_unsent = number_index;
 
             if ( plan.count < ROCKETNET_ORDERED_MAX_ITEMS && plan.planned < room &&
-                 rn_ordered_item( ordered, &region->send_numbers[slot_index], ROCKETNET_SEND_CLASS_NEW_RELIABLE, &items[plan.count] ) )
+                 rn_ordered_item( ordered, &region->send_numbers[number_index], ROCKETNET_SEND_CLASS_NEW_RELIABLE, &items[plan.count] ) )
             {
                 plan.planned += items[plan.count].alone ? ( capacity - 1 ) : (uint64_t) items[plan.count].bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
                 plan.count++;

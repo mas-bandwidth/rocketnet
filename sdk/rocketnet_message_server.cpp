@@ -422,7 +422,7 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
         else if ( connection->unreliable_build.writer.records == 0 )
             rn_message_flush_unreliable( object, index, true );
         object->in_place = 0;
-        object->in_place_payload = NULL;
+        object->in_place_message = NULL;
     }
     rn_endpoint_abort( connection );
     object->pending_connection = -1;
@@ -821,8 +821,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
                 object->in_place = 2;
                 object->pending_connection = index;
-                object->in_place_payload = build->writer.payload + build->writer.bytes;
-                return object->in_place_payload + header;
+                object->in_place_message = build->writer.payload + build->writer.bytes;
+                return object->in_place_message + header;
             }
         }
         // A queued or whole-packet send cannot overtake completed records
@@ -862,9 +862,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 rn_endpoint_in_place_begin( connection, channel, reliability, bytes, header );
                 object->in_place = 1;
                 object->in_place_context = context;
-                object->in_place_payload = frame + context.payload_index;
+                object->in_place_message = frame + context.payload_index;
                 object->pending_connection = index;
-                return object->in_place_payload + header;
+                return object->in_place_message + header;
             }
         }
         // RNOutgoingBuild StartQueued with fellback: no frame, unreliable
@@ -972,7 +972,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         }
         else
             record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
-        record.data = object->in_place_payload + connection->pending_header;
+        record.data = object->in_place_message + connection->pending_header;
         record.bytes = bytes;
         if ( !rocketnet_message_writer_add_in_place( &build->writer, &record ) )
         {
@@ -985,7 +985,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
             build->receipt_serials[build->receipt_count++] = serial;
         rn_endpoint_abort( connection ); // clear the reservation; committed bytes stay in the frame
         object->in_place = 0;
-        object->in_place_payload = NULL;
+        object->in_place_message = NULL;
         object->pending_connection = -1;
         if ( rocketnet_message_writer_space( &build->writer ) < ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 )
             rn_message_flush_unreliable( object, index, false );
@@ -1000,7 +1000,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
-        const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_payload, bytes, object->time, &payload_bytes );
+        const uint32_t serial = rn_endpoint_in_place_finish( connection, object->in_place_message, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
         {
             rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
@@ -1008,7 +1008,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         }
         rocketnet_packet_context_t context = object->in_place_context;
         object->in_place = 0;
-        object->in_place_payload = NULL;
+        object->in_place_message = NULL;
         object->pending_connection = -1;
         if ( payload_bytes == 0 )
         {

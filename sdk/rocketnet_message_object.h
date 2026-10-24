@@ -225,7 +225,7 @@ struct rn_message_object_t
     // the pending start is written in this transport frame
     int in_place;                               // pending start: 0 region, 1 whole frame, 2 appended record
     struct rocketnet_packet_context_t in_place_context;
-    uint8_t * in_place_payload;                 // the frame's payload root
+    uint8_t * in_place_message;                 // the frame's payload root
     void * block;
     int owns_block;
 };

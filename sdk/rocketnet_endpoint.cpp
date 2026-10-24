@@ -794,7 +794,7 @@ static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int count
         rn_endpoint_count( endpoint, counter, count - already_counted );
 }
 
-static int rn_endpoint_sequenced_payload_bytes( const rn_send_descriptor_t * descriptor )
+static int rn_endpoint_sequenced_packet_bytes( const rn_send_descriptor_t * descriptor )
 {
     const int header = 3 + 3 + 3 + ( descriptor->channel >= 256 ? 2 : 1 );
     return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
@@ -805,7 +805,7 @@ static bool rn_endpoint_large_sequenced( const rn_endpoint_t * endpoint, const r
     (void) endpoint;
     // The packed writer reserves the form byte, so the full-payload boundary takes this path.
     return descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
-           rn_endpoint_sequenced_payload_bytes( descriptor ) >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+           rn_endpoint_sequenced_packet_bytes( descriptor ) >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 // The end of the reliable path: a reliable packet the budget could not pay
@@ -835,7 +835,7 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
     rn_region_t * region = endpoint->region;
     const uint32_t d = endpoint->unreliable_head;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    const int payload_bytes = rn_endpoint_sequenced_payload_bytes( descriptor );
+    const int payload_bytes = rn_endpoint_sequenced_packet_bytes( descriptor );
     int fragment_count, stride;
     // An exact-capacity record is a whole packet, not a fragment payload.
     const bool exact_packet = payload_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
@@ -859,8 +859,8 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
         for ( int i = 0; i < fragment_count; i++ )
         {
             const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
-            const int wire_payload_bytes = fragment_bytes + ( exact_packet ? 0 : ROCKETNET_FRAGMENT_HEADER_BYTES );
-            const int maximum = rocketnet_send_budget_max_wire_bytes( wire_payload_bytes );
+            const int packet_payload_bytes = fragment_bytes + ( exact_packet ? 0 : ROCKETNET_FRAGMENT_HEADER_BYTES );
+            const int maximum = rocketnet_send_budget_max_wire_bytes( packet_payload_bytes );
             if ( maximum == 0 )
                 return -1;
             admitted_wire_bytes += maximum;

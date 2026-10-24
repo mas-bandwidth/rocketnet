@@ -1712,7 +1712,7 @@ static uint32_t rn_held_index( const rn_region_t * region, uint64_t key )
     return slot;
 }
 
-static uint32_t rn_sent_index_slot( const rn_region_t * region, uint64_t packet_id )
+static uint32_t rn_sent_index_entry( const rn_region_t * region, uint64_t packet_id )
 {
     uint32_t slot = (uint32_t) ( packet_id * 2654435761u ) % region->sent_index_entries;
     while ( region->sent_index[slot].used && region->sent_index[slot].packet_id != packet_id )
@@ -1859,11 +1859,11 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             entry->ref_count = (uint16_t) fragments;
             entry->unreliable_receipts = 0;
             side->sent_count++;
-            const uint32_t index_slot = rn_sent_index_slot( region, entry->packet_id );
-            check( !region->sent_index[index_slot].used );
-            region->sent_index[index_slot].packet_id = entry->packet_id;
-            region->sent_index[index_slot].entry = entry_index;
-            region->sent_index[index_slot].used = 1;
+            const uint32_t index_entry = rn_sent_index_entry( region, entry->packet_id );
+            check( !region->sent_index[index_entry].used );
+            region->sent_index[index_entry].packet_id = entry->packet_id;
+            region->sent_index[index_entry].entry = entry_index;
+            region->sent_index[index_entry].used = 1;
 
             uint32_t chunk = descriptor->chunk;
             for ( uint32_t f = 0; f < fragments; f++ )
@@ -1998,8 +1998,8 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
             continue;
         if ( !all && entry->send_time >= (double) tick && ( rn_random() & 1 ) )
             continue;
-        const uint32_t index_slot = rn_sent_index_slot( region, entry->packet_id );
-        check( region->sent_index[index_slot].used && region->sent_index[index_slot].packet_id == entry->packet_id );
+        const uint32_t index_entry = rn_sent_index_entry( region, entry->packet_id );
+        check( region->sent_index[index_entry].used && region->sent_index[index_entry].packet_id == entry->packet_id );
         for ( uint32_t r = 0; r < entry->ref_count; r++ )
         {
             const uint64_t number = region->sent_refs[entry->ref_first + r];
@@ -2046,10 +2046,10 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
         refs += moved.ref_count;
         const uint32_t to = ( side->sent_head + kept ) % region->packets;
         region->sent_packets[to] = moved;
-        const uint32_t index_slot = rn_sent_index_slot( region, moved.packet_id );
-        region->sent_index[index_slot].packet_id = moved.packet_id;
-        region->sent_index[index_slot].entry = to;
-        region->sent_index[index_slot].used = 1;
+        const uint32_t index_entry = rn_sent_index_entry( region, moved.packet_id );
+        region->sent_index[index_entry].packet_id = moved.packet_id;
+        region->sent_index[index_entry].entry = to;
+        region->sent_index[index_entry].used = 1;
         kept++;
     }
     check( refs <= region->sent_ref_entries );
@@ -3455,8 +3455,8 @@ static const uint8_t * channels_lossy_soak_fragment_chunk_data( const rn_region_
         for ( uint16_t j = 0; j < slot->fragment; j++ )
         {
             const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );
-            const rn_send_number_t * prev_slot = &region->send_numbers[prev_num & ( region->window - 1 )];
-            if ( prev_slot->descriptor == slot->descriptor && prev_slot->number == prev_num && !prev_slot->acked )
+            const rn_send_number_t * prev_entry = &region->send_numbers[prev_num & ( region->window - 1 )];
+            if ( prev_entry->descriptor == slot->descriptor && prev_entry->number == prev_num && !prev_entry->acked )
                 chain_index++;
         }
     }
