@@ -429,7 +429,7 @@ jobs:
           mkdir -p "$work/obj"
           for f in "$src"/Fuzzer*.cpp; do
             clang++ -O1 -g -std=c++17 -fPIC \
-              -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+              -ffp-contract=off -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
               -nostdinc++ -isystem "$MSAN_LIBCXX/include/c++/v1" -I "$src" \
               -c "$f" -o "$work/obj/$(basename "${f%.cpp}").o"
           done
