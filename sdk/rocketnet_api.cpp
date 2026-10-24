@@ -1890,8 +1890,8 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 // it takes each client's request into a free slot, establishes it when its
 // response opens, ends a slot on a denial, a timeout or the client's own
 // disconnect, and opens a client's traffic only under its slot's session keys.
-// SealStep: the same update seals one waiting disconnect packet of an ended
-// session (rocketnet_server_transport_drain_disconnect_bursts).
+// SealStep: the same update seals a waiting disconnect of an ended session
+// (rocketnet_server_transport_drain_disconnect_bursts).
 void rocketnet_server_update( struct rocketnet_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )

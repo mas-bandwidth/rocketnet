@@ -810,7 +810,9 @@ static void rocketnet_server_uring_multishot_ended( struct rocketnet_server_urin
     }
 }
 
-// tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag
+// tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag. The kernel
+// posted it: KernelComplete for a send run, KernelFill for a filled receive
+// buffer, KernelStop for the end of the multishot receive.
 
 static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
 {
