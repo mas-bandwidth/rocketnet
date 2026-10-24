@@ -211,8 +211,10 @@ A functional case never waits for the library in wall-clock seconds, because a
 loaded host may take any amount of wall time to schedule the case that waits
 and the library itself keeps its own clock. A timeout the library owns (the
 slot's idle timeout, the handshake deadline) is checked in the clock the
-library is given: the slot is still there at the last update whose time was
-below the timeout, and it is gone at the update whose time first passed it. A
+library is given, from the time of the last update that received a packet
+from the slot (the case watches the slot's wire receive count to find it): the
+slot is still there at the last update whose time was below that receive plus
+the timeout, and it is gone at the update whose time first reached it. A
 wait for a packet, a payload or a counter is bounded by a count of updates or
 polls, never by a deadline; the wall cap that remains is a hang guard only: it
 fires when the polls stop making progress, and it names the case that hung. A
