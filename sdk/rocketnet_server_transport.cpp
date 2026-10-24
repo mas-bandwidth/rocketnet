@@ -207,7 +207,8 @@ struct rocketnet_server_payloads_t
 {
     int num_payloads;
     int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
+    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    uint64_t sequence[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
     uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
@@ -2403,6 +2404,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
             server_transport->payloads.payload_data[index] = payload;
             server_transport->payloads.payload_bytes[index] = payload_bytes;
+            server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
             server_transport->payloads.num_payloads++;
         }
 
@@ -2421,6 +2423,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                 server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+                server_transport->payloads.sequence[index] = 0;
                 server_transport->payloads.num_payloads++;
             }
             else
@@ -2552,6 +2555,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = payload;
                 server_transport->payloads.payload_bytes[index] = payload_bytes;
+                server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
                 server_transport->payloads.num_payloads++;
             }
 
@@ -2570,6 +2574,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                     server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                     server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                     server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+                    server_transport->payloads.sequence[index] = 0;
                     server_transport->payloads.num_payloads++;
                 }
                 else
@@ -3631,6 +3636,19 @@ void rocketnet_server_transport_delivery_capture( struct rocketnet_server_transp
     capture->keep_alive_acked = endpoint->keep_alive_acked ? 1 : 0;
 }
 #endif // #if ROCKETNET_DEV
+
+
+void rocketnet_server_transport_defer_payload_acks( struct rocketnet_server_transport_t * transport )
+{
+    transport->protocol.defer_payload_acks = 1;
+}
+
+void rocketnet_server_transport_accept_payload( struct rocketnet_server_transport_t * transport, int k )
+{
+    const rocketnet_server_payloads_t * batch = &transport->payloads;
+    if ( k >= 0 && k < batch->num_payloads )
+        rocketnet_server_protocol_accept_payload( &transport->protocol, batch->client_index[k], batch->connection_id[k], batch->sequence[k] );
+}
 
 #endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 

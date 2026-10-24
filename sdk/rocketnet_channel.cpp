@@ -1378,6 +1378,34 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
     return rn_channels_feed_acks( &ordered->ack, packet_ids, count, now );
 }
 
+// Reserve all deliveries this record can release before accepting its number.
+// A partial packet may already have delivered an earlier record; its retry
+// deduplicates that prefix while the refused record remains unmarked.
+static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
+{
+    if ( record->control )
+        return 0;
+    uint32_t needed = 1;
+    if ( record->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record->channel >= channels->num_channels )
+        return needed;
+    const rn_region_t * region = channels->region;
+    const rn_channel_receive_t * rx = &region->channel_receive[record->channel];
+    if ( rn_u24( record->ordering ) != rx->ordered_read )
+        return needed;
+    // At most one sequenced hold can be released by this channel's drain.
+    if ( rx->held_sequenced != RN_DESCRIPTOR_NONE )
+        needed++;
+    uint32_t ordering = rn_u24( record->ordering + 1 );
+    for ( uint32_t i = 0; i < region->window; ++i, ordering = rn_u24( ordering + 1 ) )
+    {
+        const uint32_t held = rn_held_find( region, rn_held_key( record->channel, ordering ) );
+        if ( held == RN_DESCRIPTOR_NONE || region->held_index[held].used != RN_HELD_COMPLETE )
+            break;
+        needed++;
+    }
+    return needed;
+}
+
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes )
 {
     if ( !ordered || !payload )
@@ -1405,6 +1433,9 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
                                 record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
         if ( numbered )
         {
+            const uint32_t needed = rn_receive_delivery_reservation( channels, &record );
+            if ( channels->deliveries > channels->delivery_capacity || needed > channels->delivery_capacity - channels->deliveries )
+                return ROCKETNET_CHANNEL_RECEIVE_DEFERRED;
             uint32_t slot = RN_DESCRIPTOR_NONE;
             const int accepted = rn_window_receive_accept( &ordered->receive, &record, &slot );
             if ( accepted == RN_WINDOW_RECEIVE_DUPLICATE )

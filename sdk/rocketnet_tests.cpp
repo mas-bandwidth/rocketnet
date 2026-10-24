@@ -48,8 +48,7 @@
 #if ROCKETNET_XDP
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_server_socket.h"
-#include <xdp/xsk.h>
-#include <xdp/libxdp.h>
+#include "rocketnet_xdp_compat.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 

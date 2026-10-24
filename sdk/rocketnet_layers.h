@@ -2027,6 +2027,13 @@ void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_
 
 #endif // #if ROCKETNET_DEV
 
+
+void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport );
+void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k );
+
+void rocketnet_server_transport_defer_payload_acks( struct rocketnet_server_transport_t * transport );
+void rocketnet_server_transport_accept_payload( struct rocketnet_server_transport_t * transport, int k );
+
 #ifdef __cplusplus
 }
 #endif

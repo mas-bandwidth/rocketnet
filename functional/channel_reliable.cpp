@@ -188,3 +188,182 @@ void reliable_duplicate_after_gap_delivered_once()
     reliable_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
     rocketnet_channel_harness_destroy( &h );
 }
+
+// Fault injection at the SDK delivery table, not the simulated wire: reserve
+// all receive delivery slots temporarily. The normal W+Du sizing makes this
+// difficult to reach with a conforming peer, but ACK safety must survive it.
+static void reliable_receive_full_recovers_direction( int to_server, int reliability = ROCKETNET_RELIABILITY_RELIABLE, int message_bytes = 4 )
+{
+    rocketnet_channel_harness_t h;
+    reliable_check( rocketnet_channel_harness_create( &h ) );
+    rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
+    reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
+    for ( int i = 0; i < 120; ++i )
+        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+    rn_message_object_t * receiver = to_server ? &h.message_server->object : &h.message_client->object;
+    rn_message_object_t * sender = to_server ? &h.message_client->object : &h.message_server->object;
+    rn_message_connection_t * rx = &receiver->connections[to_server ? h.client_slot : 0];
+    rn_message_connection_t * tx = &sender->connections[to_server ? 0 : h.client_slot];
+    const uint32_t capacity = rx->ordered.channels.delivery_capacity;
+    const uint64_t receive_floor = rx->ordered.receive.R;
+    rx->ordered.channels.delivery_capacity = 0;
+    uint8_t message[8192];
+    for ( int i = 0; i < message_bytes; ++i ) message[i] = (uint8_t) ( i * 31 + 7 );
+    reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, reliability, message, message_bytes ) :
+                                 rocketnet_channel_harness_server_send( &h, 0, reliability, message, message_bytes ) ) != 0 );
+    // Long enough for an ACK and at least one retry, but below the reliable
+    // timeout. Neither end may disconnect or forget the rejected message.
+    for ( int i = 0; i < 180 && h.connected; ++i )
+        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+    printf( "receive_full direction=%s connected=%d sender_pending=%d receive_floor_unchanged=%d reason=%d\n",
+            to_server ? "client_to_server" : "server_to_client", h.connected,
+            tx->ordered.send.U != tx->ordered.send.next, rx->ordered.receive.R == receive_floor,
+            rx->disconnect_reason );
+    fflush( stdout );
+    reliable_check( h.connected );
+    reliable_check( tx->ordered.send.U != tx->ordered.send.next );
+    reliable_check( rx->ordered.receive.R == receive_floor );
+    rocketnet_channel_delivery_t delivery;
+    reliable_check( !( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) :
+                                  rocketnet_channel_harness_client_collect( &h, 0, &delivery ) ) );
+    rx->ordered.channels.delivery_capacity = capacity;
+    int received = 0;
+    for ( int i = 0; i < 600; ++i )
+    {
+        reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+        while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) :
+                            rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
+        {
+            reliable_check( delivery.bytes == message_bytes && memcmp( delivery.data, message, (size_t) message_bytes ) == 0 );
+            ++received;
+        }
+    }
+    reliable_check( received == 1 );
+    reliable_check( tx->ordered.send.U == tx->ordered.send.next );
+    reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+    reliable_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
+    printf( "receive_full direction=%s recovered=1 delivered_once=1 sender_drained=1\n", to_server ? "client_to_server" : "server_to_client" );
+    fflush( stdout );
+    rocketnet_channel_harness_destroy( &h );
+}
+
+void reliable_receive_full_recovers_client_to_server() { reliable_receive_full_recovers_direction( 1 ); }
+void reliable_receive_full_recovers_server_to_client() { reliable_receive_full_recovers_direction( 0 ); }
+
+void reliable_receive_full_recovers_all_modes()
+{
+    const int modes[] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+                         ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT };
+    for ( int direction = 0; direction < 2; ++direction )
+    {
+        reliable_receive_full_recovers_direction( direction, ROCKETNET_RELIABILITY_RELIABLE, 8192 );
+        for ( int mode : modes )
+        {
+            reliable_receive_full_recovers_direction( direction, mode, 4 );
+            reliable_receive_full_recovers_direction( direction, mode, 8192 );
+        }
+    }
+}
+
+void reliable_receive_full_partial_packet_recovers()
+{
+    for ( int to_server = 0; to_server < 2; ++to_server )
+    {
+        rocketnet_channel_harness_t h;
+        reliable_check( rocketnet_channel_harness_create( &h ) );
+        rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
+        reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
+        for ( int i = 0; i < 120; ++i ) rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+        rn_message_object_t * receiver = to_server ? &h.message_server->object : &h.message_client->object;
+        rn_message_object_t * sender = to_server ? &h.message_client->object : &h.message_server->object;
+        rn_message_connection_t * rx = &receiver->connections[to_server ? h.client_slot : 0];
+        rn_message_connection_t * tx = &sender->connections[to_server ? 0 : h.client_slot];
+        const uint32_t capacity = rx->ordered.channels.delivery_capacity;
+        const uint64_t floor = rx->ordered.receive.R;
+        rx->ordered.channels.delivery_capacity = 1;
+        const uint8_t a[4] = { 1, 2, 3, 4 }, b[4] = { 5, 6, 7, 8 };
+        for ( const uint8_t * data : { a, b } )
+            reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) :
+                                         rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) ) != 0 );
+        int first = 0, second = 0;
+        rocketnet_channel_delivery_t delivery;
+        for ( int i = 0; i < 20 && first == 0; ++i )
+        {
+            reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+            while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
+            {
+                reliable_check( delivery.bytes == 4 && memcmp( delivery.data, a, 4 ) == 0 );
+                first++;
+            }
+        }
+        rx->ordered.channels.delivery_capacity = 0;
+        for ( int i = 0; i < 120; ++i )
+            reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+        reliable_check( first == 1 && rx->ordered.receive.R == floor + 1 );
+        reliable_check( tx->ordered.send.next - tx->ordered.send.U == 2 ); // packet ACK suppressed for the whole pair
+        rx->ordered.channels.delivery_capacity = capacity;
+        for ( int i = 0; i < 600; ++i )
+        {
+            reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+            while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
+            {
+                reliable_check( delivery.bytes == 4 && memcmp( delivery.data, b, 4 ) == 0 );
+                second++;
+            }
+        }
+        reliable_check( second == 1 && tx->ordered.send.U == tx->ordered.send.next );
+        reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+        rocketnet_channel_harness_destroy( &h );
+    }
+}
+
+// Filling an ordering gap can release multiple previously ACKed holds. The
+// triggering record must reserve room for that whole chain before acceptance.
+void reliable_receive_full_ordered_gap_recovers()
+{
+    rocketnet_channel_harness_t h;
+    reliable_check( rocketnet_channel_harness_create( &h ) );
+    rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
+    reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
+    for ( int i = 0; i < 120; ++i ) rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+    rn_message_connection_t * rx = &h.message_server->object.connections[h.client_slot];
+    const uint32_t capacity = rx->ordered.channels.delivery_capacity;
+    const uint64_t floor = rx->ordered.receive.R;
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_PASS );
+    int ends[3];
+    for ( uint8_t i = 0; i < 3; ++i )
+    {
+        reliable_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, &i, 1 ) != 0 );
+        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+        ends[i] = h.held_count;
+    }
+    reliable_check( ends[0] == 1 && ends[1] == 2 && ends[2] == 3 );
+    const int later[] = { 1, 2 };
+    reliable_check( rocketnet_channel_harness_deliver_held( &h, later, 2 ) == 2 );
+    reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+    reliable_check( rx->ordered.receive.R == floor );
+    rx->ordered.channels.delivery_capacity = 2; // gap record + two holds need three
+    const int first[] = { 0 };
+    reliable_check( rocketnet_channel_harness_deliver_held( &h, first, 1 ) == 1 );
+    reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+    reliable_check( rx->ordered.receive.R == floor );
+    rocketnet_channel_delivery_t delivery;
+    reliable_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ) );
+    rx->ordered.channels.delivery_capacity = capacity;
+    rocketnet_channel_harness_clear_held( &h );
+    rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
+    int received = 0;
+    for ( int i = 0; i < 600; ++i )
+    {
+        reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+        while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
+        {
+            reliable_check( delivery.bytes == 1 && delivery.data[0] == received );
+            received++;
+        }
+    }
+    reliable_check( received == 3 );
+    reliable_check( h.message_client->object.connections[0].ordered.send.U == h.message_client->object.connections[0].ordered.send.next );
+    reliable_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+    rocketnet_channel_harness_destroy( &h );
+}

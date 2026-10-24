@@ -313,6 +313,7 @@ typedef struct rocketnet_channel_endpoint_t
     uint8_t (* payload)[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     uint8_t * payload_ptr[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
+    uint64_t payload_sequence[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_client_index[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
 } rocketnet_channel_endpoint_t;
 
@@ -483,6 +484,7 @@ static inline void rocketnet_channel_endpoint_payload( rocketnet_channel_endpoin
     memcpy( endpoint->payload[index], data, (size_t) bytes );
     endpoint->payload_ptr[index] = endpoint->payload[index];
     endpoint->payload_bytes[index] = bytes;
+    endpoint->payload_sequence[index] = endpoint->is_server ? endpoint->harness->server.payload_sequence : endpoint->harness->client.received_session_sequence;
     endpoint->payload_client_index[index] = client_index;
 }
 
@@ -508,6 +510,8 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
     rocketnet_channel_endpoint_t * endpoint = (rocketnet_channel_endpoint_t *) transport;
     rocketnet_channel_harness_t * h = endpoint->harness;
     endpoint->payload_count = 0;
+    h->server.defer_payload_acks = 1;
+    h->client.defer_payload_acks = 1;
     struct rocketnet_address_t from;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -747,12 +751,24 @@ static inline void rocketnet_channel_endpoint_disconnect( void * transport, int 
     }
 }
 
+static inline void rocketnet_channel_endpoint_accept_payload( void * transport, int k )
+{
+    rocketnet_channel_endpoint_t * endpoint = (rocketnet_channel_endpoint_t *) transport;
+    rocketnet_channel_harness_t * h = endpoint->harness;
+    if ( endpoint->is_server )
+        rocketnet_server_protocol_accept_payload( &h->server, endpoint->payload_client_index[k],
+            rocketnet_server_protocol_connection_id( &h->server, endpoint->payload_client_index[k] ), endpoint->payload_sequence[k] );
+    else
+        rocketnet_client_protocol_accept_payload( &h->client, endpoint->payload_sequence[k] );
+}
+
 static inline void rocketnet_channel_endpoint_link( struct rn_message_link_t * link, rocketnet_channel_endpoint_t * endpoint )
 {
     memset( link, 0, sizeof(*link) );
     link->transport = endpoint;
     link->update = rocketnet_channel_endpoint_update;
     link->payloads = rocketnet_channel_endpoint_payloads;
+    link->accept_payload = rocketnet_channel_endpoint_accept_payload;
     link->acked = rocketnet_channel_endpoint_acked;
     link->start_packet = rocketnet_channel_endpoint_start_packet;
     link->finish_packet = rocketnet_channel_endpoint_finish_packet;

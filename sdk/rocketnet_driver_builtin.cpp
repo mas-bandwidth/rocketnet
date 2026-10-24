@@ -1088,13 +1088,13 @@ static const rocketnet_server_transport_io_operations_t xdp_operations =
 // Keep a refusing rung: removing this known row would make an all-skipped
 // pin expand to auto under the fleet-wide list policy. No socket is opened.
 // XDP is compiled out (CMakeLists.txt: ROCKETNET_XDP=OFF, or no clang with the
-// BPF target, libbpf or libxdp at configure), so a list naming xdp refuses it
+// BPF target, libbpf or an AF_XDP provider at configure), so a list naming xdp refuses it
 // with TRANSPORT_NOT_BUILT and auto falls past it to the next transport.
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
     if ( config->status )
         *config->status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
-    rocketnet_error( "xdp create refused: XDP is compiled out of this build (ROCKETNET_XDP=OFF, or no clang with the BPF target, libbpf or libxdp at configure)" );
+    rocketnet_error( "xdp create refused: XDP is compiled out of this build (ROCKETNET_XDP=OFF, or no clang with the BPF target, libbpf or an AF_XDP provider at configure)" );
     return NULL;
 }
 static void xdp_disabled_destroy( void * ) {}

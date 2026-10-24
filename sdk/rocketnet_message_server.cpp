@@ -613,8 +613,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         for ( int k = 0; k < count; k++ )
         {
             rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.payload_connection, k );
-            if ( connection )
-                rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time );    // RNEndpoint OnPayload
+            if ( connection && rn_endpoint_on_payload( connection, payload_data[k], payload_bytes[k], NULL, 0, NULL, time ) &&
+                 object->link.accept_payload )
+                object->link.accept_payload( object->link.transport, k );
         }
     }
 
@@ -1244,12 +1245,20 @@ static void rn_server_link_destroy( void * transport )
     rocketnet_server_transport_destroy( (rocketnet_server_transport_t *) transport );
 }
 
+static void rn_server_link_accept_payload( void * transport, int k )
+{
+    rocketnet_server_transport_accept_payload( (rocketnet_server_transport_t *) transport, k );
+}
+
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = rn_server_link_update;
     link->payloads = rn_server_link_payloads;
+    link->accept_payload = rn_server_link_accept_payload;
+    if ( transport )
+        rocketnet_server_transport_defer_payload_acks( transport );
     link->acked = rn_server_link_acked;
     link->payload_connection = rn_server_link_payload_connection;
     link->acked_connection = rn_server_link_acked_connection;

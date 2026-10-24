@@ -119,12 +119,20 @@ static void rn_client_link_destroy( void * transport )
     rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
 }
 
+static void rn_client_link_accept_payload( void * transport, int k )
+{
+    rocketnet_client_transport_accept_payload( (rocketnet_client_transport_t *) transport, k );
+}
+
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
+    link->accept_payload = rn_client_link_accept_payload;
+    if ( transport )
+        rocketnet_client_transport_defer_payload_acks( transport );
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
     link->acked_connection = rn_client_link_entry_connection;

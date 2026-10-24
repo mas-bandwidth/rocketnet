@@ -284,14 +284,17 @@ static bool load_filter( filter_t * filter, const char * path )
     struct bpf_object_open_opts options;
     memset( &options, 0, sizeof(options) );
     options.sz = sizeof(options);
+#if !ROCKETNET_XDP_LEGACY_LIBBPF
     options.kernel_log_buf = verifier_log;
     options.kernel_log_size = sizeof(verifier_log);
     options.kernel_log_level = 1;
+#endif
 
     filter->object = bpf_object__open_file( path, &options );
-    if ( filter->object == NULL )
+    if ( filter->object == NULL || libbpf_get_error( filter->object ) )
     {
         fprintf( stderr, "could not open %s: %s\n", path, strerror( errno ) );
+        filter->object = NULL;
         return false;
     }
 
@@ -305,7 +308,13 @@ static bool load_filter( filter_t * filter, const char * path )
     }
 
     struct bpf_program * program = bpf_object__find_program_by_name( filter->object, "server_xdp_filter" );
+#if ROCKETNET_XDP_LEGACY_LIBBPF
+    if ( program != NULL )
+        bpf_program__set_type( program, BPF_PROG_TYPE_XDP );
+    if ( program == NULL )
+#else
     if ( program == NULL || bpf_program__set_type( program, BPF_PROG_TYPE_XDP ) != 0 )
+#endif
     {
         fprintf( stderr, "the program has no server_xdp_filter to load as XDP\n" );
         return false;
@@ -318,7 +327,15 @@ static bool load_filter( filter_t * filter, const char * path )
         return false;
     }
 
+#if ROCKETNET_XDP_LEGACY_LIBBPF
+    // Old libbpf reports verifier diagnostics through its print callback.
+    struct bpf_object_load_attr load = {};
+    load.obj = filter->object;
+    load.log_level = 1;
+    const int result = bpf_object__load_xattr( &load );
+#else
     const int result = bpf_object__load( filter->object );
+#endif
     if ( result != 0 )
     {
         fprintf( stderr, "load failed: %s\n", strerror( -result ) );
@@ -1543,7 +1560,11 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     int frames_to_peer = 0;
     int frames_elsewhere = 0;
     const double deadline = onlink_now() + ONLINK_SECONDS;
-    while ( frames_to_peer < ONLINK_WANT_FRAMES && onlink_now() < deadline )
+    // Keep the exchange alive for the full bounded window. Captured frames
+    // include control traffic, so reaching ONLINK_WANT_FRAMES can precede
+    // the client's report after 100 received payloads. Stopping at that
+    // frame count races the payload assertion below.
+    while ( onlink_now() < deadline )
     {
         struct pollfd fds;
         fds.fd = environment.capture_fd;
