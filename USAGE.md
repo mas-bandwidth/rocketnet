@@ -460,10 +460,13 @@ returns. A completion query does not free the object or promise receipt by the o
 ### Receive buffer sizing
 
 Between two updates the server's socket holds every packet that arrives.
-The portable transport's receive worker reads ahead into three banks and
-then waits for the next update, so at a low update rate nearly a whole
-update interval of inbound packets sits in the kernel's receive buffer. Each
-server socket therefore asks for:
+The portable transport's receive worker reads the socket into one of three
+banks and hands a filled bank to the main thread at the next update, so at a
+low update rate nearly a whole update interval of inbound packets waits
+somewhere. It waits in the bank: the worker appends every packet it reads to
+its bank and goes on draining the socket while main holds the other banks,
+and only a bank at its capacity stops the worker until a free bank comes.
+Each server socket therefore asks for:
 
 ```
 receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
@@ -491,7 +494,8 @@ sudo sysctl -w net.core.rmem_max=25000000
 
 A grant below one update's inbound traffic drops packets in the kernel
 before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
-update carries 3.2 MB of payload.
+update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
+1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp).
 
 ## Frame loop
 
