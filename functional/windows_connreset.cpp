@@ -344,6 +344,10 @@ struct windows_connreset_session_t
     bool measuring;
     double max_gap;
     int child_index;
+    // the child's slot: its wire receive count and the time of the last
+    // update that received a packet from it, the library's last_receive_time
+    uint64_t child_received;
+    double child_receive_clock;
     uint32_t sequence;
     windows_connreset_child_t child;
 };
@@ -370,6 +374,17 @@ static double windows_connreset_tick( windows_connreset_session_t * session, int
         windows_connreset_client_tick( session->live[i], now, session->sequence, true,
                                        &session->client_sent[i], &session->client_received[i] );
     rocketnet_server_transport_update( session->server, now );
+    if ( session->child_index >= 0 && rocketnet_server_transport_is_client_connected( session->server, session->child_index ) )
+    {
+        struct rocketnet_server_transport_client_stats_t stats;
+        memset( &stats, 0, sizeof( stats ) );
+        rocketnet_server_transport_client_stats( session->server, session->child_index, &stats );
+        if ( stats.packets_received > session->child_received )
+        {
+            session->child_received = stats.packets_received;
+            session->child_receive_clock = now;
+        }
+    }
     const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
     for ( int i = 0; i < num_payloads; i++ )
     {
@@ -520,10 +535,12 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     double next = killed;
     // the slot's timeout is the library's own, so it is checked in the clock
     // the library was given: the slot is freed by the update whose time
-    // first passes the timeout, and it is not freed before the update whose
-    // time is below it. the wall clock only bounds the loop against a hang.
-    const double timeout_clock = killed + ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
-    double last_connected_clock = killed;
+    // first passes the last receive plus the timeout, and it is not freed
+    // before. packets the child sent before the kill may still be received
+    // by updates after it, so the tick tracks the last receive until the
+    // slot is freed. the wall clock only bounds the loop against a hang.
+    windows_connreset_require( session.child_receive_clock > 0.0 );
+    double last_connected_clock = 0.0;
     double freed_clock = 0.0;
     rocketnet_bounded_wait_t wait;
     rocketnet_bounded_wait_start( wait, "windows_connreset_hard_killed_client", 60.0, WINDOWS_CONNRESET_CONNECT_TICKS );
@@ -582,7 +599,12 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
 
     // the timeout the library owns is checked in the library's clock: the
     // slot was still connected at the last update whose time was below the
-    // timeout, and it was freed by the update whose time first passed it
+    // last receive plus the timeout, and it was freed by the update whose
+    // time first reached it
+    const double timeout_clock = session.child_receive_clock + ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    printf( "    dead slot: last receive at update %.3f, timeout at %.3f, last connected update %.3f, freed by update %.3f\n",
+            session.child_receive_clock, timeout_clock, last_connected_clock, freed_clock );
+    fflush( stdout );
     windows_connreset_require( last_connected_clock < timeout_clock );
     windows_connreset_require( freed_clock >= timeout_clock );
     // the reports are off on every socket: the stack delivered none
