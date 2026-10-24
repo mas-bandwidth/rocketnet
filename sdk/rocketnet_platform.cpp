@@ -574,7 +574,6 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 // portable shape beside it.
 
 #include "rocketnet_platform.h"
-#include "rocketnet_constants.h"
 #include <limits.h>
 #include "rocketnet_address.h"
 
@@ -4038,7 +4037,6 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // windows
 
 #include "rocketnet_platform.h"
-#include "rocketnet_constants.h"
 #include <limits.h>
 #include <math.h>
 #include "rocketnet_address.h"
