@@ -233,15 +233,17 @@ commit the minimized input to its corpus as `regress_<name>`.
 - `fuzz-nightly.yml` also runs the same ten-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
-  headers, exactly as `tools/run_msan.sh` does, and each target links
-  `-fsanitize=fuzzer-no-link,memory` with origin tracking and the
+  headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
+  links `-fsanitize=fuzzer-no-link,memory` with origin tracking and the
   instrumented libc++ (`/opt/msan-libcxx-<clang version>`; a runner without
   it fails with a TOOL-MISSING line). The leg builds libFuzzer's engine from
   the compiler-rt source pinned by `tools/build_msan_libcxx.sh` against that
   libc++ and with the same MSan flags: the engine clang ships is built
   against libstdc++, so it cannot resolve a target's `std::__1` references
   and, forced to link, leaves poison its uninstrumented `std::string` writes
-  never clear. Any MemorySanitizer report fails that leg.
+  never clear. The engine is cached per runner clang version (the fleet's
+  Linux runners carry different clangs, and the engine is built against
+  each one's libc++). Any MemorySanitizer report fails that leg.
 - After the matrix, one `coverage` job per OS (Linux and macOS) runs
   `tools/fuzz_coverage.sh` over every target and appends its per-area table
   as Markdown to the job summary (`FUZZ_COV_SUMMARY=$GITHUB_STEP_SUMMARY`).
