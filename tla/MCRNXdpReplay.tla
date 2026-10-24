@@ -10,7 +10,10 @@
 (* NewSessionNeverDroppedByOldMark; MCRNXdpReplayBrokenNarrowWindow.cfg    *)
 (* sets KernelWindow <- KernelWindowBroken (the kernel window one short of *)
 (* the userspace window, the shape of the old 16 against 4096) and must    *)
-(* fail FreshGenuineNeverDropped.                                          *)
+(* fail FreshGenuineNeverDropped;                                          *)
+(* MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg sets                        *)
+(* WalkForgetsUnmarked <- WalkForgetsUnmarkedBroken (the walk forgets only *)
+(* a slot that held a mark) and must fail MacForgottenAfterAWalk.          *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -19,4 +22,5 @@ CONSTANTS A1
 KernelAdvancesBroken == TRUE
 WalkForgetsBroken    == FALSE
 KernelWindowBroken   == W - 1
+WalkForgetsUnmarkedBroken == FALSE
 =============================================================================

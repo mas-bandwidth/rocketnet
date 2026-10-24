@@ -79,13 +79,14 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     rocketnet_assert( sink->forget );
     rocketnet_assert( sink->mark );
 
-    // tla/RNXdpReplay.tla Walk: first the forgets -- every slot that held a
-    // mark and is no longer connected, or whose mapping changed address.
+    // tla/RNXdpReplay.tla Walk: first the forgets -- every slot a walk saw
+    // connected that is no longer connected, or whose mapping changed address,
+    // mark or not, so the reply MAC learned on accept is forgotten too.
 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
-        if ( !slot->has_mark )
+        if ( slot->marked_address.type == ROCKETNET_ADDRESS_NONE )
             continue;
 
         int forget = 0;
@@ -116,8 +117,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         }
     }
 
-    // then the marks -- every connected slot whose highest_opened is nonzero
-    // and differs from what it last marked.
+    // then the marks -- every connected slot with a mapping is recorded as
+    // seen at its address, and marked when its highest_opened is nonzero and
+    // differs from what it last marked.
 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
@@ -127,6 +129,11 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
         if ( mapping_index < 0 )
             continue;
+
+        struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
+        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
+        slot->marked_address = *address;
+
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, mapping_index );
         const uint64_t highest_opened = mapping->replay_session.highest_opened;
         if ( highest_opened == 0 )
@@ -134,15 +141,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         const uint32_t high_water = (uint32_t) highest_opened;
 
-        struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
         if ( slot->has_mark && slot->marked_value == high_water )
             continue;
 
-        const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
         sink->mark( sink->context, address, high_water );
         slot->has_mark = 1;
         slot->marked_value = high_water;
-        slot->marked_address = *address;
     }
 }
 

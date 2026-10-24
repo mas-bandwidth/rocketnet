@@ -10,10 +10,16 @@
 (* design's KernelWindow is W, the userspace replay window.  The kernel    *)
 (* never writes the map.  Userspace writes it once per server update: the  *)
 (* transport walks its client slots, FORGETs the address of every slot     *)
-(* that held a mark and is no longer connected, then MARKs every connected *)
-(* slot whose session replay window's highest_opened is nonzero and        *)
-(* differs from what it last marked; the transport applies the forgets, then  *)
-(* the marks, in one commit.                                               *)
+(* a walk saw connected that is no longer connected, mark or not, then     *)
+(* MARKs every connected slot whose session replay window's highest_opened *)
+(* is nonzero and differs from what it last marked; the transport applies  *)
+(* the forgets, then the marks, in one commit.                             *)
+(*                                                                         *)
+(* The same forget clears the transport's reply-MAC entry for the address, *)
+(* learned when the slot is accepted (rocketnet_server_socket_client_      *)
+(* accepted), at once and not at the commit.  A slot accepted and released *)
+(* before any walk saw it is never forgotten by the walk: the model keeps  *)
+(* that case reachable and MacForgottenAfterAWalk names it out.            *)
 (*                                                                         *)
 (* A client slot is identified with its address here: one live session    *)
 (* per address, a reconnect from the same address being a new session     *)
@@ -57,10 +63,13 @@ ASSUME /\ Addresses # {}
 (*     mark and is no longer connected (the design: TRUE).                 *)
 (*   KernelWindow: the distance behind the mark the kernel drops at (the   *)
 (*     design: W, ROCKETNET_XDP_REPLAY_WINDOW, the userspace window).      *)
+(*   WalkForgetsUnmarked: the walk forgets every slot it saw connected,    *)
+(*     mark or not (the design: TRUE); FALSE forgets only marked slots.    *)
 (***************************************************************************)
-KernelAdvances == FALSE
-WalkForgets    == TRUE
-KernelWindow   == W
+KernelAdvances      == FALSE
+WalkForgets         == TRUE
+KernelWindow        == W
+WalkForgetsUnmarked == TRUE
 
 NoSession == 0
 SessionIds == 1..Sessions
@@ -87,10 +96,14 @@ VARIABLES
     pendingMark,    \* the marks the walk takes, applied by Commit
     phase,          \* "run" (packet processing) or "flush" (walk done)
     settle,         \* settle[a]: "clear", "released" or "walked" since Release(a)
-    dropped         \* ghost: genuine packets the kernel dropped
+    dropped,        \* ghost: genuine packets the kernel dropped
+    seen,           \* seen[a]: a walk saw a session connected at a
+    mac,            \* mac[a]: the session whose reply MAC is learned, or 0
+    unseen          \* ghost: unseen[a], the last session at a ended unseen
 
 vars == <<session, nextSession, sent, opened, reached, marked, kmap, net,
-          pendingForget, pendingMark, phase, settle, dropped>>
+          pendingForget, pendingMark, phase, settle, dropped, seen, mac,
+          unseen>>
 
 Drops == [addr : Addresses, seq : Seqs, session : 0..Sessions,
           against : 0..Sessions]
@@ -109,6 +122,9 @@ TypeOK ==
     /\ phase \in {"run", "flush"}
     /\ settle \in [Addresses -> {"clear", "released", "walked"}]
     /\ dropped \subseteq Drops
+    /\ seen \in [Addresses -> BOOLEAN]
+    /\ mac \in [Addresses -> 0..Sessions]
+    /\ unseen \in [Addresses -> BOOLEAN]
 
 Init ==
     /\ session = [a \in Addresses |-> NoSession]
@@ -124,6 +140,9 @@ Init ==
     /\ phase = "run"
     /\ settle = [a \in Addresses |-> "clear"]
     /\ dropped = {}
+    /\ seen = [a \in Addresses |-> FALSE]
+    /\ mac = [a \in Addresses |-> NoSession]
+    /\ unseen = [a \in Addresses |-> FALSE]
 
 Max(x, y) == IF x >= y THEN x ELSE y
 
@@ -133,7 +152,8 @@ Max(x, y) == IF x >= y THEN x ELSE y
 (* processed.  Enabled only once a Walk and a Commit have both run since   *)
 (* the last Release(a): the assumption HandshakeSpansAnUpdate, true        *)
 (* because a slot exists only after a request, a challenge and a response  *)
-(* round trip while the walk runs every update.                            *)
+(* round trip while the walk runs every update.  The transport learns the  *)
+(* reply MAC for a on accept, before any session packet opens.             *)
 (***************************************************************************)
 Connect(a) ==
     /\ phase = "run"
@@ -144,8 +164,10 @@ Connect(a) ==
     /\ nextSession' = nextSession + 1
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
+    /\ mac' = [mac EXCEPT ![a] = nextSession]
+    /\ unseen' = [unseen EXCEPT ![a] = FALSE]
     /\ UNCHANGED <<reached, marked, kmap, net, pendingForget, pendingMark,
-                   phase, settle, dropped>>
+                   phase, settle, dropped, seen>>
 
 (* ClientSend(a): the live session sends its next genuine sequence.        *)
 ClientSend(a) ==
@@ -157,7 +179,8 @@ ClientSend(a) ==
                          session |-> session[a], genuine |-> TRUE,
                          stage |-> "wire", copy |-> 1]}
     /\ UNCHANGED <<session, nextSession, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped>>
+                   pendingForget, pendingMark, phase, settle, dropped, seen,
+                   mac, unseen>>
 
 (* Forge(a, s): an attacker spoofing a sends any sequence; it never opens. *)
 Forge(a, s) ==
@@ -165,7 +188,8 @@ Forge(a, s) ==
     /\ net' = net \cup {[addr |-> a, seq |-> s, session |-> session[a],
                          genuine |-> FALSE, stage |-> "wire", copy |-> 1]}
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped>>
+                   pendingForget, pendingMark, phase, settle, dropped, seen,
+                   mac, unseen>>
 
 (* Duplicate(p): the network delivers a second copy of a packet.           *)
 Duplicate(p) ==
@@ -174,7 +198,8 @@ Duplicate(p) ==
     /\ Cardinality(net) < MaxInFlight
     /\ net' = net \cup {[p EXCEPT !.copy = 2]}
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped>>
+                   pendingForget, pendingMark, phase, settle, dropped, seen,
+                   mac, unseen>>
 
 (***************************************************************************)
 (* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
@@ -205,7 +230,7 @@ KernelFilter(p) ==
                                ELSE kmap
                   /\ UNCHANGED dropped
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked,
-                   pendingForget, pendingMark, phase, settle>>
+                   pendingForget, pendingMark, phase, settle, seen, mac, unseen>>
 
 (***************************************************************************)
 (* UserOpen(p): userspace receives a packet the kernel passed.  A genuine  *)
@@ -222,9 +247,10 @@ UserOpen(p) ==
               /\ reached' = [reached EXCEPT ![p.session] = Max(@, p.seq)]
          ELSE UNCHANGED <<opened, reached>>
     /\ UNCHANGED <<session, nextSession, sent, marked, kmap, pendingForget,
-                   pendingMark, phase, settle, dropped>>
+                   pendingMark, phase, settle, dropped, seen, mac, unseen>>
 
-(* Release(a): the session ends (timeout, disconnect).  Userspace.         *)
+(* Release(a): the session ends (timeout, disconnect).  Userspace.  The    *)
+(* ghost unseen[a] records that no walk saw this session connected.        *)
 Release(a) ==
     /\ phase = "run"
     /\ session[a] # NoSession
@@ -232,19 +258,23 @@ Release(a) ==
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
     /\ settle' = [settle EXCEPT ![a] = "released"]
+    /\ unseen' = [unseen EXCEPT ![a] = ~seen[a]]
     /\ UNCHANGED <<nextSession, reached, marked, kmap, net, pendingForget,
-                   pendingMark, phase, dropped>>
+                   pendingMark, phase, dropped, seen, mac>>
 
 (***************************************************************************)
 (* Walk: once per update, after packet processing and before the flush.   *)
-(* First the forgets: every slot that held a mark and is no longer         *)
-(* connected.  Then the marks: every connected slot whose highest_opened   *)
-(* is nonzero and differs from what it last marked.  The broken shape      *)
-(* WalkForgets = FALSE never forgets a released slot.                      *)
+(* First the forgets: every slot a walk saw connected that is no longer    *)
+(* connected, mark or not; each forget clears the reply MAC at once.  Then *)
+(* the marks: every connected slot is seen, and marked when its            *)
+(* highest_opened is nonzero and differs from what it last marked.  The    *)
+(* broken shape WalkForgets = FALSE never forgets a released slot;         *)
+(* WalkForgetsUnmarked = FALSE forgets only a slot that held a mark.       *)
 (***************************************************************************)
-Forgets == IF WalkForgets
-             THEN {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
-             ELSE {}
+Forgets == IF ~WalkForgets THEN {}
+           ELSE IF WalkForgetsUnmarked
+             THEN {a \in Addresses : seen[a] /\ session[a] = NoSession}
+             ELSE {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
 
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
             a \in {b \in Addresses : /\ session[b] # NoSession
@@ -261,9 +291,12 @@ Walk ==
                     ELSE marked[a]]
     /\ settle' = [a \in Addresses |->
                     IF settle[a] = "released" THEN "walked" ELSE settle[a]]
+    /\ seen' = [a \in Addresses |->
+                  IF a \in Forgets THEN FALSE ELSE session[a] # NoSession]
+    /\ mac' = [a \in Addresses |-> IF a \in Forgets THEN NoSession ELSE mac[a]]
     /\ phase' = "flush"
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, kmap, net,
-                   dropped>>
+                   dropped, unseen>>
 
 (* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.                         *)
@@ -282,7 +315,7 @@ Commit ==
                     IF settle[a] = "walked" THEN "clear" ELSE settle[a]]
     /\ phase' = "run"
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, net,
-                   dropped>>
+                   dropped, seen, mac, unseen>>
 
 Next ==
     \/ \E a \in Addresses : Connect(a) \/ ClientSend(a) \/ Release(a)
@@ -332,4 +365,12 @@ MarksTakenFromTheTruth ==
     \A a \in Addresses :
         kmap[a].hw = 0 \/ (kmap[a].sess \in SessionIds
                            /\ kmap[a].hw <= reached[kmap[a].sess])
+(* MacForgottenAfterAWalk: once a walk has run since a session at a ended, *)
+(* no reply MAC is left for a, unless no walk ever saw that session        *)
+(* connected (accepted and released inside one update): the walk cannot   *)
+(* forget what it never saw, and that case is named out here.              *)
+MacForgottenAfterAWalk ==
+    \A a \in Addresses :
+        (session[a] = NoSession /\ settle[a] # "released" /\ ~unseen[a])
+            => mac[a] = NoSession
 =============================================================================

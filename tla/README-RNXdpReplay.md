@@ -15,8 +15,9 @@ the `xdp-replay-high-water` row of `tla/COVERAGE.tsv` is `owed`.
 
 `tla/MCRNXdpReplay.tla` and `tla/MCRNXdpReplay.cfg` are the small instance.
 `tla/MCRNXdpReplayBrokenKernelAdvances.cfg`,
-`tla/MCRNXdpReplayBrokenNoForget.cfg` and
-`tla/MCRNXdpReplayBrokenNarrowWindow.cfg` are the reversed witnesses. The cases
+`tla/MCRNXdpReplayBrokenNoForget.cfg`,
+`tla/MCRNXdpReplayBrokenNarrowWindow.cfg` and
+`tla/MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` are the reversed witnesses. The cases
 are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
 `tla/RUNS.tsv`.
 
@@ -32,10 +33,12 @@ are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
   The kernel never updates or deletes an entry, so a forged sequence far
   ahead passes to userspace, fails the AEAD open there, and moves nothing.
 - Userspace, once per update after packet processing and before the transport
-  flush: FORGET the old address of every slot that held a mark and is no
-  longer connected (or whose mapping changed address); then MARK every
-  connected slot whose `highest_opened` is nonzero and differs from what it
-  last marked. The transport applies all forgets, then all marks, in one commit.
+  flush: FORGET the old address of every slot a walk saw connected that is
+  no longer connected (or whose mapping changed address), whether or not it
+  held a mark; then MARK every connected slot whose `highest_opened` is
+  nonzero and differs from what it last marked. A forget also clears the
+  transport's reply MAC for the address, learned when the slot was accepted,
+  so a slot released before its first mark leaves no MAC behind. The transport applies all forgets, then all marks, in one commit.
   The map lags the truth by at most one update and is never ahead of it.
 - Sizing: the kernel window is the userspace window,
   `ROCKETNET_XDP_REPLAY_WINDOW` = `ROCKETNET_REPLAY_WINDOW_BITS`
@@ -65,19 +68,24 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `pendingForget`, `pendingMark` | the walk's output | what the next commit applies |
 | `phase` | the update | `"run"` while packets are processed, `"flush"` between the walk and the commit |
 | `settle[a]` | (assumption bookkeeping) | `"released"`, then `"walked"`, then `"clear"` after a Release |
+| `seen[a]` | `marked_address` of the per-slot record, set for every connected slot | a walk saw a session connected at `a` |
+| `mac[a]` | the transport's reply-MAC table entry | the session whose accept learned it, `0` for none |
+| `unseen[a]` | (ghost) | the last session at `a` was released before any walk saw it |
 | `reached[s]` | (ghost) | the highest `highest_opened` session `s` reached |
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
 | `nextSession` | (ghost) | the id the next connection takes |
 
-Three rule switches are definitions with the design's values, each
+Four rule switches are definitions with the design's values, each
 overridden by one witness configuration: `KernelAdvances` (`FALSE`),
-`WalkForgets` (`TRUE`) and `KernelWindow` (`W`).
+`WalkForgets` (`TRUE`), `KernelWindow` (`W`) and `WalkForgetsUnmarked`
+(`TRUE`).
 
 Actions, each against the design sentence it models:
 
 - `Connect(a)`: a new session; sequences restart at 1 and `highest_opened` is
   0. Enabled only when `settle[a] = "clear"`, that is once a `Walk` and a
   `Commit` have both run since the last `Release(a)` (the assumption below).
+  The accept learns the reply MAC: `mac[a]` is the new session.
 - `ClientSend(a)`: the live session sends its next genuine sequence.
 - `Forge(a, s)`: an attacker spoofing `a` sends any sequence `s`; it never
   opens.
@@ -91,10 +99,12 @@ Actions, each against the design sentence it models:
 - `UserOpen(p)`: a genuine packet of the live session opens and raises
   `highest_opened`; a forged one fails the AEAD open, and a packet of an
   ended session has no mapping: neither moves anything.
-- `Release(a)`: the session ends.
-- `Walk`: forgets first (every address with `marked[a] # 0` and no live
-  session), then marks (every live session with `opened[a] # 0` and
-  `opened[a] # marked[a]`), into the pending sets; `marked` records them.
+- `Release(a)`: the session ends; `unseen[a]` records whether no walk saw it.
+- `Walk`: forgets first (every address with `seen[a]` and no live session,
+  mark or not; the broken shape `WalkForgetsUnmarked = FALSE` keeps the old
+  `marked[a] # 0`), clearing `mac[a]` at once, then marks (every live session
+  with `opened[a] # 0` and `opened[a] # marked[a]`), into the pending sets;
+  `marked` records them and `seen` becomes every live session.
 - `Commit`: the transport applies all forgets, then all marks, to `kmap`. The
   only action that writes `kmap` in the design.
 
@@ -116,6 +126,9 @@ Properties:
   `opened[a] - W`, so the userspace window, `W` deep, would refuse it too.
 - `NewSessionNeverDroppedByOldMark`: no genuine packet is dropped against a
   mark taken in an earlier session.
+- `MacForgottenAfterAWalk`: once a walk has run since the session at `a`
+  ended, no reply MAC is left for `a`, unless no walk ever saw that session
+  (`unseen[a]`).
 
 The last two split one statement by the session of the mark: together they
 say no genuine packet of the live session within `W` of its last opened
@@ -135,6 +148,15 @@ from that address, at least one walk and one commit run. `Connect(a)` is
 enabled only when that has happened. Without it, a reconnect inside one
 update would find the old mark still committed for one update; the
 assumption is what makes the one-update lag safe for a new session.
+
+## Not covered by the walk: accepted and released inside one update
+
+A slot accepted and released inside one update, before any walk saw it, is
+never forgotten by the walk, so its reply MAC stays. The model keeps that
+interleaving reachable (`Connect` then `Release` in one `"run"` phase) and
+`MacForgottenAfterAWalk` names it out with `unseen[a]` rather than assuming
+it away. Closing it needs the transport to forget the reply MAC on its own
+slot-release path, independent of the walk.
 
 ## Left out
 
@@ -187,6 +209,7 @@ and every invariant and `KernelNeverWrites` holds.
 | `MCRNXdpReplayBrokenKernelAdvances.cfg` | the kernel never writes: `KernelAdvances <- KernelAdvancesBroken`, `kmap[a] := seq` on every pass | `FreshGenuineNeverDropped`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 17 |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
+| `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | the walk forgets every slot it saw, mark or not: `WalkForgetsUnmarked <- WalkForgetsUnmarkedBroken` | `MacForgottenAfterAWalk`, exit 12 |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
@@ -242,3 +265,18 @@ In the design the kernel window is `W`, `2 - 1 < 2`, and sequence 1 passes to
 userspace. This is the shape of the old `ROCKETNET_XDP_REPLAY_WINDOW` of 16
 against a userspace window of 4096: on XDP alone, a packet reordered 16 to
 4095 behind was dropped in the kernel as replayed.
+
+### UnmarkedNotForgotten, checked by hand against the design
+
+1. `Connect(A1)`: session 1; the accept learns the reply MAC (`mac = 1`).
+2. `Walk`: session 1 is live with `highest_opened = 0`, so it is seen and
+   not marked; `Commit`.
+3. `Release(A1)`: seen by a walk, so `unseen = FALSE`.
+4. `Walk`: the broken walk forgets only `marked # 0`, so `A1` is not
+   forgotten and `mac = 1` survives the walk.
+
+In the design the walk at step 4 forgets `A1` because it was seen, and the
+forget clears the reply MAC. This is the shape of the code before the fix: a
+client accepted with only sequence 0 opened left its MAC in the table, and a
+learned MAC outranks the gateway, so the next client at that address and port
+had its handshake replies sent to the stale MAC.
