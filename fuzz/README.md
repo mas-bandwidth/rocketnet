@@ -21,9 +21,17 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
 | `rocketnet_fuzz_client_transport` | the client's real receive loop (`rocketnet_client_transport_update`) and the message client above it | `corpus_client_transport/` | `dict/rocketnet_fuzz_client_transport.dict` |
 | `rocketnet_fuzz_session` | a scripted session (send, tick, drop, duplicate, reorder, corrupt, inject) checked against the DST invariants in `../dst_checks.h` | `corpus_session/` | `dict/rocketnet_fuzz_session.dict` |
+| `rocketnet_fuzz_differential` | both admission deciders on one abstract case, shared with the fixed gate (`tools/differential/decide.h`); aborts on rocketnet-weaker or an undocumented stricter class | `corpus_differential/` | `dict/rocketnet_fuzz_differential.dict` |
 
 The input format of each target is described in the comment at the top of
-its source file. The last three are the pair targets. They share
+its source file. `rocketnet_fuzz_differential` runs the two admission
+deciders of `tools/differential/` (the fixed gate and this target both use
+`tools/differential/decide.h`) on one abstract case encoded as a 25-byte
+record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
+`tools/differential/README.md` does not document as permitted. It needs the
+pinned netcode checkout to build: the nightly Linux leg checks out
+mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
+`tools/differential/run.sh` does. The last three are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
 They run with no sockets, no threads and no clock, and their randomness is
