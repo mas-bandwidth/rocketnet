@@ -386,12 +386,14 @@ jobs:
           restore-keys: |
             fuzz-corpus-windows-${{ fromJSON(matrix.leg).target }}-
 
+      # clang-cl's dash spellings, not /DWIN32 and /fsanitize: Git Bash
+      # rewrites a leading-slash argument into a Windows path.
       - name: Configure the instrumented library
         run: >
           cmake -B build-fuzz -T ClangCL -A x64
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
-          "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /fsanitize=address -fsanitize=fuzzer-no-link"
-          "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /fsanitize=address -fsanitize=fuzzer-no-link"
+          "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -fsanitize=address -fsanitize=fuzzer-no-link"
+          "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 
       - name: Build the instrumented library
         run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
@@ -405,7 +407,7 @@ jobs:
             -DWIN32 -D_WINDOWS -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address \
             -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/Debug/rocketnet_dev.lib \
-            -fuse-ld=lld "-Fe:bin/${{ fromJSON(matrix.leg).target }}.exe" "-Fo:bin/${{ fromJSON(matrix.leg).target }}.obj"
+            -fuse-ld=lld "-Fe:bin/${{ fromJSON(matrix.leg).target }}.exe"
           cp "$ROCKETNET_FUZZ_RUNTIME_DIR/clang_rt.asan_dynamic-x86_64.dll" bin/
 
       # LeakSanitizer is not part of AddressSanitizer on Windows: the runtime

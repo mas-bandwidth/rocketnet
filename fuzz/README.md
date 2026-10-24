@@ -87,15 +87,15 @@ at the checkout root:
 
 ```sh
 cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL \
-    "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /fsanitize=address -fsanitize=fuzzer-no-link" \
-    "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /fsanitize=address -fsanitize=fuzzer-no-link"
+    "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -fsanitize=address -fsanitize=fuzzer-no-link" \
+    "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
 CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
 "$CLANG_CL" -nologo -Zi -O1 -std:c++17 -EHsc -utf-8 -fp:precise \
     -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
     -DWIN32 -D_WINDOWS -DROCKETNET_DEV=1 -fsanitize=fuzzer,address \
     -Isodium -Isdk -Itest fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
-    -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe -Fo:bin/rocketnet_fuzz_session.obj
+    -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe
 cp "$("$CLANG_CL" -print-resource-dir)/lib/windows/clang_rt.asan_dynamic-x86_64.dll" bin/
 mkdir -p corpus_session
 ASAN_OPTIONS=detect_leaks=0 ./bin/rocketnet_fuzz_session.exe \
