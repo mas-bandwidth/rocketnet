@@ -11,7 +11,7 @@ in `sdk/rocketnet.h`, [USAGE.md](../USAGE.md), and
 | `UNRELIABLE_SEQUENCED` | at most once; only the newest sequence on its channel is delivered |
 | `RELIABLE` | exactly once, without ordering |
 | `RELIABLE_ORDERED` | exactly once, in order on its channel |
-| `RELIABLE_SEQUENCED` | reliable delivery while superseded queued values may be skipped |
+| `RELIABLE_SEQUENCED` | resent until acknowledged; the receiver delivers only the newest message on its channel and may drop a stale one |
 | `UNRELIABLE_WITH_ACK_RECEIPT` | unreliable delivery with an ACK or loss receipt |
 | `RELIABLE_WITH_ACK_RECEIPT` | reliable delivery with an ACK receipt |
 | `RELIABLE_ORDERED_WITH_ACK_RECEIPT` | reliable ordered delivery with an ACK receipt |

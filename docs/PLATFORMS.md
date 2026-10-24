@@ -114,21 +114,21 @@ new support claim:
 - `static.yml`, `tlc.yml`, `msan.yml` and `nightly-leaks.yml` run on the
   self-hosted `[self-hosted, Linux, X64, fleet]` runners. They are analysis
   and leak gates on the supported Linux x86_64 platform.
-- `nightly-soak.yml` runs its soak job on `ubuntu-latest` with the
-  `self-hosted, Linux, X64, fleet` label, its soak job on the
+- `nightly-soak.yml` runs its soak job on the
+  `self-hosted, Linux, X64, fleet, long` label, its soak-macos job on the
   `self-hosted, macOS, ARM64, rocketnet-macos` label, its soak-windows job on
   the `self-hosted, Windows, X64, rocketnet-windows` label, and its
   sanitized-soak job on the `self-hosted, Linux, X64, fleet` label.
 - `nightly-frame-budget.yml` has its Linux leg on
   `self-hosted, Linux, X64, rocketnet-quiet`, macOS leg on
-  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
-  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg
+  disabled (`if: false`; its label is `self-hosted, Windows, X64, rocketnet-windows`).
 - `nightly-examples.yml` has its Linux leg on
   `self-hosted, Linux, X64, fleet`, macOS leg on
-  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg (hosted
-  `windows-2025`) disabled (`if: false`, no Windows fleet runner registered).
-- `nightly.yml`'s `windows-transport-extension` job (hosted `windows-2025`) is
-  disabled (`if: false`, no Windows fleet runner registered).
+  `self-hosted, macOS, ARM64, rocketnet-macos`, and Windows leg
+  disabled (`if: false`; its label is `self-hosted, Windows, X64, rocketnet-windows`).
+- `nightly.yml`'s `windows-transport-extension` job is
+  disabled (`if: false`; its label is `self-hosted, Windows, X64, rocketnet-windows`).
 - `ci.yml`'s `platform-selftests` job runs on the
   `self-hosted, Linux, X64, fleet` and
   `self-hosted, macOS, ARM64, rocketnet-macos` labels.
@@ -139,13 +139,13 @@ new support claim:
 
 The table above is the support claim. The table below is not: it records the
 Windows Debug, AddressSanitizer and Application Verifier runs, which are made
-on the native Windows member (`self-hosted, Windows, X64, rocketnet-windows`),
+on the native Windows runner (`self-hosted, Windows, X64, rocketnet-windows`),
 one run at a time, and are owed to the current API whenever the source moves
 under them. A row that says "not made" is a row that was not run, not a row
 that passed. `BUILDING.md` names the commands.
 
-Each run below was made once on the member (captain, Windows 11 build
-26200, cl 19.51.36260), under its exclusive lock, at rocketnet commit
+Each run below was made once on the Windows runner (Windows 11 build
+26200, cl 19.51.36260), with nothing else running, at rocketnet commit
 `79834cfa`, on 2026-10-23. "No pin" clears `ROCKETNET_SERVER_TRANSPORT`; a pin
 is set with cmd.exe `set`, and each pinned `functional.exe` run printed
 `test_transport_env_pin_is_honoured`. The Debug runs, with or without
