@@ -380,6 +380,10 @@ def comment_blocks(text):
             if cur is not None:
                 blocks.append("\n".join(cur))
                 cur = None
+            # A trailing comment after code is a comment of its own.
+            idx = line.find("//")
+            if idx >= 0:
+                blocks.append(line[idx:])
         i += 1
     if cur is not None:
         blocks.append("\n".join(cur))
@@ -387,7 +391,10 @@ def comment_blocks(text):
 
 
 def is_action_cited(code_text, module, action):
-    mod_pat = re.compile(re.escape(module) + r"\.tla")
+    # The module name starts the word: line start, whitespace or tla/
+    # before it, so tla/MCActMod.tla never cites ActMod.
+    mod_pat = re.compile(r"(?:^|(?<=\s)|(?<=tla/))" + re.escape(module)
+                         + r"\.tla", re.MULTILINE)
     act_pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(action)
                          + r"(?![A-Za-z0-9_])")
     for block in comment_blocks(code_text):

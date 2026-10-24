@@ -238,6 +238,25 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertNotEqual(code, 0, out)
         self.assertIn("ACTIONS UNCITED 2", out)
 
+    def test_actions_model_checking_module_does_not_cite(self):
+        code_text = ("// tla/ActMod.tla ActionA ActionB\n"
+                     "\n"
+                     "// tla/MCActMod.tla EnvStep\n")
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("ActMod EnvStep: sdk/act.c", out)
+        self.assertIn("ACTIONS UNCITED 1", out)
+
+    def test_actions_trailing_comment_cites(self):
+        code_text = ("int x = 0;    // tla/ActMod.tla ActionA\n"
+                     "\n"
+                     "// tla/ActMod.tla ActionB and EnvStep\n")
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+
 
 if __name__ == "__main__":
     unittest.main()
