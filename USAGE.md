@@ -275,8 +275,10 @@ whose old worker still owns the attempt, it returns
 `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` and retains that state; poll
 `rocketnet_client_disconnected` and retry. Positive handshake states and
 `CONNECTED` are refused with `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
-A negative state says how the last attempt or connection ended and stays until
-disconnect.
+A connect from a negative state starts a fresh attempt that carries no key,
+replay window, sequence, cookie or message state of the earlier one. A negative
+state says how the last attempt or connection ended and stays until disconnect
+or the next connect.
 
 `rocketnet_server_create( context, ipv4_address, ipv6_address, config, &status )`
 takes the IPv4 and IPv6 bind addresses, the config and a nullable status

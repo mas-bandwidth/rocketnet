@@ -1535,8 +1535,11 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// worker still owns that attempt it returns ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED
 /// and retains the terminal state. Poll rocketnet_client_disconnected and retry
 /// with the token. After completion connect joins and frees the old attempt,
-/// then starts the new one. Explicit disconnect still clears the state to
-/// DISCONNECTED. Active handshake and CONNECTED states are refused.
+/// then starts the new one. A connect from a negative state starts a fresh
+/// attempt that carries no key, replay window, sequence, cookie or message
+/// state of the earlier one. A negative state stays until disconnect or the
+/// next connect; explicit disconnect clears it to DISCONNECTED. Active
+/// handshake and CONNECTED states are refused.
 ///
 /// Failed token checks set INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED.
 /// A socket or thread failure leaves the client DISCONNECTED.
