@@ -14,6 +14,7 @@
 */
 
 #include "../tests/native_shutdown.h"
+#include "../tests/time_scale.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -42,6 +43,12 @@ rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * tran
 uint16_t rocketnet_client_transport_test_bound_port( struct rocketnet_client_transport_t * client_transport );
 
 #define WINDOWS_SOCKET_ERRORS_TICK ( 1.0 / 60.0 )
+// a wait for a connection is bounded by ticks of the transport, not by wall
+// time: a loaded host may take any wall time to schedule this case. the
+// handshake deadline the library owns is enforced by the library itself, in
+// the clock the library is given, so a case never has to bound it in wall
+// seconds.
+#define WINDOWS_SOCKET_ERRORS_CONNECT_TICKS 4000
 #define WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES 32
 #define WINDOWS_SOCKET_ERRORS_SENDS_PER_TICK 32
 #define WINDOWS_SOCKET_ERRORS_GARBAGE_SEED 0x5eed5eed12345678ULL
@@ -234,7 +241,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
     windows_socket_errors_sleep_to( session->next );
 }
 
-static void windows_socket_errors_session_start( windows_socket_errors_session_t * session, const windows_socket_errors_transport_t * transport )
+static void windows_socket_errors_session_start( windows_socket_errors_session_t * session, const windows_socket_errors_transport_t * transport, const char * case_name )
 {
     memset( session, 0, sizeof( *session ) );
     session->transport = *transport;
@@ -262,13 +269,18 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     windows_socket_errors_require( session->client != NULL );
 
     session->next = rocketnet_platform_time();
-    const double start = session->next;
+    // the wait for the connection is bounded by ticks of the transport, not by
+    // wall time: a loaded host may take any wall time to schedule this case,
+    // and the handshake deadline the library owns is measured in the clock
+    // the library is given. the wall cap is a hang guard that names the case.
+    rocketnet_bounded_wait_t wait;
+    rocketnet_bounded_wait_start( wait, case_name, 60.0, WINDOWS_SOCKET_ERRORS_CONNECT_TICKS );
     while ( rocketnet_client_transport_state( session->client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
             rocketnet_server_transport_num_connected_clients( session->server ) != 1 )
     {
         windows_socket_errors_tick( session );
         windows_socket_errors_require( rocketnet_client_transport_state( session->client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
-        windows_socket_errors_require( rocketnet_platform_time() - start < 10.0 );
+        windows_socket_errors_require( rocketnet_bounded_wait_poll( wait ) );
     }
     session->client_index = rocketnet_client_transport_client_index( session->client );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session->server, session->client_index ) );
@@ -374,8 +386,10 @@ static const char * windows_socket_errors_label( const windows_socket_errors_tra
 
 static void windows_server_drops( const windows_socket_errors_transport_t * transport, const char * name, const std::vector<windows_socket_errors_datagram_t> & datagrams )
 {
+    char case_name[128];
+    snprintf( case_name, sizeof( case_name ), "%s %s", name, windows_socket_errors_label( transport ) );
     windows_socket_errors_session_t session;
-    windows_socket_errors_session_start( &session, transport );
+    windows_socket_errors_session_start( &session, transport, case_name );
 
     const int in_flight_before = windows_socket_errors_receives_in_flight( &session );
     const uint64_t counted_before = windows_socket_errors_server_counted( &session );
@@ -477,8 +491,10 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 static void windows_client_drops_oversize_and_garbage( bool ipv6 )
 {
     windows_socket_errors_transport_t transport = { "portable", ipv6 };
+    char case_name[128];
+    snprintf( case_name, sizeof( case_name ), "windows_client_drops_oversize_and_garbage %s", windows_socket_errors_label( &transport ) );
     windows_socket_errors_session_t session;
-    windows_socket_errors_session_start( &session, &transport );
+    windows_socket_errors_session_start( &session, &transport, case_name );
 
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_oversize( datagrams );
