@@ -405,10 +405,6 @@ static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_ne
     (void) simulator; (void) mutex;
     return false;
 }
-static inline void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent )
-{
-    (void) simulator; (void) mutex; (void) latency; (void) jitter; (void) loss_percent; (void) duplicate_percent;
-}
 static inline bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator )
 {
     (void) simulator;
