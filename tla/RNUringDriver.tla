@@ -87,7 +87,7 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           bytes,    \* per slot: finish recorded bytes (abort zeroes them)
           idx,      \* the reservation index
           kown,     \* slots whose frame and msghdr the kernel owns
-          head,     \* per slot: the head slot of the send carrying it, 0 none
+          head,     \* per slot: the head slot of the kernel-owned send carrying it, 0 none
           pending,  \* heads of sends submitted, CQE not reaped
           sending,  \* the main thread is inside send_packets
           bstate,   \* per ring buffer: Ring, Filled or Copied
@@ -201,8 +201,9 @@ KernelComplete(s) ==
     /\ s \in kown
     /\ head[s] = s
     /\ kown' = kown \ {t \in SlotIds : head[t] = s}
+    /\ head' = [t \in SlotIds |-> IF head[t] = s THEN 0 ELSE head[t]]
     /\ cq' = cq \cup {SendCqe(s)}
-    /\ UNCHANGED <<sstate, bytes, idx, head, pending, sending, phase>>
+    /\ UNCHANGED <<sstate, bytes, idx, pending, sending, phase>>
     /\ UNCHANGED RecvVars
     /\ UNCHANGED CallVars
 
@@ -289,12 +290,11 @@ ResetIndex ==
     /\ ResetWaitsForReap => (kown = {} /\ pending = {})
     /\ sstate' = [s \in SlotIds |-> "Free"]
     /\ bytes' = [s \in SlotIds |-> FALSE]
-    /\ head' = [s \in SlotIds |-> IF s \in kown THEN head[s] ELSE 0]
     /\ idx' = 0
     /\ sending' = FALSE
     /\ call' = "none"
     /\ work' = 0
-    /\ UNCHANGED <<kown, pending, cq, phase>>
+    /\ UNCHANGED <<kown, head, pending, cq, phase>>
     /\ UNCHANGED RecvVars
 
 \* the other end of send_packets: some send is still without its CQE and
