@@ -3160,9 +3160,9 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero denotes no acknowledgement-eligible session packet only after reconstruction |
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero with a zero first range length and a zero range count is the empty block, which denotes no acknowledgement-eligible session packet at any highest sent session sequence |
 | range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
-| first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
+| first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero only in the empty block (all three fixed fields zero); otherwise nonzero and no greater than reconstructed largest received |
 | gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
 | range length | 9 + 4i | 2 | u16 | Length of the received run below entry i's gap | Nonzero |
 
@@ -3175,19 +3175,27 @@ Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
 
-The largest received field is the low 32 bits of the highest acknowledgement-eligible 64-bit
-session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
-with those low 32 bits that is nearest to its own highest sent session sequence;
-the higher value wins an equidistant tie. The receiver MUST evaluate every
-validity rule on that reconstructed value.
+The empty block is the block whose largest received, range count and first
+range length fields are all zero on the wire. A receiver MUST recognise it by
+those wire fields, whatever its own highest sent session sequence, and MUST NOT
+reconstruct its largest received. A block that names a sequence always has a
+first range length of at least one, so the empty block is unambiguous: a
+genuine largest received whose low 32 bits are zero is not the empty block.
+
+In every other block, the largest received field is the low 32 bits of the
+highest acknowledgement-eligible 64-bit session sequence. A receiver MUST
+reconstruct it as the nonnegative 64-bit value with those low 32 bits that is
+nearest to its own highest sent session sequence; the higher value wins an
+equidistant tie. The receiver MUST evaluate every remaining validity rule on
+that reconstructed value.
 
 A receiver MUST reject the block when any of these conditions holds:
 
 1. The opened plaintext does not contain the minimum block, or its declared
    range entries do not fit before the packet type's data.
-2. Reconstructed largest received is zero and either first range length or
-   range count is nonzero; or reconstructed largest received is nonzero and
-   first range length is zero.
+2. First range length is zero and either the largest received field or the
+   range count is nonzero on the wire (the block is neither the empty block
+   nor a block naming a sequence).
 3. First range length exceeds reconstructed largest received.
 4. Any gap or range length is zero.
 5. The sum of first range length and every gap and range length exceeds
@@ -3271,7 +3279,8 @@ the reported RTT MUST be zero.
 <a id="t15.6"></a>
 ### t15.6. Vectors
 
-The all-zero block represents a fresh connection:
+The all-zero block is the empty block of a fresh connection, at any highest
+sent session sequence of the receiver, including one past 2^32:
 
 ```vector t15.fresh
 input: largest received = 0; range count = 0; first range length = 0

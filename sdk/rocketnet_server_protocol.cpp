@@ -1186,10 +1186,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     int client_index = mapping->control->client_index;
 
-    // the ack block at the front of the opened data, validated on the
-    // reconstructed 64-bit largest against this end's own highest sent
-    // session sequence: a malformed block refuses the whole packet, and the
-    // type data behind it is never examined
+    // the ack block at the front of the opened data: the empty block on its
+    // wire fields, every other block on the reconstructed 64-bit largest
+    // against this end's own highest sent session sequence
+    // (tla/AckBlockWrap.tla ReadBlock): a malformed block refuses the whole
+    // packet, and the type data behind it is never examined
 
     struct rocketnet_ack_block_t block;
     int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, mapping->send_sequence_session - 1 );

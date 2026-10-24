@@ -58,12 +58,15 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
 
 uint64_t rocketnet_reconstruct_ack_largest( uint32_t wire_value, uint64_t highest_sent );
 
-// Decodes and validates a block at the front of opened session data,
-// evaluating validity on the reconstructed 64-bit largest. Every rule in
-// _Acks_/Validity: geometry contained in the opened size, first range
-// length zero exactly when largest is zero, first range length never
-// exceeding largest, no zero gap or length entry, and the walk never
-// falling below sequence one -- computed without unsigned underflow.
+// Decodes and validates a block at the front of opened session data. The
+// empty block is recognised on its wire fields at any highest sent: wire
+// largest 0, first range length 0 and no ranges (tla/AckBlockWrap.tla
+// ReadBlock); a zero first range length with anything else nonzero is
+// malformed. Every other block is evaluated on the reconstructed 64-bit
+// largest, by every rule in _Acks_/Validity: geometry contained in the opened
+// size, first range length never exceeding largest, no zero gap or length
+// entry, and the walk never falling below sequence one -- computed without
+// unsigned underflow.
 // Returns the block's byte length (7 + 4 * count), or 0 when the block is
 // malformed, which refuses its whole packet as BAD_ACK_BLOCK.
 
