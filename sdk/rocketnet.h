@@ -193,8 +193,23 @@ extern "C" {
 
 /// Status-returning calls use these values. OK is zero and the only success;
 /// every failure is negative. Test status < 0 for failure.
+///
+/// In C++ the enum is fixed to int, so every int is a value of it: C++ gives
+/// an enum without a fixed type only the values its bits can hold, and
+/// rocketnet_status_name takes any int a caller holds, INT_MIN to INT_MAX.
 
-enum rocketnet_status_t
+#if defined( __cplusplus ) && __cplusplus >= 201103L
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wc++98-compat"
+#endif
+#define ROCKETNET_STATUS_FIXED_INT : int
+#else
+#define ROCKETNET_STATUS_FIXED_INT
+#endif
+
+enum rocketnet_status_t ROCKETNET_STATUS_FIXED_INT
 {
     /// Success.
 
@@ -337,6 +352,11 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
 };
+
+#undef ROCKETNET_STATUS_FIXED_INT
+#if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
+#pragma clang diagnostic pop
+#endif
 
 
 /// The process-wide log levels, least to most verbose.
