@@ -8,8 +8,11 @@ serialize it.
 The main frame calls and create are designed to be unnoticeable in a game
 profiler. Client disconnect and server stop request shutdown without waiting
 for workers. Their completion queries let a game keep its frame loop running;
-only after completion does synchronous destroy join and free. Soak, load and profiling work is planned
-hardening. This preview makes no claim from it.
+after completion synchronous destroy joins and frees. An early destroy logs and
+counts the misuse, then performs the shutdown and join itself with a bounded
+number of updates and no sleep; a worker that has not exited by then is logged
+and its object is kept, not freed. Soak, load and
+profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
 [sdk/rocketnet.h](sdk/rocketnet.h). This file is the narrative: how a frame is
@@ -25,6 +28,7 @@ library omits the simulator, test seams and development token minting, and
 refuses the published test packet filter, development keys and development
 connect tokens. [BUILDING.md, "Production builds"](BUILDING.md#production-builds)
 lists the production build and install commands.
+[KEYS.md](KEYS.md) covers the backend and server keys and production tokens.
 
 ## Start and stop
 
@@ -173,7 +177,6 @@ structs, except `config_bytes`.
 | Field | Variable | Type | Default | A bad value |
 |---|---|---|---|---|
 | packet_filter | ROCKETNET_CLIENT_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
-| max_payload_bytes | ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
 | max_fragmented_messages | ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, or a list with no usable candidate: refuses the create |
 | state_change_callback | none | `void (*)( void *, enum rocketnet_client_state_t, enum rocketnet_client_state_t )` | `NULL` | no environment form |
@@ -197,9 +200,8 @@ structs, except `config_bytes`.
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
 | packet_filter | ROCKETNET_SERVER_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
 | backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
-| num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024` |
+| num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024`; the Windows iocp transport ignores it (always runs one completion worker plus one send worker) and the rio transport ignores it (runs one I/O worker) |
 | num_os_cpus | ROCKETNET_SERVER_NUM_OS_CPUS | int | `0` (transport default) | refuses the create unless `0` or `1..256` |
-| max_payload_bytes | ROCKETNET_SERVER_MAX_PAYLOAD_BYTES | int | `0` (16384) | refuses the create unless `0` or `1416..305408` |
 | max_fragmented_messages | ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
@@ -224,6 +226,8 @@ structs, except `config_bytes`.
 The fields the header marks "must match on both ends" must be identical on
 both ends. The connection verifies them. `max_message_bytes` must not exceed
 `receive_message_buffer_bytes`, and create refuses a config that breaks it.
+`max_message_bytes` is the one size limit for every reliability type: an
+unreliable message too large for one packet is sent as its reliable twin.
 
 ### Operator-only environment variables
 
@@ -289,8 +293,11 @@ returns `ROCKETNET_STATUS_THREAD_CREATE_FAILED` and leaves the server stopped.
 The server does not fall back to computing these stats synchronously on the
 frame thread. After a successful start, stop requests worker shutdown;
 `rocketnet_server_stopped` remains false until both transport I/O and the stats
-worker have exited. Destroy requires completion and synchronously joins the
-worker before freeing its storage.
+worker have exited. Destroy normally follows completion and synchronously joins
+the worker before freeing its storage; called early, it logs and counts the
+misuse, requests shutdown and updates a bounded number of times without
+sleeping, then joins and frees once complete, or logs and keeps the object if
+the worker has not exited.
 
 ### Server memory footprint
 
@@ -382,9 +389,13 @@ bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t 
 
 To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
-request shutdown and poll completion before destroy. Destroy asserts completion,
-then joins any remaining thread handle and wipes/frees resources synchronously.
-Keep allocator/callback contexts and all borrowed storage alive until destroy
+request shutdown and poll completion before destroy. Destroy asserts completion;
+called early, it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown itself and updates a bounded number of
+times without sleeping. Once complete it joins any remaining thread handle and
+wipes/frees resources synchronously; if the worker has not exited it logs a
+second error and keeps the object rather than free memory the worker owns. Keep
+allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise peer receipt.
 
 ## Frame loop
@@ -797,7 +808,10 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 ```
 
 Destroy every client and server before `rocketnet_term`. Request shutdown first,
-wait by polling completion from the event loop, then destroy. A stalled worker
-keeps completion false, so its object and contexts must remain alive. Destroy
-is synchronous after completion; allocator hooks and thread-handle cleanup do
-not have a strict wall-time guarantee.
+wait by polling completion from the event loop, then destroy. An early destroy
+is API misuse: it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown, updates a bounded number of times without
+sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
+worker keeps completion false, so its object and contexts must remain alive.
+Destroy is synchronous after completion; allocator hooks and thread-handle
+cleanup do not have a strict wall-time guarantee.

@@ -30,28 +30,6 @@ static void rn_window_ack_count( const rn_region_t * region, int counter )
 }
 
 // ----------------------------------------------------------------
-//      Descriptor first_send storage inside reserved[22] (6.4)
-// ----------------------------------------------------------------
-
-static bool rn_descriptor_has_first_send( const rn_send_descriptor_t * descriptor )
-{
-    return descriptor->reserved[8] != 0;
-}
-
-static double rn_descriptor_get_first_send( const rn_send_descriptor_t * descriptor )
-{
-    double t = 0.0;
-    memcpy( &t, descriptor->reserved, sizeof(double) );
-    return t;
-}
-
-static void rn_descriptor_set_first_send( rn_send_descriptor_t * descriptor, double t )
-{
-    memcpy( descriptor->reserved, &t, sizeof(double) );
-    descriptor->reserved[8] = 1;
-}
-
-// ----------------------------------------------------------------
 //     Two intrusive resend FIFOs over the one region->resend_fifo
 // ----------------------------------------------------------------
 
@@ -284,50 +262,42 @@ static void rn_window_ack_reclaim_head( rn_window_ack_t * ack )
     }
 }
 
-static void rn_window_ack_refresh_oldest( rn_window_ack_t * ack, double fallback_now )
+// MESSAGES m9.3: the reliable timeout runs from the oldest unacknowledged
+// number's own first send. For a chunk that is its own, never its block's:
+// a block paced out by the send budget over longer than the timeout keeps
+// the connection while each chunk is acked inside it. A number not yet sent
+// has no clock: has_oldest stays 0 until rn_window_ack_record_first_send.
+static void rn_window_ack_refresh_oldest( rn_window_ack_t * ack )
 {
     const rn_window_send_t * send = ack->send;
     const rn_region_t * region = ack->region;
+    if ( ack->has_oldest && ack->oldest_number == send->U && send->U < send->next )
+        return;
+
+    ack->oldest_number = send->U;
     if ( send->U >= send->next )
     {
         ack->has_oldest = 0;
-        ack->oldest_number = send->U;
         ack->oldest_first_send = 0.0;
         return;
     }
 
-    if ( ack->has_oldest && ack->oldest_number == send->U )
+    const uint32_t slot_index = (uint32_t) ( send->U & ( region->window - 1 ) );
+    if ( rn_send_number_never_sent( region->send_numbers[slot_index].last_send ) )
+    {
+        ack->has_oldest = 0;
+        ack->oldest_first_send = 0.0;
         return;
-
-    const rn_send_number_t * slot = &region->send_numbers[send->U & ( region->window - 1 )];
-    double first_send = fallback_now;
-    if ( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
-        if ( descriptor->in_use && rn_descriptor_has_first_send( descriptor ) )
-            first_send = rn_descriptor_get_first_send( descriptor );
-        else if ( slot->last_send >= 0.0 )
-            first_send = slot->last_send;
-    }
-    else if ( slot->last_send >= 0.0 )
-    {
-        first_send = slot->last_send;
     }
 
     ack->has_oldest = 1;
-    ack->oldest_number = send->U;
-    ack->oldest_first_send = first_send;
+    ack->oldest_first_send = region->send_first_sends[slot_index];
 }
 
 static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_number_t * slot, double now )
 {
     rn_region_t * region = ack->region;
-    if ( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue )
-    {
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
-        if ( descriptor->in_use && !rn_descriptor_has_first_send( descriptor ) )
-            rn_descriptor_set_first_send( descriptor, now );
-    }
+    region->send_first_sends[slot->number & ( region->window - 1 )] = now;
     if ( slot->number == ack->send->U && ( !ack->has_oldest || ack->oldest_number != slot->number ) )
     {
         ack->has_oldest = 1;
@@ -482,7 +452,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
-// tla/RNReceipts.tla WritePacket
+// tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -580,6 +550,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // Processes one acked transport sequence `packet_id` at time `now`
 // (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
 // tla/RNResendTiming.tla Sample).
+// tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -676,7 +647,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     rn_window_ack_reclaim_head( ack );
 
     if ( send->U != u_before )
-        rn_window_ack_refresh_oldest( ack, now );
+        rn_window_ack_refresh_oldest( ack );
 
     return 1;
 }
@@ -782,6 +753,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 }
 
 // Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
+// tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
@@ -792,7 +764,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
     if ( send->U >= send->next )
         return 0;
 
-    rn_window_ack_refresh_oldest( ack, now );
+    rn_window_ack_refresh_oldest( ack );
     if ( ack->has_oldest && ( now - ack->oldest_first_send ) >= ack->reliable_timeout )
     {
         ack->error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;

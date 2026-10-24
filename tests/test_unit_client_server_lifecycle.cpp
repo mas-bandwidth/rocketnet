@@ -344,16 +344,10 @@ static void test_client_reconnects_with_a_second_token()
 }
 REGISTER_UNIT_TEST( test_client_reconnects_with_a_second_token );
 
-static int lifecycle_premature_destroy_asserts;
-
-static void lifecycle_premature_destroy_assert_hook( const char *, const char *, const char *, int )
-{
-    ++lifecycle_premature_destroy_asserts;
-}
-
 // A connected step-driven client retains its sealed disconnect burst until
 // the caller explicitly steps its worker. Polling and a duplicate request
-// cannot retire that generation; neither reconnect nor destroy may consume it.
+// cannot retire that generation; only an explicit update completes it, and a
+// reconnect waits for that completion.
 static void test_client_disconnect_requires_explicit_completion_before_reuse()
 {
     lifecycle_world_t world;
@@ -368,18 +362,6 @@ static void test_client_disconnect_requires_explicit_completion_before_reuse()
     for ( int i = 0; i < 8; ++i )
         check( !rocketnet_client_disconnected( client ) );
     check( rocketnet_client_connect( client, pending_token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
-    check( !rocketnet_client_disconnected( client ) );
-
-    auto saved_assert = rn_assert_function;
-    lifecycle_premature_destroy_asserts = 0;
-    rocketnet_assert_function( lifecycle_premature_destroy_assert_hook );
-    rocketnet_client_destroy( client );
-    rocketnet_assert_function( saved_assert );
-#if ROCKETNET_ASSERTS
-    check( lifecycle_premature_destroy_asserts == 1 );
-#else
-    check( lifecycle_premature_destroy_asserts == 0 );
-#endif
     check( !rocketnet_client_disconnected( client ) );
 
     rocketnet_client_update( client, world.time );
@@ -889,6 +871,33 @@ static void test_server_start_stop_start_again()
     lifecycle_world_destroy( &world );      // destroys a running server
 }
 REGISTER_UNIT_TEST( test_server_start_stop_start_again );
+
+// tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
+// client. rocketnet_server_update returns while !server->running
+// (sdk/rocketnet_api.cpp:1797), and the transport reads only while RUNNING
+// (sdk/rocketnet_server_transport.cpp:2388).
+static void test_server_stopped_admits_no_client()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1610, 1, token );
+    const uint64_t accepted = rn_server_stats_of( world.server ).connections_accepted;
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    check( rocketnet_server_running( world.server ) == 0 );
+    check( rocketnet_client_connect( world.clients[0], token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( world.clients[0] ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+    {
+        check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+        lifecycle_pump( &world, 0.1 );
+    }
+    check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+    check( rn_server_stats_of( world.server ).connections_accepted == accepted );
+    check( rocketnet_client_state( world.clients[0] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_stopped_admits_no_client );
 
 static void test_server_stop_disconnects_every_client()
 {

@@ -5,15 +5,52 @@ The caller owns its frame loop and calls `rocketnet_client_update`, drains
 `rocketnet_client_receive_messages`, runs simulation, queues messages, and
 calls `rocketnet_client_send_packets` last.
 
-By default the client transport owns a background I/O thread.
-Datagrams cross bounded handoff queues between that thread and the caller
-thread. The legacy receive handoff tries its mutex once at each boundary.
-A busy expose leaves packets READY for the next update. A busy return keeps
-processed buffers caller-owned and retries their FREE publication at the next
-update, even if no new packets are ready. No payload bytes are cleared or
-copied at these handoffs. With `ROCKETNET_CLIENT_STEP_DRIVEN=1`,
+By default the client transport owns a background I/O thread that does every
+socket send and receive. Datagrams cross between that thread and the caller
+thread in preallocated buffers: three send rings and three receive buffers,
+each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
+`tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
+that exchange alone. `update` and `send_packets` only try that mutex: when the
+I/O thread holds it, the exchange waits for the next call, so they never wait
+on the I/O thread. Sends then leave with the next hand-off
+(`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. With
+`ROCKETNET_CLIENT_STEP_DRIVEN=1`,
 the caller performs transport
 receive and send work inside those calls and no client I/O thread starts.
+
+The BASE receive path uses the same ownership queues and reserves one buffer
+for the producer. Up to N-1 batches may be READY. Each update takes all oldest
+READY batches that fit its 1024-packet budget, processes them outside the mutex,
+and returns their indices in the same update. A busy return keeps those cleared
+buffers caller-owned until the next successful exchange; no packet is processed
+twice or overwritten. Batches beyond the budget remain READY in order.
+
+Stop transfers the development link simulator to the worker using the quit
+publication. The worker drains delayed packets before reporting completion;
+step-driven transports drain in their explicit shutdown step. Stop and polling
+perform no backend work, and reconfiguration after stop is refused.
+
+Custom BASE drivers without wait/wake retain caller-thread per-packet sends;
+this compatibility path does not provide the built-in send offload guarantee.
+Built-in loopback uses the same I/O core and bounded worker-side idle polling.
+The optional development link simulator is also an explicit exception to the
+built-in worker-offload guarantee: while running, its frame work and backend
+sends remain caller-owned. Its shutdown drain transfers to the worker as
+described above. This exception is development-only and does not change the
+normal built-in transport handoff contract.
+
+Each built-in client transport fills the same operations
+(`rocketnet_client_transport_io_operations_t`, `sdk/rocketnet_driver.h`) and
+runs under this I/O thread: create opens the socket and its wake and
+allocates everything, connect connects the socket to the one server, and the
+I/O thread alone calls send_batch, receive_batch and wait. On Linux, `portable`
+batches with plain `sendmmsg` and `recvmmsg`, and `gso`
+(`sdk/rocketnet_client_gso_linux.cpp`, pin-only) sends each run of
+equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
+messages without loss when the kernel refuses (TRANSPORTS.md, UDP
+coalescing). Its send batch is one synchronous call that returns with every
+datagram sent or counted dropped, so it adds no state to `tla/RNClientIo.tla`.
+On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`.
 
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
@@ -38,9 +75,9 @@ valid through destroy, and make it safe for its calling threads. The game
 clock supplied to time-taking API calls must be finite, nondecreasing, and
 consistent across calls.
 
-The executable invariants live in `tla/RNClientIo.tla`,
-`tla/RNClientIoDecrypt.tla`, the unit suite, and the functional transport
-matrix. Performance profiling and longer saturation campaigns are planned
+The executable invariants live in `tla/RNBufferHandoff.tla`,
+`tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
+functional transport matrix. Performance profiling and longer saturation campaigns are planned
 hardening work.
 
 A step-driven test advances shutdown explicitly with update (or its I/O-step

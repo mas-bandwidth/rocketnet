@@ -42,4 +42,14 @@ MCServeFirstOnly == TRUE
 
 MCRefreshConnectedOnResponse == TRUE
 
+\* the family race (MCServerConnectionRace.cfg, MCServerConnectionRaceIpv6.cfg
+\* and the reversed witness MCServerConnectionBrokenCommitEarly.cfg): a token
+\* naming both families on a host with both; the server serves one family,
+\* so the other family's route answers nothing
+MCServedIpv6    == "ipv6"
+MCCommitEarly   == TRUE
+
+\* the race invariants, with the safety set
+RaceInvariants == SafetyInvariants /\ OneFamilyPerAttempt /\ CommitsOnAnswer
+
 =============================================================================

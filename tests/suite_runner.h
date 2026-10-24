@@ -2,12 +2,13 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Parallel suite runner. Each test is a process. The output is the netcode
+    Suite runner. Each test is a process. Functional cases run serially;
+    deterministic unit cases may run in parallel. The output is the netcode
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails (a Debug, sanitizer or explicitly emulated build scales the 120s:
-    tests/time_scale.h). A
+    fails. The functional runner keeps 120s in every build; the unit runner
+    scales it for Debug, sanitizer or emulated builds (tests/time_scale.h). A
     test whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -22,6 +23,7 @@
 
 #include "portable_crt.h"
 #include "time_scale.h"
+#include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -60,7 +62,19 @@ extern char **environ;
 // (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
 // overrides it with a positive value.
+//
+// A build for more clients (-DROCKETNET_MAX_CLIENTS, BUILDING.md "Maximum
+// clients") carries larger per-server tables whatever the case's max_clients:
+// the receive arrays and payload batches hold 16 packets for every client
+// the build holds. There the bound is 1.5 times the largest case measured at
+// 10000 clients on a macOS Release build (811 MiB,
+// test_server_stats_worker_late_batch_keeps_modulo_fairness, 2026-10-23),
+// so 1217; a build for more than 10000 sets the environment variable.
+#if ROCKETNET_MAX_CLIENTS <= 1000
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 698
+#else
+#define ROCKETNET_TEST_MAX_CASE_RSS_MB 1217
+#endif
 
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
@@ -576,7 +590,9 @@ inline int suite_main( int argc, char ** argv,
     int ( *count )(),
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
-    int ( *group_of )( const char * name ) = NULL )
+    int ( *group_of )( const char * name ) = NULL,
+    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+    int max_jobs = 0 )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -613,8 +629,8 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
 
-    const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (tests/time_scale.h)
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    const double limit_s = case_limit_s;
     struct running_t
     {
         size_t index;
@@ -819,7 +835,9 @@ inline int suite_main( int argc, char ** argv,
     int ( *count )(),
     const char * ( *name_at )( int ),
     const suite_exec * execs, int nexecs,
-    int ( *group_of )( const char * name ) = NULL )
+    int ( *group_of )( const char * name ) = NULL,
+    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+    int max_jobs = 0 )
 {
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
@@ -846,8 +864,8 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
 
-    const int jobs = suite_job_count();
-    const double limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE; // Native Release as written; Debug/sanitizer/emulation scaled (tests/time_scale.h)
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    const double limit_s = case_limit_s;
     struct running_t
     {
         size_t index;
