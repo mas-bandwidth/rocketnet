@@ -14,7 +14,7 @@ static development library. Each page lives in `docs/examples/`.
 | [channels](channels.c) | multi-channel message multiplexing and independent channel stream delivery | [channels.md](../docs/examples/channels.md) |
 | [client_server_server](client_server_server.c) / [client_server_client](client_server_client.c) | two-process client and server architecture communicating over UDP sockets | [client_server.md](../docs/examples/client_server.md) |
 | [config_env](config_env.c) | configuration precedence (default < struct < environment) and environment variable overrides | [config_env.md](../docs/examples/config_env.md) |
-| [game_loop](game_loop.c) | integrating RocketNet into a game tick loop with update, dispatch, and send_packets cadence | [game_loop.md](../docs/examples/game_loop.md) |
+| [game_loop](game_loop/) | a game's launcher, server and client: listen mode on loopback across threads, or a dedicated server over UDP; the network step runs beside the next frame | [game_loop.md](../docs/examples/game_loop.md) |
 | [reliability](reliability.c) | message reliability modes: unreliable, sequenced, reliable unordered, and reliable ordered | [reliability.md](../docs/examples/reliability.md) |
 | [soak](soak.c) | concurrent multi-client soak and stress load test against a single server | [soak.md](../docs/examples/soak.md) |
 | [stats](stats.c) | reading connection quality stats (RTT, jitter, loss, bandwidth) and diagnostic counters | [stats.md](../docs/examples/stats.md) |

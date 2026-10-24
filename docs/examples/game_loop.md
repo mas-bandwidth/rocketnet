@@ -1,88 +1,79 @@
 # Game loop
 
-A 60 Hz fixed-step loop driving one server and N clients in one process, and
-what it costs: client network calls per frame against a 100 microsecond
-budget, the server's tick, and message latency in frames.
+A game's shape around RocketNet: a launcher that runs a server, a client or
+both, and a 60 Hz frame loop on each side whose network step runs in parallel
+with the next frame.
+
+```
+examples/game_loop/
+    launcher.cpp   main: listen mode (server and clients in one process), server, client
+    server.cpp     server_main: the server's frame loop and network step
+    client.cpp     client_main: the client's frame loop and network step
+    game.h         what they share: the message, the frame pacing, the wire check
+```
 
 ## What it shows
 
-1. A fixed-step loop: accumulate `rocketnet_time()`, run one frame per 1/60 s
-   of it, and `rocketnet_sleep` for the rest.
-2. The frame order, on every client and on the server: (1) `*_update` takes in
-   what arrived; (2) `*_receive_messages` takes every message in batches; (3) simulate;
-   (4) queue this frame's messages with `*_start_message` and `*_finish_message`; (5)
-   `*_send_packets` last, so this frame's messages leave this frame.
-3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
-   channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
-   1); the server sends each client a state update every frame. Each message
-   carries the frame it was queued in, and the receiver counts frames since.
+1. The launcher's three modes. With no mode it is a listen server: the server
+   and the clients run in one process, each on its own thread, over the
+   in-memory `loopback` transport. `server` runs a dedicated server over UDP;
+   `client` runs a client against it.
+2. The frame loop, the same on both sides:
 
-Every run is in memory over the `loopback` transport: the in-memory transport
-holds one server and up to `ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
-all are connected.
+   ```cpp
+   std::thread network( server_network_step, &s, &frames[current ^ 1], rocketnet_time() );
+   server_simulate( &s, &frames[current], frame );
+   network.join();
+   current ^= 1;
+   wait_for_frame_end( frame_end );
+   ```
+
+   The network step for what the last frame produced runs on its own thread
+   while this frame simulates; the frame joins it, then swaps the two buffers.
+   The network step queues and sends what the last frame wrote
+   (`*_start_message`, `*_finish_message`, `*_send_packets`), then updates and
+   takes every message (`*_update`, `*_receive_messages`) into the buffer the
+   next frame reads. The simulation never calls RocketNet, and RocketNet is
+   called from one thread at a time. The parallelism is the game's: RocketNet
+   runs no thread of its own here.
+3. Each client sends an input every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
+   channel 0); the server sends each client its state every frame.
 
 ## Run it
 
 From the repository root, after the normal build:
 
 ```sh
-./bin/example_game_loop                      # 32 clients, 5 seconds
-./bin/example_game_loop --wrong-order        # send_packets before queuing
-./bin/example_game_loop --clients 1000 --seconds 30
+./bin/example_game_loop                          # listen mode: a server and 1 client, 5 seconds
+./bin/example_game_loop --clients 64 --seconds 30
+./bin/example_game_loop server                   # a dedicated server on 127.0.0.1:40000, over UDP
+./bin/example_game_loop client                   # in the same directory, once the server is up
 ```
 
-The full-scale run holds 1000 clients in one process, all in memory over the
-loopback transport. `--clients` outside 1..1000 prints a usage line and exits
-1. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
-run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
+`--port <n>` or `ROCKETNET_EXAMPLE_PORT` moves the dedicated server and its
+client off 40000. The server writes its public key to `game_loop.keys`, as it
+would register it with a backend, and the client reads it to mint its
+development token. On Windows the binary is `bin\Release\example_game_loop.exe`.
+Each mode prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
 
 ```
-32 clients, server transport loopback
-[end] client frame p50 7.1 us, p99 24.3 us, max 313.6 us (budget 100 us); server tick mean 183.1 us, max 412.4 us
-client frame budget held at p99 (informational, never a failure)
-latency client->server frames: min 0 mean 0.00 max 0
-latency server->client frames: min 1 mean 1.00 max 1
-latency: 0 extra frame(s) (correct order)
+1 clients and the server on their own threads, transport loopback
+server network step mean 21.4 us, max 135.6 us over 316 frames
+client 0 network step mean 9.0 us, max 53.2 us over 316 frames
+299 inputs and 297 state updates; 0 not taken by the receiver's next update
 PASS
 ```
 
-A `[1s]` line prints every second and `[end]` covers the run. `client frame`
-is one client's update, receive, queue and send calls in one frame: p50 is the
-typical frame, p99 the slow one in a hundred. The budget verdict never fails
-the run, because a shared machine's noise is not the library's cost. `server tick` is the server's frame over all clients.
+A network step is the RocketNet work of one frame on one side: queue, send,
+update and receive. It is informational, never a failure, because a shared
+machine's noise is not the library's cost.
 
-The two `latency ... frames` lines give each direction's min, mean and max.
-Clients run their frames before the server's, so the server reads a message in
-the frame it was sent (0) and a client reads its state update no earlier than
-the next frame (1): that is the delay of running in one process, and
-`extra frame(s)` is what the frame order adds on top, read from client->server.
-That direction has no receive handoff, so every message must read 0 in the correct order and 1 with
-`--wrong-order`. Server->client passes through a background receive handoff;
-moving that receive work off the frame thread lets data processing scale, with
-extra frames under load as the chosen cost. Its min, mean and max expose that
-cost, but worker scheduling has no fixed frame-count maximum. The causal
-minimum is still fixed by the loop order: at least 1 frame in the correct order
-and 2 in the wrong order. `PASS` means every client stayed connected, every
-reliable event arrived, the client->server order had no unnecessary extra
-frame, and no state update arrived before its causal minimum.
-
-## Public calls it uses
-
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_transport_name`,
-  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
-  `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_start_message`,
-  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+The last line is the listen mode's check, and it is exact. After its
+`send_packets` returns, each side records the last frame it sent; at the start
+of its update, the other side reads that record. Every message sent before an
+update began must be taken by that update, and the run fails on one that is
+not. The loopback transport makes a send visible before `send_packets` returns
+and the receiver's next update takes it (`tla/RNLoopbackWire.tla`), so no frame
+is lost to the handoff between the two threads.

@@ -1,4 +1,5 @@
-# Every examples/*.c builds as example_<name>. Most use the development
+# Every examples/*.c builds as example_<name>, and examples/game_loop/ as
+# example_game_loop. Most use the development
 # library to mint development tokens locally. The backend examples use the
 # selected library mode and can connect with production backend keys.
 file( GLOB ROCKETNET_EXAMPLE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c" )
@@ -12,6 +13,15 @@ foreach( example_source IN LISTS ROCKETNET_EXAMPLE_SOURCES )
         target_link_libraries( example_${example_name} PRIVATE rocketnet_dev )
     endif()
 endforeach()
+
+# examples/game_loop/ is a game's shape: a launcher, a server and a client,
+# each side's network step on its own thread beside the frame.
+add_executable( example_game_loop
+    "${CMAKE_CURRENT_SOURCE_DIR}/game_loop/launcher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/game_loop/server.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/game_loop/client.cpp" )
+target_include_directories( example_game_loop PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" )
+target_link_libraries( example_game_loop PRIVATE rocketnet_dev Threads::Threads )
 
 # The soak allocator telemetry uses a native lock across callback threads.
 target_link_libraries( example_soak PRIVATE Threads::Threads )

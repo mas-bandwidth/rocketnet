@@ -3,6 +3,8 @@
 
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the published
 development keys as data) and the C standard headers below, and may name only rocketnet_ identifiers that sdk/rocketnet.h declares.
+A directory example (examples/<name>/, a game's launcher, server and client in
+C++) may also include its own headers and the C++ thread headers below.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -28,6 +30,10 @@ ALLOWED_HEADERS = {
     "time.h",       # a development token is stamped now, as a backend stamps it
 }
 
+# a directory example's sources: its own headers, the C++ thread headers its
+# frame loop runs the network step on, and math.h for its simulation
+DIRECTORY_HEADERS = ALLOWED_HEADERS | {"atomic", "thread", "math.h"}
+
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 IDENTIFIER = re.compile(r"\brocketnet_[A-Za-z0-9_]+\b")
 
@@ -50,6 +56,7 @@ def line_of(text, offset):
 
 def main():
     sources = sorted(EXAMPLES.glob("*.c"))
+    directory_sources = sorted(p for p in EXAMPLES.glob("*/*") if p.suffix in (".cpp", ".h") and (p.parent / "launcher.cpp").is_file())
     if not sources:
         print("FAIL: no examples/*.c", file=sys.stderr)
         return 1
@@ -60,20 +67,22 @@ def main():
     declared = set(IDENTIFIER.findall(blank_strings(strip_comments(HEADER.read_text(encoding="utf-8")))))
     failed = False
 
-    for source_path in sources:
+    for source_path in sources + directory_sources:
         rel = source_path.relative_to(ROOT).as_posix()
         source = source_path.read_text(encoding="utf-8")
         cleaned = blank_strings(strip_comments(source))
         source_failed = False
+        in_directory = source_path.parent != EXAMPLES
+        allowed = DIRECTORY_HEADERS | {p.name for p in source_path.parent.glob("*.h")} if in_directory else ALLOWED_HEADERS
 
         includes = list(INCLUDE.finditer(source))
-        if not any(m.group(2) == "rocketnet.h" for m in includes):
+        if not any(m.group(2) in ("rocketnet.h", "game.h") if in_directory else m.group(2) == "rocketnet.h" for m in includes):
             print(f'{rel}:1: does not include "rocketnet.h"', file=sys.stderr)
             source_failed = True
 
         for match in includes:
             name = match.group(2)
-            if name not in ALLOWED_HEADERS:
+            if name not in allowed:
                 print(f'{rel}:{line_of(source, match.start())}: #include "{name}" is not allowed', file=sys.stderr)
                 source_failed = True
 

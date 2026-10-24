@@ -23,6 +23,9 @@ memory and is killed by an 8 GB process-tree cap when two runs go at once.
 At 64 clients each example stays well under 1 GB, so two runs at once stay
 under 4 GB together. The 1000-client proof is the soak matrix, not this
 script.
+A directory example (examples/<name>/launcher.cpp, example_game_loop) runs
+alone in its default listen mode, then as a pair of its own binary: the
+"server" mode first, then the "client" mode, over UDP.
 The backend pair (example_backend_server and example_backend_client) is not
 run here: its client takes a token from a backend in examples/backend/, so
 tools/run_backend_examples.py runs it with each backend between the two.
@@ -185,12 +188,12 @@ def free_udp_port():
         return probe.getsockname()[1]
 
 
-def run_pair(base, server_binary, client_binary):
+def run_pair(base, server_binary, client_binary, server_args=(), client_args=()):
     for attempt in range(1, PORT_TRIES + 1):
         port = free_udp_port()
         workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{base}_")
         try:
-            ok = run_pair_once(base, server_binary, client_binary, port, workdir)
+            ok = run_pair_once(base, server_binary, client_binary, port, workdir, server_args, client_args)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         if ok != "bind":
@@ -200,11 +203,11 @@ def run_pair(base, server_binary, client_binary):
     return failure(base, f"server could not bind a free port in {PORT_TRIES} tries")
 
 
-def run_pair_once(base, server_binary, client_binary, port, workdir):
+def run_pair_once(base, server_binary, client_binary, port, workdir, server_args=(), client_args=()):
     env = dict(os.environ)
     env["ROCKETNET_EXAMPLE_PORT"] = str(port)
     server = subprocess.Popen(
-        [str(server_binary)],
+        [str(server_binary)] + list(server_args),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -224,7 +227,7 @@ def run_pair_once(base, server_binary, client_binary, port, workdir):
             return "bind"
         return failure(base, f"server exited {server.returncode} before it wrote its keys\n{server_out}{server_err}")
     client = subprocess.Popen(
-        [str(client_binary)],
+        [str(client_binary)] + list(client_args),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -272,6 +275,8 @@ def main():
     dirs = binary_dirs(build, args.config)
 
     names = {path.stem for path in EXAMPLES.glob("*.c")}
+    directories = {path.parent.name for path in EXAMPLES.glob("*/launcher.cpp")}
+    names |= directories
     if not names:
         print("FAIL: no examples/*.c", file=sys.stderr)
         return 1
@@ -301,6 +306,8 @@ def main():
             ok = run_pair(base, binaries[members[0]], binaries[members[1]])
         else:
             ok = run_single(base, binaries[members[0]])
+        if ok and base in directories:
+            ok = run_pair(base, binaries[base], binaries[base], ["server"], ["client"])
         if not ok:
             return 1
         print(f"PASS example_{base}")
