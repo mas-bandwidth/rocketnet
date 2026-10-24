@@ -273,6 +273,13 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     rocketnet_assert( client_index >= 0 && client_index < slots->max_clients );
     rocketnet_assert( slots->connected[client_index] );
 
+    // tla/RNDestroyWipe.tla Remove requires m \in live: a free slot is refused before anything is touched
+    if ( client_index < 0 || client_index >= slots->max_clients || !slots->connected[client_index] )
+    {
+        rocketnet_error( "server refused to release client slot %d: not connected", client_index );
+        return;
+    }
+
     uint64_t client_id = slots->client_id[client_index];
     int bucket = rocketnet_client_slots_bucket( slots, client_id );
     if ( slots->bucket_head[bucket] == client_index )
@@ -292,7 +299,13 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
             }
         }
         rocketnet_assert( found );
-        (void) found;
+        if ( !found )
+        {
+            // tla/RNDestroyWipe.tla Remove: a slot missing from its chain stays out of circulation, never handed out twice
+            rocketnet_error( "server refused to release client slot %d: missing from its bucket chain", client_index );
+            sodium_memzero( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
+            return;
+        }
     }
 
     slots->connected[client_index] = 0;
