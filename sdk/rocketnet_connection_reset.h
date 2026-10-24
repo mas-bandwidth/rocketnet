@@ -50,7 +50,8 @@ struct rn_message_object_t;
     X( KEEP, mapping_index ) X( KEEP, confirmed ) X( KEEP, user_data )
 
 #define ROCKETNET_SERVER_REPLAY_MARK_FIELDS( X ) \
-    X( RESET, has_mark ) X( RESET, marked_value ) X( RESET, marked_address )
+    X( RESET, has_mark ) X( RESET, marked_value ) X( RESET, marked_address ) \
+    X( RESET, seen ) X( RESET, seen_address )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
     X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, transport ) \

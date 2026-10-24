@@ -19,4 +19,5 @@ CONSTANTS A1
 KernelAdvancesBroken == TRUE
 WalkForgetsBroken    == FALSE
 KernelWindowBroken   == W - 1
+WalkForgetsOnlyMarked == FALSE
 =============================================================================

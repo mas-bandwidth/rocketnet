@@ -297,7 +297,39 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+// Walk forgets a released slot that never held a mark (highest_opened was 0)
+// but was connected with a mapping during the mark pass.
+
+static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 4 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+
+    const struct server_replay_marks_client_t client_a = server_replay_marks_add_client( &fixture, &a, 100, 0 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof(recording) );
+
+    server_replay_marks_walk( &fixture, &recording );
+    // First walk marks nothing (highest_opened=0) but sets seen=a.
+    rocketnet_unit_check( recording.count == 0 );
+
+    rocketnet_client_slots_release( fixture.slots, client_a.slot );
+    rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    // Second walk forgets a because the slot was seen and is now released.
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
 REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );
+REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_released_slot_without_a_mark );

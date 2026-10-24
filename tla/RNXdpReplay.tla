@@ -60,6 +60,7 @@ ASSUME /\ Addresses # {}
 (***************************************************************************)
 KernelAdvances == FALSE
 WalkForgets    == TRUE
+WalkForgetsOnlyMarked == TRUE
 KernelWindow   == W
 
 NoSession == 0
@@ -82,6 +83,7 @@ VARIABLES
     reached,        \* ghost: reached[s], the highest_opened session s reached
     marked,         \* marked[a]: what the transport last marked, 0 for none
     kmap,           \* kmap[a]: the kernel entry, NoEntry for none
+    replyMac,       \* replyMac[a]: the learned MAC entry, or NoEntry for none
     net,            \* in-flight packets: on the wire, or past the kernel
     pendingForget,  \* the addresses the walk forgets, applied by Commit
     pendingMark,    \* the marks the walk takes, applied by Commit
@@ -89,7 +91,7 @@ VARIABLES
     settle,         \* settle[a]: "clear", "released" or "walked" since Release(a)
     dropped         \* ghost: genuine packets the kernel dropped
 
-vars == <<session, nextSession, sent, opened, reached, marked, kmap, net,
+vars == <<session, nextSession, sent, opened, reached, marked, kmap, replyMac, net,
           pendingForget, pendingMark, phase, settle, dropped>>
 
 Drops == [addr : Addresses, seq : Seqs, session : 0..Sessions,
@@ -103,6 +105,7 @@ TypeOK ==
     /\ reached \in [SessionIds -> 0..MaxSeq]
     /\ marked \in [Addresses -> 0..MaxSeq]
     /\ kmap \in [Addresses -> Entries]
+    /\ replyMac \in [Addresses -> Entries]
     /\ net \subseteq Packets
     /\ pendingForget \subseteq Addresses
     /\ pendingMark \subseteq [addr : Addresses, hw : Seqs, sess : SessionIds]
@@ -118,6 +121,7 @@ Init ==
     /\ reached = [s \in SessionIds |-> 0]
     /\ marked = [a \in Addresses |-> 0]
     /\ kmap = [a \in Addresses |-> NoEntry]
+    /\ replyMac = [a \in Addresses |-> NoEntry]
     /\ net = {}
     /\ pendingForget = {}
     /\ pendingMark = {}
@@ -238,13 +242,14 @@ Release(a) ==
 (***************************************************************************)
 (* Walk: once per update, after packet processing and before the flush.   *)
 (* First the forgets: every slot that held a mark and is no longer         *)
-(* connected.  Then the marks: every connected slot whose highest_opened   *)
-(* is nonzero and differs from what it last marked.  The broken shape      *)
-(* WalkForgets = FALSE never forgets a released slot.                      *)
+(* connected, or was seen (connected with a mapping) and is no longer     *)
+(* connected (the design: WalkForgetsOnlyMarked == TRUE).  The broken     *)
+(* shape WalkForgets = FALSE never forgets a released slot.              *)
 (***************************************************************************)
-Forgets == IF WalkForgets
-             THEN {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
-             ELSE {}
+Forgets == IF WalkForgetsOnlyMarked
+              THEN {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
+              ELSE {a \in Addresses : marked[a] # 0 \/ marked[a] = 0} \
+                      \cap {a \in Addresses : session[a] = NoSession}
 
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
             a \in {b \in Addresses : /\ session[b] # NoSession
@@ -259,6 +264,10 @@ Walk ==
                     IF \E m \in Marks : m.addr = a THEN opened[a]
                     ELSE IF a \in Forgets THEN 0
                     ELSE marked[a]]
+    /\ replyMac' = [a \in Addresses |->
+                    IF \E m \in Marks : m.addr = a THEN [hw |-> opened[a], sess |-> session[a]]
+                    ELSE IF a \in Forgets THEN NoEntry
+                    ELSE replyMac[a]]
     /\ settle' = [a \in Addresses |->
                     IF settle[a] = "released" THEN "walked" ELSE settle[a]]
     /\ phase' = "flush"
