@@ -112,12 +112,16 @@ identifiers, not an ordering protocol.
   state and admitted to 2, violating `ReusedSlotStartsClean` at state 13.
   This is the same-client-id-reconnect hazard the transport's per-connection
   id removes (P9a/P9b).
-- **Omit reset:** deliver connection 1's record, return its view, then release
-  it. Region storage is empty, but receive/dedup state still belongs to 1.
-  Begin another update, disconnect 1, and observe the free slot. The mutant
-  leaves that receive state in a `Free` slot, violating
-  `ReusedSlotStartsClean` at state 13, before the next client can inherit it.
-  Releasing application views does not replace endpoint reset.
+- **Omit reset:** connect connection 1, request/send/open its record;
+  `Observe` binds the slot and `Admit` delivers it into the region. The
+  application then ends the slot (`PublicDisconnect`) and `ResetFree` frees
+  it in O(1), the lazy reset: its views are released and its region still
+  holds 1's record, bound to no connection. Begin another update, connect
+  connection 2 and observe it: the mutant's `Observe` binds the slot to 2
+  without carving the region, so the `Connected` slot holds 1's record,
+  violating `ReusedSlotStartsClean` at state 14. The carve at the binding
+  `Observe` (`RN_SLOTS_RESET`) is the reset; freeing the slot does not
+  replace it.
 - **Carry on after exhaustion:** open two different records in one update
   using two transport tickets. `Observe` binds the slot, the first `Admit`
   fills its one-record region, and the second enters `Exhausted` without
