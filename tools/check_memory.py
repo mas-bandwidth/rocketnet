@@ -7,7 +7,12 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
+# (clients, payload column, max_fragmented_messages). The payload column is
+# ignored since the payload is fixed (01a85333 removed max_payload_bytes); at
+# that payload 1000 clients x 16 slots is over the reassembly budget
+# (ROCKETNET_REASSEMBLY_MEMORY_MIB) and create refuses it, so the full-load
+# profile runs 1000 clients at the default 8 slots.
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 8)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
