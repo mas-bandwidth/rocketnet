@@ -182,17 +182,32 @@ struct rocketnet_ack_endpoint_t
     uint64_t s_highseq;                     // highest present sent sequence in window
     uint64_t a_lowseq;                      // lowest acknowledged sent sequence in window
     uint64_t a_highseq;                     // highest acknowledged sent sequence in window
+    double   s_low_time;                    // send times at those four sequences, kept
+    double   s_high_time;                   // here so publishing reads no cold record
+    double   a_low_time;
+    double   a_high_time;
     int      have_s_time;                   // a present recorded exists for the sent spans
     int      have_a_time;                   // an acknowledged record exists for the acked spans
 
+    // Received records arrive out of sequence order (reordering, late
+    // arrivals), so their receive times are not ordered by sequence: the
+    // counted received records are kept on a list ordered by receive time,
+    // linked through their buffer slots, and the received span is read from
+    // its head and tail. Receive times come from one clock in call order, so
+    // an insert lands at the tail.
+
     uint64_t recv_base;                     // low edge of the received older half
-    int      r_cnt;
+    int      r_cnt;                         // counted received records
     uint64_t r_bytes;
-    uint64_t r_lowseq;
-    uint64_t r_highseq;
-    int      have_r_time;
+    int      r_head;                        // slot with the earliest receive time
+    int      r_tail;                        // slot with the latest receive time
+    double   r_low_time;                    // receive times at head and tail
+    double   r_high_time;
+    uint16_t r_prev[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+    uint16_t r_next[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
 
     float    rtt_min_pos;                   // minimum positive rtt sample, milliseconds
+    int      rtt_min_count;                 // history entries equal to rtt_min_pos
     double   rtt_raw_sum;                   // sum of samples >= 0, for jitter
     int      rtt_count;                     // count of samples >= 0
     int      rtt_reconciled;                // rtt aggregates mirror the history

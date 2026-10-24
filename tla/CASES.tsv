@@ -109,3 +109,7 @@ MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverR
 MCRNScheduler.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
 MCRNSchedulerBrokenPerMessagePriority.cfg	MCRNScheduler.tla	invariant	FirstWriteInOrderPerChannel	check	rnscheduler	required	-
 MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
+MCRNServerStats.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
+MCRNServerStatsReceived.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
+MCRNServerStatsBrokenEntering.cfg	MCRNServerStats.tla	invariant	CountedIsWindow	check	rnserverstats	required	-
+MCRNServerStatsBrokenSeqTimes.cfg	MCRNServerStats.tla	invariant	PublishedSpanExact	check	rnserverstats	required	-
