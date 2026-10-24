@@ -21,7 +21,7 @@ transport branches on generic capabilities, never a specific backend identity.
 The `transport` config value is an ordered candidate list
 (`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp:858-998`).
 A known name absent from this build's availability list for the endpoint on
-this platform (`gso` on a client or on macOS, `io_uring` built without
+this platform (`gso` or `io_uring` on macOS, `io_uring` on a client or built without
 liburing) is skipped with one info line (`:947-961`). A list with at least
 one name left after skipping is a strict pin: only those candidates are tried,
 in order, and if every one refuses, the ladder is exhausted and connect or
@@ -36,7 +36,11 @@ in a build without XDP) is not skipped: its pin refuses at start with
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
 (1000) is pin-only: it stays in the availability list, so an explicit name
 always selects it, but `auto` never chooses it. The loopback transport is the
-one pin-only row. It is in-process, carries datagrams through memory with no
+one row pin-only on both endpoints. The pin-only check reads the
+endpoint's own column, so a transport can rank in one endpoint's `auto` order
+and be pin-only on the other: the `gso` client is pin-only
+(`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
+server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
 by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
@@ -122,7 +126,17 @@ one size with at most one shorter tail. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
-- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
+- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive. The server
+  (`sdk/rocketnet_server_gso_linux.cpp`) does both. The client
+  (`sdk/rocketnet_client_gso_linux.cpp`) sends every datagram to its one
+  connected server, so each send batch is one `sendmmsg` call and each run
+  leaves as one message with a `UDP_SEGMENT` cmsg at the run's stride. It
+  probes `UDP_SEGMENT` at create as the server does; a refused probe is the
+  plain tier, one datagram per message. A live `EINVAL`, `EIO` or `EOPNOTSUPP`
+  on a segmented message moves the client to the plain tier for good and
+  resends from that message's first datagram, so no datagram is lost. The
+  client receives with `recvmmsg`; `UDP_GRO` on the client is
+  rn-client-gso-linux-b.
 - **IOCP (Windows 11, Server 2022 or later):** USO on send through the
   `UDP_SEND_MSG_SIZE` socket option, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
