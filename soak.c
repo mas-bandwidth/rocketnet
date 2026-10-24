@@ -47,10 +47,10 @@
     sample at every later reconnect and every 10 s, and the end sample after
     the bound, once the last client is destroyed and before the server is.
     Memory is also sampled every 10 s after the warm-up and at the end, each
-    sample printed as "soak memory: t=<s> resident_bytes=<n>
+    sample printed as "soak memory: t=<s> client|between_clients resident_bytes=<n>
     smaps_rss_bytes=<n> private_dirty_bytes=<n>" (smaps_rollup Rss and
     Private_Dirty on Linux, -1 elsewhere), and each series' least-squares
-    slope prints as "soak memory slope: <name> bytes_per_minute=<n>
+    slope over the 10 s samples taken with a client alive prints as "soak memory slope: <name> bytes_per_minute=<n>
     samples=<n> allowed=<page bytes>".
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes on
@@ -249,6 +249,9 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
 
 // the memory samples after the warm-up: seconds since the post-warmup
 // sample, and per series the memory count, smaps Rss and Private_Dirty.
+// Only the 10 s samples taken with a client alive are judged, so every
+// judged sample sees the same objects alive; the post-warmup and end
+// samples (between clients) print but are not in the slope.
 // Static and fixed: 8192 samples at 10 s cover 22 hours; a longer run
 // judges its first 8192.
 
@@ -263,16 +266,16 @@ static const char * soak_memory_series_name( int series )
     return series == 0 ? process_resources_name( PROCESS_RESOURCES_MEMORY ) : process_resources_detail_name( series - 1 );
 }
 
-static void soak_record_memory( int * memory_samples, double seconds, const struct process_resources_t * sample )
+static void soak_record_memory( int * memory_samples, double seconds, const struct process_resources_t * sample, int client_alive )
 {
     int64_t detail[PROCESS_RESOURCES_DETAIL_COUNT];
     process_resources_read_detail( detail );
-    printf( "soak memory: t=%.0f %s=%lld %s=%lld %s=%lld\n", seconds,
+    printf( "soak memory: t=%.0f %s %s=%lld %s=%lld %s=%lld\n", seconds, client_alive ? "client" : "between_clients",
             soak_memory_series_name( 0 ), (long long) sample->values[PROCESS_RESOURCES_MEMORY],
             soak_memory_series_name( 1 ), (long long) detail[0],
             soak_memory_series_name( 2 ), (long long) detail[1] );
     const int n = *memory_samples;
-    if ( n >= SOAK_MEMORY_SAMPLES )
+    if ( !client_alive || n >= SOAK_MEMORY_SAMPLES )
         return;
     soak_memory_seconds[n] = seconds;
     soak_memory_bytes[0][n] = sample->values[PROCESS_RESOURCES_MEMORY];
@@ -503,7 +506,7 @@ int main( int argc, char ** argv )
                     resources_start = sample;
                     resources_peak = sample;
                     resources_start_time = rocketnet_time();
-                    soak_record_memory( &memory_samples, 0.0, &sample );
+                    soak_record_memory( &memory_samples, 0.0, &sample, 0 );
                 }
                 process_resources_peak( &resources_peak, &sample );
             }
@@ -646,7 +649,7 @@ int main( int argc, char ** argv )
                 if ( process_resources_read( &sample ) )
                 {
                     process_resources_peak( &resources_peak, &sample );
-                    soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &sample );
+                    soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &sample, client != NULL );
                 }
             }
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
@@ -738,7 +741,7 @@ int main( int argc, char ** argv )
     {
         resources_ended = 1;
         process_resources_peak( &resources_peak, &resources_end );
-        soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &resources_end );
+        soak_record_memory( &memory_samples, rocketnet_time() - resources_start_time, &resources_end, 0 );
     }
 
     if ( resources_started && resources_ended )
