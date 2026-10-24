@@ -458,6 +458,34 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
     rn_message_connection_cancel_pending( object, index );
 }
 
+// RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
+// tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
+// a server slot whose connection ended is freed here in O(1) -- its views,
+// cursors and held count cleared, its open unreliable build already
+// discarded by rn_message_connection_cancel_at_reset -- and its region is carved only when
+// Observe binds the slot to its next connection (RN_SLOTS_RESET calls
+// rocketnet_server_connection_reset). A free slot is never offered, written
+// or admitted to (every path checks CONNECTED, rn_slots_admit discards for a
+// free slot), so nothing of the ended connection is reachable, and a reused
+// slot still starts exactly as a fresh one (ReusedSlotStartsClean). The
+// region holds message bytes only: the session keys are wiped by the
+// transport when the slot ends (rocketnet_server_connection_reset in
+// sdk/rocketnet_connection_reset.cpp, the encryption map's remove), never here.
+// Carving at the end as well cost 1000 slots x ~86 KB of memsets in the
+// update after rocketnet_server_disconnect_all_clients (11.5 ms).
+
+static void rn_message_connection_release( rn_message_object_t * object, int index )
+{
+    rocketnet_assert( object->is_server );
+    rn_message_connection_t * connection = &object->connections[index];
+    const uint32_t views = connection->ordered.channels.deliveries;
+    memset( connection->hot->views, 0, views < connection->region->delivery_entries ? views : connection->region->delivery_entries );
+    memset( connection->hot->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
+    connection->hot->held = 0;
+    connection->hot->connection_id = 0;
+    connection->hot->state = RN_MESSAGE_CONNECTION_FREE;
+}
+
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
 {
     // RNSlots Kick, RNConnectionMemory Kick: the transport ends the connection
@@ -597,7 +625,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         {
             rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel (kick cancelled it already)
             if ( object->is_server )
-                rocketnet_server_connection_reset( object, i );
+                rn_message_connection_release( object, i );         // RNSlots ResetFree: lazy, carved at reuse
             else
                 rocketnet_client_connection_reset( object );
             rn_slots_observe( &object->slots, i, 0 );
@@ -640,6 +668,15 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
                 continue;
 
             rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel
+
+            // RNSlots Observe: a slot going free is released in O(1); the
+            // region is carved when the slot is bound again (the lazy reset)
+            if ( action == RN_SLOTS_DROP )
+            {
+                rn_message_connection_release( object, i );
+                continue;
+            }
+
             rocketnet_server_connection_reset( object, i );
 
             if ( action == RN_SLOTS_RESET )
