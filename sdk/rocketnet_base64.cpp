@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_base64.h"
+#include <limits.h>
 #include <string.h>
 
 static const char base64_table_encode[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -23,6 +24,11 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
     if ( output_length < input_length )
     {
         return -1; // integer overflow
+    }
+
+    if ( output_length > (size_t) INT_MAX )
+    {
+        return -1; // the encoded length would not fit the int return
     }
 
     if ( output_length >= output_size )
@@ -122,6 +128,9 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
 
     if ( output_length > output_size )
         return 0;
+
+    if ( output_length > (size_t) INT_MAX )
+        return 0;       // the decoded length would not fit the int return
 
     size_t j = 0;
     uint32_t accumulator = 0;
