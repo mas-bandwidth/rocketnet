@@ -18,12 +18,11 @@
 # in the same commit, from three equal PASS lines (Linux, macOS, Windows).
 #
 # Nightlies are exempt from the two-minute rule. Each sweep is sized to about
-# 1200 s from a Release measurement on that OS's fleet member:
-#   Linux   amd-2      seeds 1-500 in 55 s (0.11 s/seed); 51-11000 ran in 1297 s
-#   macOS   mini-m5-1  seeds 1-500 in 43 s (0.086 s/seed); 51-14000 ran in 1261 s
-#   Windows captain    seeds 1-50 in 10 s (0.2 s/seed), so 1200 s / 0.2 = 6000
-#                      seeds: 51-6000 (measured from 1-50 alone; captain's
-#                      exclusive lock is shared by the sprint)
+# 1200 s from a Release measurement on that OS's fleet member, and each range
+# was run once at the commit that set DST_REFERENCE_TRACE:
+#   Linux   hetzner2   51-11000 PASS in 1384 s (0.13 s/seed)
+#   macOS   mini-m5-1  51-14000 PASS in 1218 s (0.087 s/seed)
+#   Windows captain    51-6000  PASS in 1348 s (0.23 s/seed)
 # timeout-minutes 50 is about twice the sweep plus the build.
 
 name: nightly-dst
@@ -34,7 +33,7 @@ on:
   workflow_dispatch:
 
 env:
-  DST_REFERENCE_TRACE: f5b51aa640524001
+  DST_REFERENCE_TRACE: 510908e5051b7f68
 
 jobs:
 
