@@ -21,11 +21,14 @@
 # kernel, read from tests/suite_runner.h (ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB
 # overrides it, as it does the suite's). It also measures the per-server need
 # on this kernel: the smallest `ulimit -l` (16 KiB steps, under this limit) at
-# which ./bin/transport_memory creates a default 4-queue 1000-client io_uring
-# server, and fails when that is over the per-case need (the suite runner's
-# value is stale for this kernel). It prints the limit, both needs, the
-# runners and PASS, or FAIL and exits 1. Creating the measuring server opens a
-# loopback socket; the script changes no system setting.
+# which ./bin/transport_memory creates a default 4-queue io_uring server (4
+# clients: the ring and the provided buffers are fixed per queue and do not
+# grow with max_clients, and this transport's operator memory budget refuses a
+# 1000-client 16-slot geometry before any ring is created), and fails when that
+# is over the per-case need (the suite runner's value is stale for this
+# kernel). It prints the limit, both needs, the runners and PASS, or FAIL and
+# exits 1. Creating the measuring server opens a loopback socket; the script
+# changes no system setting.
 
 set -u
 
@@ -73,7 +76,7 @@ if [ "$limit" = unlimited ]; then
     exit 0
 fi
 
-creates() { bash -c "ulimit -l $1 && \"$probe\" 1000 1416 16 io_uring 0 >/dev/null 2>&1"; }
+creates() { bash -c "ulimit -l $1 && \"$probe\" 4 1416 16 io_uring 0 >/dev/null 2>&1"; }
 server_kib="not measured (no $probe)"
 if [ -x "$probe" ]; then
     if ! creates "$limit"; then

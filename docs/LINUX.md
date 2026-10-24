@@ -223,10 +223,14 @@ stay in the completion queue for a later call and are counted
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
-  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 1000 1416 16 io_uring 0'`:
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 16 io_uring 0'`:
   on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
   (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
-  for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are single-server measurements.
+  for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are
+  single-server measurements. The probe uses 4 clients because the ring and the
+  provided buffers are fixed per queue and do not grow with `max_clients`, and
+  the transport's operator memory budget (section 10) refuses a 1000-client
+  16-slot geometry before any ring is created (`tools/check_memlock.sh`).
   On kernel 7.0, io_uring charges locked pages across processes of the same
   user and checks that total against the creating process's limit
   ([kernel accounting](https://github.com/torvalds/linux/blob/v7.0/io_uring/rsrc.c#L36-L52)).
