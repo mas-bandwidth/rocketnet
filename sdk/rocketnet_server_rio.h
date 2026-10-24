@@ -97,6 +97,7 @@ int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
 
 #if defined(ROCKETNET_RIO_TESTS)
+uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
 // receive completion reports status as its completion status; a send or
