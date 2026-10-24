@@ -2671,12 +2671,12 @@ The server turns a connection request into an encryption mapping, and a connecti
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
+9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive.
-14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -2706,7 +2706,7 @@ list is ignored in that state.
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
-| no mapping | request | token claimed from another address until the handshake deadline | ignore, count | no mapping |
+| no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
@@ -3605,9 +3605,10 @@ an input ([t1.4 Conventions](#t1.4)).
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
      first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline, when a response binds the
-     token, or immediately when processing the request refuses it without
-     retaining a mapping. A full mapping table refuses with no reply and is counted as a
+     the claim ends at the handshake deadline, when its half-open mapping is
+     removed before that deadline, when a response binds the token, or
+     immediately when processing the request refuses it without retaining a
+     mapping. A full mapping table refuses with no reply and is counted as a
      refusal. The request-claim table and the response-binding table are
      independent capacities: claim pressure cannot consume or evict a still
      live response binding.
@@ -4076,6 +4077,7 @@ the property the row it carries.
 | Packet type and salt unmodifiable | AEAD associated data |
 | Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
 | Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
 | A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
 | Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
