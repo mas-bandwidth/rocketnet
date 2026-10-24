@@ -70,6 +70,28 @@ transport packet, and that ACK clears its resend state even if it never reaches
 the application. This is the study's I12: acknowledged means transport arrival,
 not application delivery. No sender-side superseding removes resend state.
 
+### Code-4 blocks and the one in-turn rule
+
+The `blocks` scenario sends each code-4 message as a block of two fragments
+(`ArriveFragment`, in any order); a block is complete only when the fragments
+counted since its anchor (`counted`, the code's `block_have`) include both.
+`InTurnOneRule` states one rule for an in-turn sequenced message, block or
+record: it is delivered as soon as it is complete and newer than the
+watermark; a newer in-turn message supersedes an incomplete in-turn block, and
+one no newer is superseded by it; nothing in turn is held as future state
+(`InTurnNeverHeldAsFuture`). An in-turn block collects in `inTurn`, apart from
+the one future-state slot; a held block still incomplete when its epoch opens
+moves there (`Drain`). `InTurnDeliveredWhenComplete` is the observable half:
+`missed` records an in-turn message, every fragment of which arrived in its
+turn, that was `Deliverable` when complete and was not delivered.
+`MCRNChannelTypesBlocks.cfg` checks the rule with every shared invariant.
+
+`Broken = "BlockInTurnHeld"` is the code-4 dispatch of
+`sdk/rocketnet_channel_sequenced.cpp` before the rule: an in-turn block is
+checked against the watermark, then collected in the future-state slot and
+compared with the held state there. Until that file follows the rule, the
+code is this witness.
+
 ## Shared delivery and comparison
 
 `DeliverMessage` is the common direct/held delivery function. Ordered delivery
@@ -145,6 +167,13 @@ runtime allocation design.
 - `BrokenHoldAllSequenced`: packets 3 and 5 carry successive sequenced
   messages ahead of missing ordered message 1. Keeping both leaves two held
   values on channel 1, violating the one-per-channel `BuffersBounded` rule.
+- `BrokenBlockInTurnHeld`: block 1 (ordering 0) has its first fragment held
+  in turn; block 4 (ordering 1, after the ordered message) arrives and, newer,
+  replaces it in the one slot; block 1's second fragment is then superseded by
+  block 4. Block 1 was complete in its turn and newer than the watermark but
+  never delivered: `InTurnDeliveredWhenComplete` fails. Checked by hand
+  against the code: the second fragment takes the hold path, `gap` is
+  negative against block 4 and it returns STALE with SEQUENCED_SUPERSEDED.
 
 ## Evaluation and measurements
 
@@ -154,7 +183,7 @@ input, each branch and returned record is unchanged. This forces eager value
 binding in TLC and avoids repeatedly expanding nested record updates. It
 changes no transition, scheduling rule, loss action, bound or fairness.
 
-All seven healthy scenarios and four reversed witnesses complete with the
+All eight healthy scenarios and five reversed witnesses complete with the
 pinned runner and JAR from `README.md`, on Linux with a 110-second budget
 per shard. Positive cases use two workers; witnesses use one. They retain
 all seven programs, the same arbitrary arrival and ACK timing, original
@@ -163,19 +192,23 @@ exact generated/distinct counts after the evaluation change.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
-| `MCRNChannelTypes.cfg` | 2058385 | 376853 | 65.946 | pass - |
-| `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 0.659 | invariant SequencedNeverBackwards |
-| `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 0.721 | invariant EpochWatermark |
-| `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.663 | invariant ReliableExactlyOnce |
-| `MCRNChannelBrokenHoldAllSequenced.cfg` | 321 | 157 | 0.682 | invariant BuffersBounded |
-| `MCRNChannelTypesStale.cfg` | 171729 | 37065 | 4.343 | pass - |
-| `MCRNChannelTypesBackwards.cfg` | 21971 | 5927 | 1.641 | pass - |
-| `MCRNChannelTypesReset.cfg` | 56938 | 11595 | 3.617 | pass - |
-| `MCRNChannelTypesHold.cfg` | 102358 | 21795 | 3.957 | pass - |
-| `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 5.385 | pass - |
-| `MCRNChannelTypesChannels.cfg` | 99178 | 20995 | 3.708 | pass - |
+| `MCRNChannelTypes.cfg` | 2168240 | 400234 | 76.097 | pass - |
+| `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 0.680 | invariant SequencedNeverBackwards |
+| `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 0.744 | invariant EpochWatermark |
+| `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.648 | invariant ReliableExactlyOnce |
+| `MCRNChannelBrokenHoldAllSequenced.cfg` | 321 | 157 | 0.670 | invariant BuffersBounded |
+| `MCRNChannelBrokenBlockInTurnHeld.cfg` | 366 | 210 | 0.702 | invariant InTurnDeliveredWhenComplete |
+| `MCRNChannelTypesStale.cfg` | 171729 | 37065 | 5.208 | pass - |
+| `MCRNChannelTypesBackwards.cfg` | 21971 | 5927 | 1.976 | pass - |
+| `MCRNChannelTypesReset.cfg` | 56938 | 11595 | 4.734 | pass - |
+| `MCRNChannelTypesHold.cfg` | 102358 | 21795 | 5.164 | pass - |
+| `MCRNChannelTypesUnordered.cfg` | 253601 | 52469 | 6.569 | pass - |
+| `MCRNChannelTypesChannels.cfg` | 99178 | 20995 | 4.774 | pass - |
+| `MCRNChannelTypesBlocks.cfg` | 29805 | 9096 | 1.323 | pass - |
 
 Earlier failed measurements remain in the job evidence and historical ledger;
-they are not passing results. The reset scenario originally exhausted its
+they are not passing results. The rows below were measured with the blocks
+scenario in the module; the existing scenarios keep their counts, since no
+fragment is enabled outside it. The reset scenario originally exhausted its
 110-second budget during recursive expression evaluation. Eager binding
 completes the same bounded scenario without restricting its action graph.

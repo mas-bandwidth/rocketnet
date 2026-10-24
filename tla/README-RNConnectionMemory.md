@@ -35,7 +35,16 @@ A client owns one region; it is the same machine with one slot.
     disconnects itself.
   - `Leave(s)`: an ordinary disconnect, not from exhaustion.
   - `Reuse(s)`: the slot is freed and its region reset (`rn_region_reset`,
-    which is `rn_region_carve`).
+    which is `rn_region_carve`). The server performs the two halves of this
+    step at two times (the lazy reset): the update its connection ends in
+    frees the slot in O(1) (`rn_message_connection_release`,
+    sdk/rocketnet_message_server.cpp), and the Observe that binds the slot
+    to its next connection carves the region before anything else touches it.
+    Between the two the slot is Free, and no action of a Free slot reads or
+    writes its region (every path checks CONNECTED, and `rn_slots_admit`
+    discards for an unbound slot), so the split is a stutter of this step
+    and the model keeps it one step. tla/RNSlots.tla models the split itself
+    (ResetFree keeps the region, Observe carves it).
 - **Fairness.** Weak fairness on `Kick(s)` and `Reuse(s)` for every slot.
 
 ## Properties

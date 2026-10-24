@@ -263,7 +263,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
-// tla/RNChannel.tla Enqueue
+// tla/RNChannel.tla Enqueue, GhostSequencedWrite: a sequenced send moves sequenced_write past zero on its channel
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -293,7 +293,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
-// tla/RNChannel.tla DeliverMessage
+// tla/RNChannel.tla DeliverMessage, GhostSequencedRead: a sequenced delivery moves sequenced_watermark past zero on its channel
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -372,7 +372,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
         rn_channels_count( channels->region->counters, counter );
 
     // 17.3 item 11: a wire violation ends the connection. The owner reads
-    // rn_ordered_decide and disconnects the peer; counted once per connection.
+    // rn_ordered_decide and disconnects the other side of the connection; counted once per connection.
     if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
     {
         channels->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
@@ -380,7 +380,8 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
-// tla/RNChannel.tla OpenPacket
+// tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened.
+// tla/RNReceipts.tla OpenPacket: the far end dispatches that packet, marking it opened.
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -619,6 +620,8 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 // never a rescan of its descriptors. The chunk is copied to its own offset,
 // ring + index * F (THE COPIES (b): a chunk must outlive the batch).
 // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
+// tla/RNChannelTypes.tla ArriveFragment: one block fragment arrives at its
+// index and is placed, and the block is complete only when all have arrived.
 
 rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, const struct rocketnet_message_record_t * record,
                                                      uint32_t key_channel, uint32_t key_index, uint32_t slot,
@@ -800,7 +803,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
-// tla/RNChannel.tla ReceiveAck
+// tla/RNChannel.tla ReceiveAck, ReceiveAckAny: feeds the acked packet ids the transport delivered into the window
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into
@@ -965,7 +968,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
         return false;
     channels->pending = RN_DESCRIPTOR_NONE;
 
-    // RNChannelTypes!Enqueue: code 2 has no ordering index. Code 3 keeps its
+    // tla/RNChannelTypes.tla Enqueue: assigns the ordering and sequencing counters as the message joins the channel queue.
+    // Code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
     // takes one number; a larger block takes one number per chunk
     // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
@@ -1091,9 +1095,9 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
 
     rn_channels_t * channels = &ordered->channels;
 
-    struct rocketnet_message_config_body_t peer;
-    memset( &peer, 0, sizeof( peer ) );
-    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &peer );
+    struct rocketnet_message_config_body_t remote;
+    memset( &remote, 0, sizeof( remote ) );
+    const int body_violation = rocketnet_message_read_config_body( record->data, record->bytes, &remote );
     if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         rn_channels_count_violation( channels, rn_violation_counter( body_violation ) );
@@ -1101,24 +1105,24 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
     }
 
     const struct rocketnet_message_config_body_t * own = &ordered->config;
-    struct field_t { const char * name; uint32_t own, peer; };
+    struct field_t { const char * name; uint32_t own, remote; };
     const field_t fields[] =
     {
-        { "version",            own->version,            peer.version },
-        { "enabled",            own->enabled,            peer.enabled },
-        { "num_channels",       own->num_channels,       peer.num_channels },
-        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    peer.reliable_messages_in_flight },
-        { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, peer.receive_message_buffer_bytes },
-        { "max_message_bytes",  own->max_message_bytes,  peer.max_message_bytes },
-        { "fragment_bytes",     own->fragment_bytes,     peer.fragment_bytes },
+        { "version",            own->version,            remote.version },
+        { "enabled",            own->enabled,            remote.enabled },
+        { "num_channels",       own->num_channels,       remote.num_channels },
+        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    remote.reliable_messages_in_flight },
+        { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, remote.receive_message_buffer_bytes },
+        { "max_message_bytes",  own->max_message_bytes,  remote.max_message_bytes },
+        { "fragment_bytes",     own->fragment_bytes,     remote.fragment_bytes },
     };
     for ( size_t i = 0; i < sizeof( fields ) / sizeof( fields[0] ); i++ )
     {
-        if ( fields[i].own == fields[i].peer )
+        if ( fields[i].own == fields[i].remote )
             continue;
         if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
         {
-            rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the peer", fields[i].name, fields[i].own, fields[i].peer );
+            rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the remote endpoint", fields[i].name, fields[i].own, fields[i].remote );
             channels->error = ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH;
         }
         return channels->error;
@@ -1174,7 +1178,9 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
-// tla/RNChannel.tla WritePacket
+// tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write.
+// tla/RNChannelTypes.tla WriteAny: the same packet write, any message and either attempt.
+// tla/RNBlocks.tla SendRecord: a fragment's item carries its index, k - 1 and its own ring offset
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
     const rn_region_t * region = ordered->channels.region;
@@ -1281,6 +1287,8 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
     return true;
 }
 
+// tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
+// tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
     if ( !ordered || !payloads || num_payloads < 1 )
@@ -1530,7 +1538,7 @@ int rn_ordered_decide( const struct rn_ordered_t * ordered )
     if ( !ordered || !ordered->channels.region )
         return ROCKETNET_DISCONNECT_REASON_NONE;
 
-    // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the peer broke
+    // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the other side of the connection broke
     // the wire (17.3 item 11); then a reliable message went unacked too long
     const int memory = rn_connection_memory_decide( ordered->channels.region );
     if ( memory != ROCKETNET_DISCONNECT_REASON_NONE )

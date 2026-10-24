@@ -34,7 +34,6 @@ static void ack_span_cost_case( uint32_t count, int order )
     config.max_message_bytes = 512 * 1024;
     config.receive_message_buffer_bytes = 512 * 1024;
     config.send_message_buffer_bytes = 2 * 1024 * 1024;
-    config.packets_in_flight = 512;
     rocketnet_unit_check( rocketnet_message_validate_config( &config ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
     rocketnet_unit_check( arena );

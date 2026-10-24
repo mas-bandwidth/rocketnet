@@ -212,6 +212,8 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     // half): room in the region for a message of `bytes` bytes, and the
     // pointer it is written at, once, in place (R3). A refusal for want of
     // room sets send_error (R5); the owner ends the connection with it.
+    // tla/RNOutgoingBuild.tla StartQueued: the start on the queued path, the
+    // message handed its region record rather than a transport frame.
     int type = reliability;
     const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
     if ( route == RN_ENDPOINT_ROUTE_REFUSED )
@@ -267,8 +269,8 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
         {
-            // RNConnectionMemory Exhaust then Kick (R5): the region has no room
-            // for a send it must not drop
+            // tla/RNChannelTypes.tla MemoryExhausted: the send region has no room left, so the connection ends.
+            // The region has no room for a send it must not drop.
             endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
             return NULL;
         }
@@ -311,9 +313,12 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
 
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial )
 {
-    // tla/RNEndpoint.tla Send, its second half (RNChannel Enqueue's): the
+    // tla/RNEndpoint.tla Send, its second half: the
     // message joins its channel's queue in FIFO order and takes its receipt
     // serial (7.4: nonzero for every send). 0 leaves the start pending.
+    // tla/RNReceipts.tla Send: issues the next receipt serial before any packet write.
+    // tla/RNOutgoingBuild.tla FinishQueued: the region record's message is
+    // appended to the queue the write pass copies from.
     if ( endpoint->pending_type == -1 || endpoint->pending_in_place )
         return 0;                                               // an in-place start finishes with rn_endpoint_in_place_finish
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
@@ -422,10 +427,14 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
 //                     the in-place unreliable send
 // ---------------------------------------------------------------
 
-// docs/OUTGOING-BUILD.md; tla/RNOutgoingBuild.tla StartInPlace, FinishInPlace,
-// FinishInPlaceOverBudget and Abort. The payload is the frame's: the header
-// goes in front of the bytes the game wrote and the form byte after them,
-// in place, so the message layer copies nothing into the transport.
+// docs/OUTGOING-BUILD.md; tla/RNOutgoingBuild.tla StartInPlace (header and
+// affordable decide it: a record appended at the open build's committed end,
+// or a frame opened for it), FinishInPlace, Abort, and the over-budget drop
+// of a seal (SealBuild, BeginFlush, BeginUpdate). The payload is the frame's:
+// the header goes in front of the bytes the game wrote and the form byte
+// after them, in place, so the message layer copies nothing into the
+// transport. rn_endpoint_in_place_finish is the whole-frame case, a record
+// that fills its frame and is sealed at once.
 
 static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now );
 
@@ -563,8 +572,8 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
     // R6, RNSendBudget Send at the unreliable class. start took this path
     // only when the bucket could pay the declared maximum
     // (rn_endpoint_in_place_affordable), and the bytes written are at most
-    // that, so the admit succeeds; RNOutgoingBuild FinishInPlaceOverBudget
-    // is the drop, counted, should the bucket have moved since. The class
+    // that, so the admit succeeds; RNOutgoingBuild's seal with its drop
+    // (SealBuild) is the drop, counted, should the bucket have moved since. The class
     // order holds: while the reliable path has work due, an in-place packet
     // is admitted only if one maximum packet stays in the bucket for it
     if ( endpoint->send_budget_enabled )
@@ -590,9 +599,10 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
 
 void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now )
 {
-    // RNOutgoingBuild TransportSend's commit: the receipt entry under the
-    // transport's packet id (RNReceipts WritePacket), the budget settled at
-    // the sealed size
+    // tla/RNOutgoingBuild.tla TransportSend: the commit of an in-place
+    // packet the transport sent, the receipt entry under the transport's
+    // packet id (RNReceipts WritePacket), the budget settled at the sealed
+    // size
     if ( endpoint->in_place_receipt )
         rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
@@ -619,7 +629,8 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 {
     // tla/RNEndpoint.tla Send (10.1): start, the one copy, finish. Per-send
     // priority (9.3): MEDIUM is the one level a send takes, and any other is
-    // refused.
+    // refused. tla/RNOutgoingBuild.tla Write: the one copy writes the
+    // message's bytes once at the pointer start returned.
     if ( !data || priority != ROCKETNET_PRIORITY_MEDIUM )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -652,7 +663,8 @@ bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     // tla/RNEndpoint.tla OnPayload (RNChannel OpenPacket, DeliverMessage):
     // layer 2's reader, then each record through the window and the dispatch
     // (13.3). A violation is held for rn_endpoint_error. The CONFIG
-    // comparison (ConfigCompare) runs inside the dispatch.
+    // comparison (ConfigCompare) runs inside the dispatch. OpenAny: the
+    // packet opened is the one the transport hands over, the head of its wire.
     (void) now;
     const uint32_t before = rn_ordered_deliveries( &endpoint->ordered );
     const int result = rn_ordered_receive( &endpoint->ordered, payload, bytes );
@@ -684,7 +696,7 @@ void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
 void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now )
 {
     // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): an endpoint still
-    // waiting for the peer's CONFIG reliable_timeout after its connection
+    // waiting for the remote endpoint's CONFIG reliable_timeout after its connection
     // began ends it as RELIABLE_TIMEOUT. The wait starts at the first update
     // the connection is connected at: the server's from its Observe reset,
     // the client's from the first update its transport reports CONNECTED
@@ -705,7 +717,9 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
-    // receive descriptors return to the region (RNSlots Release's charge)
+    // receive descriptors return to the region (RNSlots Release's charge).
+    // tla/RNOutgoingBuild.tla BeginUpdate: the packet allowance (written)
+    // resets, and queued reliable work is offered first in the next pass.
     // A transport may exhaust its frame capacity before next_packet_bytes
     // reaches the end of the write pass. The next update must offer reliable
     // work first and begin a fresh budget phase while keeping queued records.
@@ -795,9 +809,10 @@ static bool rn_endpoint_large_sequenced( const rn_endpoint_t * endpoint, const r
            rn_endpoint_sequenced_payload_bytes( descriptor ) >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
+// tla/RNChannel.tla DropUnreliableForBudget: unreliable sends past the budget are dropped and counted, and this pass writes nothing further.
 // The end of the reliable path: a reliable packet the budget could not pay
-// waits; nothing after it spends the bucket this pass (RNSendBudget Wait), so
-// this pass's unreliable sends are over budget: dropped and counted (Drop, R6).
+// waits; nothing after it spends the bucket this pass, so
+// this pass's unreliable sends are over budget: dropped and counted.
 
 static void rn_endpoint_end_reliable( rn_endpoint_t * endpoint )
 {
@@ -879,6 +894,9 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     // retransmits first, one packet at a time so a frame is started only for
     // a packet that is written, then unreliable records under the
     // connection's budget (R6) and shared per-update packet allowance.
+    // tla/RNOutgoingBuild.tla BeginFlush and EndFlush: an idle pass opens at
+    // its reliable phase, and returning 0 ends it once nothing more may be
+    // sent this update.
     if ( endpoint->packet_written )
         return 0;                                               // the written packet is not yet sent or failed
 
@@ -971,7 +989,11 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 {
     // tla/RNEndpoint.tla WritePacket: the planned packet written by layer 6
     // in place (THE COPIES (a)) into the frame the caller started for
-    // packet_id, whose sent-map entry rn_endpoint_packet_sent commits
+    // packet_id, whose sent-map entry rn_endpoint_packet_sent commits.
+    // WriteAny: the records chosen here end in WritePacket (sent) or
+    // PacketFailed (refused). tla/RNOutgoingBuild.tla SendReliable and
+    // SendUnreliable: the ordered packet of the reliable phase, then the
+    // queued unreliable records copied from their region records.
     (void) capacity;
     (void) packet_id;
     if ( endpoint->packet_written || !payload )
@@ -1127,7 +1149,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
 {
     // tla/RNEndpoint.tla WritePacket, its commit (9.3 step 4, RNSlots Send):
     // the packet enters the sent map under the transport's id, and the
-    // budget is settled at the sealed size
+    // budget is settled at the sealed size. tla/RNOutgoingBuild.tla
+    // TransportSend: the commit of a write-pass packet the transport sent.
     if ( !endpoint->packet_written )
         return;
 
@@ -1224,7 +1247,7 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
     // the region's exhaustion, a wire violation (a CONFIG mismatch among
     // them, logged with the field and both values when it was compared) and a
     // reliable message past its timeout, in rn_ordered_decide's order, then
-    // the peer's CONFIG past reliable_timeout (rn_endpoint_config_tick)
+    // the remote endpoint's CONFIG past reliable_timeout (rn_endpoint_config_tick)
     if ( endpoint->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
         return endpoint->send_error;
     const int reason = rn_ordered_decide( &endpoint->ordered );
@@ -1288,7 +1311,7 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
         const rn_sent_packet_t * entry = &region->sent_packets[sweep % region->packets];
         if ( entry->packet_id == 0 )
             continue;
-        const double loss = entry->send_time + ack->resend_delay;
+        const double loss = entry->send_time + ack->resend_delay_max;   // tla/RNReceipts.tla SweepLoss: the receipt deadline
         if ( loss < deadline )
             deadline = loss;
         break;

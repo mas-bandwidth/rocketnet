@@ -1,6 +1,6 @@
 ------------------------------ MODULE MCLink ------------------------------
 (***************************************************************************)
-(* The small instance that proves Link itself.  Two abstract peers: a      *)
+(* The small instance that proves Link itself.  Two abstract endpoints: a  *)
 (* sender that may hand any packet to the link at any time, and a receiver *)
 (* that takes whatever is deliverable.  Two ghosts record what was ever    *)
 (* sent and ever delivered.                                                *)

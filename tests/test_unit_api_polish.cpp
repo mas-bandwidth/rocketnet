@@ -318,7 +318,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -31 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -32 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
@@ -369,7 +369,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
@@ -542,7 +542,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
 
-// --- the production minter refuses a token no peer accepts ---------------------
+// --- the production minter refuses a token no server accepts -------------------
 
 // a timeout of zero or below (t13.2: a production server refuses both), and an
 // expire stamp at or before the create stamp (the token is already expired when

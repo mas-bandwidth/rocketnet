@@ -128,7 +128,10 @@ enum rocketnet_status_t
 
     // production builds (ROCKETNET_DEV=0) refuse the development values
     ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -29,
-    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
+
+    // a connect token naming a server address with port 0
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31
 };
 ```
 
@@ -142,7 +145,7 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_OUT_OF_RANGE`, `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`,
 `INVALID_ADDRESS` (server) or `OUT_OF_MEMORY`. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
-`INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `SERVER_NOT_STOPPED`,
+`INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
 `THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
@@ -162,9 +165,14 @@ libxdp (`docs/LINUX.md`). Its string is
 `TRANSPORT_NOT_BUILT`.
 `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` is -29: a production build
 (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and
-server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -30, the
-last code: a production client refuses, at connect, a token sealed to the
-published development server key.
+server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -30: a
+production client refuses, at connect, a token sealed to the published
+development server key. `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` is -31, the
+last code: every client refuses, at connect, a token that names a server
+address with port 0, on every platform. No server can be reached at port 0:
+macOS refuses the socket connect, and Linux and Windows accept it and the
+packets reach no server. The client stays `DISCONNECTED`, and connect logs
+one `ERROR` line.
 
 ### 2.2 Reporting
 
