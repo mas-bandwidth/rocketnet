@@ -719,24 +719,34 @@ static void rocketnet_ack_stats_rtt_write( struct rocketnet_ack_endpoint_t * end
         endpoint->stats_rtt_sum += (double) sample;
         endpoint->stats_rtt_count++;
     }
+    // a node whose minimum does not change leaves every ancestor unchanged
     for ( int node = ( index + ROCKETNET_RTT_HISTORY_SIZE ) >> 1; node >= 1; node >>= 1 )
     {
         const float left = rocketnet_ack_stats_rtt_node( endpoint, 2 * node );
         const float right = rocketnet_ack_stats_rtt_node( endpoint, 2 * node + 1 );
-        endpoint->stats_rtt_min_tree[node] = left < right ? left : right;
+        const float minimum = left < right ? left : right;
+        if ( endpoint->stats_rtt_min_tree[node] == minimum )
+            break;
+        endpoint->stats_rtt_min_tree[node] = minimum;
     }
 }
 
-// publishes the aggregates to the fields the transports read, with the
-// reference's arithmetic
-static void rocketnet_ack_stats_publish( struct rocketnet_ack_endpoint_t * endpoint )
+// publish the aggregates to the fields the transports read, with the
+// reference's arithmetic. each event republishes only what it can change:
+// a send the sent numbers, a receive the received rate, an ack block the
+// rtt and the sent numbers.
+
+static void rocketnet_ack_stats_publish_rtt( struct rocketnet_ack_endpoint_t * endpoint )
 {
     const float root = endpoint->stats_rtt_min_tree[1];
     const float min_rtt = root < ROCKETNET_ACK_RTT_NONE ? root : 0.0f;
     endpoint->rtt = min_rtt;
     endpoint->jitter = endpoint->stats_rtt_count > 0 ?
         (float) ( ( endpoint->stats_rtt_sum - (double) endpoint->stats_rtt_count * (double) min_rtt ) / (double) endpoint->stats_rtt_count ) : 0.0f;
+}
 
+static void rocketnet_ack_stats_publish_sent( struct rocketnet_ack_endpoint_t * endpoint )
+{
     endpoint->packet_loss = endpoint->stats_eligible_count > 0 ?
         ( (float) endpoint->stats_eligible_unacked ) / ( (float) endpoint->stats_eligible_count ) * 100.0f : 0.0f;
 
@@ -747,7 +757,10 @@ static void rocketnet_ack_stats_publish( struct rocketnet_ack_endpoint_t * endpo
     const double acked_span = endpoint->stats_acked_high_time - endpoint->stats_acked_low_time;
     endpoint->bandwidth_acked_kbps = ( endpoint->stats_acked_count > 0 && acked_span > 0.0 ) ?
         (float) ( ( (double) endpoint->stats_acked_bytes ) / acked_span * 8.0 / 1000.0 ) : 0.0f;
+}
 
+static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_t * endpoint )
+{
     const double received_span = endpoint->stats_received_high_time - endpoint->stats_received_low_time;
     endpoint->bandwidth_received_kbps = ( endpoint->stats_received_count > 0 && received_span > 0.0 ) ?
         (float) ( ( (double) endpoint->stats_received_bytes ) / received_span * 8.0 / 1000.0 ) : 0.0f;
@@ -822,7 +835,7 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     if ( sequence >= rocketnet_ack_stats_window_base( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) &&
          sequence <= rocketnet_ack_stats_window_top( endpoint->highest_sequence, ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
         rocketnet_ack_stats_sent_add( endpoint, sequence, sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) );
-    rocketnet_ack_stats_publish( endpoint );
+    rocketnet_ack_stats_publish_sent( endpoint );
     if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
         rocketnet_ack_stats_record_sent( delta, record, endpoint->highest_sequence );
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
@@ -919,7 +932,7 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
     endpoint->highest_received_sequence = highest;
     if ( sequence >= base && sequence <= top )
         rocketnet_ack_stats_received_link( endpoint, sequence );
-    rocketnet_ack_stats_publish( endpoint );
+    rocketnet_ack_stats_publish_received( endpoint );
     if ( rocketnet_ack_stats_delta_t * delta = endpoint->stats_delta )
         rocketnet_ack_stats_record_received( delta, record, endpoint->highest_received_sequence );
 }
@@ -1269,7 +1282,10 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     }
 
     if ( newly_acked )
-        rocketnet_ack_stats_publish( endpoint );
+    {
+        rocketnet_ack_stats_publish_rtt( endpoint );
+        rocketnet_ack_stats_publish_sent( endpoint );
+    }
 
     return newly_acked;
 }
