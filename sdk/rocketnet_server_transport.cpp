@@ -2279,13 +2279,10 @@ static void rocketnet_server_stats_publish_and_submit( rocketnet_server_transpor
                  !rocketnet_client_slots_connected(server->protocol.client_slots, job->slot) ||
                  server->protocol.connection_ids[job->slot] != job->connection_id )
                 continue;
-            rocketnet_ack_endpoint_t * live = &server->protocol.acks->endpoints[job->slot];
-            live->rtt = job->output.rtt;
-            live->jitter = job->output.jitter;
-            live->packet_loss = job->output.packet_loss;
-            live->bandwidth_sent_kbps = job->output.sent_kbps;
-            live->bandwidth_received_kbps = job->output.received_kbps;
-            live->bandwidth_acked_kbps = job->output.acked_kbps;
+            // The live endpoint's running aggregates already publish the
+            // current numbers as each send, receive and ack lands
+            // (sdk/rocketnet_ack.cpp, tla/RNServerStats.tla). The batch's
+            // older result must not overwrite them, so it only retires.
             worker->published++;
         }
         worker->next_publish++;

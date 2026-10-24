@@ -216,9 +216,12 @@ struct rocketnet_ack_endpoint_t
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
-    // published per-connection statistics, recomputed by update_stats --
-    // amortized round-robin across slots on the server, on each stats read on the
-    // client. rtt and jitter in milliseconds, loss as a percentage.
+    // published per-connection statistics. The running aggregates below keep
+    // them current as each send, receive and ack lands, exactly the numbers
+    // update_stats recomputes from the full histories, so a server slot's
+    // stats are current at every read and cost nothing per idle slot. The
+    // client still recomputes on each stats read. rtt and jitter in
+    // milliseconds, loss as a percentage.
     float rtt;
     float jitter;
     float packet_loss;
@@ -242,6 +245,42 @@ struct rocketnet_ack_endpoint_t
 
     uint8_t keep_alive_acked;
 
+    // The running aggregates (sdk/rocketnet_ack.cpp, tla/RNServerStats.tla).
+    // Every counted window is a function of its high-water mark, the same
+    // one update_stats walks, so nothing here stores an edge: the sent
+    // window is [base, top] with base = max(1, highest - N + 1) and top =
+    // min(highest, base + N/2 - 1); its loss-eligible part ends at
+    // highest - N/2. Send times rise with sequence (update refuses a time
+    // that goes backwards), so the sent spans are read at the lowest and
+    // highest counted sequences. Receive times do not follow sequence
+    // (reordering, late and duplicate arrivals), so the counted received
+    // records are linked in receive-time order through their ring slots.
+    // All zero is the empty state.
+
+    uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
+    uint64_t stats_acked_bytes;                 // of those, acknowledged
+    uint64_t stats_sent_low;                    // lowest and highest counted sequence; 0 = none
+    uint64_t stats_sent_high;
+    uint64_t stats_acked_low;                   // lowest and highest acknowledged counted sequence; 0 = none
+    uint64_t stats_acked_high;
+    double stats_sent_low_time;                 // send times at those sequences, kept here so
+    double stats_sent_high_time;                // publishing reads no cold record
+    double stats_acked_low_time;
+    double stats_acked_high_time;
+    uint32_t stats_sent_count;                  // counted sent records
+    uint32_t stats_acked_count;                 // of those, acknowledged
+    uint32_t stats_eligible_count;              // counted records in the loss-eligible part
+    uint32_t stats_eligible_unacked;            // of those, unacknowledged
+    uint64_t stats_received_bytes;
+    double stats_received_low_time;             // receive times at the list's head and tail
+    double stats_received_high_time;
+    uint32_t stats_received_count;
+    uint16_t stats_received_head;               // slot received earliest; valid while the count is nonzero
+    uint16_t stats_received_tail;               // slot received latest
+    double stats_rtt_sum;                       // sum and count of the positive rtt samples
+    uint32_t stats_rtt_count;
+    uint32_t stats_pad;
+
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
 
     // bit (slot) set: the record at slot was written since the reset. The three
@@ -260,7 +299,22 @@ struct rocketnet_ack_endpoint_t
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
     struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
+
+    // the minimum positive rtt sample: a min tree over rtt_history, node k
+    // the minimum of nodes 2k and 2k+1, a node at or past the history size
+    // the history entry it names (an empty or non-positive entry reads as
+    // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
+    float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
+
+    // the received list's links, by ring slot; read only for counted slots
+    uint16_t stats_received_prev[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+    uint16_t stats_received_next[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
 };
+
+static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
+               "the rtt min tree needs a power-of-two history" );
+static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE <= 65536,
+               "the received list links are 16-bit slots" );
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
