@@ -19,6 +19,7 @@
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_packet_builder.h"
 #include "../sdk/rocketnet_send_budget.h"
+#include "../sdk/rocketnet_test_seams.h"
 
 static rocketnet_counters_t builder_counters;
 
@@ -761,8 +762,87 @@ static void test_packet_builder_matches_reference_order()
     rn_arena_destroy( arena );
 }
 
+// the builder's cost is linear in the plan: one visit per item to link the
+// channels' lists, then one visit per channel head of the class for each
+// pick, never a scan of the plan per pick. Plans of 32, 128 and 512 items over
+// 8 channels, one packet per call (the endpoint's shape) and 16. BASE's
+// picker, counted the same way, is quadratic in the plan for every pick.
+
+static void test_packet_builder_visits_linear()
+{
+#if ROCKETNET_TEST_SEAMS
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rocketnet_unit_check( arena != NULL );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    plan_random_state = 0x9E3779B9u;
+
+    uint8_t * builder_frames[PLAN_PAYLOADS];
+    uint8_t * reference_frames[PLAN_PAYLOADS];
+    for ( int p = 0; p < PLAN_PAYLOADS; p++ )
+    {
+        builder_frames[p] = plan_builder_frames[p];
+        reference_frames[p] = plan_reference_frames[p];
+    }
+
+    const uint32_t channels = 8;
+    static const int sizes[] = { 32, 128, 512 };
+    static const int packet_counts[] = { 1, 16 };
+
+    for ( int s = 0; s < 3; s++ )
+    {
+        for ( int c = 0; c < 2; c++ )
+        {
+            const int num_items = sizes[s];
+            const int packets_per_update = packet_counts[c];
+
+            rn_packet_builder_t builder;
+            rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, packets_per_update, PLAN_PAYLOAD_BYTES ) );
+            builder.num_channels = channels;
+            builder.round_robin = channels - 1;
+
+            struct reference_scheduler_t reference;
+            memset( &reference, 0, sizeof( reference ) );
+            reference.num_channels = channels;
+            reference.round_robin = channels - 1;
+            reference.packets_per_update = builder.packets_per_update;
+            reference.payload_capacity = PLAN_PAYLOAD_BYTES;
+            reference_reset_clocks( &reference );
+
+            plan_fill( num_items, channels );       // channels 0 .. 10, below 32: no link slot is shared
+
+            uint32_t reference_payload_bytes[PLAN_PAYLOADS];
+            const int reference_packets = reference_write( &reference, plan_reference_items, num_items, reference_frames, PLAN_PAYLOADS, reference_payload_bytes );
+            const int packets = rn_packet_builder_write( &builder, plan_builder_items, num_items, builder_frames, PLAN_PAYLOADS );
+            rocketnet_unit_check( packets == reference_packets );
+            rocketnet_unit_check( packets >= 1 );
+
+            uint64_t taken = 0;
+            for ( int i = 0; i < num_items; i++ )
+                rocketnet_unit_check( plan_builder_items[i].taken == plan_reference_items[i].taken );
+            for ( int p = 0; p < packets; p++ )
+                taken += builder.packet[p].records;
+            rocketnet_unit_check( taken >= 1 );
+
+            // one visit per item to link, and each pick (every take, and at
+            // most one pick per packet that ends the packet without a take)
+            // visits at most one head per channel: 11 channel values here
+            const uint64_t heads = channels + 3;
+            rocketnet_unit_check( builder.visits <= (uint64_t) num_items + ( taken + (uint64_t) packets_per_update ) * heads );
+
+            // and a plan of 512 costs a small part of BASE's scan
+            if ( num_items == 512 )
+                rocketnet_unit_check( (uint64_t) builder.visits * 100 < reference.visits );
+        }
+    }
+
+    rn_arena_destroy( arena );
+#endif // #if ROCKETNET_TEST_SEAMS
+}
+
 REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
 REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
+REGISTER_UNIT_TEST( test_packet_builder_visits_linear );
