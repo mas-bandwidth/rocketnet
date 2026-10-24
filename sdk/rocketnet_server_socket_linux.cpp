@@ -30,6 +30,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_hash.h"
+#include "rocketnet_send_handoff.h"
 
 #include <ifaddrs.h>
 #include <bpf/bpf.h>
@@ -212,6 +213,15 @@ struct rocketnet_server_xdp_socket_t
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{0};
 
+    // staged packets the start path refused because the queue was full or its
+    // counter had wrapped negative (rocketnet_xdp_send_claim); written by the
+    // fill threads, read by this queue's xdp thread at flush time
+    std::atomic<uint64_t> send_refused_overflow{0};
+
+    // the overflow count this queue's xdp thread already warned about; only
+    // that thread writes it
+    uint64_t send_refused_overflow_warned{0};
+
     uint8_t padding_5[4096];
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -225,9 +235,6 @@ struct rocketnet_server_xdp_socket_t
 
     rocketnet_platform_mutex_t send_mutex;
     rocketnet_platform_mutex_t receive_mutex;
-
-    int num_free_receive_frames;
-    uint64_t receive_frames[ROCKETNET_XDP_NUM_FRAMES/2];
 
     int num_free_send_frames;
     uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES/2];
@@ -471,18 +478,6 @@ static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t fr
     {
         rocketnet_error( "xdp send frame dropped: %llu", (unsigned long long)frame );
     }
-}
-
-static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
-{
-    uint64_t frame = INVALID_FRAME;
-    if ( socket->num_free_receive_frames > 0 )
-    {
-        socket->num_free_receive_frames--;
-        frame = socket->receive_frames[socket->num_free_receive_frames];
-        socket->receive_frames[socket->num_free_receive_frames] = INVALID_FRAME;
-    }
-    return frame;
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data );
@@ -738,7 +733,7 @@ uint64_t rocketnet_xdp_umem_bytes(int queues)
     if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
     uint64_t bytes = 0;
     if (!rocketnet_memory_add(bytes, (uint64_t)queues,
-            (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
+            (uint64_t)ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
         return 0;
     return bytes;
 }
@@ -1733,7 +1728,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // allocate umem
 
-        const int buffer_size = ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        // send frames [0, NUM_FRAMES/2), then the fill frames up to ROCKETNET_XDP_UMEM_FRAMES
+
+        const int buffer_size = ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
         if ( posix_memalign( &socket->buffer, (size_t) getpagesize(), (size_t) buffer_size ) ) 
         {
@@ -1838,18 +1835,11 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         socket->send_flow_index.store( socket->send_handoff.producer, std::memory_order_relaxed );
 
-        // initialize receive frame allocator
-
-        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
-        {
-            socket->receive_frames[j] = (uint64_t) ( ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE );
-        }
-
-        socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
-
-        // populate fill ring for packets to be received in. The ring has room
-        // for twice these frames (ROCKETNET_XDP_FILL_RING_SIZE), so the worker
-        // always has a slot to hand a frame back in
+        // populate fill ring for packets to be received in, once: every frame
+        // of the receive region goes on it, and a received frame goes back to
+        // it, never to a free list. The ring has room for twice these frames
+        // (ROCKETNET_XDP_FILL_RING_SIZE), so the worker always has a slot to
+        // hand a frame back in
 
         {
             uint32_t index;
@@ -1863,14 +1853,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
             for ( int i = 0; i < ROCKETNET_XDP_FILL_FRAMES; i++ )
             {
-                const uint64_t frame = alloc_receive_frame( socket );
-                if ( frame == INVALID_FRAME )
-                {
-                    rocketnet_error( "server could not allocate receive frame for fill queue" );
-                    rocketnet_server_socket_abort_create( server_socket );
-                    return NULL;
-                }
-                *xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i ) = frame;
+                *xsk_ring_prod__fill_addr( &socket->fill_queue, index + (uint32_t) i ) =
+                    (uint64_t) ( ROCKETNET_XDP_NUM_FRAMES / 2 + i ) * ROCKETNET_XDP_FRAME_SIZE;
             }
 
             xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_FRAMES );
@@ -2112,17 +2096,14 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( flow_index < 0 ) return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
-    int packet_index = send_buffer->num_packets.fetch_add(1);
-
     // the lower bound matters too: an app that stages forever without ever
     // flushing wraps this counter negative after ~2^31 packets, and a
-    // negative index here is an out-of-bounds write, not a dropped packet
+    // negative index here is an out-of-bounds write, not a dropped packet.
+    // the claim counts a refusal instead of logging on this hot path
 
-    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
-    {
-        rocketnet_warn( "sent too many packets!" );
+    const int packet_index = rocketnet_xdp_send_claim( send_buffer->num_packets, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow );
+    if ( packet_index < 0 )
         return NULL;
-    }
 
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
@@ -2398,7 +2379,7 @@ bool rocketnet_server_socket_test_buffer_exchange()
 {
     const uint64_t planned_bytes = sizeof(rocketnet_server_socket_t) +
         sizeof(rocketnet_xdp_replay_marks_t) + sizeof(rocketnet_server_xdp_socket_t) +
-        (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        (uint64_t)ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
     bool valid = rocketnet_server_socket_memory_required( 1 ) == planned_bytes;
     rocketnet_xdp_buffer_exchange_t<3> exchange;
     valid &= exchange.producer == 0;
@@ -2739,7 +2720,8 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 }
 
 // The transport's send_failures operation sums frames each queue's flush drops
-// because the copy rejects their length or the codec refuses to build them.
+// because the copy rejects their length or the codec refuses to build them,
+// and the packet starts it refused because the queue was full.
 // The worker publishes these counts atomically so a request/query never waits
 // behind its send mutex while it copies a batch into UMEM.
 
@@ -2751,7 +2733,8 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
-                    socket->send_refused_build.load( std::memory_order_relaxed );
+                    socket->send_refused_build.load( std::memory_order_relaxed ) +
+                    socket->send_refused_overflow.load( std::memory_order_relaxed );
     }
     return failures;
 }
@@ -2775,7 +2758,8 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
     server->socket = queue;
     queue->send_refused_length.store( 5 );
     queue->send_refused_build.store( 7 );
-    const bool valid = rocketnet_server_socket_send_failures( server ) == 12;
+    queue->send_refused_overflow.store( 3 );
+    const bool valid = rocketnet_server_socket_send_failures( server ) == 15;
     queue->~rocketnet_server_xdp_socket_t();
     server->~rocketnet_server_socket_t();
     rocketnet_free( NULL, queue_storage );
@@ -2986,7 +2970,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // descriptor read and its frame held while the staging buffer has room.
             uint32_t num_consumed = 0;
 
+            // The frames this pass hands back to the fill ring: one per
+            // descriptor read whose frame lies in the receive region, so it
+            // can be fewer than num_consumed (rocketnet_xdp_fill_return).
+            uint32_t num_returned = 0;
+
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+            const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+            const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
             for ( uint32_t i = 0; i < num_packets; i++ ) 
             {
@@ -2995,18 +2987,22 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 
-                frame[num_consumed] = desc->addr;
                 num_consumed++;
+
+                // only a receive-region frame goes back to the fill queue; a
+                // descriptor naming any other frame is dropped, never refilled
+                // (tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
+                if ( rocketnet_xdp_fill_return( desc->addr, receive_region_begin, receive_region_end, &frame[num_returned] ) )
+                    num_returned++;
 
                 // the descriptor is checked against the receive region and
                 // its own frame before a byte of it is read; a refused one is
-                // counted in receive_drops.descriptor, and its address stays
-                // in frame[] above, so it goes back to the fill queue like any
-                // dropped frame
+                // counted once, in receive_drops.descriptor (a refused one in
+                // the receive region still went back to the fill queue above,
+                // like any dropped frame)
 
                 const uint8_t * __restrict__ packet_data = rocketnet_xdp_receive_descriptor( socket->buffer,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE,
-                    (uint64_t) ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE,
+                    receive_region_begin, receive_region_end,
                     desc->addr, desc->len, &socket->receive_drops );
                 if ( !packet_data )
                     continue;
@@ -3046,8 +3042,11 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 &socket->receive_queue );
 
             // The peek was bounded by available pending storage, so every
-            // consumed frame remains owned until a full fill reservation.
-            const bool retained = pending_return.append(frame, num_consumed);
+            // returned frame remains owned until a full fill reservation. The
+            // fill credit is the returned count, not num_consumed: a refused
+            // descriptor outside the receive region is released from the RX
+            // ring above but never refilled.
+            const bool retained = pending_return.append(frame, num_returned);
             rocketnet_assert(retained);
             if (!retained)
             {
@@ -3192,6 +3191,16 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     rocketnet_platform_mutex_acquire( &socket->send_mutex );
                     socket->send_handoff.recycle( on_index );
                     rocketnet_platform_mutex_release( &socket->send_mutex );
+
+                    // one warning per queue per flush for the starts this
+                    // queue refused, naming the queue and the count
+                    const uint64_t refused_total = socket->send_refused_overflow.load( std::memory_order_relaxed );
+                    if ( refused_total > socket->send_refused_overflow_warned )
+                    {
+                        rocketnet_warn( "xdp queue %d refused %llu packet starts past its send queue size",
+                            socket->queue, (unsigned long long) ( refused_total - socket->send_refused_overflow_warned ) );
+                        socket->send_refused_overflow_warned = refused_total;
+                    }
                     send_worker_index = -1;
                 }
             }

@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_route.h"
 #include <atomic>
 #include <limits.h>
@@ -336,7 +337,10 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 // drop is counted on the socket that made it, so a caller can price what the
 // kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
 // buffer, a refused destination). Atomic: the client's I/O thread and the
-// main thread both read.
+// main thread both read. send_failures counts each dropped datagram, and each
+// refused sendmsg_x chunk once (its delivered prefix is indeterminate);
+// send_replay_failures counts the refusals of that chunk's per-packet replay,
+// which may resend datagrams the kernel had already delivered.
 
 static inline void rocketnet_platform_note_send_failure( rocketnet_platform_socket_t * socket )
 {
@@ -347,6 +351,12 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
 {
     rocketnet_assert( socket );
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
+}
+
+uint64_t rocketnet_platform_socket_send_replay_failures( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+    return rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
 }
 
 // Test-only receive seam, compiled into the unit suite's hook library only
@@ -518,6 +528,59 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
 }
 
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// ---------------------------------------------------
+
+// Server receive buffer sizing (rocketnet_internal.h, USAGE.md "Receive
+// buffer sizing"). A server updating at update_hz must hold one update's
+// inbound packets at max_clients in its socket: the portable transport's
+// receive worker stops reading while every receive bank waits for the next
+// update (tla/RNPortableRx.tla HoldOnFull), so the kernel holds the rest.
+
+int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz )
+{
+    const uint64_t clients = max_clients > 1 ? (uint64_t) max_clients : 1u;
+    const uint64_t kbps = receive_kbps_per_client > 1 ? (uint64_t) receive_kbps_per_client : 1u;
+    const uint64_t hz = update_hz > 1 ? (uint64_t) update_hz : 1u;
+    const uint64_t bytes_per_second_per_kbps = 125u;
+    const uint64_t scale = bytes_per_second_per_kbps * (uint64_t) ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN;
+    const uint64_t rate = clients * kbps; // both below 2^31: no overflow
+    if ( rate > UINT64_MAX / scale )
+        return INT_MAX;
+    uint64_t bytes = ( rate * scale + hz - 1u ) / hz;
+    if ( bytes < (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE )
+        bytes = (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    if ( bytes > (uint64_t) INT_MAX )
+        bytes = (uint64_t) INT_MAX;
+    return (int) bytes;
+}
+
+int rocketnet_server_receive_buffer_request( int max_clients )
+{
+    return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ );
+}
+
+void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes )
+{
+    // one line per server socket: what the kernel granted and what was asked
+    // for. A grant below the request is a warning that names the limit to
+    // raise, because the kernel drops what arrives past the grant.
+    if ( granted_bytes >= requested_bytes )
+    {
+        rocketnet_info( "server %s: socket receive buffer granted %d of %d requested bytes",
+                        name ? name : "socket", granted_bytes, requested_bytes );
+        return;
+    }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const char * limit = "net.core.rmem_max";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const char * limit = "the system socket buffer limit";
+#else
+    const char * limit = "kern.ipc.maxsockbuf";
+#endif
+    rocketnet_warn( "server %s: socket receive buffer granted %d of %d requested bytes; packets arriving between updates past the grant are dropped by the kernel: raise %s",
+                    name ? name : "socket", granted_bytes, requested_bytes, limit );
+}
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
@@ -758,6 +821,21 @@ static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, i
     return false;
 }
 
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    socklen_t length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // linux doubles the request for its bookkeeping and reports the double
+    granted /= 2;
+#endif
+    return granted;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_assert( address );
@@ -776,6 +854,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->send_replay_failures = 0;
     socket->connected = false;
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
@@ -2633,6 +2712,17 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
 static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
 
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    socklen_t length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+    return granted;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PLATFORM_PUMP_MODE_AUTO );
@@ -2652,6 +2742,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
+    socket->send_replay_failures = 0;
     socket->connected = false;
 
     socket->msgx = false;
@@ -2710,11 +2801,22 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         return NULL;
     }
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &receive_buffer_size ), sizeof( int ) ) != 0 )
+    // a request above kern.ipc.maxsockbuf is refused, not clamped: walk down
+    // by halves to what the kernel grants (a server's request is sized from
+    // its max_clients and may pass the limit); the server reads the grant
+    // back and names the limit (rocketnet_server_receive_buffer_granted)
     {
-        rocketnet_error( "failed to set socket receive buffer size" );
-        rocketnet_platform_socket_destroy( socket );
-        return NULL;
+        int size = receive_buffer_size;
+        while ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &size ), sizeof( int ) ) != 0 )
+        {
+            if ( size <= 1 )
+            {
+                rocketnet_error( "failed to set socket receive buffer size" );
+                rocketnet_platform_socket_destroy( socket );
+                return NULL;
+            }
+            size /= 2;
+        }
     }
 
     // Darwin chooses an ephemeral port for an IPv6 wildcard without checking
@@ -2986,13 +3088,18 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     return true;
 }
 
-void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
+// The per-packet send. A refusal counts in *failures: send_failures for an
+// ordinary send, send_replay_failures for the replay of a refused sendmsg_x
+// chunk (rocketnet_platform_socket_send_packets).
+
+static void rocketnet_platform_darwin_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes, volatile uint64_t * failures )
 {
     rocketnet_assert( socket );
     rocketnet_assert( input_to );
     rocketnet_assert( input_to->type == ROCKETNET_ADDRESS_IPV6 || input_to->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+    rocketnet_assert( failures == &socket->send_failures || failures == &socket->send_replay_failures );
 
 #if defined(ROCKETNET_PLATFORM_SEND_SEAM)
     int injected_error = 0;
@@ -3002,7 +3109,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
         rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-        rocketnet_platform_note_send_failure( socket );
+        rocketnet_platform_atomic_add_u64( failures, 1 );
         return;
     }
 #endif
@@ -3032,7 +3139,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
             rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-            rocketnet_platform_note_send_failure( socket );
+            rocketnet_platform_atomic_add_u64( failures, 1 );
         }
     }
     else
@@ -3049,7 +3156,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
                 rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
-                rocketnet_platform_note_send_failure( socket );
+                rocketnet_platform_atomic_add_u64( failures, 1 );
             }
         }
         else
@@ -3057,6 +3164,12 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
             rocketnet_error( "invalid address. could not send packet" );
         }
     }
+}
+
+void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, const void * packet_data, int packet_bytes )
+{
+    rocketnet_assert( socket );
+    rocketnet_platform_darwin_send_packet( socket, input_to, packet_data, packet_bytes, &socket->send_failures );
 }
 
 // UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors). a
@@ -3499,6 +3612,14 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             // destination, a full buffer) stays on the msgx pump for the
             // next chunk; anything else pauses the pump for
             // ROCKETNET_MSGX_RETRY_SECONDS and this call finishes portable.
+            // the counts: each refusal of the replay counts in
+            // send_replay_failures, never in send_failures, since a replayed
+            // message may already have reached the wire (a full buffer,
+            // EAGAIN or ENOBUFS, that refused the chunk usually refuses its
+            // replay too, delivered prefix included). the refused chunk
+            // itself counts ONCE in send_failures, whatever its replay does:
+            // its fate is indeterminate. a replay that sent every message
+            // adds nothing to send_replay_failures.
 
             const int error = errno;
 
@@ -3519,10 +3640,11 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
                 rocketnet_msgx_pause( socket, "sendmsg_x", error );
             }
 
+            rocketnet_platform_note_send_failure( socket );
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];
-                rocketnet_platform_socket_send_packet( socket, send->to, send->packet_data, send->packet_bytes );
+                rocketnet_platform_darwin_send_packet( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
             }
             offset = count;
         }
@@ -4569,6 +4691,17 @@ uint64_t rocketnet_platform_receive_empties()
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
 }
 
+int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return 0;
+    int granted = 0;
+    int length = sizeof( granted );
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &granted ), &length ) != 0 )
+        return 0;
+    return granted;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
@@ -4578,6 +4711,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     s->context = context;
     s->send_failures = 0;
+    s->send_replay_failures = 0;
     s->connected = false;
 
     rocketnet_assert( address );

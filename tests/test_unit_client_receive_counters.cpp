@@ -930,6 +930,92 @@ static void test_client_fragment_receive_counters_move_exactly()
 REGISTER_UNIT_TEST( test_client_fragment_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
+// a fragment packet becomes ack-eligible only once reassembly accepts it
+// (standard/TRANSPORT.md t15.3; tla/FragmentsAndAcks.tla RecvData,
+// NamedOnlyIfAccepted): a fragment reassembly refuses is never named in a
+// later ack block and adds no ack debt, at the client and at the server
+// ---------------------------------------------------------------------------
+
+// seals a type 9 packet toward either end: the fresh block, the fragment
+// header and the given number of body bytes, on the next crafted sequence
+
+static int rcr_craft_fragment_toward( struct rcr_pair_t * pair, int to_server, uint32_t payload_id, int index,
+                                      int count_minus_one, int body_bytes, uint64_t * out_sequence, uint8_t * out )
+{
+    static uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
+    check( body_bytes >= 1 && body_bytes <= ROCKETNET_MAX_FRAGMENT_BYTES );
+    uint8_t * p = plaintext + rcr_block_fresh( plaintext );
+    rocketnet_write_uint32( &p, payload_id );
+    rocketnet_write_uint8( &p, (uint8_t) index );
+    rocketnet_write_uint8( &p, (uint8_t) count_minus_one );
+    memset( p, 0x77, (size_t) body_bytes );
+    p += body_bytes;
+    *out_sequence = pair->next_sequence++;
+    return rcr_seal( pair, to_server, ROCKETNET_CONNECTION_FRAGMENT_PACKET, *out_sequence, plaintext, (int) ( p - plaintext ), NULL, out );
+}
+
+static void test_fragment_refused_by_reassembly_is_not_acknowledged()
+{
+    static struct rcr_pair_t pair;
+    static uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint64_t sequence = 0;
+    int bytes;
+
+    rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
+    // a payload id half the id space from the newest completed (none yet,
+    // so 0): further than ROCKETNET_REASSEMBLY_REACH in both directions,
+    // refused as stale with the slot empty
+
+    const uint32_t stale_payload_id = 0x80000000u;
+
+    // the client
+
+    {
+        uint64_t debt_before = pair.client.ack.ack_debt;
+        uint64_t stale_before = pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE];
+        bytes = rcr_craft_fragment_toward( &pair, 0, stale_payload_id, 0, 2, 1000, &sequence, packet );
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE] == stale_before + 1 );
+        check( rocketnet_replay_already_received( &pair.client.accepted_session, sequence ) == 0 );
+        check( pair.client.ack.ack_debt == debt_before );
+
+        // the control: a fragment reassembly accepts is eligible and owed
+        debt_before = pair.client.ack.ack_debt;
+        bytes = rcr_craft_fragment_toward( &pair, 0, 1, 0, 2, 1000, &sequence, packet );
+        check( rcr_to_client( &pair, packet, bytes ) );
+        check( rocketnet_replay_already_received( &pair.client.accepted_session, sequence ) == 1 );
+        check( pair.client.ack.ack_debt == debt_before + 1 );
+    }
+
+    // the server
+
+    {
+        const int mapping_index = rocketnet_client_slots_mapping_index( pair.server.client_slots, 0 );
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( pair.server.encryption_map, mapping_index );
+        struct rocketnet_ack_endpoint_t * endpoint = &pair.server.acks->endpoints[0];
+
+        uint64_t debt_before = endpoint->ack_debt;
+        uint64_t stale_before = pair.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_STALE];
+        bytes = rcr_craft_fragment_toward( &pair, 1, stale_payload_id, 0, 2, 1000, &sequence, packet );
+        check( rcr_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( pair.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_STALE] == stale_before + 1 );
+        check( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) == 0 );
+        check( endpoint->ack_debt == debt_before );
+
+        debt_before = endpoint->ack_debt;
+        bytes = rcr_craft_fragment_toward( &pair, 1, 1, 0, 2, 1000, &sequence, packet );
+        check( rcr_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        check( rocketnet_replay_already_received( &mapping->accepted_session, sequence ) == 1 );
+        check( endpoint->ack_debt == debt_before + 1 );
+    }
+
+    rcr_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_fragment_refused_by_reassembly_is_not_acknowledged );
+
+// ---------------------------------------------------------------------------
 // the server's response ladder, and the counters only a hooked server reaches
 // ---------------------------------------------------------------------------
 

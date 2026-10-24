@@ -182,6 +182,8 @@ named functional, never as a unit step.
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp) | CI `Functional: lifecycle binary` |
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
+| `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
+| `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
@@ -194,6 +196,11 @@ The corpus-consistency cases in `./bin/functional`
 `test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
 `tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
 as findings land, so they are functional cases, never unit ones.
+
+The two process thread-count cases live in `functional/process_thread_counts.cpp`
+and count the process's threads from `/proc/self/task`, which Linux has and
+the other platforms do not: off Linux the count reads -1 and the case pins
+nothing, so neither case is unit logic.
 
 Dependencies, per platform, as CI installs them:
 

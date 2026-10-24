@@ -125,8 +125,8 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
     // live is the state: every reader of an entry's address, control or
     // mapping reaches it through live (the bucket chains hold live entries
-    // only), and add writes the entry whole, so those three arrays (3.4 KB an
-    // entry) are never zeroed here
+    // only), and add writes the entry whole, so those three arrays are never
+    // zeroed here
     memset( map->live, 0, sizeof(int) * (size_t) capacity );
 
     return map;
