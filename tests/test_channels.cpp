@@ -628,7 +628,8 @@ static void channels_test_round_trip_and_never_overreads()
             struct rocketnet_message_writer_t writer;
             rocketnet_message_writer_begin( &writer, payload, sizeof( payload ) );
             struct rocketnet_message_record_t record;
-            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, ROCKETNET_MESSAGE_MAX_RECORD_BYTES ) );
+            // at most the receiver's max_message_bytes (check 9)
+            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, limits.max_message_bytes ) );
             for ( size_t i = 0; i < big.size(); i++ )
                 big[i] = pool[( i * 13 + (size_t) iteration ) & 4095];
             record = channels_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, big.data(), (int) big.size() );
