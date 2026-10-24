@@ -648,6 +648,42 @@ static void test_xdp_transport_ladder_keeps_xdp_for_ipv6()
     rocketnet_unit_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_XDP );
 }
 
+// one strict parse serves both the interface's sysfs address file and the
+// override: exactly 17 characters after a single trailing newline is
+// stripped, hex pairs separated by ':' or '.', and no write on refusal.
+
+static void test_xdp_transport_mac_address_parse_is_strict()
+{
+    static const uint8_t expected[6] = { 0x02, 0x42, 0xac, 0x11, 0x00, 0x02 };
+    static const uint8_t untouched[6] = { 0xA5, 0x5A, 0xA5, 0x5A, 0xA5, 0x5A };
+
+    uint8_t mac[6];
+
+    memset( mac, 0xAA, sizeof(mac) );
+    rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02:42:ac:11:00:02\n", mac ) );
+    rocketnet_unit_check( memcmp( mac, expected, sizeof(expected) ) == 0 );
+
+    memset( mac, 0xAA, sizeof(mac) );
+    rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02.42.ac.11.00.02", mac ) );
+    rocketnet_unit_check( memcmp( mac, expected, sizeof(expected) ) == 0 );
+
+    static const char * const refused[] = {
+        "",
+        "\n",
+        "02:42:ac:11:00",
+        "02:42:ac:11:00:0g",
+        "02-42-ac-11-00-02",
+        "02:42:ac:11:00:020"
+    };
+
+    for ( size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); ++i )
+    {
+        memcpy( mac, untouched, sizeof(untouched) );
+        rocketnet_unit_check( !rocketnet_xdp_parse_mac_address( refused[i], mac ) );
+        rocketnet_unit_check( memcmp( mac, untouched, sizeof(untouched) ) == 0 );
+    }
+}
+
 // A server create that pins xdp with an IPv6 address is not refused for its
 // family: the ladder hands it to the xdp transport, whose create meets this
 // process's commit barrier (the unit suite forbids an XDP data plane) and
@@ -761,6 +797,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_receive_ipv6_extension_dropped_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
+REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
 #if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif

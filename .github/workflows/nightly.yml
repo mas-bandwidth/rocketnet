@@ -58,10 +58,10 @@
 #   cells x50               matrix fifty times in a row on the fleet's
 #                           Apple-silicon runner, for the same reason.
 #
-#   windows / transport     the portable-server and loopback cells of ci.yml's
-#   cells x50               Windows transport family matrix fifty times in a
-#                           row on the native Windows runner, for the same
-#                           reason.
+#   windows / transport     every cell of ci.yml's Windows transport family
+#   cells x50               matrix (the portable, iocp and rio servers and
+#                           loopback) fifty times in a row on the native
+#                           Windows runner, for the same one-in-fifty reason.
 
 name: nightly
 
@@ -316,24 +316,22 @@ jobs:
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
-  # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW. The same script on the
-  # fleet's native Windows runner (rocketnet-windows), under git-bash: it reads
-  # ci.yml's TRANSPORT_MATRIX_WINDOWS step (never a copy) and runs the
-  # portable-server cell (portable/portable) and loopback/loopback, each of
-  # their cases fifty times in a row, IPv4, IPv6 and an IPv4 client of a
-  # dual-stack server in each (test_loopback_transport_udp,
-  # test_loopback_transport_ipv6, test_transport_dual_stack_ipv4_client), with
-  # the matrix's pins and pass rule. One CELL line per case; a failure is
-  # reported with its first log, never retried. The iocp and rio server cells
-  # join in a separate change.
-  # docs/runs/windows-transport-family-50x.md records a run.
+  # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW.
+  # scripts/transport-cells-repeat reads the cells and cases from ci.yml's
+  # TRANSPORT_MATRIX_WINDOWS step (never a copy) and runs each named cell's
+  # cases (IPv4, IPv6, an IPv4 client of a dual-stack server, and the pin
+  # check) fifty times in a row with the matrix's pins and pass rule, printing
+  # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
+  # keeping the first failing log. A failure is reported with its log, never
+  # retried. The cells named here are the portable, iocp and rio servers and
+  # loopback: every cell of the Windows matrix, each named so a cell added to
+  # ci.yml is added here on purpose.
 
   windows-transport-cells-repeat:
     name: windows / transport cells x50
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
-      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
@@ -344,18 +342,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ matrix.ref }}
-          persist-credentials: false
 
       - name: Configure
         run: cmake -B build -A x64
 
       - name: Build Release
-        run: cmake --build build --config Release --parallel 4 --target functional
+        run: cmake --build build --config Release --parallel 4
 
-      - name: The Windows portable-server and loopback cells, fifty times in a row
-        timeout-minutes: 30
+      - name: The Windows transport cells, fifty times in a row
+        timeout-minutes: 60
         shell: bash
-        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell loopback/loopback
+        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
 
       - name: Keep the logs of a failing run
         if: failure()
@@ -364,6 +361,7 @@ jobs:
           name: windows-transport-cells-repeat-${{ matrix.ref }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
+
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
@@ -496,8 +494,6 @@ jobs:
 
   windows-transport-extension:
     name: external transport backend / windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       fail-fast: false
