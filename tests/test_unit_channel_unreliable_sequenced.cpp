@@ -102,6 +102,30 @@ static void test_held_newest_ahead_of_epoch()
     rn_region_reset( region );
 }
 
+// RNChannelTypes!DrainStale: a held code-1 record whose sequencing index is
+// in the upper half of the reset watermark is dropped by the drain and counted
+// stale, never released silently (standard/MESSAGES.md m7.4, m6.1 rule 6).
+static void test_sequenced_drain_refusal_counts_stale()
+{
+    rn_region_t * region = sequenced_region();
+    rocketnet_unit_check( region != NULL );
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    const uint8_t held = 1, ordered = 2;
+    rocketnet_message_record_t record;
+    rn_delivery_t out;
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0x800000, &held );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    rocketnet_unit_check( region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+    const uint64_t stale_before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, &ordered );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    rocketnet_unit_check( channels.deliveries == 1 );
+    rocketnet_unit_check( region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    rn_region_reset( region );
+}
+
 static void test_reliable_sequenced_uses_shared_watermark()
 {
     rn_region_t * region = sequenced_region();
@@ -304,6 +328,7 @@ static void test_sequenced_no_allocation_after_create()
 REGISTER_UNIT_TEST( test_older_dropped_newest_delivered );
 REGISTER_UNIT_TEST( test_watermark_resets_on_ordered_delivery );
 REGISTER_UNIT_TEST( test_held_newest_ahead_of_epoch );
+REGISTER_UNIT_TEST( test_sequenced_drain_refusal_counts_stale );
 REGISTER_UNIT_TEST( test_reliable_sequenced_uses_shared_watermark );
 REGISTER_UNIT_TEST( test_hold_full_drops_and_counts );
 REGISTER_UNIT_TEST( test_large_future_state_drops_without_violation );

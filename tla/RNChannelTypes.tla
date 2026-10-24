@@ -43,6 +43,7 @@ Plans ==
       [] Scenario = "hold" -> {Plan(<<3,1,4,2>>, <<1,1,1,1>>)}
       [] Scenario = "promote" -> {Plan(PromotePlanCodes, <<1,1,1,1>>),
                                   Plan(<<1,3,4,2>>, <<1,1,1,1>>)}
+      [] Scenario = "drainstale" -> {Plan(<<4,3,3,1>>, <<1,1,1,1>>)}
       [] Scenario = "blocks" -> {Plan(<<4,3,1,4>>, <<1,1,1,1>>),
                                  Plan(<<4,1,3,4>>, <<1,1,1,1>>)}
       [] OTHER -> {Plan(<<1,3,4,2>>, <<1,1,1,1>>),
@@ -86,7 +87,7 @@ Sequence(m) == queue[m].sequencing
 Newer(a,b) == Order(a) > Order(b) \/ (Order(a) = Order(b) /\ Sequence(a) > Sequence(b))
 \* A code-4 block: two fragments, each its own reliable number, arriving in
 \* any order (sdk/rocketnet_channel_sequenced.cpp, rn_sequenced_block).
-Block(m) == Scenario = "blocks" /\ Code(m) = 4
+Block(m) == Scenario \in {"blocks", "drainstale"} /\ Code(m) = 4
 Fragments == 1..2
 \* r.trace is the application's one receive queue, pumped by each receive: every
 \* code's and every channel's deliveries in delivery order, never filtered
@@ -95,7 +96,15 @@ Fragments == 1..2
 EmptyReceiver == [ordered_read |-> [c \in Channels |-> 0],
     sequenced_watermark |-> [c \in Channels |-> 0],
     heldOrdered |-> {}, heldSequenced |-> {}, seen |-> {}, trace |-> <<>>,
-    inTurn |-> {}, arrived |-> {}, counted |-> {}, arrivedInTurn |-> {}]
+    inTurn |-> {}, arrived |-> {}, counted |-> {}, arrivedInTurn |-> {},
+    sequencedArrived |-> {}, sequencedDropped |-> {}]
+\* r.sequencedArrived is every sequenced record that reached the receiver;
+\* r.sequencedDropped is the count of those dropped as stale or superseded.
+\* A record is live while delivered, held ahead of its epoch, or in turn.
+MarkDropped(r,m) ==
+    IF Sequenced(Code(m)) THEN [r EXCEPT !.sequencedDropped = @ \cup {m}] ELSE r
+MarkDroppedSet(r,set) ==
+    [r EXCEPT !.sequencedDropped = @ \cup {n \in set : Sequenced(Code(n))}]
 OrderedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Code(m) = 3 /\ Channel(m) = c)
 SequencedTrace(r,c) == SelectSeq(r.trace, LAMBDA m : Sequenced(Code(m)) /\ Channel(m) = c)
 ReliableTrace(r) == SelectSeq(r.trace, LAMBDA m : Code(m) = 2)
@@ -145,7 +154,9 @@ Drain(input,c,fuel) ==
     CHOOSE output \in {
         LET stale == {m \in r.heldSequenced : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
             staleTurn == {m \in r.inTurn : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
-            s == [r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn]
+            s == IF Broken = "DrainStaleSilent"
+                 THEN [r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn]
+                 ELSE MarkDroppedSet(MarkDroppedSet([r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn], stale), staleTurn)
             turn == {m \in s.heldSequenced : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
             readyS == {m \in turn : Complete(s,m)}
             openS == turn \ readyS
@@ -157,9 +168,15 @@ Drain(input,c,fuel) ==
            ELSE IF openS # {} /\ Broken # "BlockInTurnHeld" THEN
              Drain(TLCEval([s EXCEPT !.heldSequenced = @ \ openS, !.inTurn = @ \cup openS]), c, fuel-1)
            ELSE IF readyS # {} THEN
+             \* DrainStale: a held record the drain refuses (its sequencing
+             \* index is behind the epoch's reset watermark) is counted stale.
+             \* Broken = "DrainStaleSilent" is the base code, which released
+             \* the hold and counted nothing (standard/MESSAGES.md m7.4).
              LET m == Min(readyS)
                  t == [s EXCEPT !.heldSequenced = @ \ {m}]
-             IN Drain(TLCEval(DeliverMessage(t,m,TRUE)), c, fuel-1)
+                 u == DeliverMessage(t,m,TRUE)
+             IN IF m \in Values(u.trace) THEN Drain(TLCEval(u), c, fuel-1)
+                ELSE Drain(TLCEval(IF Broken = "DrainStaleSilent" THEN u ELSE MarkDropped(u,m)), c, fuel-1)
            ELSE IF readyO # {} THEN
              LET m == Min(readyO)
                  t == [s EXCEPT !.heldOrdered = @ \ {m}]
@@ -171,21 +188,24 @@ Dispatch(r,m) ==
     IF Reliable(Code(m)) /\ m \in r.seen /\ Broken # "ReliableTwice" THEN r
     ELSE LET s == IF Reliable(Code(m)) THEN [r EXCEPT !.seen = @ \cup {m}] ELSE r
          IN IF Code(m)=2 THEN DeliverMessage(s,m,FALSE)
-            ELSE IF Order(m)<s.ordered_read[Channel(m)] THEN s
+            ELSE IF Order(m)<s.ordered_read[Channel(m)] THEN MarkDropped(s,m)
             ELSE IF Order(m)=s.ordered_read[Channel(m)] THEN
               IF Sequenced(Code(m)) THEN
                 \* one in-turn rule: an in-turn block at least as new
                 \* supersedes this record; an older one is released
                 LET cur == InTurnCollecting(s,Channel(m))
-                IN IF \E n \in cur : Sequence(n) >= Sequence(m) THEN s
-                   ELSE Drain(TLCEval(DeliverMessage(ReleaseInTurn(s,cur),m,FALSE)), Channel(m), MaxMessages+1)
+                IN IF \E n \in cur : Sequence(n) >= Sequence(m) THEN MarkDropped(s,m)
+                   ELSE LET t == MarkDroppedSet(ReleaseInTurn(s,cur),cur)
+                            u == DeliverMessage(t,m,FALSE)
+                        IN IF m \in Values(u.trace) THEN Drain(TLCEval(u), Channel(m), MaxMessages+1)
+                           ELSE Drain(TLCEval(MarkDropped(u,m)), Channel(m), MaxMessages+1)
               ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
             ELSE IF Code(m)=3 THEN [s EXCEPT !.heldOrdered = @ \cup {m}]
             ELSE LET held == {n \in s.heldSequenced : Channel(n)=Channel(m)}
                      newest == held = {} \/ (\A n \in held : Newer(m,n))
                  IN IF Broken="HoldAllSequenced" THEN [s EXCEPT !.heldSequenced = @ \cup {m}]
-                    ELSE IF newest THEN [s EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
-                    ELSE s
+                    ELSE IF newest THEN MarkDroppedSet([s EXCEPT !.heldSequenced = (@ \ held) \cup {m}], held)
+                    ELSE MarkDropped(s,m)
 
 \* One block fragment, r.arrived already counting it. In turn, the rule: the
 \* block is checked against the watermark and the in-turn block, never
@@ -195,24 +215,27 @@ DispatchFragment(r0,m,f) ==
     LET c == Channel(m)
         anchor == [r0 EXCEPT !.counted = (@ \ ({m} \X Fragments)) \cup {<<m,f>>}]
         more == [r0 EXCEPT !.counted = @ \cup {<<m,f>>}]
-    IN IF Order(m) < r0.ordered_read[c] THEN r0
+    IN IF Order(m) < r0.ordered_read[c] THEN MarkDropped(r0,m)
        ELSE IF Order(m) = r0.ordered_read[c] /\ Sequence(m) < r0.sequenced_watermark[c] THEN
-         [r0 EXCEPT !.inTurn = @ \ {m}]
+         MarkDropped([r0 EXCEPT !.inTurn = @ \ {m}],m)
        ELSE IF Order(m) = r0.ordered_read[c] /\ Broken # "BlockInTurnHeld" THEN
          LET cur == {n \in r0.inTurn : Channel(n)=c}
          IN IF m \in cur THEN
               IF Complete(more,m) THEN Drain(TLCEval(DeliverMessage([more EXCEPT !.inTurn = @ \ {m}],m,FALSE)), c, MaxMessages+1)
               ELSE more
-            ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN r0
-            ELSE LET t == [anchor EXCEPT !.inTurn = @ \ cur]
+            ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN MarkDropped(r0,m)
+            ELSE LET t == MarkDroppedSet([anchor EXCEPT !.inTurn = @ \ cur],cur)
                  IN IF Complete(t,m) THEN Drain(TLCEval(DeliverMessage(t,m,FALSE)), c, MaxMessages+1)
                     ELSE [t EXCEPT !.inTurn = @ \cup {m}]
        ELSE LET held == {n \in r0.heldSequenced : Channel(n)=c}
+                newest == m \in held \/ (\A n \in held : Newer(m,n))
                 t == IF m \in held THEN more
-                     ELSE IF \A n \in held : Newer(m,n) THEN [anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
-                     ELSE r0
+                     ELSE IF newest THEN MarkDroppedSet([anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m}],held)
+                     ELSE MarkDropped(r0,m)
             IN IF m \in t.heldSequenced /\ Complete(t,m) /\ Order(m) = t.ordered_read[c] THEN
-                 Drain(TLCEval(DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)), c, MaxMessages+1)
+                 LET u == DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)
+                 IN IF m \in Values(u.trace) THEN Drain(TLCEval(u), c, MaxMessages+1)
+                    ELSE Drain(TLCEval(MarkDropped(u,m)), c, MaxMessages+1)
                ELSE t
 
 \* Independent ordered-only receiver. Its input is ordered packet arrivals
@@ -262,10 +285,13 @@ OpenPacket(pid) ==
     /\ connected /\ pid \in written \ (opened \cup lost)
     /\ opened'=opened \cup {pid}
     /\ LET m == PacketMessage(pid)
-           r == TLCEval(Dispatch(receiver,m))
+           a == IF Sequenced(Code(m)) THEN [receiver EXCEPT !.sequencedArrived = @ \cup {m}] ELSE receiver
+           r == TLCEval(Dispatch(a,m))
            overflow == Cardinality(r.heldOrdered)>OrderedCapacity \/
                (Broken # "HoldAllSequenced" /\ Cardinality(r.heldSequenced)>HoldCapacity)
-       IN /\ receiver'=IF overflow THEN [r EXCEPT !.heldOrdered={}, !.heldSequenced={} ] ELSE r
+           cleared == MarkDroppedSet(MarkDroppedSet(r,r.heldSequenced),r.inTurn)
+       IN /\ receiver'=IF overflow THEN [cleared EXCEPT !.heldOrdered={},
+                          !.heldSequenced={}, !.inTurn={}] ELSE r
           /\ connected'=~overflow
           /\ resend'=IF overflow THEN {} ELSE resend
           /\ reason'=IF overflow THEN "MESSAGE_MEMORY_EXHAUSTED" ELSE reason
@@ -294,7 +320,9 @@ LosePacket(pid) ==
 MemoryExhausted ==
     /\ connected /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
     /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED"
-    /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
+    /\ resend'={}
+    /\ LET c == MarkDroppedSet(MarkDroppedSet(receiver,receiver.heldSequenced),receiver.inTurn)
+       IN receiver'=[c EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,lost,acked,orderedInputs,referenceTrace,missed>>
 
@@ -308,7 +336,8 @@ ArriveFragment(m,f) ==
     /\ <<m,f>> \notin receiver.arrived
     /\ LET a == [receiver EXCEPT !.arrived = @ \cup {<<m,f>>},
                     !.arrivedInTurn = IF Order(m) = receiver.ordered_read[Channel(m)]
-                                      THEN @ \cup {<<m,f>>} ELSE @]
+                                      THEN @ \cup {<<m,f>>} ELSE @,
+                    !.sequencedArrived = @ \cup {m}]
            r == TLCEval(DispatchFragment(a,m,f))
        IN /\ receiver'=r
           /\ missed'=IF ({m} \X Fragments) \subseteq a.arrivedInTurn /\
@@ -341,6 +370,8 @@ TypeOK ==
     /\ receiver.arrived \subseteq {m \in DOMAIN queue : Block(m)} \X Fragments
     /\ receiver.counted \subseteq receiver.arrived
     /\ receiver.arrivedInTurn \subseteq receiver.arrived
+    /\ receiver.sequencedArrived \subseteq {m \in DOMAIN queue : Sequenced(Code(m))}
+    /\ receiver.sequencedDropped \subseteq receiver.sequencedArrived
     /\ missed \subseteq DOMAIN queue
     /\ receiver.trace \in Seq(Messages) /\ Len(receiver.trace)<=2*MaxMessages
     /\ referenceTrace \in [Channels -> Seq(Messages)]
@@ -364,6 +395,13 @@ SequencedNeverBackwards == \A c \in Channels :
         i<j /\ Order(t[i])=Order(t[j]) => Sequence(t[i])<=Sequence(t[j])
 NoSequencedDuplicate == \A c \in Channels :
     LET t == SequencedTrace(receiver,c) IN Len(t)=Cardinality(Values(t))
+\* Every sequenced record that reached the receiver is visible: delivered,
+\* still held (ahead of its epoch or in turn), superseded, or counted as a
+\* stale drop. Nothing is silent (standard/MESSAGES.md m7.4). Broken =
+\* "DrainStaleSilent" is the base drain that released the hold uncounted.
+SequencedAccounted == \A m \in receiver.sequencedArrived :
+    m \in Values(receiver.trace) \/ m \in receiver.heldSequenced \/
+    m \in receiver.inTurn \/ m \in receiver.sequencedDropped
 PromotedIsTwin == \A m \in DOMAIN queue :
     Large(m) /\ Source(m) \in PromotionSources => Code(m) = Twin(Source(m))
 PromotedNeverUnreliable == \A m \in DOMAIN queue :

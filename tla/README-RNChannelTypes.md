@@ -175,6 +175,15 @@ runtime allocation design.
   against the code: the second fragment takes the hold path, `gap` is
   negative against block 4 and it returns STALE with SEQUENCED_SUPERSEDED.
 
+`Broken = "DrainStaleSilent"` is the base drain of
+`sdk/rocketnet_channel_sequenced.cpp`: when the drain refused a held sequenced
+record it released the hold and counted nothing. The `drainstale` scenario
+holds one fragment of a code-4 block in turn, opens two ordered epochs, and
+then drops that block as a stale in-turn record. `SequencedAccounted` fails
+because the record arrived and is neither delivered, held, superseded nor
+counted. The fixed drain counts the drop as `MESSAGE_SEQUENCED_STALE`
+(standard/MESSAGES.md m7.4).
+
 ## Evaluation and measurements
 
 The recursive drain binds its receiver through a singleton mapping before
@@ -183,7 +192,7 @@ input, each branch and returned record is unchanged. This forces eager value
 binding in TLC and avoids repeatedly expanding nested record updates. It
 changes no transition, scheduling rule, loss action, bound or fairness.
 
-All eight healthy scenarios and five reversed witnesses complete with the
+All eight healthy scenarios and six reversed witnesses complete with the
 pinned runner and JAR from `README.md`, on Linux with a 110-second budget
 per shard. Positive cases use two workers; witnesses use one. They retain
 all seven programs, the same arbitrary arrival and ACK timing, original
@@ -198,6 +207,7 @@ exact generated/distinct counts after the evaluation change.
 | `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.648 | invariant ReliableExactlyOnce |
 | `MCRNChannelBrokenHoldAllSequenced.cfg` | 321 | 157 | 0.670 | invariant BuffersBounded |
 | `MCRNChannelBrokenBlockInTurnHeld.cfg` | 366 | 210 | 0.702 | invariant InTurnDeliveredWhenComplete |
+| `MCRNChannelBrokenDrainStaleSilent.cfg` | 64 | 41 | 1.863 | invariant SequencedAccounted |
 | `MCRNChannelTypesStale.cfg` | 171729 | 37065 | 5.208 | pass - |
 | `MCRNChannelTypesBackwards.cfg` | 21971 | 5927 | 1.976 | pass - |
 | `MCRNChannelTypesReset.cfg` | 56938 | 11595 | 4.734 | pass - |
