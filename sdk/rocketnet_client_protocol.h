@@ -81,7 +81,7 @@ typedef void ( * rocketnet_client_retire_keys_t )( void * context );
     X( send_sequence_handshake, uint64_t send_sequence_handshake ) \
     X( send_sequence_session, uint64_t send_sequence_session ) \
     X( next_fragment_payload_id, uint64_t next_fragment_payload_id ) \
-    X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake ) \
+    X( handshake_highest_opened, uint64_t handshake_highest_opened ) \
     X( replay_session, struct rocketnet_replay_protection_t replay_session ) \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
     X( defer_payload_acks, int defer_payload_acks ) \

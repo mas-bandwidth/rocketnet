@@ -1112,10 +1112,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     int session_phase = packet_type != ROCKETNET_CONNECTION_RESPONSE_PACKET;
     const uint8_t * key = session_phase ? mapping->keys.session_client_to_server : mapping->keys.handshake_client_to_server;
-    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : &mapping->replay_handshake;
+    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : NULL;
+    const uint64_t highest_opened = session_phase ? mapping->replay_session.highest_opened : mapping->handshake_highest_opened;
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), replay->highest_opened );
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), highest_opened );
 
     if ( sequence == 0 )
     {
@@ -1199,8 +1200,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             }
         }
 
-        if ( sequence > replay->highest_opened )
-            replay->highest_opened = sequence;
+        if ( sequence > mapping->handshake_highest_opened )
+            mapping->handshake_highest_opened = sequence;
 
         // A response retransmission is not fresh session activity. Only a
         // half-open mapping may refresh its idle clock from a response.

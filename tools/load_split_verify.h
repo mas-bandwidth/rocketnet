@@ -12,13 +12,15 @@
  * direction, one reliability mode and one size class. The owner's rules, per
  * stream, at the end of a run:
  *
- *   reliable (RELIABLE, RELIABLE_ORDERED, RELIABLE_SEQUENCED and the two
- *   reliable _WITH_ACK_RECEIPT modes): every message delivered exactly once,
- *   judged against the sender's count, which the merger supplies;
+ *   exactly once (RELIABLE, RELIABLE_ORDERED and the two reliable
+ *   _WITH_ACK_RECEIPT modes): every message delivered exactly once, judged
+ *   against the sender's count, which the merger supplies;
  *   ordered (RELIABLE_ORDERED, RELIABLE_ORDERED_WITH_ACK_RECEIPT): delivered
  *   in order with no gaps;
  *   sequenced (UNRELIABLE_SEQUENCED, RELIABLE_SEQUENCED): never a message
- *   older than the newest delivered;
+ *   older than the newest delivered and never a duplicate; a stale message
+ *   the receiver drops is a skip, counted and never failed (sdk/rocketnet.h:
+ *   RELIABLE_SEQUENCED "can drop a stale one", so it is not exactly once);
  *   unreliable (UNRELIABLE, UNRELIABLE_SEQUENCED, UNRELIABLE_WITH_ACK_RECEIPT):
  *   no duplicate; loss is counted, never failed;
  *   receipts (the three _WITH_ACK_RECEIPT modes): every send gets exactly one
@@ -65,16 +67,54 @@
 #define SPLIT_VERIFY_NUM_MODES 8u
 #define SPLIT_VERIFY_STREAMS_PER_CLIENT ( SPLIT_VERIFY_NUM_DIRECTIONS * SPLIT_VERIFY_NUM_MODES * SPLIT_VERIFY_NUM_SIZE_CLASSES )
 
+/* The five reliable modes, in the order the proof's fragmented stream
+ * rotates them. An unreliable mode has no fragmented stream: the SDK sends
+ * an unreliable message too large for one packet as its reliable twin. */
+#define SPLIT_VERIFY_FRAGMENTED_MODES 5u
+
 /* A small unreliable message stays within the strictest unreliable limit
  * (UNRELIABLE_SEQUENCED on a channel of 256 or more, sdk/rocketnet.h), so it
  * is never sent as a reliable one. */
 #define SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES 1404u
+
+/* The proof's rotation: offer k of client c carries the small message in
+ * mode (c + k) % 8 and the fragmented message in the reliable mode
+ * (c + k) % 5 of the five. The merger counts the same rotation
+ * (tools/check_split_load.py, proof_expected_sent), so both ends of a run
+ * agree on which stream each offer belongs to. */
+static inline uint32_t split_verify_small_mode( uint32_t client, uint32_t offer )
+{
+    return ( client + offer ) % SPLIT_VERIFY_NUM_MODES;
+}
+
+static inline uint32_t split_verify_fragmented_mode( uint32_t client, uint32_t offer )
+{
+    static const uint32_t modes[SPLIT_VERIFY_FRAGMENTED_MODES] =
+    {
+        ROCKETNET_RELIABILITY_RELIABLE,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+        ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+        ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
+        ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT,
+    };
+    return modes[( client + offer ) % SPLIT_VERIFY_FRAGMENTED_MODES];
+}
 
 static inline int split_verify_mode_is_reliable( uint32_t mode )
 {
     return mode == ROCKETNET_RELIABILITY_RELIABLE ||
            mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
            mode == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ||
+           mode == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ||
+           mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+}
+
+/* Exactly once against the sender's count. RELIABLE_SEQUENCED is reliable on
+ * the wire (resent, and so it may fragment) but may skip a stale message. */
+static inline int split_verify_mode_is_exactly_once( uint32_t mode )
+{
+    return mode == ROCKETNET_RELIABILITY_RELIABLE ||
+           mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
            mode == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ||
            mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 }
@@ -291,7 +331,8 @@ struct split_verify_stream_result_t
     uint32_t sent;
     uint32_t delivered;
     uint32_t lost;                  /* unreliable modes: sent - delivered, counted and never failed */
-    uint32_t missing;               /* reliable modes: sent - delivered, a failure */
+    uint32_t skipped;               /* RELIABLE_SEQUENCED: stale messages dropped, counted and never failed */
+    uint32_t missing;               /* exactly-once modes: sent - delivered, a failure */
     uint32_t phantom;               /* delivered sequences the sender never sent */
     int window_exceeded;            /* the sender sent past SPLIT_VERIFY_MAX_SEQUENCE */
     int clean;
@@ -312,8 +353,10 @@ static inline int split_verify_stream_final( const struct split_verify_stream_t 
     }
     const uint32_t delivered_sent = stream->delivered - result->phantom;
     const uint32_t short_by = sent > delivered_sent ? sent - delivered_sent : 0;
-    if ( split_verify_mode_is_reliable( stream->mode ) )
+    if ( split_verify_mode_is_exactly_once( stream->mode ) )
         result->missing = short_by;
+    else if ( split_verify_mode_is_reliable( stream->mode ) )
+        result->skipped = short_by;
     else
         result->lost = short_by;
     result->clean = !result->window_exceeded && result->phantom == 0 && result->missing == 0 &&
@@ -433,9 +476,53 @@ struct split_verify_ledger_result_t
     int clean;
 };
 
+/* One stream's share of a ledger: its receipt sends, their outcomes, and a
+ * seen-bitmap (as split_verify_stream_t.seen) of the sequences ACKED. When
+ * sender and receiver run in different processes, the receiver's seen-bitmap
+ * and this one are compared by the merger: every ACKED sequence must be one
+ * the receiver recorded. */
+struct split_verify_ledger_stream_t
+{
+    uint32_t sends;
+    uint32_t acked;
+    uint32_t lost;
+    uint32_t without_outcome;
+    uint8_t acked_seen[SPLIT_VERIFY_WINDOW_SEQUENCES / 8];
+};
+
+static inline void split_verify_ledger_stream( const struct split_verify_ledger_t * ledger, uint32_t mode, uint32_t size_class,
+                                               struct split_verify_ledger_stream_t * out )
+{
+    memset( out, 0, sizeof( *out ) );
+    const uint32_t mode_size = mode * SPLIT_VERIFY_NUM_SIZE_CLASSES + size_class;
+    for ( uint32_t i = 0; i < ledger->sends; ++i )
+    {
+        if ( ledger->mode_size[i] != mode_size ) continue;
+        out->sends++;
+        if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_NONE ) out->without_outcome++;
+        else if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_LOSS ) out->lost++;
+        else
+        {
+            const uint32_t sequence = ledger->sequence[i];
+            out->acked++;
+            out->acked_seen[sequence >> 3] = (uint8_t) ( out->acked_seen[sequence >> 3] | ( 1u << ( sequence & 7u ) ) );
+        }
+    }
+}
+
+/* The ledger's rule breaks that need no receiver record. */
+static inline uint32_t split_verify_ledger_errors( const struct split_verify_ledger_t * ledger )
+{
+    return ledger->overflow + ledger->serial_order_errors + ledger->unknown_serials + ledger->repeated_outcomes +
+           ledger->reliable_losses + ledger->bad_status;
+}
+
 /* Judges the ledger at the end of the run. receiver_streams is the receiving
  * end's SPLIT_VERIFY_STREAMS_PER_CLIENT records for this client, indexed by
- * split_verify_stream_index; receipts_dropped is the sender's stats counter. */
+ * split_verify_stream_index, or NULL when the receiver is another process
+ * (the merger then checks every ACKED sequence against the receiver's
+ * bitmap, split_verify_ledger_stream); receipts_dropped is the sender's
+ * stats counter. */
 static inline int split_verify_ledger_final( const struct split_verify_ledger_t * ledger,
                                              const struct split_verify_stream_t * receiver_streams,
                                              uint64_t receipts_dropped, struct split_verify_ledger_result_t * result )
@@ -452,15 +539,14 @@ static inline int split_verify_ledger_final( const struct split_verify_ledger_t 
             result->without_outcome++;
             continue;
         }
-        if ( ledger->outcome[i] != SPLIT_VERIFY_OUTCOME_ACKED ) continue;
+        if ( ledger->outcome[i] != SPLIT_VERIFY_OUTCOME_ACKED || receiver_streams == NULL ) continue;
         const uint32_t mode = ledger->mode_size[i] / SPLIT_VERIFY_NUM_SIZE_CLASSES;
         const uint32_t size_class = ledger->mode_size[i] % SPLIT_VERIFY_NUM_SIZE_CLASSES;
         const struct split_verify_stream_t * stream = &receiver_streams[split_verify_stream_index( ledger->direction, mode, size_class )];
         if ( !split_verify_stream_has( stream, ledger->sequence[i] ) ) result->acked_unrecorded++;
     }
     result->clean = receipts_dropped == 0 && result->without_outcome == 0 && result->acked_unrecorded == 0 &&
-                    ledger->overflow == 0 && ledger->serial_order_errors == 0 && ledger->unknown_serials == 0 &&
-                    ledger->repeated_outcomes == 0 && ledger->reliable_losses == 0 && ledger->bad_status == 0;
+                    split_verify_ledger_errors( ledger ) == 0;
     return result->clean;
 }
 
