@@ -250,6 +250,14 @@ int main( int argc, char ** argv )
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 #endif
 
+    // The suite process reads each case's memory plan before it spawns the
+    // case (SUITE_CASE_RSS_BOUND, tests/suite_runner.h), and a plan through
+    // the public API applies the ROCKETNET_ environment overrides. The parent
+    // takes the same config isolation every worker takes, so a bound is
+    // planned from the configuration its case runs with and ambient config
+    // never logs from the parent (tools/check_test_environment.py).
+    rocketnet_unit_prepare();
+
     int result;
     // ./bin/test <name> runs that one test alone, in this process: a suite
     // name, or a message-layer test's alias (the name a card's TEST line uses)
