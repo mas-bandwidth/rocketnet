@@ -48,7 +48,9 @@
 // catch-up window that is a completion bound like any other. Under full-system
 // emulation the drain thread gets a fraction of a native CPU, so the window is
 // scaled with the case-time scale to give it the same room. Consumed by
-// functional/posix_socket_errors.cpp (the burst catch-up poll).
+// functional/posix_socket_errors.cpp (the burst catch-up poll). The client I/O
+// hand-off case's final drain wait (functional/rocketnet_functional_tests.cpp)
+// is scaled by ROCKETNET_TEST_CASE_TIME_SCALE the same way.
 #define ROCKETNET_TEST_BURST_CATCHUP_SECONDS (2.0 * ROCKETNET_TEST_CASE_TIME_SCALE)
 
 #endif // ROCKETNET_TEST_TIME_SCALE_H
