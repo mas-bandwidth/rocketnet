@@ -27,8 +27,8 @@
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
 static const int server_receive_low_tick_max_clients = 1000;
-static const int server_receive_low_tick_packet_bytes = 800;          // payload bytes per packet
-static const int server_receive_low_tick_packets_per_client_update = 4; // 3,200 bytes per 0.1 s: 256 kbps of payload
+static const int server_receive_low_tick_payload_bytes_per_second = 32000; // 256 kbps of payload per client
+static const int server_receive_low_tick_packets_per_client_update = 4;    // 4 x 800 bytes per 0.1 s at 10 Hz
 static const int server_receive_low_tick_slices = 10;                 // clients are updated in 10 slices of 100
 static const double server_receive_low_tick_traffic_seconds = 10.0;
 
@@ -133,6 +133,10 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     const double update_seconds = 1.0 / update_hz;
     const double slice_seconds = update_seconds / server_receive_low_tick_slices;
     const int clients_per_slice = max_clients / server_receive_low_tick_slices;
+    // each client updates once per server update and sends that update's
+    // share of 256 kbps, so the rate is the same at every update rate
+    const int packet_bytes = server_receive_low_tick_payload_bytes_per_second / ( update_hz * server_receive_low_tick_packets_per_client_update );
+    server_receive_low_tick_require( packet_bytes >= 8 );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -237,14 +241,14 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             for ( int p = 0; p < server_receive_low_tick_packets_per_client_update; ++p )
             {
                 struct rocketnet_packet_context_t context;
-                uint8_t * packet = rocketnet_client_transport_start_packet( client, server_receive_low_tick_packet_bytes, &context );
+                uint8_t * packet = rocketnet_client_transport_start_packet( client, packet_bytes, &context );
                 if ( !packet )
                     break;
                 int capacity = 0;
                 uint8_t * payload = rocketnet_client_transport_packet_payload( client, &context, &capacity );
-                server_receive_low_tick_require( payload != NULL && capacity >= server_receive_low_tick_packet_bytes );
-                memset( payload, i & 0xff, (size_t) server_receive_low_tick_packet_bytes );
-                server_receive_low_tick_require( rocketnet_client_transport_finish_packet( client, &context, server_receive_low_tick_packet_bytes ) > 0 );
+                server_receive_low_tick_require( payload != NULL && capacity >= packet_bytes );
+                memset( payload, i & 0xff, (size_t) packet_bytes );
+                server_receive_low_tick_require( rocketnet_client_transport_finish_packet( client, &context, packet_bytes ) > 0 );
             }
             rocketnet_client_transport_send_packets( client );
             rocketnet_client_transport_update( client, time );
