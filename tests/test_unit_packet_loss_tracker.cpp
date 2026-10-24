@@ -20,6 +20,7 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_ack.h"
+#include "rocketnet_jitter_tracker.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include <math.h>
 
@@ -205,6 +206,40 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
     rocketnet_server_acks_destroy( acks_fresh );
 }
 
+// A receive stamp that steps backwards is not a jitter sample. Ten packets on
+// a steady 10 ms spacing settle the estimate near zero; then one packet is
+// stamped a second earlier and the next two resume the steady spacing from
+// there. Before the guard, the backwards difference went through fabs() as a
+// large positive deviation and each of the two packets around it added about
+// 1.1 s to the 1% running average, so the jitter jumped by about 0.02 s. With
+// the guard the backwards packet only re-seeds the tracker, and the estimate
+// stays below 1 ms.
+static void test_jitter_tracker_backwards_stamp_is_not_a_sample()
+{
+    rocketnet_jitter_tracker_t tracker;
+    rocketnet_jitter_tracker_reset( &tracker );
+
+    const double spacing_seconds = 0.01;
+    for ( uint64_t sequence = 0; sequence < 10; ++sequence )
+    {
+        rocketnet_jitter_tracker_packet_received( &tracker, sequence, 1000.0 + spacing_seconds * (double) sequence );
+    }
+    rocketnet_unit_check( tracker.jitter < 0.001 );
+
+    const double delta_before_seconds = tracker.last_packet_delta;
+
+    rocketnet_jitter_tracker_packet_received( &tracker, 10, 999.0 );
+    rocketnet_unit_check( tracker.jitter < 0.001 );
+    rocketnet_unit_check( tracker.last_packet_delta == delta_before_seconds );
+    rocketnet_unit_check( tracker.last_packet_processed == 10 );
+    rocketnet_unit_check( tracker.last_packet_time == 999.0 );
+
+    rocketnet_jitter_tracker_packet_received( &tracker, 11, 999.0 + spacing_seconds );
+    rocketnet_jitter_tracker_packet_received( &tracker, 12, 999.0 + spacing_seconds * 2.0 );
+    rocketnet_unit_check( tracker.jitter < 0.001 );
+}
+
 REGISTER_UNIT_TEST( test_packet_loss_tracker_window_edge_is_not_lost );
 REGISTER_UNIT_TEST( test_packet_loss_tracker_reorder_does_not_recount );
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
+REGISTER_UNIT_TEST( test_jitter_tracker_backwards_stamp_is_not_a_sample );

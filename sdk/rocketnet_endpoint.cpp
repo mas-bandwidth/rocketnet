@@ -619,6 +619,8 @@ void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint )
     rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
     if ( endpoint->in_place_receipt )
         rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->in_place_serial );
+    if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
+        rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, 0 );    // tla/RNSendBudget.tla SendFailed: refund the whole charge
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
     endpoint->written++;
@@ -1205,6 +1207,7 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
     {
         case RN_ENDPOINT_PACKET_ORDERED:
             rn_ordered_packet_failed( &endpoint->ordered, 0, now );     // 6.4 Failed send: resent first next update
+            rn_ordered_settle( &endpoint->ordered, 0, 0 );              // tla/RNSendBudget.tla SendFailed: refund the whole charge
             endpoint->written++;
             rn_endpoint_end_reliable( endpoint );
             break;
@@ -1213,11 +1216,14 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED, endpoint->packet_records );
             for ( uint32_t i = 0; i < endpoint->receipt_count; i++ )
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->receipt_serials[i] );
+            rn_packet_builder_settle( &endpoint->unreliable_builder, 0, 0 );  // tla/RNSendBudget.tla SendFailed: refund the whole charge
             endpoint->written++;
             break;
 
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+            if ( endpoint->send_budget_enabled )                       // tla/RNSendBudget.tla SendFailed: refund the whole charge
+                rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, 0 );
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
             endpoint->written++;
             break;
