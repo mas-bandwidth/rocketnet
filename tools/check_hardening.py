@@ -146,14 +146,14 @@ def check_macho(library, run):
 # ---- PE -------------------------------------------------------------------
 
 
-class PEError(ValueError):
+class PortableExecutableError(ValueError):
     pass
 
 
 def _unpack(fmt, data, offset):
     size = struct.calcsize(fmt)
     if offset < 0 or offset + size > len(data):
-        raise PEError(f"truncated PE image at offset {offset:#x}")
+        raise PortableExecutableError(f"truncated PE image at offset {offset:#x}")
     return struct.unpack_from(fmt, data, offset)
 
 
@@ -170,7 +170,7 @@ def windows_checks(data):
     try:
         (pe_offset,) = _unpack("<I", data, 0x3C)
         if data[pe_offset:pe_offset + 4] != b"PE\0\0":
-            raise PEError("no PE signature")
+            raise PortableExecutableError("no PE signature")
         _machine, section_count, _, _, _, optional_size, _ = _unpack("<HHIIIHH", data, pe_offset + 4)
         optional = pe_offset + 24
         (magic,) = _unpack("<H", data, optional)
@@ -179,7 +179,7 @@ def windows_checks(data):
         elif magic == 0x10B:
             directories, cookie_offset, cookie_format = optional + 96, 0x3C, "<I"
         else:
-            raise PEError(f"unknown optional header magic {magic:#x}")
+            raise PortableExecutableError(f"unknown optional header magic {magic:#x}")
         (dll_characteristics,) = _unpack("<H", data, optional + 70)
         sections = []
         section_table = optional + optional_size
@@ -188,7 +188,7 @@ def windows_checks(data):
             sections.append((virtual_address, virtual_size, raw_size, raw_pointer))
         load_config_rva, load_config_size = _unpack("<II", data, directories + 8 * IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG)
         debug_rva, debug_size = _unpack("<II", data, directories + 8 * IMAGE_DIRECTORY_ENTRY_DEBUG)
-    except PEError as error:
+    except PortableExecutableError as error:
         return [result(FAIL, "PE image", str(error))]
 
     for name, flag, why in (
@@ -207,7 +207,7 @@ def windows_checks(data):
                 (size,) = _unpack("<I", data, load_config)
                 if size >= cookie_offset + struct.calcsize(cookie_format):
                     (cookie,) = _unpack(cookie_format, data, load_config + cookie_offset)
-            except PEError:
+            except PortableExecutableError:
                 cookie = None
     if cookie:
         results.append(result(PASS, "SecurityCookie", f"load configuration cookie at {cookie:#x} (/GS)"))
@@ -228,7 +228,7 @@ def windows_checks(data):
                 if debug_type == IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS:
                     (characteristics_ex,) = _unpack("<I", data, raw_pointer)
                     cet = bool(characteristics_ex & IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT)
-            except PEError:
+            except PortableExecutableError:
                 break
     results.append(result(INFO, "CET_COMPAT", "set (/CETCOMPAT)" if cet else "clear (/CETCOMPAT is the owner's call)"))
     return results
