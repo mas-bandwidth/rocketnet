@@ -355,6 +355,19 @@ void rocketnet_default_free_function( void * context, void * p );
 /** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
+// Internal to the SDK. The update clock the transports and the message object
+// run on (tla/RNUpdateClock.tla): the owner keeps the caller's last raw time
+// beside its clamped time, and a forward step of d advances the clamped time
+// by d, so after a backwards step the owner resumes at once instead of
+// standing still until the caller's clock passes the last good time again.
+// While no backwards step has happened the raw and clamped times are equal
+// and the caller's time is returned unchanged. A backwards step returns
+// last_good, records the new raw time, counts one misuse and asserts; a
+// non-finite time changes neither value and is clamped as
+// rocketnet_clamp_update_time clamps it.
+/** @brief Internal update clock that resumes after a backwards step. @param last_good Previous clamped time in seconds. @param raw_time Writable non-NULL caller time of the previous update; updated for every finite time. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return The new clamped time: never below last_good. */
+double rocketnet_advance_update_time( double last_good, double * raw_time, double time, bool * clamped );
+
 #ifdef __cplusplus
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */

@@ -271,6 +271,7 @@ struct rocketnet_server_transport_t
     int send_capacity;
 
     double time;                                        // the game's clock, last seen
+    double raw_time;                                    // the caller's time at the last update, before the clamp
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
     uint64_t game_clock_epoch;                          // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
@@ -1393,6 +1394,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     server_transport->context = context;
     server_transport->time = time;
+    server_transport->raw_time = time;                  // tla/RNUpdateClock.tla Init: the offset starts at exactly 0.0
     server_transport->game_clock_epoch = config->game_clock_epoch;
     rocketnet_server_link_drain( server_transport );
 
@@ -2056,10 +2058,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity or a step backwards becomes the last good time, counted and
     // loud in a debug build. the last good time starts at zero, the value a
-    // value-initialized transport carries.
+    // value-initialized transport carries. after a backwards step the clock
+    // resumes on the caller's next forward step (tla/RNUpdateClock.tla
+    // ForwardStep), so a vanished client's timeout never waits out the step.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( server_transport->time, time, &time_clamped );
+    time = rocketnet_advance_update_time( server_transport->time, &server_transport->raw_time, time, &time_clamped );
 
     server_transport->packet_leases.reset();
 
@@ -3604,6 +3608,7 @@ int rocketnet_server_transport_test_staged_simulator_flush()
         transport->io.instance = &flushes;
         transport->transport = ROCKETNET_TRANSPORT_XDP;
         transport->time = 1000.0;
+        transport->raw_time = 1000.0;
         rocketnet_address_t to;
         if ( rocketnet_address_parse( &to, "127.0.0.1:40000" ) )
         {

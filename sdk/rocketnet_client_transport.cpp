@@ -66,6 +66,58 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
     return time;
 }
 
+// The update clock (tla/RNUpdateClock.tla). Each owner keeps the caller's
+// last raw time beside its clamped time, and the clamped time advances by the
+// caller's forward steps, so a backwards step no longer stalls the owner until
+// the caller's clock climbs back past the last good time:
+//
+//   ForwardStep: a finite time at or above the last raw time advances the
+//   clamped time by ( time - raw ) and records time as the raw time. While no
+//   backwards step has happened the raw and clamped times are equal (the
+//   offset between them is exactly 0.0) and the caller's time is returned
+//   unchanged, bit for bit; last_good + ( time - raw ) is never computed then.
+//
+//   BackwardStep: a finite time below the last raw time returns the last good
+//   time, records time as the raw time, counts one misuse and asserts, as
+//   rocketnet_clamp_update_time does. The next forward step resumes from it.
+//
+//   NonFiniteSample: NaN or an infinity changes neither value and is clamped
+//   as rocketnet_clamp_update_time clamps it.
+//
+// Invariants (tla/MCRNUpdateClock.cfg): the clamped time never decreases, and
+// after a backwards step each forward step of d advances it by exactly d.
+// tla/MCRNUpdateClockBrokenStall.cfg is the rule before it, which stalls.
+
+double rocketnet_advance_update_time( double last_good, double * raw_time, double time, bool * clamped )
+{
+    rocketnet_assert( raw_time );
+
+    if ( !isfinite( time ) )
+        return rocketnet_clamp_update_time( last_good, time, clamped );     // NonFiniteSample
+
+    const double previous_raw = *raw_time;
+    *raw_time = time;
+
+    if ( clamped )
+        *clamped = false;
+
+    if ( time < previous_raw )
+    {
+        // BackwardStep: counted and loud, as the three-argument clamp is
+        if ( clamped )
+            *clamped = true;
+        rocketnet_api_misuse_record();
+        rocketnet_assert( time >= previous_raw );
+        return last_good;
+    }
+
+    if ( previous_raw == last_good )
+        return time;                                                        // ForwardStep, offset exactly 0.0
+
+    const double resumed = last_good + ( time - previous_raw );             // ForwardStep after a BackwardStep
+    return resumed >= last_good ? resumed : last_good;
+}
+
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
@@ -187,6 +239,7 @@ struct rocketnet_client_legacy_receive_state_t
     X( received_packets, rocketnet_client_received_packets_t received_packets )                                      \
     X( receive_buffer, rocketnet_client_receive_buffer_t receive_buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS] )           \
     X( time, double time ) /* the game's clock, last seen */                                                         \
+    X( raw_time, double raw_time ) /* the caller's time at the last update, before the clamp */                      \
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
     X( config, struct rocketnet_client_transport_config_t config )                                                   \
@@ -1287,11 +1340,18 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // non-finite or negative seed would poison every later comparison, so it
     // is clamped to the initial last good time before anything reads it.
 
+    // the create is the clock's seed, not a step (tla/RNUpdateClock.tla
+    // Init): the raw time starts equal to the clamped time, so the offset
+    // between them is exactly 0.0 and every update returns the caller's time
+    // unchanged until a backwards step.
+
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( 0.0, time, &time_clamped );
+    double seed_raw_time = 0.0;
+    time = rocketnet_advance_update_time( 0.0, &seed_raw_time, time, &time_clamped );
 
     client_transport->config = *config;
     client_transport->time = time;
+    client_transport->raw_time = time;
     client_transport->last_state = client_transport->protocol.state;
 
     const uint64_t token_timestamp = test_timestamp ? test_timestamp : ( config->game_clock_epoch != 0 ?
@@ -2382,10 +2442,12 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build.
+    // loud in a debug build. after a backwards step the clock resumes on the
+    // caller's next forward step (tla/RNUpdateClock.tla ForwardStep), so
+    // keep-alives, resends and the timeout never stand still for the step.
 
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( client_transport->time, time, &time_clamped );
+    time = rocketnet_advance_update_time( client_transport->time, &client_transport->raw_time, time, &time_clamped );
 
     client_transport->packet_leases.reset();
 

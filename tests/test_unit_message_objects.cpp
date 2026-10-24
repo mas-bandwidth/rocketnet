@@ -3096,6 +3096,47 @@ static void test_update_time_first_update_not_finite_refused()
     rocketnet_assert_function( saved_assert );
 }
 
+// a backwards step stalls neither clock (tla/RNUpdateClock.tla ForwardStep):
+// a message server updated at 1000.0, 1001.0, then 990.0 (clamped, one misuse,
+// one assert), then 990.5 stands at 1001.5, half a second on from the last
+// good time, not at 1001.0 waiting for the caller's clock to climb back past
+// it; the transport is handed the same resumed time
+// ---------------------------------------------------------------------------
+
+static void test_message_object_clock_resumes_after_backwards_step()
+{
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
+
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );                           // objects seeded at MO_T0 = 1000.0
+    rocketnet_message_server_t * server = pair.server;
+    mo_endpoint_t * transport = pair.net->server;
+
+    check( rocketnet_message_server_update( server, 1000.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_server_update( server, 1001.0 ) == ROCKETNET_UPDATE_OK );
+    check( server->object.time == 1001.0 );
+    check( mo_asserts == 0 );
+
+    const uint64_t base = rocketnet_api_misuse_count();
+
+    check( rocketnet_message_server_update( server, 990.0 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( mo_asserts == 1 );
+    check( server->object.time == 1001.0 );
+    check( transport->time == 1001.0 );
+
+    check( rocketnet_message_server_update( server, 990.5 ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_api_misuse_count() == base + 1 );
+    check( mo_asserts == 1 );
+    check( server->object.time == 1001.5 );
+    check( transport->time == 1001.5 );
+
+    mo_pair_teardown( &pair );
+    rocketnet_assert_function( saved_assert );
+}
+
 // slots are keyed on the transport's connection id (P9a), and each batch entry
 // is admitted by the connection it was received for (P9b): tla/RNSlots.tla
 // NoCrossConnectionApply, NoOwnEntryDropped, ReusedSlotStartsClean, and the
@@ -3542,6 +3583,7 @@ REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts )
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 REGISTER_UNIT_TEST( test_update_time_first_update_not_finite_refused );
+REGISTER_UNIT_TEST( test_message_object_clock_resumes_after_backwards_step );
 REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );

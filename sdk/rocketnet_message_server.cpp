@@ -277,6 +277,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->default_kbps = default_kbps;
     object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
+    object->raw_time = time;                    // tla/RNUpdateClock.tla Init: the offset starts at exactly 0.0
     object->pending_connection = -1;
     object->send_next_connection = 0;
     object->block = block;
@@ -589,11 +590,19 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, false );
 
+    // the update clock (tla/RNUpdateClock.tla): after a backwards step the
+    // object's clock resumes on the caller's next forward step, and the
+    // resumed time is the one handed to the transport below, so the two
+    // clocks resume together and the transport never sees a step backwards.
+    // A rejected first sample leaves both the clamped and the raw time as
+    // create set them.
     bool time_clamped = false;
-    time = rocketnet_clamp_update_time( object->time, time, &time_clamped );
+    double raw_time = object->raw_time;
+    time = rocketnet_advance_update_time( object->time, &raw_time, time, &time_clamped );
     if ( time_clamped && !object->clock_started )
         return result;
     object->time = time;
+    object->raw_time = raw_time;
 
     // rn_message_object_update leaves both clocks untouched on a rejected
     // first sample. The client transport starts its clock at the
