@@ -140,7 +140,7 @@ int main( int argc, char ** argv )
     const int packets_per_client = argc > 2 ? atoi( argv[2] ) : ROCKETNET_RECEIVE_PACKETS_PER_CLIENT;
     const int updates = argc > 3 ? atoi( argv[3] ) : 50;
     const int payload_bytes = argc > 4 ? atoi( argv[4] ) : 100;
-    const int arena_gib = argc > 5 ? atoi( argv[5] ) : 16;
+    const int arena_gib = argc > 5 ? atoi( argv[5] ) : 32;
     CHECK( num_clients >= 1 && num_clients <= ROCKETNET_MAX_CLIENTS );
     CHECK( packets_per_client >= 1 && num_clients * packets_per_client <= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE );
     CHECK( updates >= 1 );
@@ -223,6 +223,9 @@ int main( int argc, char ** argv )
     const int clients_per_group = std::max( 1, ( ROCKETNET_LOOPBACK_QUEUE_PACKETS / 2 ) / packets_per_client );
     const int warmup = 5;
     int short_updates = 0;
+    uint64_t min_packets_processed = UINT64_MAX;
+    int min_payloads_delivered = INT_MAX;
+    const uint64_t * server_counters = rocketnet_server_transport_counters( server )->values;
 
     for ( int u = -warmup; u < updates; u++ )
     {
@@ -241,6 +244,7 @@ int main( int argc, char ** argv )
 
         receive_cost_capture.replay = true;
         receive_cost_clock += 0.01;
+        const uint64_t packets_before = server_counters[ROCKETNET_COUNTER_PACKETS_RECEIVED];
         receive_cost_arena.in_window = true;
         const auto start = std::chrono::steady_clock::now();
         rocketnet_server_transport_update( server, receive_cost_clock );
@@ -251,10 +255,17 @@ int main( int argc, char ** argv )
         uint8_t * const * payload_data;
         const int * received_bytes;
         const int delivered = rocketnet_server_transport_payloads( server, &client_index, &payload_data, &received_bytes );
-        if ( delivered < budget )
-            short_updates++;
+        const uint64_t packets_processed = server_counters[ROCKETNET_COUNTER_PACKETS_RECEIVED] - packets_before;
         if ( u >= 0 )
+        {
+            // the update is judged on a full budget: every packet it may
+            // process this update, the clients' acks among them
+            if ( packets_processed < (uint64_t) budget )
+                short_updates++;
+            min_packets_processed = std::min( min_packets_processed, packets_processed );
+            min_payloads_delivered = std::min( min_payloads_delivered, delivered );
             update_us.push_back( std::chrono::duration<double, std::micro>( end - start ).count() );
+        }
 
         // drain, outside the window: the server's acks and keep-alives to
         // the clients, and theirs back into the next capture
@@ -266,11 +277,13 @@ int main( int argc, char ** argv )
     CHECK( receive_cost_arena.window_allocations == 0 );
     CHECK( receive_cost_arena.window_frees == 0 );
     CHECK( rocketnet_server_transport_num_connected_clients( server ) == num_clients );
+    CHECK( short_updates == 0 );
 
     printf( "server_receive_cost clients=%d packets_per_client=%d packets_per_update=%d payload_bytes=%d updates=%d"
-            " update_us_p50=%.1f update_us_p99=%.1f update_us_max=%.1f short_updates=%d window_allocations=%llu arena_mib=%zu\n",
+            " update_us_p50=%.1f update_us_p99=%.1f update_us_max=%.1f min_packets_processed=%llu min_payloads_delivered=%d short_updates=%d window_allocations=%llu arena_mib=%zu\n",
             num_clients, packets_per_client, budget, payload_bytes, updates,
             percentile( update_us, 50.0 ), percentile( update_us, 99.0 ), *std::max_element( update_us.begin(), update_us.end() ),
+            (unsigned long long) min_packets_processed, min_payloads_delivered,
             short_updates, (unsigned long long) receive_cost_arena.window_allocations, receive_cost_arena.used >> 20 );
 
     server->io.operations = loopback_operations;
