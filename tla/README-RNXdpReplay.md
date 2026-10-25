@@ -223,11 +223,13 @@ done
 `MCRNXdpReplay.cfg`: two addresses, `MaxSeq = 3`, `W = 2`, `Sessions = 2`,
 `MaxInFlight = 1`, `ForgetCapacity = 1`. TLC explores every send, forgery,
 duplicate, kernel pass or drop, open, release, walk and commit interleaving,
-with one refused forget allowed anywhere in the run: 197,106 distinct states
-(484,069 generated, depth 34) in about 3 seconds on two workers, and
-`TypeOK`, `ForgetOwedUntilApplied`, `MarksTakenFromTheTruth`,
-`FreshGenuineNeverDropped`, `ReleasedSlotForgetsItsReplyMac` and
-`KernelNeverWrites` hold.
+with up to two refused forgets anywhere in the run
+(`ForgetFailureBudget <- ForgetFailureBudgetTwo`, so a kept forget can be
+refused again in the commit that lands a newer session's mark): 299,086
+distinct states (744,729 generated, depth 36) in about 3 seconds on two
+workers, and `TypeOK`, `ForgetOwedUntilApplied`, `MarksTakenFromTheTruth`,
+`FreshGenuineNeverDropped`, `ReleasedSlotForgetsItsReplyMac`,
+`RetryNeverDeletesNewerMark` and `KernelNeverWrites` hold.
 
 `MarkNeverAhead` is not in the control. With no settle guard on `Connect`,
 it fails at depth 9: `Connect(A1)`, a genuine sequence 1 opens, `Walk` and
@@ -246,7 +248,7 @@ reconnect-freshness gap of the witness above, owned by the separate remedy;
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
 | `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
-| `MCRNXdpReplayBrokenStaleForgetRetried.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, depth @STALEDEPTH@ |
+| `MCRNXdpReplayBrokenStaleForgetRetried.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, depth 13 |
 | `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
 
 Each witness configuration leaves out the properties that restate the rule it
@@ -323,17 +325,24 @@ replayed until it timed out.
 
 ### StaleForgetRetried, checked by hand against the design
 
-1. `Connect(A1)`: session 1 sends 1; the kernel passes it and userspace
-   opens it. `Walk` marks 1; `Commit` writes `high_water = 1` for session 1.
-2. `Release(A1)`; `Walk` forgets `A1`; `Commit` with the kernel refusing the
-   forget (the first refusal): the forget stays pending.
-3. `Connect(A1)`: session 2 sends 1; `1 - 1 < 2`, so the kernel passes it and
-   userspace opens it. `Walk` marks 1 for session 2.
-4. `Commit`: the kept forget is refused again (the second refusal) and the
-   mark lands, `kmap[A1]` = session 2's entry. The broken commit keeps the
-   forget, so it is pending over the live session's entry.
+The TLC trace, depth 13:
 
-In the design step 4 drops the superseded forget. In the code this was
+1. `Connect(A1)`: session 1; `Walk` sees the slot (nothing opened, so no
+   mark); `Commit`.
+2. `Release(A1)`; `Walk` forgets `A1` (a seen slot is forgotten marked or
+   not); `Commit` with the kernel refusing the forget (the first refusal):
+   the forget stays pending.
+3. `Connect(A1)`: session 2 sends 1; there is no entry, so the kernel passes
+   it and userspace opens it. `Walk` marks 1 for session 2.
+4. `Commit`: the kept forget is refused again (the second refusal) and the
+   mark lands, `kmap[A1] = [hw 1, sess 2]`. The broken commit keeps the
+   forget, so `A1` is pending over the live session's entry.
+
+The same holds with an old entry for session 1 in place; TLC reports the
+shortest trace.
+
+In the design step 4 drops the superseded forget, and the next successful
+commit has nothing to delete. In the code this was
 `rocketnet_xdp_replay_marks_reset_keeping` keeping every refused forget: the
 next successful delete removed session 2's mark, and the walk's cached
 high-water kept it from being marked again until a fresh sequence opened.
