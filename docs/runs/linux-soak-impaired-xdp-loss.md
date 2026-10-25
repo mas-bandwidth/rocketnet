@@ -286,3 +286,37 @@ assertion is loosened.
    `sdk/rocketnet_network_simulator.cpp`, `sdk/rocketnet_network_simulator.h`,
    `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`.
    A diagnostic counter, not a bound change.
+bytes 2152
+00 second cell
+
+One 16-CPU guest, a private veth, the server on XDP in copy mode, and the clients portable on the peer. The physical uplink was not attached. The one-minute load stayed at or below 1.62. The cell exited 0 and the harness printed PASS for 1800 seconds.
+
+The harness summary for this run:
+
+- sent 3145058, of which the client sent 1572529 and the server sent 1572529
+- received and verified 2884726
+- missing client to server 77093, server to client 177911
+- duplicates refused at the server 43227, at the client 43799
+- conservation held, and the soak reported 0 failures
+- `server_XDP_KERNEL_REDIRECTED` 2279279
+- `server_XDP_KERNEL_PASSED_IPV6_EXTENSION` 3
+- client `SEND_HISTORY_LOST` 104400, server `SEND_HISTORY_LOST` 198369
+
+The last counter sample on the server veth, taken in the same second the guest exited:
+
+- `rx_queue_0_xdp_packets` 2279444
+- `rx_queue_0_xdp_drops` 0
+- `rx_queue_0_drops` 0
+- `rx_queue_0_xdp_redirect` 2279279
+
+The redirect count matches `server_XDP_KERNEL_REDIRECTED`. The packet count is 165 higher than the redirect count, and neither drop counter accounts for those 165.
+
+The client namespace UDP row in that sample was `InDatagrams` 2241986, `InErrors` 101796, `RcvbufErrors` 101796, `OutDatagrams` 2279279. The server namespace UDP row was all zeros, which fits a server that is not on the UDP socket path.
+
+`rocketnet_network_simulator_send` counts one send, returns on one `drop_every_nth` hit or one loss roll, emits, then may emit one duplicate. The harness default is loss 5 percent and duplicate 2 percent, not a `drop_every_nth` pattern. Both ends send, so each direction is impaired once, at its sender.
+
+The server veth's XDP drop counters stayed 0. This run's server-to-client missing is not an AF_XDP receive-ring drop.
+
+`RcvbufErrors` 101796 and the soak's server-to-client missing 177911 are different counters. This run does not subtract one from the other. The send-history losses above are the soak's own history counts, not the link-witness missing counts.
+
+An earlier launch of this attempt exited before a guest existed. Its counters are not the numbers in this section.
