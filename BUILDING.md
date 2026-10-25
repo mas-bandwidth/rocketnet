@@ -61,7 +61,12 @@ and starts no thread; CI runs it on a Linux leg beside
 `tools/check_client_server_words.py`.
 
 `./bin/test` does not open a socket and does not start a transport. It drives the
-state machines and the in-memory network simulator. Tests run in parallel
+state machines and the in-memory network simulator, and reads and writes no
+file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
+and `tests/wycheproof/*_test.json`) are compiled into it at build time by
+`cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
+regenerated only by the tool `./bin/connect_token_vectors <path>`
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
@@ -175,6 +180,11 @@ clock starts at 1000.0). A binary that opens a real socket, starts a thread,
 sleeps or reads the wall clock is functional, and CI runs it only in a step
 named functional, never as a unit step.
 
+Unit cases feed SDK environment parsing through the in-memory source compiled
+only into `rocketnet_test_hooks`; they never read or mutate the process
+environment. `functional/environment_wiring.cpp` sets and restores real
+variables and pins the SDK wiring, precedence, and refusal paths.
+
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
@@ -202,6 +212,14 @@ not `./bin/test`.
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
+
+The corpus-consistency cases in `./bin/functional`
+(functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
+`test_pcapng_corpus_witness_unread_packet_goes_red`,
+`test_pcapng_corpus_covers_control_packet_types` and
+`test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
+`tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
+as findings land, so they are functional cases, never unit ones.
 
 The two process thread-count cases live in `functional/process_thread_counts.cpp`
 and count the process's threads from `/proc/self/task`, which Linux has and
