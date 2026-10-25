@@ -18,6 +18,17 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
+static int test_dispatch_calls = 0;
+static double test_dispatch_seconds = 0.0;
+
+static void test_sleep_dispatch( double seconds )
+{
+    ++test_dispatch_calls;
+    test_dispatch_seconds = seconds;
+}
+#endif // #if ROCKETNET_DEV
+
 static void test_sleep_clamp_bounds_negative_nan_and_huge()
 {
     check( rocketnet_sleep_clamp( -1.0 ) == 0.0 );
@@ -42,12 +53,29 @@ static void test_sleep_clamp_bounds_negative_nan_and_huge()
     // the platform sleep call; this has no wall-clock or OS timing assertion.
 #if ROCKETNET_DEV
     const uint64_t before = rocketnet_sleep_platform_dispatch_count_for_test();
+    test_dispatch_calls = 0;
+    test_dispatch_seconds = 0.0;
+    rocketnet_sleep_set_platform_dispatch_for_test( test_sleep_dispatch );
     rocketnet_sleep( -1.0 );
     check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    check( test_dispatch_calls == 0 );
     rocketnet_sleep( (double) NAN );
     check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    check( test_dispatch_calls == 0 );
     rocketnet_sleep( -(double) INFINITY );
     check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    check( test_dispatch_calls == 0 );
+    rocketnet_sleep( 0.0 );
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    check( test_dispatch_calls == 0 );
+
+    // The call-table seam proves the positive branch dispatches once with the
+    // clamped value, without asking the OS to sleep or asserting elapsed time.
+    rocketnet_sleep( 0.001 );
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before + 1 );
+    check( test_dispatch_calls == 1 );
+    check( test_dispatch_seconds == 0.001 );
+    rocketnet_sleep_set_platform_dispatch_for_test( NULL );
 #else
     rocketnet_sleep( -1.0 );
     rocketnet_sleep( (double) NAN );
