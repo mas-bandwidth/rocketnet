@@ -1,116 +1,133 @@
 # LAN 1000-client proof: results
 
-Each row is one cell run through `scripts/lan-proof` as
-[LAN-PROOF.md](../LAN-PROOF.md) describes: 1000 clients in shards of at most
-250 on client machines, the server alone on its own machine, traffic across
-the LAN. Machines are named by inventory label only. Rows are appended as
-cells complete.
+One row per cell of the LAN proof: 1000 clients for 600 seconds against one
+server pinned to one transport, the server alone on its own machine, the
+clients in shards of at most 250 on other machines, all traffic across the
+LAN. Each cell is run through `scripts/lan-proof` as
+[LAN-PROOF.md](../LAN-PROOF.md) describes. Machines are named by bench label
+only.
 
-| cell | server | speed | clients | duration | connected | timeouts | modes | sizes | min kbps | verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gso | server-a | 1000 | 1000 | 120 | yes | 0 | 0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass | small:pass,fragmented:pass | 277 | pass |
+Every value below is copied from the per-platform record named in the
+row's last column; that record holds the commands, host facts, load
+samples, proof lines, allocation manifest and log digests. A cell with no
+record is NOT MADE, with its reason, and carries no values.
 
-Cells not yet recorded: io_uring, xdp (owed: the dedicated test port has no
-carrier yet), iocp, rio, msgx.
+## Results
 
-## gso, run a1000c0062026101
+Reliability modes are numbered as `enum rocketnet_reliability_t` in
+`sdk/rocketnet.h`: 0 UNRELIABLE, 1 UNRELIABLE_SEQUENCED, 2 RELIABLE,
+3 RELIABLE_ORDERED, 4 RELIABLE_SEQUENCED, 5 UNRELIABLE_WITH_ACK_RECEIPT,
+6 RELIABLE_WITH_ACK_RECEIPT, 7 RELIABLE_ORDERED_WITH_ACK_RECEIPT. The
+reliable exactly-once, ordered, sequenced and unreliable columns give the
+merger's per-mode verdicts for those modes and its counts. "Timeouts" is the
+server's disconnect count. "Receipts" and "payload" are the server's
+`receipt_errors`, `receipts_dropped` and `checksum_errors`.
 
-Executable head `59c266ff1fbcc3e3edca82998cf7f54697b6e7c2`, built by the
-script on every host. The orchestrator at that head had SHA-256
-`7471b69160f4f2a0a10fae7e44da79f9fe6e7c6774bbf5c872dc823cbc71ec21`
-(`scripts/lan-proof`) and
-`5a0ed01869ab832d6766b2dc5c4e2e7b1a3417fc487502ea1082257e986b1643`
-(`scripts/lan-proof-remote`). Later commits changed both scripts: per-OS host
-facts with numeric validation, the Windows build and its locks, the macOS
-timeout check, the build bound's structure and the xdp guest sizing. The row
-was produced by the scripts at those digests, not by the current ones.
+### Made
 
-Command:
+| platform | server transport | server label | server NIC speed, duplex | client hosts, NIC speed | head | clients | seconds | connected throughout | timeouts | reliable exactly-once (2, 3, 6, 7) | ordered (3, 7) | sequenced (1, 4) | unreliable (0, 1, 5) | receipts | payload | min per-client kbps | sizes | verdict | record |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Linux | gso | linux-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `1ca477339e150220f90e96bbe7c61be5b175eb51` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=0 | 0:pass, 1:pass, 5:pass; unreliable_lost=0 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 278 | small:pass, fragmented:pass | pass | [lan-1000-proof-linux.md](lan-1000-proof-linux.md), run a1000c1025000002 |
+| Linux | io_uring | linux-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `1ca477339e150220f90e96bbe7c61be5b175eb51` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=2232 | 0:pass, 1:pass, 5:pass; unreliable_lost=110680 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 276 | small:pass, fragmented:pass | pass | [lan-1000-proof-linux.md](lan-1000-proof-linux.md), run a1000c1025000003 |
+| macOS | msgx | macos-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `813b4adbe3dec2eee496577e3da2c0d7d66b8063` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=20602 | 0:pass, 1:pass, 5:pass; unreliable_lost=25662 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 281 | small:pass, fragmented:pass | pass | [lan-1000-proof-macos.md](lan-1000-proof-macos.md), run 5a0500000000025a |
 
-```text
-scripts/lan-proof --inventory INVENTORY --cell gso --duration 120 \
-    --clients 1000 --commit 59c266ff1fbcc3e3edca82998cf7f54697b6e7c2 \
-    --run-dir DIR --run-id a1000c0062026101
-```
-
-Hosts (from the script's host facts):
-
-| label | role | OS, kernel | test NIC model, driver | speed, duplex | logical cores |
-| --- | --- | --- | --- | --- | --- |
-| server-a | server | Linux 7.0.0-34-generic | X540-AT2 10-Gigabit, ixgbe | 1000 Mb/s, full | 64 |
-| client-a | client, shard0 + shard2 | Linux 7.0.0-38-generic | AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
-| client-b | client, shard1 + shard3 | Linux 7.0.0-38-generic | AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
-
-The negotiated link speed on every host was 1000 Mb/s, so this cell proves
-1000 clients over a gigabit path, not a 10-gigabit one.
-
-Load samples (load1 / logical cores), retained by the script:
-
-| sample | server-a | client-a | client-b |
-| --- | --- | --- | --- |
-| start | 1.13 / 64 | 1.03 / 16 | 1.38 / 16 |
-| runtime 60 s | 1.48 / 64 | 0.78 / 16 | 2.86 / 16 |
-| runtime 120 s | 1.27 / 64 | 2.50 / 16 | 1.92 / 16 |
-| end | 1.24 / 64 | 2.38 / 16 | 1.63 / 16 |
-
-Admission was re-measured every five minutes before the start; the run began
-only when every host's load was under half its cores and no continuous
-integration job was running on a client host. No sample came near a core
-count, so the run is kept.
-
-Server proof line:
+The same rows in the eleven-field result-row form of
+[LAN-PROOF.md](../LAN-PROOF.md), with the values of the records' cell
+tables:
 
 ```text
-split_proof: role=server transport=gso transport_pin=gso small_bytes=1200 fragmented_bytes=2000 target_kbps=256 min_client_up_kbps=277.679400 min_client_down_kbps=278.976133 checksum_errors=0 receipt_errors=0 receipts_dropped=0 disconnects=0 verdict=PASS
+gso|linux-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|278|pass
+io_uring|linux-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|276|pass
+msgx|macos-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|281|pass
 ```
 
-Merger (`tools/check_split_load.py --load proof`):
+Merger verdict lines (`tools/check_split_load.py --load proof`), from the
+records:
 
 ```text
-split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=4800000 messages_delivered=4800000 unreliable_lost=0 sequenced_skipped=0 timing_verdict=FAIL
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=24000000 messages_delivered=24000000 unreliable_lost=0 sequenced_skipped=0 timing_verdict=FAIL
+split_proof_cell: verdict=PASS transport=io_uring total=1000 streams=26000 messages_sent=24000000 messages_delivered=23887088 unreliable_lost=110680 sequenced_skipped=2232 timing_verdict=FAIL
+split_proof_cell: verdict=PASS transport=msgx total=1000 streams=26000 messages_sent=24000000 messages_delivered=23953736 unreliable_lost=25662 sequenced_skipped=20602 timing_verdict=FAIL
 ```
 
-Shard proof lines, minimum per-client kbps up / down, all `verdict=PASS`
-with zero checksum, receipt and disconnect errors: shard0 280.85 / 277.95,
-shard1 279.11 / 277.83, shard2 279.94 / 277.73, shard3 280.12 / 277.88.
+Skips on RELIABLE_SEQUENCED and losses on the unreliable modes are counted
+and never failed, as the "Proof load" rule in
+[LOAD_SPLIT.md](../LOAD_SPLIT.md) states. `timing_verdict=FAIL` is the
+per-call timing budget, which is not part of the proof verdict: performance
+is judged as parity in framework. Each record gives the reason for its
+counts as far as it was measured.
 
-Server call timings (not part of the proof verdict; performance is judged
-as parity in framework, not as a per-call budget):
+### Not made
 
-| call | count | p50 us | p99 us | max us |
+| platform | server transport | status | reason | record it would come from |
 | --- | --- | --- | --- | --- |
-| server_update | 12300 | 1258 | 8140 | 12757.954 |
-| server_receive_messages | 16886 | 8 | 49 | 311.728 |
-| server_start_message | 2400000 | 1 | 2 | 754.964 |
-| server_finish_message | 2400000 | 1 | 1 | 120.096 |
-| server_send_packets | 12300 | 149 | 7344 | 29155.903 |
+| Linux | xdp | NOT MADE | the xdp server needs a dedicated, cabled test port bridged to the LAN switch (see [LAN-PROOF.md](../LAN-PROOF.md)); the server machine has no cabled test NIC yet | docs/runs/lan-1000-proof-xdp.md (not yet written) |
+| Windows | iocp | NOT MADE | the Windows server machine has no inbound firewall rule for the proof's UDP port 40000 yet, so the clients cannot reach the server | docs/runs/lan-1000-proof-windows.md (not yet written) |
+| Windows | rio | NOT MADE | the same firewall rule on the Windows server machine | docs/runs/lan-1000-proof-windows.md (not yet written) |
+| Linux | portable | NOT MADE | void: the proof covers native server transports only (ruling of 2026-10-24) | none |
+| macOS | portable | NOT MADE | void: the proof covers native server transports only (ruling of 2026-10-24) | none |
+| Windows | portable | NOT MADE | void: the proof covers native server transports only (ruling of 2026-10-24) | none |
 
-Allocation manifest (`allocation.json`, schema `split_allocation_v1`):
-server `server-a` holds total 1000 as `dedicated_server`; shard0 (first 0)
-and shard2 (first 500) on `client-a`, shard1 (first 250) and shard3
-(first 750) on `client-b`, 250 clients each, as `client_host`.
+## Heads
 
-Retained files and SHA-256 digests (the logs hold the run's connect key, so
-they are kept outside the repository):
+The Linux cells ran at `1ca477339e150220f90e96bbe7c61be5b175eb51` and the
+macOS cell at `813b4adbe3dec2eee496577e3da2c0d7d66b8063`. Between them:
 
 ```text
-e80fcf6727a5ba056274124918dd45a37d4f9928a94b2ba0d3308baee9b95d94  server.log
-88ec55f60b569b5f6dae30e18fedba6c7974ee6fa5c94c50a9a6fd807beb4879  shard0.log
-bdae68596a0930db5a82aa0bdfb883926558dfb3ee099a580fbecde0222fa8d6  shard1.log
-5bc51af2e8344457c4c8242eead91cf211ff99411322caf51a85c1e4da0f621e  shard2.log
-3db6402f43451e0fefb5aeea388850e301b051547b3b4a3d49f5d7add35b30b3  shard3.log
-048dc49f013cb04721c597172a5889753d4ca8d88392dc6fce4a8d7f68da8a7e  allocation.json
-8a4e04d9094658efc6838dd33773cbbf3876afbe47cd240fa15221029d89dbf5  merge.log
-91fb54a5b0a291fd019f41f6c5a850c3dea74dbd048939502ec3b3dab7d4e387  row.txt
+$ git diff --stat 1ca477339e150220f90e96bbe7c61be5b175eb51 813b4adbe3dec2eee496577e3da2c0d7d66b8063 -- sdk load_split.c tools/load_split_verify.h tools/check_split_load.py
+ load_split.c                          |   2 +-
+ sdk/rocketnet.h                       |  61 +++-
+ sdk/rocketnet_api.cpp                 |  23 +-
+ sdk/rocketnet_client_transport.cpp    | 140 +++++++++-
+ sdk/rocketnet_constants.h             |  10 +
+ sdk/rocketnet_driver.h                |   5 +-
+ sdk/rocketnet_driver_builtin.cpp      | 282 +++++++++++++++++--
+ sdk/rocketnet_drivers.inc             |   8 +-
+ sdk/rocketnet_frame_sync.cpp          |  11 +
+ sdk/rocketnet_frame_sync.h            |   3 +
+ sdk/rocketnet_memory.h                |  35 +++
+ sdk/rocketnet_platform.cpp            | 504 +++++++++++++++++++++++++++++++---
+ sdk/rocketnet_platform.h              | 129 +++++++++
+ sdk/rocketnet_server_iocp_windows.cpp |  38 ++-
+ sdk/rocketnet_server_replay_marks.cpp |  39 ++-
+ sdk/rocketnet_server_replay_marks.h   |  18 +-
+ sdk/rocketnet_server_rio.h            |   4 +
+ sdk/rocketnet_server_rio_windows.cpp  | 255 +++++++++++++++--
+ sdk/rocketnet_server_socket.h         |  12 +-
+ sdk/rocketnet_server_socket_linux.cpp | 158 ++++++++++-
+ sdk/rocketnet_server_transport.cpp    |  79 ++++--
+ sdk/rocketnet_server_uring_linux.cpp  |  62 ++++-
+ sdk/rocketnet_xdp_replay_marks.h      | 112 +++++++-
+ 23 files changed, 1788 insertions(+), 202 deletions(-)
 ```
 
-Every server and shard process the run started was stopped by the script's
-teardown; none remained on any host afterwards.
+The difference is not empty. By the commit subjects in that range, it is:
 
-## Discarded runs
+- msgx: the server send banks are sized to the client count, and send
+  failures and send handoff drops are counted by errno and by path (the
+  macOS record cites this fix);
+- the client transport ranking: the gso client ranks first on Linux and the
+  iocp client above portable on Windows, portable last everywhere;
+- the SDK's direct OS blocks and the Windows lifecycle resources are
+  counted beside the allocator, and the memory plan reports the lifecycle
+  peak (the only `load_split.c` change is the wording of its `split_plan`
+  line, `scope=lifecycle_allocator_peak`);
+- xdp reconnect freshness (replay marks) and the rio stop burst, which touch
+  transports with no cell in this pair.
 
-An earlier 1000-client gso run (head `c2e5e634`, run a100c00120261006) was
-discarded for load: one client host's end load was 28.34 on 16 cores from
-other work while the other client host, running the same shards, stayed
-under 6. Its delivery lines passed, but a run with foreign load is not
-evidence.
+`tools/load_split_verify.h` and `tools/check_split_load.py`, the proof's
+checks, are unchanged between the two heads.
+
+## Earlier cell
+
+Before the 600-second duration, one gso cell was recorded for 120 seconds
+(run a1000c0062026101, head `59c266ff1fbcc3e3edca82998cf7f54697b6e7c2`,
+labels from its own inventory):
+
+```text
+gso|server-a|1000|1000|120|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|277|pass
+```
+
+It is superseded by the 600-second gso row above and is kept for the
+record; its host facts, load samples, proof lines and digests are in this
+file's history.

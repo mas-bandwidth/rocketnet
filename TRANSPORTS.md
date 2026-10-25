@@ -716,9 +716,16 @@ A reply frame's destination MAC is the source MAC of the newest packet from
 that client address that the transport accepted for a connection on this
 interface, and the gateway's MAC for an address with none learned. With no
 default route the server still starts, a direct response to an unlearned
-address goes to the source MAC of the frame it answers, and any other reply
-that resolves to no MAC is refused at start and counted as
-`SEND_NO_LINK_ADDRESS`, never sent and never counted as sent.
+address goes to the source MAC of the frame it answers, and that MAC is kept
+as the address's answered entry. A later reply to that address with no frame
+in hand (one the development link simulator held for its latency, or its
+duplicate) goes to the answered entry, and so does a reply still held for a
+released client, whose learned MAC a forget turns into its answered entry. A
+learned or gateway MAC always wins over an answered entry, which never
+displaces a learned one. Any other reply that resolves to no MAC, among them
+every reply to an address no frame came from, is refused at start and counted
+as `SEND_NO_LINK_ADDRESS`, never sent and never counted as sent
+(`tla/RNXdpReplay.tla`: `NeverSeenNeverSentTo`, `HeldReplyFindsItsMac`).
 
 ## Embedded XDP source maintenance
 

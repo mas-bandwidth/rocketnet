@@ -44,6 +44,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
+// A portable or msgx server's send bank holds this many packets per configured
+// client (never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS), as its receive
+// banks hold ROCKETNET_RECEIVE_PACKETS_PER_CLIENT. One worker drains a bank
+// with one socket call per packet batch, measured at about 18 us per packet on
+// macOS at 1000 clients: about 80% of that worker at 45,000 packets a second,
+// so a burst backs up for tens of milliseconds and three banks of 1000 ran
+// out. A bank of 16 per client holds that backlog: memory is cheap, a packet
+// dropped for want of a bank is not.
+#define ROCKETNET_SEND_PACKETS_PER_CLIENT                                   16
+
 // The XDP frame size is defined on every platform: the frame codec in
 // rocketnet_xdp_frame.h (rocketnet_xdp_receive_descriptor) and its unit cases
 // are portable and build in ./bin/test everywhere. The transport's own static
