@@ -4,17 +4,17 @@ Five impaired Linux transport cells ran for 1800 seconds each on the same
 source head. `scripts/soak-per-transport` supplied loss (5%), latency (30 ms),
 jitter (20 ms), and duplication (2%) at both ends, and invoked `bin/soak`
 with `--assert-flat`. The four socket cells ran concurrently on separate
-loopback ports. XDP ran alone inside a virtme-ng guest on the dedicated hulk
+loopback ports. XDP ran alone inside a virtme-ng guest on the dedicated XDP bench
 machine, using only a guest-created veth interface.
 
 - Date (`date -u`): Sun Oct 25 2026 UTC. Socket start 02:09:54, finish
   02:39:54; XDP start 01:55:53, finish 02:25:57.
 - Source head for every build and cell: `720393a0aadd60ac43a8b5bcf887c7c51c6be999`
-  (`land rn-linux-soak-30min-per-transport-a`).
-- Socket machine: `hostname` = `vision`, `uname -r` = `7.0.0-34-generic`,
+  (the land commit).
+- Socket machine: `hostname` = `<socket bench>`, `uname -r` = `7.0.0-34-generic`,
   64 cores, `/proc/sys/kernel/io_uring_disabled` = `0`. All socket traffic
   used loopback; no physical NIC was exercised.
-- XDP machine: `hostname` = `hulk`, `uname -r` = `6.8.0-142-generic`.
+- XDP machine: `hostname` = `<XDP bench>`, `uname -r` = `6.8.0-142-generic`.
   The guest used that host's kernel, 16 vCPUs, a guest-only veth named
   `rnxdpsoak0`, and an isolated client namespace. No host uplink was bound
   or given an XDP program. `ethtool -i rnxdpsoak0` was not captured during
@@ -27,7 +27,7 @@ machine, using only a guest-created veth interface.
 
 ## Commands and load
 
-From the exact-head checkout on vision, these four commands were launched
+From the exact-head checkout on the socket bench, these four commands were launched
 concurrently. The private job's `run-socket-cell.sh` runs each existing
 script under `~/bin/benchslot`, sets the listed `SOAK_SERVER_ADDRESS`, and
 samples the whole host's one-minute load every ten seconds during the cell.
@@ -54,7 +54,7 @@ SOAK_SERVER_ADDRESS=127.0.0.1:40416 scripts/soak-per-transport --seconds 1800 --
 Each socket cell has 180 load samples. The first was 2.45, the last 1.50,
 and the maximum was 3.89 on 64 cores. No sampled load exceeded core count.
 
-On hulk, the complete XDP cell used the existing script and a temporary,
+On the XDP bench, the complete XDP cell used the existing script and a temporary,
 owned `/tmp/rnsoak-b-log` symlink pointing into the job's XDP log directory:
 
 ```sh
@@ -62,7 +62,7 @@ owned `/tmp/rnsoak-b-log` symlink pointing into the job's XDP log directory:
 ```
 
 The script started virtme-ng with
-`--run /home/gaffer/vm-kernels/vmlinuz-6.8.0-142-generic --memory 4G --cpus 16`
+`--run <home>/vm-kernels/vmlinuz-6.8.0-142-generic --memory 4G --cpus 16`
 and ran `bin/soak --seconds 1800 --assert-flat` inside the guest, with server
 transport `xdp` and client transport `portable`. The guest's server address
 was `10.77.4.1:40412`; its clients used the far veth end in the guest's
