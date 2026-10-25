@@ -399,7 +399,10 @@ toolchain), in three legs, each in its own job and its own build directory:
   Linux sanitizers job. Apple silicon AddressSanitizer has no `detect_leaks`,
   so `ASAN_OPTIONS=detect_leaks=0` and the leaks leg is the leak check.
 - **tsan**: Debug with `-fsanitize=thread`,
-  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`.
+  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. A sanitizer build's
+  functional cases complete within 180 s, not 120 s: the loopback message
+  matrix is CPU-bound in packet sealing under ThreadSanitizer and measured
+  106.6 to 119.8 s on this platform (`tests/time_scale.h`).
 - **leaks**: an unsanitized Debug build. The suites run each case in a child
   process (`tests/suite_runner.h`), and `leaks --atExit` inspects only the
   process it launched and does not pass its exit status through. So the suite

@@ -24,7 +24,8 @@
 
     Time is an argument: the clock the objects see is 1000.0 plus the wall
     time elapsed. The case prints its finish time as wall-clock duration;
-    the target is 60 s and the hard completion bound is 120 s. Timing is
+    the target is 60 s and the hard completion bound is 120 s (180 s in a
+    sanitizer build, measured in tests/time_scale.h). Timing is
     reported separately from message correctness; this is not a load test.
 */
 

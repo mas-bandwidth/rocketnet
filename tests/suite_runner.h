@@ -7,7 +7,8 @@
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails. The functional runner keeps 120s in every build; the unit runner
+    fails. The functional runner keeps 120s in every build but a sanitizer
+    build, which takes 180s (tests/time_scale.h, the measured reason); the unit runner
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h). A
     test whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
