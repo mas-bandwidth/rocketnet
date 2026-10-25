@@ -140,6 +140,19 @@ backlog found every bank in flight thousands of times a minute
 socket errno); banks sized to the client count hold it. A failed socket send
 is counted apart, by call and errno, and the first of each is logged once.
 
+`SEND_FAILED` is the sum of the socket's failures and the handoff's drops, and
+the handoff counts each drop by its path: `no-free-bank` (the producer bank is
+full and every other bank is in flight), `handoff-busy` (full, and the handoff
+lock was held), `stopping` and `invalid-packet`. The first drop on each path
+logs once; the transport logs every path's count, zeros included, beside the
+socket's send failures when it closes. On a 600 s cell at 1000 clients the
+worker's QoS class read default (0x15) and it ran on the same six cores
+throughout. It held 16.3 to 17.3 us per packet for most of the run, but in two
+episodes of about 30 s (with the server host's load rising to 8.3) the cost rose
+to 26 to 29 us per packet. The worker then drains fewer packets a second than
+main produces, and no bank size absorbs a deficit that lasts that long: those
+episodes dropped 240,768 packets, all `no-free-bank`, no socket errno.
+
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
 (`rocketnet_msgx_transport` in `sdk/rocketnet_driver_builtin.cpp`), so the two
