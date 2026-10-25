@@ -13,6 +13,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
@@ -25,6 +26,27 @@
 #include <sched.h>
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// the direct allocation count (rocketnet_memory.h). relaxed: it is a total,
+// read by a memory check, and orders against nothing
+static std::atomic<uint64_t> rocketnet_direct_allocation_total{ 0 };
+
+void rocketnet_direct_allocation_add( uint64_t bytes )
+{
+    rocketnet_direct_allocation_total.fetch_add( bytes, std::memory_order_relaxed );
+}
+
+void rocketnet_direct_allocation_remove( uint64_t bytes )
+{
+    const uint64_t before = rocketnet_direct_allocation_total.fetch_sub( bytes, std::memory_order_relaxed );
+    rocketnet_assert( before >= bytes );
+    (void) before;
+}
+
+extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
+{
+    return rocketnet_direct_allocation_total.load( std::memory_order_relaxed );
+}
 
 #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
@@ -435,6 +457,112 @@ uint64_t rocketnet_platform_socket_send_replay_failures( rocketnet_platform_sock
 {
     rocketnet_assert( socket );
     return rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
+}
+
+// Send failures by errno (rocketnet_platform.h). The counts are relaxed
+// atomics: the sending worker adds, the destroy that logs them reads after it
+// has stopped. The first failure of a call and kind is the add that saw zero.
+
+int rocketnet_platform_send_errno_kind( int error )
+{
+    if ( error == 0 )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_NONE;
+    if ( error == EAGAIN || error == EWOULDBLOCK )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN;
+    if ( error == ENOBUFS )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS;
+    if ( error == EHOSTUNREACH )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTUNREACH;
+    if ( error == ENETUNREACH )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_ENETUNREACH;
+    if ( error == ECONNREFUSED )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_ECONNREFUSED;
+#if defined(EHOSTDOWN)
+    if ( error == EHOSTDOWN )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTDOWN;
+#endif
+    if ( error == ENETDOWN )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_ENETDOWN;
+    if ( error == EMSGSIZE )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EMSGSIZE;
+    if ( error == EADDRNOTAVAIL )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EADDRNOTAVAIL;
+    if ( error == EPERM || error == EACCES )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EPERM;
+    if ( error == EINTR )
+        return ROCKETNET_PLATFORM_SEND_ERRNO_EINTR;
+    return ROCKETNET_PLATFORM_SEND_ERRNO_OTHER;
+}
+
+const char * rocketnet_platform_send_errno_kind_name( int kind )
+{
+    static const char * const names[ROCKETNET_PLATFORM_SEND_ERRNO_KINDS] =
+    {
+        "none", "EAGAIN", "ENOBUFS", "EHOSTUNREACH", "ENETUNREACH", "ECONNREFUSED", "EHOSTDOWN",
+        "ENETDOWN", "EMSGSIZE", "EADDRNOTAVAIL", "EPERM", "EINTR", "other"
+    };
+    if ( kind < 0 || kind >= ROCKETNET_PLATFORM_SEND_ERRNO_KINDS )
+        return "unknown";
+    return names[kind];
+}
+
+const char * rocketnet_platform_send_call_name( int call )
+{
+    static const char * const names[ROCKETNET_PLATFORM_SEND_CALLS] = { "sendto", "sendmsg_x", "replay sendto" };
+    if ( call < 0 || call >= ROCKETNET_PLATFORM_SEND_CALLS )
+        return "unknown";
+    return names[call];
+}
+
+bool rocketnet_platform_send_errnos_count( rocketnet_platform_send_errnos_t * errnos, int call, int error )
+{
+    rocketnet_assert( errnos );
+    rocketnet_assert( call >= 0 && call < ROCKETNET_PLATFORM_SEND_CALLS );
+    const int kind = rocketnet_platform_send_errno_kind( error );
+    const bool first = rocketnet_platform_atomic_add_u64( &errnos->counts[call][kind], 1 ) == 0;
+    if ( first && kind == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER )
+        rocketnet_platform_atomic_add_u64( &errnos->other_error, (uint64_t) (unsigned int) error );
+    return first;
+}
+
+uint64_t rocketnet_platform_send_errnos_read( rocketnet_platform_send_errnos_t * errnos, int call, int kind )
+{
+    rocketnet_assert( errnos );
+    if ( call < 0 || call >= ROCKETNET_PLATFORM_SEND_CALLS || kind < 0 || kind >= ROCKETNET_PLATFORM_SEND_ERRNO_KINDS )
+        return 0;
+    return rocketnet_platform_atomic_load_u64( &errnos->counts[call][kind] );
+}
+
+int rocketnet_platform_send_errnos_format( rocketnet_platform_send_errnos_t * errnos, char * buffer, size_t size )
+{
+    rocketnet_assert( errnos );
+    rocketnet_assert( buffer );
+    if ( size == 0 )
+        return 0;
+    buffer[0] = '\0';
+    size_t used = 0;
+    int written = 0;
+    for ( int call = 0; call < ROCKETNET_PLATFORM_SEND_CALLS; call++ )
+    {
+        for ( int kind = 0; kind < ROCKETNET_PLATFORM_SEND_ERRNO_KINDS; kind++ )
+        {
+            const uint64_t count = rocketnet_platform_send_errnos_read( errnos, call, kind );
+            if ( count == 0 )
+                continue;
+            const int result = snprintf( buffer + used, size - used, "%s%s %s=%llu", written ? " " : "",
+                                         rocketnet_platform_send_call_name( call ), rocketnet_platform_send_errno_kind_name( kind ),
+                                         (unsigned long long) count );
+            if ( result < 0 || (size_t) result >= size - used )
+            {
+                // truncated: keep the whole words that fit, still terminated
+                buffer[used] = '\0';
+                return written;
+            }
+            used += (size_t) result;
+            written++;
+        }
+    }
+    return written;
 }
 
 // Test-only receive seam, compiled into the unit suite's hook library only
@@ -2798,6 +2926,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
     socket->send_failures = 0;
     socket->send_replay_failures = 0;
+    memset( &socket->send_errnos, 0, sizeof( socket->send_errnos ) );
     socket->connected = false;
 
     socket->msgx = false;
@@ -3075,6 +3204,14 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
     rocketnet_platform_test_unregister( socket );
 #endif
 
+    // the send failures by call and errno, once, when there were any
+    char failures[512];
+    if ( rocketnet_platform_send_errnos_format( &socket->send_errnos, failures, sizeof( failures ) ) > 0 )
+    {
+        const uint64_t other_error = rocketnet_platform_atomic_load_u64( &socket->send_errnos.other_error );
+        rocketnet_info( "socket send failures by errno: %s (first other errno %llu)", failures, (unsigned long long) other_error );
+    }
+
     if ( rocketnet_platform_socket_handle_is_valid( socket->handle ) )
     {
         close( socket->handle );
@@ -3143,6 +3280,19 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     return true;
 }
 
+// One failed send call, counted by call and errno on the socket; the first of
+// each call and errno logs once at info level, the rest are only counted
+// (rocketnet_platform_send_errnos_count), and the destroy logs the counts.
+
+static void rocketnet_platform_darwin_send_failed( rocketnet_platform_socket_t * socket, int call, int error )
+{
+    if ( rocketnet_platform_send_errnos_count( &socket->send_errnos, call, error ) )
+    {
+        rocketnet_info( "socket %s failed (%s, errno %d): first of its kind on this socket; later ones are counted and logged when the socket closes",
+                        rocketnet_platform_send_call_name( call ), strerror( error ), error );
+    }
+}
+
 // The per-packet send. A refusal counts in *failures: send_failures for an
 // ordinary send, send_replay_failures for the replay of a refused sendmsg_x
 // chunk (rocketnet_platform_socket_send_packets).
@@ -3156,15 +3306,18 @@ static void rocketnet_platform_darwin_send_packet( rocketnet_platform_socket_t *
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( failures == &socket->send_failures || failures == &socket->send_replay_failures );
 
+    const int call = failures == &socket->send_failures ? ROCKETNET_PLATFORM_SEND_CALL_SENDTO : ROCKETNET_PLATFORM_SEND_CALL_REPLAY;
+
 #if defined(ROCKETNET_PLATFORM_SEND_SEAM)
     int injected_error = 0;
     if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
     {
-        errno = injected_error;
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
-        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( injected_error ) );
         rocketnet_platform_atomic_add_u64( failures, 1 );
+        rocketnet_platform_darwin_send_failed( socket, call, injected_error );
+        errno = injected_error;
         return;
     }
 #endif
@@ -3191,10 +3344,12 @@ static void rocketnet_platform_darwin_send_packet( rocketnet_platform_socket_t *
         int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in6) ) );
         if ( result < 0 )
         {
+            const int error = errno;
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( &to, address_string );
-            rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+            rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( error ) );
             rocketnet_platform_atomic_add_u64( failures, 1 );
+            rocketnet_platform_darwin_send_failed( socket, call, error );
         }
     }
     else
@@ -3208,10 +3363,12 @@ static void rocketnet_platform_darwin_send_packet( rocketnet_platform_socket_t *
             int result = int( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr*)( &socket_address ), sizeof(sockaddr_in) ) );
             if ( result < 0 )
             {
+                const int error = errno;
                 char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                 rocketnet_address_to_string( &to, address_string );
-                rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( errno ) );
+                rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( error ) );
                 rocketnet_platform_atomic_add_u64( failures, 1 );
+                rocketnet_platform_darwin_send_failed( socket, call, error );
             }
         }
         else
@@ -3744,6 +3901,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             }
 
             rocketnet_platform_note_send_failure( socket );
+            rocketnet_platform_darwin_send_failed( socket, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, error );
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];

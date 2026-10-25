@@ -191,6 +191,7 @@ struct rocketnet_server_xdp_socket_t
     struct xsk_ring_prod fill_queue;
     struct xsk_socket * xsk;
     bool zero_copy;
+    uint64_t ring_bytes;                        // the four rings' descriptors, in the direct allocation count while xsk and umem live
 
     uint8_t padding_2[4096];
 
@@ -1737,11 +1738,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         if ( posix_memalign( &socket->buffer, (size_t) getpagesize(), (size_t) buffer_size ) ) 
         {
+            socket->buffer = NULL;              // destroy removes the count only for a granted block
             rocketnet_allocation_refused();
             rocketnet_error( "server could not allocate buffer" );
             rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
+        rocketnet_direct_allocation_add( (uint64_t) buffer_size );
 
         // create umem and xdp socket: zero copy first, copy if the transport refuses the zero-copy bind.
         // A refused bind leaves the umem's rings set, so the fallback starts from a fresh umem.
@@ -1784,6 +1787,14 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             xsk_umem__delete( socket->umem );
             socket->umem = NULL;
         }
+
+        // the kernel's fill, completion, receive and send rings, mapped by
+        // libxdp at the umem and socket creates: their descriptor bytes join
+        // the direct allocation count until destroy deletes them
+
+        socket->ring_bytes = (uint64_t) ( ROCKETNET_XDP_FILL_RING_SIZE + XSK_RING_CONS__DEFAULT_NUM_DESCS ) * sizeof(uint64_t) +
+                             (uint64_t) ( ROCKETNET_XDP_RECV_QUEUE_SIZE + ROCKETNET_XDP_SEND_QUEUE_SIZE ) * sizeof(struct xdp_desc);
+        rocketnet_direct_allocation_add( socket->ring_bytes );
 
         // record the mode the kernel bound
 
@@ -2005,7 +2016,17 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
             xsk_umem__delete( socket->umem );
         }
 
-        free( socket->buffer );
+        if ( socket->ring_bytes )
+        {
+            rocketnet_direct_allocation_remove( socket->ring_bytes );
+            socket->ring_bytes = 0;
+        }
+
+        if ( socket->buffer )
+        {
+            free( socket->buffer );
+            rocketnet_direct_allocation_remove( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE );
+        }
         socket->~rocketnet_server_xdp_socket_t();
     }
 

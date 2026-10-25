@@ -175,6 +175,7 @@ struct rocketnet_server_uring_t
     rocketnet_address_t bind_address;
 
     struct io_uring ring;
+    uint64_t ring_mapped_bytes;                 // the submission, completion and entry rings mapped at create, in the direct allocation count
 
     struct rocketnet_server_uring_queue_t * queues;
 
@@ -532,10 +533,15 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 // only succeeds where the check is inverted, and the ring is the same ring
 // either way. Unregister then has to carry the same nonzero resv.
 
+// Either form maps the ring's entries from the OS outside the allocator, so
+// setup adds those bytes to the direct allocation count and free removes them.
+
 static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct io_uring * ring, unsigned int entries, int bgid, bool * inverted_resv, int * error )
 {
     *inverted_resv = false;
     struct io_uring_buf_ring * buf_ring = io_uring_setup_buf_ring( ring, entries, bgid, 0, error );
+    if ( buf_ring )
+        rocketnet_direct_allocation_add( (uint64_t) entries * sizeof(struct io_uring_buf) );
     if ( buf_ring || *error != -EINVAL )
         return buf_ring;
 
@@ -558,6 +564,7 @@ static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct 
 
     buf_ring = (struct io_uring_buf_ring *) memory;
     io_uring_buf_ring_init( buf_ring );
+    rocketnet_direct_allocation_add( (uint64_t) bytes );
     *inverted_resv = true;
     *error = 0;
     return buf_ring;
@@ -565,6 +572,7 @@ static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct 
 
 static void rocketnet_server_uring_free_buf_ring( struct io_uring * ring, struct io_uring_buf_ring * buf_ring, unsigned int entries, int bgid, bool inverted_resv )
 {
+    rocketnet_direct_allocation_remove( (uint64_t) entries * sizeof(struct io_uring_buf) );
     if ( !inverted_resv )
     {
         io_uring_free_buf_ring( ring, buf_ring, entries, bgid );
@@ -1036,21 +1044,27 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
 #if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
 
 // the no-kernel-ring seam: a fake transport with queues but no ring. the test
-// owns it through these calls only.
+// owns it through these calls only. both blocks come from the counted
+// allocator, value-initialized as before, so the allocator's count sees them.
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int num_queues )
 {
     if ( num_queues <= 0 )
         return NULL;
-    struct rocketnet_server_uring_t * uring = new (std::nothrow) rocketnet_server_uring_t();
-    if ( !uring )
+    void * storage = rocketnet_malloc( NULL, sizeof(struct rocketnet_server_uring_t) );
+    if ( !storage )
         return NULL;
-    uring->queues = new (std::nothrow) rocketnet_server_uring_queue_t[(size_t) num_queues]();
-    if ( !uring->queues )
+    struct rocketnet_server_uring_t * uring = new ( storage ) rocketnet_server_uring_t();
+    void * queues = rocketnet_malloc( NULL, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
+    if ( !queues )
     {
-        delete uring;
+        uring->~rocketnet_server_uring_t();
+        rocketnet_free( NULL, storage );
         return NULL;
     }
+    uring->queues = (struct rocketnet_server_uring_queue_t*) queues;
+    for ( int i = 0; i < num_queues; i++ )
+        new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
     uring->num_queues = num_queues;
     uring->test_no_ring = true;
     return uring;
@@ -1058,8 +1072,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int n
 
 void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t * uring )
 {
-    delete[] uring->queues;
-    delete uring;
+    for ( int i = 0; i < uring->num_queues; i++ )
+        uring->queues[i].~rocketnet_server_uring_queue_t();
+    rocketnet_free( NULL, uring->queues );
+    uring->~rocketnet_server_uring_t();
+    rocketnet_free( NULL, uring );
 }
 
 void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring_t * uring, int count )
@@ -1315,6 +1332,13 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     }
     uring->ring_ready = true;
 
+    // the kernel's rings, mapped by liburing: the submission ring, the
+    // completion ring where it is a mapping of its own, and the entries
+    uring->ring_mapped_bytes = (uint64_t) uring->ring.sq.ring_sz +
+                               ( uring->ring.cq.ring_ptr != uring->ring.sq.ring_ptr ? (uint64_t) uring->ring.cq.ring_sz : 0 ) +
+                               (uint64_t) params.sq_entries * sizeof(struct io_uring_sqe);
+    rocketnet_direct_allocation_add( uring->ring_mapped_bytes );
+
     if ( ( params.features & IORING_FEAT_NODROP ) == 0 )
     {
         rocketnet_error( "io_uring transport: this kernel drops completions on overflow (no IORING_FEAT_NODROP)" );
@@ -1429,6 +1453,9 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 
         if ( !ROCKETNET_URING_FAKE( uring ) )
             io_uring_queue_exit( &uring->ring );
+        if ( uring->ring_mapped_bytes )
+            rocketnet_direct_allocation_remove( uring->ring_mapped_bytes );
+        uring->ring_mapped_bytes = 0;
         uring->ring_ready = false;
     }
 

@@ -128,6 +128,33 @@ owned RX banks and publishes them to the caller, which copies their packets and
 performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
+Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
+configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+the three banks are one allocation made at create. A packet sent while all
+three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
+a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
+packet in `sendmsg_x`, so 45,000 packets a second keep it about 80% busy and a
+burst backs up for tens of milliseconds. With fixed banks of 1000 packets that
+backlog found every bank in flight thousands of times a minute
+(`SEND_FAILED` 9,240 in 60 s, all of them for want of a free bank, none a
+socket errno); banks sized to the client count hold it. A failed socket send
+is counted apart, by call and errno, and the first of each is logged once.
+
+`SEND_FAILED` is the sum of the socket's failures and the handoff's drops, and
+the handoff counts each drop by its path: `no-free-bank` (the producer bank is
+full and every other bank is in flight), `handoff-busy` (full, and the handoff
+lock was held), `stopping` and `invalid-packet`. The first drop on each path
+logs once; the transport logs every path's count, zeros included, beside the
+socket's send failures when it closes. On a 600 s cell at 1000 clients the
+worker's QoS class read default (0x15) and it ran on the same six cores
+throughout. It held 16.3 to 17.3 us per packet for most of the run, but in two
+episodes of about 30 s (from 210 s and from 411 s to 440 s into the run) (with the server host's load rising to 8.3) the cost rose
+to 26 to 29 us per packet. The worker then drains fewer packets a second than
+main produces, and no bank size absorbs a deficit that lasts that long: those
+episodes dropped 240,768 packets, all `no-free-bank`, no socket errno. This is
+an observation of a host loaded by other work, not a bank sizing fault: the
+banks are unchanged.
+
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
 (`rocketnet_msgx_transport` in `sdk/rocketnet_driver_builtin.cpp`), so the two
