@@ -345,9 +345,10 @@ jobs:
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
     # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
-    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all, inside the 90-minute bound.
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The iocp and rio server
+    # cells add 1800 s each, about 79 minutes in all, inside the 120-minute bound.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -378,6 +379,64 @@ jobs:
       - name: UDP loopback soak (Windows)
         shell: bash
         run: ./bin/Release/soak.exe 200000
+
+      # The iocp server cell: 1800 s of bin/soak under loss, latency, jitter and
+      # duplication at both ends (the env overlay, the values
+      # scripts/soak-per-transport runs), held to flat handles, threads and
+      # private bytes by --assert-flat. The server transport is pinned and the
+      # granted name is checked from the run's own summary line.
+      - name: Soak iocp server (Windows, 1800 s, impaired, flat handles, threads and private bytes)
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -u
+          mkdir -p build/soak-windows
+          log=build/soak-windows/iocp.log
+          export ROCKETNET_SERVER_TRANSPORT=iocp ROCKETNET_CLIENT_TRANSPORT=portable
+          for end in SERVER CLIENT; do
+            export "ROCKETNET_${end}_SIMULATED_LOSS_PERCENT=5" "ROCKETNET_${end}_SIMULATED_LATENCY_MS=30" \
+                   "ROCKETNET_${end}_SIMULATED_JITTER_MS=20" "ROCKETNET_${end}_SIMULATED_DUPLICATE_PERCENT=2"
+          done
+          status=0
+          timeout 1920 ./bin/Release/soak.exe --seconds 1800 --assert-flat > "$log" 2>&1 || status=$?
+          granted=$(awk '$1 == "soak" && $2 == "summary:" && $3 == "server_transport_io" { v = $4 } END { print v }' "$log" | tr -d '\r')
+          grep -E '^soak (resources|summary): ' "$log" | tail -n 40 || true
+          if [ "$status" -ne 0 ]; then
+            echo "SOAK cell=iocp FAIL soak exited $status"; tail -n 20 "$log"; exit 1
+          fi
+          if [ "$granted" != "iocp" ]; then
+            echo "SOAK cell=iocp FAIL server transport granted '${granted:-none}', the cell pins iocp"; exit 1
+          fi
+          echo "SOAK cell=iocp PASS server=$granted"
+
+      # The rio server cell: 1800 s of bin/soak under loss, latency, jitter and
+      # duplication at both ends (the env overlay, the values
+      # scripts/soak-per-transport runs), held to flat handles, threads and
+      # private bytes by --assert-flat. The server transport is pinned and the
+      # granted name is checked from the run's own summary line.
+      - name: Soak rio server (Windows, 1800 s, impaired, flat handles, threads and private bytes)
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -u
+          mkdir -p build/soak-windows
+          log=build/soak-windows/rio.log
+          export ROCKETNET_SERVER_TRANSPORT=rio ROCKETNET_CLIENT_TRANSPORT=portable
+          for end in SERVER CLIENT; do
+            export "ROCKETNET_${end}_SIMULATED_LOSS_PERCENT=5" "ROCKETNET_${end}_SIMULATED_LATENCY_MS=30" \
+                   "ROCKETNET_${end}_SIMULATED_JITTER_MS=20" "ROCKETNET_${end}_SIMULATED_DUPLICATE_PERCENT=2"
+          done
+          status=0
+          timeout 1920 ./bin/Release/soak.exe --seconds 1800 --assert-flat > "$log" 2>&1 || status=$?
+          granted=$(awk '$1 == "soak" && $2 == "summary:" && $3 == "server_transport_io" { v = $4 } END { print v }' "$log" | tr -d '\r')
+          grep -E '^soak (resources|summary): ' "$log" | tail -n 40 || true
+          if [ "$status" -ne 0 ]; then
+            echo "SOAK cell=rio FAIL soak exited $status"; tail -n 20 "$log"; exit 1
+          fi
+          if [ "$granted" != "rio" ]; then
+            echo "SOAK cell=rio FAIL server transport granted '${granted:-none}', the cell pins rio"; exit 1
+          fi
+          echo "SOAK cell=rio PASS server=$granted"
 
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
