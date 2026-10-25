@@ -1460,8 +1460,10 @@ struct rocketnet_server_config_t
 /// peak: the most the allocator holds over create, connect or start,
 /// disconnect or stop, reconnect or restart, and destroy, each allocation
 /// with its alignment header, for whichever transport of the config's list
-/// is granted (the largest of them). An allocator over a region of that
-/// size never runs out.
+/// is granted (the largest of them). For the planned built-in transports,
+/// with unchanged configuration and environment overrides, an allocator over
+/// a region of that size never runs out. The development link simulator is
+/// included in development builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
 /// stack (the platform default: pthread's default attribute, or the
@@ -1469,8 +1471,8 @@ struct rocketnet_server_config_t
 /// transport the page-aligned UMEM, 256 MiB per queue (65536 frames of 4096
 /// bytes), and the AF_XDP rings; on the
 /// io_uring transport its rings and each queue's provided buffer ring; kernel
-/// socket buffers. A custom transport's own memory, the development link
-/// simulator's and a ROCKETNET_SERVER_ or ROCKETNET_CLIENT_ environment
+/// socket buffers. A custom transport's own memory and a
+/// ROCKETNET_SERVER_ or ROCKETNET_CLIENT_ environment
 /// override changed after the call are not counted either. Connect and start
 /// log each candidate's plan at info level ("client memory plan",
 /// "server memory plan").

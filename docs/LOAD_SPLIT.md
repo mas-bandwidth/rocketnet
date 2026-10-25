@@ -24,10 +24,13 @@ load_split plan-server 1000
 load_split plan-client-shard 1000 250
 ```
 
-The `split_plan:` receipt covers public SDK create memory only: one server on
-the server host, or the local number of clients on a shard host. It excludes
-transport connect/start allocations, OS resources, and process overhead.
-Provision and document a separate native/transport reserve before deployment.
+The `split_plan:` receipt reports `scope=lifecycle_allocator_peak`: one server
+on the server host, or the local number of clients on a shard host. It includes
+create and planned built-in transport allocations over repeated lifecycle
+cycles, with unchanged configuration and environment overrides. It excludes
+OS resources (`os_owned_resources=excluded`), custom-transport allocations
+and process overhead. Provision and
+document separate headroom for those exclusions before deployment.
 Do not substitute the same-process `LOAD_PLAN_ONLY` total for these role
 specific plans. Both role runs, and both planners, first pay one warm cycle
 (init, a one-client loopback server, one client, term) so first-use

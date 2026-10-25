@@ -37,18 +37,18 @@
 #elif defined(__APPLE__)
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523801417 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745629 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745965 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517405053 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21959825 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960161 )
 #endif
 #else
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3231507582ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745957 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3231507646ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746021 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111218ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960153 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111282ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960217 )
 #endif
 #endif
 

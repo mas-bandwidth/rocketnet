@@ -1121,7 +1121,7 @@ int main( int argc, char ** argv )
         free( timing.buckets );
         printf( "load_plan: clients=%d profile=%s client_public_required_bytes=%zu "
                 "server_public_required_bytes=%zu total_public_required_bytes=%zu "
-                "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                "public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start "
                 "term_status_code=%d reason=%s verdict=%s\n",
                 num_clients, profile_name, client_public_required_bytes,
                 server_public_required_bytes, total_public_required_bytes,
