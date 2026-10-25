@@ -117,7 +117,13 @@ static void no_worker_world_destroy( no_worker_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
         rn_test_client_stop_and_destroy( world->clients[i] );
-    rn_test_server_stop_and_destroy( world->server );
+    rocketnet_server_stop( world->server );
+    // Bound the completion poll without sleeping; loopback stops immediately.
+    for ( int step = 0; step < 10000000 && !rocketnet_server_stopped( world->server ); step++ )
+    {
+    }
+    check( rocketnet_server_stopped( world->server ) );
+    rocketnet_server_destroy( world->server );
     world->num_clients = 0;
     world->server = NULL;
 }
