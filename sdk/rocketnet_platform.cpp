@@ -16,11 +16,77 @@
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#include <map>
+#include <string>
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+
+// The unit suite installs this table before main. Reads then stop at the
+// table, including an absent name, so ambient process values cannot enter a
+// unit case. Standard strings keep test values exact and impose no SDK limit;
+// the caller's buffer remains the only limit rocketnet_platform_getenv reports.
+static bool rocketnet_platform_test_environment_installed;
+
+static std::map<std::string, std::string> & rocketnet_platform_test_environment()
+{
+    static std::map<std::string, std::string> environment;
+    return environment;
+}
+
+void rocketnet_platform_test_environment_install()
+{
+    rocketnet_platform_test_environment_installed = true;
+}
+
+void rocketnet_platform_test_environment_set( const char * name, const char * value )
+{
+    rocketnet_assert( name && value );
+    rocketnet_platform_test_environment()[name] = value;
+}
+
+void rocketnet_platform_test_environment_unset( const char * name )
+{
+    rocketnet_assert( name );
+    rocketnet_platform_test_environment().erase( name );
+}
+
+void rocketnet_platform_test_environment_reset()
+{
+    rocketnet_platform_test_environment().clear();
+}
+
+// Returns true when the installed table answered the read. An unset name is
+// an answer (0), distinct from no table, which leaves the real platform path.
+static bool rocketnet_platform_test_environment_getenv( const char * name, char * buffer, size_t size, int * result )
+{
+    if ( !rocketnet_platform_test_environment_installed )
+        return false;
+    buffer[0] = '\0';
+    const std::map<std::string, std::string> & environment = rocketnet_platform_test_environment();
+    const std::map<std::string, std::string>::const_iterator entry = environment.find( name );
+    if ( entry == environment.end() )
+    {
+        *result = 0;
+        return true;
+    }
+    if ( entry->second.size() >= size )
+    {
+        *result = -1;
+        return true;
+    }
+    memcpy( buffer, entry->second.c_str(), entry->second.size() + 1 );
+    *result = 1;
+    return true;
+}
+
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -54,6 +120,17 @@ struct timeval rocketnet_platform_timeval_from_seconds( float seconds )
         tv.tv_usec -= 1000000;
     }
     return tv;
+}
+
+uint32_t rocketnet_platform_timeout_milliseconds( float seconds )
+{
+    // Round positive timeouts up and cap before conversion, never requesting an infinite wait.
+    const double milliseconds = ceil( (double) seconds * 1000.0 );
+    if ( !( milliseconds > 1.0 ) )
+        return 1;
+    if ( milliseconds >= 4294967294.0 )
+        return UINT32_C(0xFFFFFFFE);
+    return (uint32_t) milliseconds;
 }
 
 struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time )
@@ -654,6 +731,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -2041,42 +2123,6 @@ template <typename T> struct rocketnet_vector_t
         return true;
     }
 
-    void remove( int i )
-    {
-        rocketnet_assert( data );
-        rocketnet_assert( i >= 0 && i < length );
-        if ( i != length - 1 )
-        {
-            data[i] = data[length - 1];
-        }
-        length--;
-    }
-
-    void remove_ordered( int i )
-    {
-        rocketnet_assert( data );
-        rocketnet_assert( i >= 0 && i < length );
-        memmove( &data[i], &data[i + 1], sizeof( T ) * ( length - ( i + 1 ) ) );
-        length--;
-    }
-
-    T * insert( int i )
-    {
-        rocketnet_assert( i >= 0 && i <= length );
-        if ( length == INT_MAX || !resize( length + 1 ) )
-            return NULL;
-        memmove( &data[i + 1], &data[i], sizeof( T ) * ( length - 1 - i ) );
-        return &data[i];
-    }
-
-    T * insert( int i, const T & t )
-    {
-        T * p = insert( i );
-        if ( p )
-            *p = t;
-        return p;
-    }
-
     T * add()
     {
         if ( length == INT_MAX || !reserve( length + 1 ) )
@@ -2561,6 +2607,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -4346,6 +4397,11 @@ int rocketnet_platform_connection_type()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     // getenv_s with no buffer reports the bytes the value needs, terminator
     // included, and zero when the variable is unset
@@ -4926,7 +4982,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     else if ( timeout_seconds > 0.0f )
     {
         // set receive timeout
-        DWORD tv = DWORD( timeout_seconds * 1000.0f );
+        DWORD tv = (DWORD) rocketnet_platform_timeout_milliseconds( timeout_seconds );
         if ( setsockopt( s->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *)( &tv ), sizeof( tv ) ) < 0 )
         {
             rocketnet_error( "failed to set socket receive timeout" );
@@ -5128,8 +5184,9 @@ receive_again:
 #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
         if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
+            // Preserve the drained sentinel so batch receive cannot manufacture empty packets.
             if ( result < 0 )
-                return 0;
+                return -1;
             if ( result == 0 )
                 continue;
             break;
@@ -5241,13 +5298,8 @@ static int get_connection_type()
     if ( !addresses )
         return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
-    int result = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-    
-    // if there are any adapters at all, default to wired
-    if ( addresses )
-    {
-        result = ROCKETNET_CONNECTION_TYPE_WIRED;
-    }
+    // A nonempty adapter list defaults to wired.
+    int result = ROCKETNET_CONNECTION_TYPE_WIRED;
 
     // if any wifi adapter exists and is connected to a network, assume we're on wifi.
     IP_ADAPTER_ADDRESSES * address = addresses;
@@ -5261,10 +5313,7 @@ static int get_connection_type()
         address = address->Next;
     }
 
-    if ( addresses )
-    {
-        rocketnet_free( rocketnet_global_context, addresses );
-    }
+    rocketnet_free( rocketnet_global_context, addresses );
 
     return result;
 }

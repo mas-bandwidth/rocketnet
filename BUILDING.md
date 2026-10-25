@@ -61,7 +61,12 @@ and starts no thread; CI runs it on a Linux leg beside
 `tools/check_client_server_words.py`.
 
 `./bin/test` does not open a socket and does not start a transport. It drives the
-state machines and the in-memory network simulator. Tests run in parallel
+state machines and the in-memory network simulator, and reads and writes no
+file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
+and `tests/wycheproof/*_test.json`) are compiled into it at build time by
+`cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
+regenerated only by the tool `./bin/connect_token_vectors <path>`
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
@@ -175,13 +180,18 @@ clock starts at 1000.0). A binary that opens a real socket, starts a thread,
 sleeps or reads the wall clock is functional, and CI runs it only in a step
 named functional, never as a unit step.
 
+Unit cases feed SDK environment parsing through the in-memory source compiled
+only into `rocketnet_test_hooks`; they never read or mutate the process
+environment. `functional/environment_wiring.cpp` sets and restores real
+variables and pins the SDK wiring, precedence, and refusal paths.
+
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
 | `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
-| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
@@ -193,9 +203,23 @@ named functional, never as a unit step.
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
 
+The shared-library export cases are functional because they load the built
+libraries through the OS loader: `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant`, and
+`test_dev_token_minting_absent_in_release`. They run from `./bin/functional`,
+not `./bin/test`.
+
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
+
+The corpus-consistency cases in `./bin/functional`
+(functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
+`test_pcapng_corpus_witness_unread_packet_goes_red`,
+`test_pcapng_corpus_covers_control_packet_types` and
+`test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
+`tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
+as findings land, so they are functional cases, never unit ones.
 
 The two process thread-count cases live in `functional/process_thread_counts.cpp`
 and count the process's threads from `/proc/self/task`, which Linux has and

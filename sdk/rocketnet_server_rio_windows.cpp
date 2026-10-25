@@ -841,7 +841,10 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
     if ( rocketnet_platform_receive_status_is_reset( (int) status ) )
         rocketnet_platform_count_receive_reset();
     if ( status == WSAEMSGSIZE )
+    {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );     // past the slice: oversize
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE );
+    }
     else if ( status != 0 )
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
     else
@@ -850,7 +853,11 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         rocketnet_address_t from;
         rocketnet_rio_bank_t * bank = &rio->banks[rio->fill_bank];
         if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
+        {
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE );
+            rocketnet_rio_count( rio, bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ?
+                ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT : ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE );
+        }
         else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), rio->ipv6, &from ) )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
         else if ( bank->num_packets >= ROCKETNET_RIO_RECEIVES )

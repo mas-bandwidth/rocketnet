@@ -8874,6 +8874,13 @@ struct rocketnet_functional_test_t
     bool ( *runs_here )(); // NULL: every host; else the case is in the suite only where it returns true
 };
 
+extern void rocketnet_test_real_environment_dev_session_sequence_start();
+extern void rocketnet_test_real_environment_log_level_before_init();
+extern void rocketnet_test_real_environment_config_precedence_and_invalid();
+extern void rocketnet_test_real_environment_client_step_driven();
+extern void rocketnet_test_real_environment_dev_simulator_number();
+extern void rocketnet_test_real_environment_server_ipv4_address();
+
 // POSIX lifecycle stress: real sockets, counted file descriptors and threads
 // (and on Linux locked memory), in functional/posix_lifecycle_stress.cpp.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -8987,6 +8994,9 @@ extern void windows_server_drops_runt_and_garbage_iocp_ipv4();
 extern void windows_server_drops_runt_and_garbage_iocp_ipv6();
 extern void windows_server_drops_runt_and_garbage_rio_ipv4();
 extern void windows_server_drops_runt_and_garbage_rio_ipv6();
+extern void windows_server_counts_oversize_as_prefilter_too_large_iocp();
+extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
+extern void windows_server_counts_runt_as_prefilter_too_short_rio();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
@@ -9608,6 +9618,16 @@ extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void test_api_polish_dev_token_string();
+extern void test_dev_connect_token_timeout_is_the_named_constant();
+extern void test_dev_token_minting_absent_in_release();
+
+// the corpus-consistency cases (functional/corpus_consistency.cpp): each walks a
+// directory of committed inputs that grows, so none is a unit case
+extern void test_pcapng_corpus_replay();
+extern void test_pcapng_corpus_witness_unread_packet_goes_red();
+extern void test_pcapng_corpus_covers_control_packet_types();
+extern void test_fuzz_prefilter_seed_names_match_outcomes();
 
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
@@ -9640,10 +9660,23 @@ extern void rocketnet_test_public_step_driven_client_connects_without_a_thread()
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
+    { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
+    { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
+    { "test_real_environment_client_step_driven", rocketnet_test_real_environment_client_step_driven, NULL },
+    { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
+    { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+    { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
+    { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
+    { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
+    { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
+    { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
+    { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
@@ -9906,6 +9939,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_iocp_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_iocp_ipv6, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv4", windows_server_drops_runt_and_garbage_rio_ipv4, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_iocp", windows_server_counts_oversize_as_prefilter_too_large_iocp, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_rio", windows_server_counts_oversize_as_prefilter_too_large_rio, NULL },
+    { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4, NULL },
@@ -9937,6 +9973,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
+
+void rocketnet_functional_restore_log_function()
+{
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+}
 
 void rocketnet_functional_prepare()
 {

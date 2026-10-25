@@ -11,7 +11,7 @@ binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').reso
 # ignored: the payload is fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (16384).
 # Slots 0 is the default config (ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, 8), which
 # must plan and create at 1000 clients.
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 0)]
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 0), (1000, 4096, 1)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
