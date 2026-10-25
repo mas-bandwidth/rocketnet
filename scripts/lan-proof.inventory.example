@@ -8,7 +8,8 @@
 #   ssh-name  the name ssh would use; replace every .invalid name before a live run
 #   role      server or client
 #   os        linux, macos or windows
-#   iface     the test interface
+#   iface     the test interface; for an xdp server, a Linux bridge backed by
+#             the dedicated test NIC
 #   uplink    "-" or "uplink"; the xdp cell refuses an uplink interface
 #
 # The real inventory lives outside the repository.

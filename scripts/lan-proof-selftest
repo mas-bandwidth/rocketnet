@@ -53,6 +53,21 @@ EOF
 "$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 >"$tmp/xdp" 2>&1 && say "xdp accepted an uplink"
 grep -q 'refuses an uplink' "$tmp/xdp" || say "xdp refusal did not name the uplink"
 
+sed 's/server linux/server macos/' "$tmp/inventory" > "$tmp/nonlinux"
+"$proof" --dry-run --inventory "$tmp/nonlinux" --cell xdp --duration 120 >"$tmp/xdp-nonlinux" 2>&1 &&
+    say "xdp accepted a non-Linux server"
+grep -q 'needs a Linux server' "$tmp/xdp-nonlinux" || say "xdp non-Linux refusal was unclear"
+
+xdp_command=$(LAN_PROOF_BASE=/tmp/lan-proof-live "$here/lan-proof-remote" xdp-command \
+    0123456789abcdef "$tmp/run" test-bridge 100 60 0123456789abcdef 40000 600000) ||
+    say "xdp command exited $?"
+echo "$xdp_command" | grep -q 'vng --run' || say "xdp command missed vng"
+echo "$xdp_command" | grep -q -- '--memory 1536M --cpus 3' || say "xdp command missed guest sizing"
+echo "$xdp_command" | grep -q 'irqaffinity=0.*isolcpus=1-2.*nohz_full=1-2' || say "xdp command missed boot isolation"
+echo "$xdp_command" | grep -q -- '--network bridge=test-bridge' || say "xdp command missed the dedicated bridge"
+echo "$xdp_command" | grep -q 'guest-server' || say "xdp command missed the guest server"
+echo "$xdp_command" | grep -q 'scripts/lan-proof-remote.*guest-server' || say "xdp command used a helper outside the shared checkout"
+
 cat > "$tmp/server.log" <<'EOF'
 split_ready: schema=split_v1 role=server run_id=0123456789abcdef total=1000 duration_s=120 profile=default payload_bytes=proof rate_target_hz=10 load=proof address=192.0.2.10:40000 key=00 transport=gso startup_utc_s=1 transport_pin=gso
 split_proof: role=server run_id=0123456789abcdef transport=gso transport_pin=gso small_bytes=1200 fragmented_bytes=2000 target_kbps=256 min_client_up_kbps=277.859200 min_client_down_kbps=279.153067 checksum_errors=0 receipt_errors=0 receipts_dropped=0 disconnects=0 verdict=PASS

@@ -1,8 +1,8 @@
 # LAN proof
 
 One command runs one cell. The native cells are gso, io_uring and xdp on
-Linux, iocp and rio on Windows, and msgx on macOS. The results table of
-every cell is recorded in `docs/runs/lan-1000-proof.md`.
+Linux, iocp and rio on Windows, and msgx on macOS. The results table of every
+completed cell is recorded below.
 
 The inventory has one row per machine: label, ssh name, role, os, test
 interface, and whether that interface is the machine uplink. The real
@@ -39,8 +39,16 @@ NIC speed in megabits, clients, duration, connected throughout, timeouts
 kbps, verdict. A speed that cannot be read is `unknown`. A slower switch
 link is recorded when it is known.
 
-The xdp cell runs in a guest on a test interface. The script refuses that
-cell when the inventory marks the interface as the uplink.
+For an xdp cell, the inventory's server interface is a dedicated Linux bridge
+backed by X540 port 0, cabled to the LAN switch. It must not be the host's
+uplink. The XDP cell has no recorded result until that test port is cabled and
+the bridge exists. The script starts the server with the host's own kernel
+inside a `virtme-ng` guest, using 1536 MiB,
+three CPUs, `irqaffinity=0 isolcpus=1-2 nohz_full=1-2`, and
+`--network bridge=<test bridge>`. The guest provisions its bridged LAN
+interface, and the clients use the address printed by the guest's ready line.
+The script refuses the xdp cell when the inventory marks this interface as the
+uplink.
 
 ## Recorded cells
 
@@ -51,5 +59,4 @@ cell when the inventory marks the interface as the uplink.
 The bounded Linux gso cell above (1000 clients in four shards of 250 on
 two client machines, 120 s) ran through the script; its five logs, the
 allocation manifest and the start and end loads are kept with the run
-directory named in the session report. This row is copied into
-`docs/runs/lan-1000-proof.md` with the remaining cells.
+directory named in the session report. Further completed cells are appended to this table.

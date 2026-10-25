@@ -9,7 +9,11 @@
 #   build <commit>
 #   hostinfo <iface>
 #   load
+#   check-xdp-bridge <bridge>
 #   start-server <commit> <dir> <transport> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   start-xdp-server <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
+#   guest-server <commit> <total> <duration> <run-id> <port> <cap-kbps>
+#   xdp-command <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
 #   start-shard <commit> <dir> <name> <total> <duration> <run-id> <first> <count> <server-endpoint> <key> <cap-kbps>
 #   alive <pidfile>
 #   stop <pidfile>
@@ -21,7 +25,7 @@
 set -u
 
 REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
-BASE="${HOME}/lan-proof-live"
+BASE="${LAN_PROOF_BASE:-${HOME}/lan-proof-live}"
 
 fail()
 {
@@ -31,7 +35,7 @@ fail()
 
 usage()
 {
-    echo "usage: lan-proof-remote build|hostinfo|load|start-server|start-shard|alive|stop|collect ..." >&2
+    echo "usage: lan-proof-remote build|hostinfo|load|check-xdp-bridge|start-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
     exit 2
 }
 
@@ -87,6 +91,29 @@ cmd_load()
     echo "load1=$load1 nproc=$nproc"
 }
 
+cmd_check_xdp_bridge()
+{
+    local bridge=$1 default_dev member members="" default_devs routes
+    [ -d "/sys/class/net/$bridge/bridge" ] ||
+        fail "xdp bridge: $bridge is not a Linux bridge"
+    for member in "/sys/class/net/$bridge/brif/"*; do
+        [ -e "$member" ] || continue
+        members="$members ${member##*/}"
+    done
+    [ -n "$members" ] || fail "xdp bridge: $bridge has no test NIC"
+    routes=$( { ip -4 route show default && ip -6 route show default; } 2>/dev/null ) ||
+        fail "xdp bridge: cannot inspect default routes"
+    default_devs=$( printf '%s\n' "$routes" |
+        awk '/^default / { for (i = 1; i < NF; ++i) if ($i == "dev") print $(i + 1) }' |
+        sort -u )
+    for default_dev in $default_devs; do
+        [ "$default_dev" != "$bridge" ] || fail "xdp bridge: $bridge carries a default route"
+        [ ! -e "/sys/class/net/$bridge/brif/$default_dev" ] ||
+            fail "xdp bridge: $bridge contains a default-route interface"
+    done
+    echo "bridge=$bridge member=${members# } default_route_interfaces=${default_devs:-none}"
+}
+
 start_recorded()
 {
     local dir=$1 name=$2
@@ -107,6 +134,49 @@ cmd_start_server()
     [ -x "$bin" ] || fail "start-server: no built load_split for $commit"
     start_recorded "$dir" server env ROCKETNET_SERVER_TRANSPORT="$transport" \
         "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+cmd_guest_server()
+{
+    local commit=$1 total=$2 duration=$3 run_id=$4 port=$5 cap=$6
+    local repo="$BASE/$commit" bin="$BASE/$commit/bin/load_split" iface address
+    [ -x "$bin" ] || fail "guest-server: no built load_split for $commit"
+    iface=$( ip -4 -o addr show scope global | awk '$2 != "lo" { print $2; exit }' )
+    [ -n "$iface" ] || fail "guest-server: the guest has no LAN interface"
+    address=$( ip -4 -o addr show dev "$iface" | awk '{ split($4, a, "/"); print a[1]; exit }' )
+    [ -n "$address" ] || fail "guest-server: the guest LAN interface has no IPv4 address"
+    cd "$repo" || fail "guest-server: cannot enter checkout"
+    scripts/rocketnet-provision "$iface" 2 provision 1-2 >/dev/null || fail "guest-server: XDP provision failed"
+    exec env ROCKETNET_SERVER_TRANSPORT=xdp "$bin" server "$total" "$duration" "$run_id" \
+        "$address:$port" "$address" "$cap" proof
+}
+
+make_xdp_command()
+{
+    local commit=$1 dir=$2 bridge=$3 total=$4 duration=$5 run_id=$6 port=$7 cap=$8
+    local repo="$BASE/$commit" self="$BASE/$commit/scripts/lan-proof-remote" guest
+    printf -v guest '%q ' sudo env "LAN_PROOF_BASE=$BASE" "$self" guest-server \
+        "$commit" "$total" "$duration" "$run_id" "$port" "$cap"
+    guest=${guest% }
+    XDP_COMMAND=( vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)"
+        --memory 1536M --cpus 3
+        --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2"
+        --network "bridge=$bridge" --rwdir "$repo" -- "$guest" )
+}
+
+cmd_start_xdp_server()
+{
+    local commit=$1 dir=$2 bridge=$3 total=$4 duration=$5 run_id=$6 port=$7 cap=$8
+    cmd_check_xdp_bridge "$bridge" >/dev/null
+    make_xdp_command "$commit" "$dir" "$bridge" "$total" "$duration" "$run_id" "$port" "$cap"
+    start_recorded "$dir" server timeout "$(( duration + 180 ))" "${XDP_COMMAND[@]}"
+}
+
+cmd_xdp_command()
+{
+    make_xdp_command "$@"
+    printf '%q ' "${XDP_COMMAND[@]}"
+    printf '\n'
 }
 
 cmd_start_shard()
@@ -151,7 +221,11 @@ case "${1:-}" in
     build)        [ $# -eq 2 ] || usage; cmd_build "$2" ;;
     hostinfo)     [ $# -eq 2 ] || usage; cmd_hostinfo "$2" ;;
     load)         cmd_load ;;
+    check-xdp-bridge) [ $# -eq 2 ] || usage; cmd_check_xdp_bridge "$2" ;;
     start-server) [ $# -eq 10 ] || usage; cmd_start_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    start-xdp-server) [ $# -eq 9 ] || usage; cmd_start_xdp_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
+    guest-server) [ $# -eq 7 ] || usage; cmd_guest_server "$2" "$3" "$4" "$5" "$6" "$7" ;;
+    xdp-command) [ $# -eq 9 ] || usage; cmd_xdp_command "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
     start-shard)  [ $# -eq 12 ] || usage; cmd_start_shard "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" ;;
     alive)        [ $# -eq 2 ] || usage; cmd_alive "$2" ;;
     stop)         [ $# -eq 2 ] || usage; cmd_stop "$2" ;;

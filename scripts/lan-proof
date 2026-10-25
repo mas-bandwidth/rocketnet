@@ -155,6 +155,7 @@ for ssh_name in $client_sshs; do
     [ "$ssh_name" != "$server_ssh" ] || refuse "a client is the server machine"
 done
 [ "$cell" = "xdp" ] && [ "$uplink" -eq 1 ] && refuse "xdp cell refuses an uplink interface"
+[ "$cell" = "xdp" ] && [ "$server_os" != "linux" ] && refuse "xdp cell needs a Linux server"
 
 echo "cell $cell duration $duration server $server_label"
 for label in $server_label $client_labels; do
@@ -295,6 +296,10 @@ for host in $client_sshs; do
     record_host "$host" "$iface" "$run_dir/client$i.host"
     i=$(( i + 1 ))
 done
+if [ "$cell" = "xdp" ]; then
+    ssh_run "$server_ssh" "$remote_path" check-xdp-bridge "$server_iface" > "$run_dir/xdp.bridge" 2>&1 ||
+        fail "the XDP server interface is not a dedicated non-uplink bridge; see $run_dir/xdp.bridge"
+fi
 server_address=$( sed -n 's/.* address=\([0-9.]*\).*/\1/p' "$run_dir/server.host" )
 server_speed=$( sed -n 's/.* speed_mbps=\([0-9]*\).*/\1/p' "$run_dir/server.host" )
 [ -n "$server_address" ] && [ "$server_address" != "unknown" ] || fail "server address is unknown"
@@ -307,8 +312,16 @@ case "$server_os" in
         ssh_run "$server_ssh" winlock --exclusive "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
             fail "cannot start the server"
         ;;
+    linux)
+        if [ "$cell" = "xdp" ]; then
+            ssh_run "$server_ssh" "$remote_path" start-xdp-server "$commit" "$remote_run" "$server_iface" "$clients_total" "$duration" "$run_id" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
+                fail "cannot start the XDP guest server"
+        else
+            ssh_run "$server_ssh" "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
+                fail "cannot start the server"
+        fi
+        ;;
     *)
-        [ "$cell" = "xdp" ] && fail "xdp live start needs a guest test interface; this run has none recorded"
         ssh_run "$server_ssh" "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
             fail "cannot start the server"
         ;;
@@ -326,6 +339,12 @@ done
 echo "$ready" > "$run_dir/ready.txt"
 key=$( printf '%s\n' "$ready" | sed -n 's/.* key=\([0-9a-fA-F]*\).*/\1/p' )
 [ -n "$key" ] || fail "the ready line named no key"
+if [ "$cell" = "xdp" ]; then
+    server_endpoint=$( printf '%s\n' "$ready" | sed -n 's/.* address=\([^ ]*\).*/\1/p' )
+    server_address=${server_endpoint%:*}
+    [ -n "$server_address" ] && [ "$server_address" != "$server_endpoint" ] ||
+        fail "the XDP guest ready line named no IPv4 endpoint"
+fi
 
 # shards of at most 250, spread over the client machines, never the server's
 shard_size=250
