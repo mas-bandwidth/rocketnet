@@ -1,6 +1,10 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
 
+#if defined( __cplusplus )
+#include "rocketnet_sequence_buffer.h"
+#endif
+
 // The published depth bounds (STANDARD.md _Replay window sizing_): the message
 // tier's half-range reconstruction relies on a depth no larger than 32768 and
 // transport sequences that rise in packet write order (STANDARD.md _Numbers_).

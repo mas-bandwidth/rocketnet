@@ -551,6 +551,10 @@ if(ROCKETNET_BUILD_TESTS)
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
+    # Keep the reusable internal sequence-buffer contract visible to build
+    # generators as a first-class dependency; its registered unit translation
+    # unit also includes it standalone at the strict warning floor.
+    target_sources(test PRIVATE sdk/rocketnet_sequence_buffer.h)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
     target_compile_definitions(test PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
     target_compile_definitions(test PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
