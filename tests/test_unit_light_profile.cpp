@@ -27,11 +27,16 @@
 // host whose ladder grants fewer transports reports less; the check is at
 // most.
 #if defined(_WIN32)
+// Windows adds, on the server, over the figures before them: the TX banks
+// sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
+// at 1000 clients: 67,500,000) and 231 bytes of the send handoff's per-path
+// drop counts and allocation rounding. Its sockets keep no per-errno send
+// counts, so the client figures are unchanged.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523705813 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1591206044 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22968879 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517309449 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584809680 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22183075 )
 #endif
 #elif defined(__APPLE__)
