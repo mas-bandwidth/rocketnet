@@ -38,6 +38,12 @@
 #define ROCKETNET_DST_CHECK_SEQ_BYTES ( ROCKETNET_DST_CHECK_SEQ_BITS / 8 )
 #define ROCKETNET_DST_CHECK_MAX_PACKETS 4096
 
+// The steps a sequenced message of the quiet window may still be in flight at
+// the last step: the simulator's longest delay is 150 ms of latency plus half
+// of it in jitter, 225 ms, and a step is 10 ms, so 30 steps of slack cover
+// it. A type 4 sent later than that is owed.
+#define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS 30
+
 // The ghost state one stream keeps. The checks read and update these
 // counters; the SDK objects are never touched.
 struct rocketnet_dst_check_stream_t
@@ -131,13 +137,15 @@ struct rocketnet_dst_check_sequenced_channel_t
     uint64_t identity;
     uint32_t send_count;
     uint32_t settle_count;              // send_count when the quiet window began
-    int first_quiet_set;                // the first type 4 send of the quiet window
-    uint32_t first_quiet_index;
-    uint32_t first_quiet_epoch;
+    int quiet_required_set;             // a type 4 was sent in the quiet window
+    uint32_t quiet_required_index;      // the newest such send's send index
+    uint32_t quiet_required_epoch;      // that send's ordered epoch
+    uint64_t quiet_required_step;       // that send's step
+    uint32_t quiet_served_index;        // the highest index delivered in the required epoch
+    int quiet_served_set;
     uint32_t delivered_index;           // the highest send index delivered, either type
     uint32_t delivered_epoch;
     int delivered_set;
-    int quiet_satisfied;                // a delivery at or above first_quiet in its epoch
     uint32_t index_of[2][ROCKETNET_DST_CHECK_SEQ_BITS];     // [type 1, type 4][sequence]
 };
 
@@ -359,11 +367,21 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
         {
             c->send_count++;
             c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = c->send_count;
-            if ( type == 4 && c->send_count > c->settle_count && !c->first_quiet_set )
+            if ( type == 4 && c->send_count > c->settle_count )
             {
-                c->first_quiet_set = 1;
-                c->first_quiet_index = c->send_count;
-                c->first_quiet_epoch = epoch;
+                // The newest type 4 of the quiet window is the one the
+                // channel owes, so every later type 4 raises the index a
+                // delivery has to reach. The send index grows with the send
+                // order, so a delivery seen before this send has a lower
+                // index and cannot serve it: a delivery of another epoch
+                // does not serve this send either, so the served index
+                // starts empty.
+                if ( c->quiet_required_set && c->quiet_required_epoch != epoch )
+                    c->quiet_served_set = 0;
+                c->quiet_required_set = 1;
+                c->quiet_required_index = c->send_count;
+                c->quiet_required_epoch = epoch;
+                c->quiet_required_step = st->step;
             }
         }
     }
@@ -716,7 +734,7 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
             rocketnet_dst_check_sequenced( st, time, stream, sequence );
 
         // The cross-type view: a delivery of either type at or above the
-        // first quiet-window type 4 send, in its epoch, serves that send.
+        // newest type 4 quiet-window send, in its epoch, serves that send.
         struct rocketnet_dst_check_sequenced_channel_t * c =
             rocketnet_dst_check_sequenced_channel( st, session, channel, identity );
         const uint32_t index = c ? c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] : 0;
@@ -728,8 +746,12 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
                 c->delivered_index = index;
                 c->delivered_epoch = epoch;
             }
-            if ( c->first_quiet_set && index >= c->first_quiet_index && epoch == c->first_quiet_epoch )
-                c->quiet_satisfied = 1;
+            if ( c->quiet_required_set && epoch == c->quiet_required_epoch &&
+                 ( !c->quiet_served_set || index > c->quiet_served_index ) )
+            {
+                c->quiet_served_set = 1;
+                c->quiet_served_index = index;
+            }
         }
     }
 
@@ -974,8 +996,8 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
         if ( !c->seen )
             continue;
         c->settle_count = c->send_count;
-        c->first_quiet_set = 0;
-        c->quiet_satisfied = 0;
+        c->quiet_required_set = 0;
+        c->quiet_served_set = 0;
     }
 }
 
@@ -1027,18 +1049,25 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     // (rn_channels_send_sequenced in sdk/rocketnet_channel.cpp;
                     // SequencedNewestWins in tla/RNChannelTypes.tla). So the
                     // quiet window is served when a delivery of type 1 or 4
-                    // at or above its first type 4 send was seen on the
-                    // channel, in that send's ordered epoch.
+                    // at or above the newest type 4 quiet-window send was
+                    // seen on the channel, in that send's ordered epoch.
                     const struct rocketnet_dst_check_sequenced_channel_t * c =
                         &st->sequenced[session * 9 + channel];
-                    if ( !c->seen || !c->quiet_satisfied )
+                    const int served = c->quiet_served_set && c->quiet_served_index >= c->quiet_required_index;
+                    // A type 4 sent in the last steps of the run is still on
+                    // the wire: the simulator's longest delay is under the
+                    // slack above, so it is not owed yet.
+                    const int in_flight = c->quiet_required_set &&
+                                          st->step - c->quiet_required_step < ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
+                    if ( !served && !in_flight )
                     {
-                        char what[200];
+                        char what[220];
                         snprintf( what, sizeof(what),
-                                  "stream=%d quiet_start=%u newest=%u sent_count=%u cross_newest=%u first_quiet=%u",
+                                  "stream=%d quiet_start=%u newest=%u sent_count=%u cross_newest=%u quiet_required=%u",
                                   rocketnet_dst_check_stream_index( session, channel, type ), s->quiet_start_seq,
                                   rocketnet_dst_check_type4_newest( s ), s->reliable_sent_count,
-                                  c->delivered_set ? c->delivered_index : 0, c->first_quiet_set ? c->first_quiet_index : 0 );
+                                  c->delivered_set ? c->delivered_index : 0,
+                                  c->quiet_required_set ? c->quiet_required_index : 0 );
                         rocketnet_dst_check_fail( st, "liveness_delivered", what );
                     }
                 }
