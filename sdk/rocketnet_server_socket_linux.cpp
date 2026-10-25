@@ -2037,13 +2037,6 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     rocketnet_free( allocation_context, server_socket );
 }
 
-void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )
-{
-    rocketnet_assert( server_socket );
-    if ( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPING )
-        (void) rocketnet_server_socket_stopped( server_socket );
-}
-
 void rocketnet_server_socket_stop( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
@@ -2060,12 +2053,6 @@ bool rocketnet_server_socket_stopped( rocketnet_server_socket_t * server_socket 
              !server_socket->socket[i].stopped.load( std::memory_order_acquire ) ) return false;
     server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPED;
     return true;
-}
-
-int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
-{
-    rocketnet_assert( server_socket );
-    return server_socket->state;
 }
 
 // the staging slot a finish or abort names, from the byte offset of its
@@ -2874,12 +2861,6 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_proce
 {
     rocketnet_assert( server_socket );
     return &server_socket->process_packets;
-}
-
-int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket )
-{
-    rocketnet_assert( server_socket );
-    return server_socket->num_queues;
 }
 
 // The transport's send_failures operation sums frames each queue's flush drops
