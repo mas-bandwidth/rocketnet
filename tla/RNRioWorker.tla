@@ -29,7 +29,7 @@
 (* can serve and waits on the notification event and the wake.  RIONotify *)
 (* on a non-empty queue sets the event at once (the documented rule).      *)
 (*                                                                         *)
-(* Stop sets stopping and the wake.  The worker drops ready phases,        *)
+(* Stop sets stopping and the wake.  The worker posts ready phases,        *)
 (* commits any deferred sends (a refused commit is retried), closes the    *)
 (* socket, which completes every posted receive and send, drains both      *)
 (* queues and only then reports stopped.  Destroy frees the registered     *)
@@ -49,11 +49,11 @@ CONSTANTS Slices,          \* ROCKETNET_RIO_RECEIVES
           View,            \* the process view's capacity
           MaxDatagrams,    \* datagrams the network offers
           MaxSends,        \* packets the fill threads stage
-          SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn
+          SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded
 
 ASSUME Slices >= 1 /\ NumBanks >= 2 /\ Cap >= 1 /\ View >= Cap
 ASSUME MaxDatagrams \in Nat /\ MaxSends \in Nat
-ASSUME {SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn} \subseteq BOOLEAN
+ASSUME {SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded} \subseteq BOOLEAN
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
@@ -287,7 +287,7 @@ WCommit ==
     /\ \/ CommitSuccess
        \/ /\ Uncommitted
           /\ UNCHANGED <<pend, infl>>
-    /\ wpc' = "retire"
+    /\ wpc' = IF stopping THEN "stop" ELSE "retire"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
@@ -373,21 +373,34 @@ WWait ==
     /\ UNCHANGED rvars /\ UNCHANGED svars
     /\ UNCHANGED <<armed, stopping, closed, exited, freed, progress>>
 
-\* stop: drop handed phases, commit deferred sends, then close the socket.
-\* Closing completes every posted receive (cancelled) and lets every
-\* committed send complete.
+\* Stop posts every handed phase and the finished fill phase through WPost
+\* and WCommit before closing. DropHanded retains the old reversed witness.
 WStop ==
     /\ wpc = "stop"
-    /\ dropped' = dropped \cup UNION {Range(staged[p]) : p \in Range(sready)}
-                          \cup (IF inhand # NoPhase THEN Range(staged[inhand]) ELSE {})
-    /\ sready' = <<>>
-    /\ inhand' = NoPhase
-    /\ \/ CommitSuccess
-       \/ /\ Uncommitted
-          /\ UNCHANGED <<pend, infl>>
-    /\ wpc' = "close"
+    /\ IF ~DropHanded /\ sready # <<>>
+       THEN /\ inhand' = Head(sready)
+            /\ sready' = Tail(sready)
+            /\ state' = [state EXCEPT ![Head(sready)] = "posted"]
+            /\ wpc' = "post"
+            /\ UNCHANGED <<pend, infl, dropped>>
+       ELSE IF ~DropHanded /\ state[phase] = "fill" /\ staged[phase] # <<>>
+            THEN /\ inhand' = phase
+                 /\ state' = [state EXCEPT ![phase] = "posted"]
+                 /\ wpc' = "post"
+                 /\ UNCHANGED <<sready, pend, infl, dropped>>
+            ELSE /\ dropped' = IF DropHanded
+                               THEN dropped \cup UNION {Range(staged[p]) : p \in Range(sready)}
+                                            \cup (IF inhand # NoPhase THEN Range(staged[inhand]) ELSE {})
+                               ELSE dropped
+                 /\ sready' = <<>>
+                 /\ inhand' = NoPhase
+                 /\ \/ CommitSuccess
+                    \/ /\ Uncommitted
+                       /\ UNCHANGED <<pend, infl>>
+                 /\ wpc' = "close"
+                 /\ UNCHANGED state
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, scq, done>>
+    /\ UNCHANGED <<sent, staged, phase, scq, done>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 WClose ==
@@ -488,6 +501,10 @@ NoSendDuplicated ==
 \* The registered region is freed only when the kernel owns no request.
 FreedOnlyWhenDrained ==
     freed => posted = 0 /\ ~KernelOwnsSend
+
+\* Every staged send is retired at exit; stop never silently drops a phase.
+StopSendsHanded == exited => dropped = {}
+StopSendsFinished == exited => Range(done) = 1..sent
 
 \* Liveness: every accepted datagram reaches main unless stop begins.
 EveryDatagramConsumed ==
