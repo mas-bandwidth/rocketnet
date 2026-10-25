@@ -14689,7 +14689,6 @@ struct rocketnet_unit_test_t
 };
 
 void rocketnet_test_public_connect_token_string_refused();
-void rocketnet_test_public_dev_connect_token_round_trip();
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
@@ -14850,7 +14849,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_public_connect_token_string_refused", rocketnet_test_public_connect_token_string_refused },
-    { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
@@ -14955,34 +14953,6 @@ void rocketnet_run_tests()
         rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
 }
 
-// A public loopback server for the connect token cases: the development
-// backend key and protocol id set by hand, the loopback transport pinned (no
-// socket), port 0 bound by the transport. NULL when create or start refuses.
-// Development only: a release server refuses the development backend key.
-#if ROCKETNET_DEV
-static struct rocketnet_server_t * rocketnet_test_public_loopback_server()
-{
-    struct rocketnet_server_config_t config;
-    rocketnet_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
-    config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    config.max_clients = 4;
-    config.transport = "loopback";
-    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
-    rocketnet_check( server != NULL && status == ROCKETNET_STATUS_OK );
-    if ( !server )
-        return NULL;
-    if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
-    {
-        rocketnet_check( false );
-        rn_test_server_shutdown( server );
-        return NULL;
-    }
-    return server;
-}
-#endif // #if ROCKETNET_DEV
-
 static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
 {
     struct rocketnet_client_test_config_t config;
@@ -15006,8 +14976,7 @@ static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
 void rocketnet_test_public_connect_token_string_refused()
 {
     struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
-    if ( !client )
-        return;
+    rocketnet_check( client != NULL );
 
     // a well-formed base64 string of the right length: a real token in a
     // development build, all 'A' in a production build (where none can be made)
@@ -15057,45 +15026,4 @@ void rocketnet_test_public_connect_token_string_refused()
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
 
     rn_test_client_shutdown( client );
-}
-
-// The public development round trip: a public loopback server makes its own
-// keypair; its public key and advertised IPv4 address go into
-// rocketnet_create_dev_connect_token with the server's protocol id, and a
-// public client connects with the string. The loopback transport opens no
-// socket. A production build has no development minting and refuses the
-// development backend key, so the case is development only.
-
-void rocketnet_test_public_dev_connect_token_round_trip()
-{
-#if ROCKETNET_DEV
-    struct rocketnet_server_t * server = rocketnet_test_public_loopback_server();
-    if ( !server )
-        return;
-    struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
-    if ( !client )
-    {
-        rn_test_server_shutdown( server );
-        return;
-    }
-
-    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    rocketnet_check( rocketnet_server_ipv4_address( server, address, sizeof( address ) ) );
-    rocketnet_check( rocketnet_server_port( server ) != 0 );
-    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    rocketnet_server_public_key( server, server_key );
-    uint8_t zero[ROCKETNET_SERVER_PUBLIC_KEY_BYTES] = { 0 };
-    rocketnet_check( memcmp( server_key, zero, sizeof( zero ) ) != 0 );
-
-    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    // the token's create stamp is a fixed time far past any test run, so the
-    // client's expiry check at connect passes with no clock read here
-    rocketnet_check( rocketnet_create_dev_connect_token( address, NULL, server_key, 30, 10, 0x1234, ROCKETNET_DEV_PROTOCOL_ID, 4000000000ULL, NULL, token ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-    rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
-
-    rn_test_client_shutdown( client );
-    rn_test_server_shutdown( server );
-#endif // #if ROCKETNET_DEV
 }
