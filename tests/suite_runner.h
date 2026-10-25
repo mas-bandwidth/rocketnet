@@ -1072,6 +1072,22 @@ inline std::string suite_spawn_failure_text( const char * call, DWORD error )
     return text;
 }
 
+// A case that declares SUITE_CASE_RSS_BOUND is a full-capacity server: its
+// memory plan allocates every slot up front. Windows charges committed memory
+// against the system commit limit when it is allocated, not when it is
+// touched, so one such case commits tens of GiB, and two at once (or one with
+// the cases beside it) can pass the limit: every allocation in every running
+// case can then fail, wherever it is (a world that does not create, a
+// connection that comes back NULL, a case that does not spawn). Such a case
+// runs alone.
+inline bool suite_case_runs_alone( const std::string & name )
+{
+    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+        if ( name == entry->name )
+            return true;
+    return false;
+}
+
 inline int suite_main( int argc, char ** argv,
     int ( *worker )( const char * name ),
     int ( *count )(),
@@ -1125,6 +1141,7 @@ inline int suite_main( int argc, char ** argv,
         std::chrono::steady_clock::time_point start;
         bool killed;
         int group;
+        bool alone;
         HANDLE out;
     };
     const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
@@ -1135,7 +1152,8 @@ inline int suite_main( int argc, char ** argv,
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( (int) running.size() < jobs && next < pending.size() &&
+                ( running.empty() || ( running[0].group == pending[next].group && !running[0].alone && !suite_case_runs_alone( pending[next].name ) ) ) )
         {
             const size_t index = next++;
             const suite_case & item = pending[index];
@@ -1199,6 +1217,7 @@ inline int suite_main( int argc, char ** argv,
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
             child.group = item.group;
+            child.alone = suite_case_runs_alone( item.name );
             child.out = read_end;
             running.push_back( child );
         }
