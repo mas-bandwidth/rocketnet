@@ -349,6 +349,11 @@ add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
 # archive or a shared library, so no shipped symbol carries it.
 target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+if(WIN32 AND ROCKETNET_BUILD_TESTS)
+    # The lifecycle fixture alone links this instrumented static development
+    # library. Production and shared libraries have no ledger code or cost.
+    target_compile_definitions(rocketnet_dev PUBLIC ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
+endif()
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
 # the shared library's soname follows the major version
@@ -840,6 +845,7 @@ if(ROCKETNET_BUILD_TESTS)
     file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/functional/channel_*.cpp" )
     add_executable(functional
         functional/main.cpp
+        functional/unit_case_memory.cpp
         functional/rocketnet_functional_tests.cpp
         functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
@@ -849,6 +855,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/live_matrix.cpp
         functional/windows_socket_errors.cpp
         functional/windows_connreset.cpp
+        functional/windows_lifecycle_stress.cpp
         functional/environment_wiring.cpp
         functional/posix_hard_killed_client.cpp
         functional/posix_lifecycle_stress.cpp
@@ -865,8 +872,12 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
         "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\""
         ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV=$<BOOL:${ROCKETNET_DEV}>)
+    if(WIN32)
+        target_compile_definitions(functional PRIVATE ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
+    endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     target_compile_features(functional PRIVATE cxx_std_11)
+    add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_dependencies(functional test_serialize test_transport_control)
         if(ROCKETNET_XDP)
