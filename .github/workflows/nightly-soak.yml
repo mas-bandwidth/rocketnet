@@ -234,6 +234,46 @@ jobs:
           path: build/xdp-filter-guest
           if-no-files-found: ignore
 
+  low-tick-load:
+    name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build the named low-tick load case
+        run: make -j4
+
+      - name: Run the enabled low-tick load case on an idle host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cores=$(nproc)
+          load_start=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
+          if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            exit 1
+          fi
+          set +e
+          ROCKETNET_TEST_VERBOSE=1 ROCKETNET_LOW_TICK_MEASURE=1 ./bin/functional --run test_server_receive_1000_clients_256kbps_10hz
+          result=$?
+          set -e
+          load_end=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
+          if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            exit 1
+          fi
+          exit "$result"
+
   # Thirty minutes per Linux server cell under impairment, with flat fds,
   # threads and resident memory: scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
