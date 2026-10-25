@@ -442,13 +442,15 @@ KernelNeverWrites == [][Commit \/ kmap' = kmap]_vars
 
 (* ForgetOwedUntilApplied: an entry left for an address with no live       *)
 (* session is always owed a forget, either still to be taken by the walk   *)
-(* (marked) or pending, kept across every commit the kernel refused it,    *)
+(* (marked, or seen: the walk forgets every seen released slot, and a      *)
+(* refused zero mark leaves an older entry under a seen slot whose cache   *)
+(* reads 0) or pending, kept across every commit the kernel refused it,    *)
 (* so no stale entry outlives a released slot by more than the commits it  *)
 (* took the forget to succeed.                                             *)
 ForgetOwedUntilApplied ==
     \A a \in Addresses :
         (kmap[a].hw # 0 /\ session[a] = NoSession)
-            => (marked[a] # 0 \/ a \in pendingForget)
+            => (marked[a] # 0 \/ seen[a] \/ a \in pendingForget)
 
 (* RetryNeverDeletesNewerMark: a pending forget is never held over the    *)
 (* entry of the live session at its address.  Commit applies a pending     *)
