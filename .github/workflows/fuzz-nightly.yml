@@ -643,7 +643,7 @@ jobs:
 
       # the engine is C++ built against /opt/msan-libcxx-<clang version>,
       # and the fleet's runners do not share one clang (18.1.3 on
-      # hetzner2-rocketnet-*, 21.1.8 on amd-3-rocketnet-*). An engine keyed
+      # one Linux x64 host, 21.1.8 on another). An engine keyed
       # only by OS and arch is reused across them and fails to link, so the
       # clang version is part of the key and of the prefix restore-key.
       - name: Restore the MSan libFuzzer engine

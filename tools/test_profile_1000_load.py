@@ -50,7 +50,7 @@ PHASE_SUMMARY = (SUMMARY.replace("fds_start=4 fds_end=4 threads_start=1 threads_
                  .replace(" verdict=PASS", PHASE_COUNTS + " verdict=PASS"))
 
 
-# captain 2026-10-22: after the warm cycle the counts still move with the
+# Windows x64 MSVC 2026-10-22: after the warm cycle the counts still move with the
 # operating system's thread pool (97/101/103/99 handles, 4/4/6/6 threads);
 # the census found no survivor, so the receipt passes
 CENSUS_COUNTS = (" fds_pre_init=97 fds_post_init=101 fds_pre_term=103 fds_post_term=99"

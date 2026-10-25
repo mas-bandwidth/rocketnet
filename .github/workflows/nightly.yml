@@ -161,7 +161,7 @@ jobs:
   # 345-454s, past ci.yml's 3-minute law, so it runs here with a real budget.
   # The live message matrix case runs alone in the functional suite (its own
   # suite group, functional/main.cpp): its 50s tsan wall-clock bound measures
-  # the case, about 35s alone on amd-1, and not the rest of the suite.
+  # the case, about 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
 
   tsan-threaded:
     name: tsan (threaded transport)

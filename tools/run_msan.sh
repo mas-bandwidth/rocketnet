@@ -20,7 +20,7 @@
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
 # clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
-# tools/build_msan_libcxx.sh (rowan-tools fleet/msan-libcxx.yml puts it on
+# tools/build_msan_libcxx.sh (the fleet's provisioning puts it on
 # every Linux runner host). The system libstdc++ is not instrumented: its
 # compiled tree rebalance and string growth write memory the shadow never
 # sees, and every later read of it is reported. A host without the library
@@ -39,7 +39,7 @@ build_dir=build-msan
 msan_exitcode=86
 # -O1, as MemorySanitizer's own documentation configures it: at -O0 every
 # libc++ element operation is an out-of-line call that pays for its origin
-# bookkeeping, and the suite's byte vectors made one case run 534 s on vision
+# bookkeeping, and the suite's byte vectors made one case run 534 s on a Linux x64 bench
 # (the whole gate is 103 s at -O1). MSan reports an uninitialised value where
 # it is used, a use the optimizer keeps; the build stays Debug, asserts on.
 flags="-O1 -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"

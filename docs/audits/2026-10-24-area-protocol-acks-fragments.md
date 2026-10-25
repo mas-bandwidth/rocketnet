@@ -66,11 +66,11 @@ under Already filed and are not repeated as findings.
 
 ## Already filed
 
-- `sdk/rocketnet_packet_loss_tracker.h:91`, a gap of 1024 or more discarded as zero lost: `docs/audits/2026-10-24-code-quality-aurora.md` finding 2 (the number it feeds is not published; see finding 4 here).
-- `sdk/rocketnet_window_send.cpp:19`, `ring_bytes` non-zero checked only by an assert: `docs/audits/2026-10-24-code-quality-aurora.md` finding 3.
-- `sdk/rocketnet_fragment.cpp:312`, `connection_index` bounded only by an assert: `docs/audits/2026-10-24-code-quality-aurora.md` finding 4.
-- `sdk/rocketnet_window_send.cpp:193`, `rn_window_send_can_write_unreliable` always true and uncalled: `docs/audits/2026-10-24-code-quality-aurora.md` finding 12.
-- `sdk/rocketnet_out_of_order_tracker.h:49`, the out-of-order tracker has no production caller: `docs/audits/2026-10-24-code-quality-aurora.md` finding 13.
-- `sdk/rocketnet_protocol.cpp:421`, the dead `best_distance` store: `docs/audits/2026-10-24-code-quality-aurora.md` finding 15.
-- `sdk/rocketnet_window_send.cpp:32`, `count <= W` asserted only before `W - count`: `docs/audits/2026-10-24-code-quality-johnny.md` finding 2.
-- `sdk/rocketnet_protocol.cpp:35`, the refusal-code comment above the wrong function: `docs/audits/2026-10-24-code-quality-johnny.md` finding 7.
+- `sdk/rocketnet_packet_loss_tracker.h:91`, a gap of 1024 or more discarded as zero lost: `docs/audits/2026-10-24-code-quality-a.md` finding 2 (the number it feeds is not published; see finding 4 here).
+- `sdk/rocketnet_window_send.cpp:19`, `ring_bytes` non-zero checked only by an assert: `docs/audits/2026-10-24-code-quality-a.md` finding 3.
+- `sdk/rocketnet_fragment.cpp:312`, `connection_index` bounded only by an assert: `docs/audits/2026-10-24-code-quality-a.md` finding 4.
+- `sdk/rocketnet_window_send.cpp:193`, `rn_window_send_can_write_unreliable` always true and uncalled: `docs/audits/2026-10-24-code-quality-a.md` finding 12.
+- `sdk/rocketnet_out_of_order_tracker.h:49`, the out-of-order tracker has no production caller: `docs/audits/2026-10-24-code-quality-a.md` finding 13.
+- `sdk/rocketnet_protocol.cpp:421`, the dead `best_distance` store: `docs/audits/2026-10-24-code-quality-a.md` finding 15.
+- `sdk/rocketnet_window_send.cpp:32`, `count <= W` asserted only before `W - count`: `docs/audits/2026-10-24-code-quality-b.md` finding 2.
+- `sdk/rocketnet_protocol.cpp:35`, the refusal-code comment above the wrong function: `docs/audits/2026-10-24-code-quality-b.md` finding 7.

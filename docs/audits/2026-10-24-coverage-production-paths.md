@@ -222,7 +222,7 @@ bulk of the never column in `sdk/rocketnet_server_socket_linux.cpp` (1447),
 
 ## Already filed
 
-- `sdk/rocketnet_out_of_order_tracker.h:49`, the tracker has no production caller. `docs/audits/2026-10-24-code-quality-aurora.md` finding 13. This run agrees: 28 unit-only lines, 5 never, 0 production.
+- `sdk/rocketnet_out_of_order_tracker.h:49`, the tracker has no production caller. `docs/audits/2026-10-24-code-quality-a.md` finding 13. This run agrees: 28 unit-only lines, 5 never, 0 production.
 - `rocketnet_message_client_receive_channel` and `rocketnet_message_server_receive_channel` are in the never set (each 9 lines). `docs/audits/2026-10-24-area-protocol-channels-messages.md` finding 2.
 - The multipath match at `sdk/rocketnet_gateway_netlink_linux.cpp:225` is `docs/audits/2026-10-24-area-transports-linux-af-xdp.md` finding 5. The parsers that finding describes are unit-only here. Finding 3 above is the socket entry, which that finding does not cover.
 

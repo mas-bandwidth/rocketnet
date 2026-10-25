@@ -117,7 +117,7 @@ uint64_t rocketnet_client_transport_ladder_allocator_bytes(const rocketnet_clien
 // skip lists the buffers as (offset, bytes) spans, ascending and disjoint.
 // A buffer's bytes are written before they are read, below the count that
 // names them, so only its count is state, set after construction; its pages
-// are touched only by use. Zero only what is state (Glenn 2026-10-22).
+// are touched only by use. Zero only what is state (owner, 2026-10-22).
 //
 // The zeroed state survives the default-initialization that follows
 // (`new ( p ) T;`, never `T()`, which would zero the buffers too) because the

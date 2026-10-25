@@ -242,7 +242,7 @@ class SplitReceiptTests(unittest.TestCase):
                                       "direction=c2s combo=0 sent=0 received=0", 1), shards)
 
     def test_census_accepts_operating_system_count_churn(self):
-        # captain 2026-10-22: counts 97/101/103/99 and 4/4/6/6 with every
+        # Windows x64 MSVC 2026-10-22: counts 97/101/103/99 and 4/4/6/6 with every
         # survivor an OS thread pool worker; the census, not the count, decides
         server, shards = fixture()
         self.check(server, shards)

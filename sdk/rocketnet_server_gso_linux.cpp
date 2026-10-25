@@ -470,7 +470,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     // reuseport group: bound with SO_REUSEPORT, an ephemeral bind may be
     // given a port another reuseport group of the same user already holds,
     // and the kernel then shares that port's datagrams between the two
-    // servers (measured on amd-1: 4 shared ports in 50 x 64 reuseport
+    // servers (measured on Linux x64 gcc: 4 shared ports in 50 x 64 reuseport
     // ephemeral binds, none when the first socket binds without it). Bound
     // first, it takes a port no socket holds, and SO_REUSEPORT set after the
     // bind lets this server's other queues join it.

@@ -19,8 +19,8 @@
 #   tarball over HTTPS, checked against the sha256 pinned below; a clang
 #   version with no pin here is refused. About ten minutes on a 16-core bench.
 #
-# The fleet runs this on every Linux runner host through rowan-tools
-# fleet/msan-libcxx.yml; run_msan.sh prints TOOL-MISSING naming this script
+# The fleet runs this on every Linux runner host through the fleet's
+# provisioning; run_msan.sh prints TOOL-MISSING naming this script
 # when the prefix for the active clang is absent.
 set -euo pipefail
 

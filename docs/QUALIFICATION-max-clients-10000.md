@@ -17,12 +17,12 @@ Recorded at head `09395b079957938538af5e36c67479e938b1293b` (branch
 `tests/test_unit_secrets_wiped.cpp:750`). The commit that records this file
 differs from that head only in this file. Builds at `-j4`, Release.
 
-- 10000 unit suite: amd-3 (16 cores, 30 GB, Ubuntu 26.04.1, gcc 15.2.0,
+- 10000 unit suite: Linux x64 gcc and clang (16 cores, 30 GB, Ubuntu 26.04.1, gcc 15.2.0,
   clang 21.1.8), one checkout per cell.
-- 10000 bounded load: hetzner2 (16 cores, 124 GB, Ubuntu 24.04, gcc 13.3.0),
+- 10000 bounded load: Linux x64 gcc (16 cores, 124 GB, Ubuntu 24.04, gcc 13.3.0),
   gcc, DEV ON.
 - The memory plan, the DEV OFF load row and the default-build rows below were
-  recorded on hetzner2 at attempt 3 (`cbf907be`, BASE `7a0258612392`).
+  recorded on the Linux x64 gcc load host at attempt 3 (`cbf907be`, BASE `7a0258612392`).
 
 ## Commands
 
@@ -86,7 +86,7 @@ difference is run-to-run noise on a shared host. At head the default build's
 `./bin/test` and `./bin/functional` pass at DEV ON, and `./bin/test` passes
 at DEV OFF.
 
-**Unit suite, 10000 build, at head: green in all four cells.** On amd-3,
+**Unit suite, 10000 build, at head: green in all four cells.** On Linux x64,
 `./bin/test` exits 0 and prints `*** ALL TESTS PASSED ***` with no check
 failure in every 10000 cell, each built with zero warnings:
 

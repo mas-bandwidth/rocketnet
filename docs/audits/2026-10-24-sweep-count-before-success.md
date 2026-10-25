@@ -1421,5 +1421,5 @@ One row per grep hit judged safe (1363), plus one instance found by reading (`re
 
 ## Already filed
 
-- `sdk/rocketnet_packet_lease.h:40` — `used` incremented before the insert can fail: `docs/audits/2026-10-24-code-quality-aurora.md`, finding 6.
-- `sdk/rocketnet_client_slots.cpp:308` and `:310` — the slot is pushed to the free stack and `num_connected` decremented even when the chain search failed: `docs/audits/2026-10-24-code-quality-johnny.md`, finding 3.
+- `sdk/rocketnet_packet_lease.h:40` — `used` incremented before the insert can fail: `docs/audits/2026-10-24-code-quality-a.md`, finding 6.
+- `sdk/rocketnet_client_slots.cpp:308` and `:310` — the slot is pushed to the free stack and `num_connected` decremented even when the chain search failed: `docs/audits/2026-10-24-code-quality-b.md`, finding 3.

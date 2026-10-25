@@ -98,4 +98,4 @@ defect, a one-sentence concrete failure or cost, and the smallest fix.
 
 ## Already filed
 
-- `sdk/rocketnet_server_protocol.cpp:33`, connection ids issued by a bare pre-increment with no skip of zero: `docs/audits/2026-10-24-code-quality-johnny.md`, finding 5.
+- `sdk/rocketnet_server_protocol.cpp:33`, connection ids issued by a bare pre-increment with no skip of zero: `docs/audits/2026-10-24-code-quality-b.md`, finding 5.

@@ -1,11 +1,11 @@
 # LAN 1000-client proof: results
 
-One row per cell of the LAN proof: 1000 clients for 600 seconds against one
-server pinned to one transport, the server alone on its own machine, the
-clients in shards of at most 250 on other machines, all traffic across the
-LAN. Each cell is run through `scripts/lan-proof` as
-[LAN-PROOF.md](../LAN-PROOF.md) describes. Machines are named by bench label
-only.
+One row per cell of the LAN proof: 1000 clients for 600 seconds (300
+seconds for the xdp cell, as its record states) against one server pinned
+to one transport, the server alone on its own machine, the clients in shards
+of at most 250 on other machines, all traffic across the LAN. Each cell is
+run through `scripts/lan-proof` as [LAN-PROOF.md](../LAN-PROOF.md)
+describes. Machines are named by bench label only.
 
 Every value below is copied from the per-platform record named in the
 row's last column; that record holds the commands, host facts, load
@@ -30,6 +30,7 @@ server's disconnect count. "Receipts" and "payload" are the server's
 | Linux | gso | linux-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `1ca477339e150220f90e96bbe7c61be5b175eb51` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=0 | 0:pass, 1:pass, 5:pass; unreliable_lost=0 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 278 | small:pass, fragmented:pass | pass | [lan-1000-proof-linux.md](lan-1000-proof-linux.md), run a1000c1025000002 |
 | Linux | io_uring | linux-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `1ca477339e150220f90e96bbe7c61be5b175eb51` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=2232 | 0:pass, 1:pass, 5:pass; unreliable_lost=110680 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 276 | small:pass, fragmented:pass | pass | [lan-1000-proof-linux.md](lan-1000-proof-linux.md), run a1000c1025000003 |
 | macOS | msgx | macos-server-1 | 1000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full | `813b4adbe3dec2eee496577e3da2c0d7d66b8063` | 1000 | 600 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=20602 | 0:pass, 1:pass, 5:pass; unreliable_lost=25662 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 281 | small:pass, fragmented:pass | pass | [lan-1000-proof-macos.md](lan-1000-proof-macos.md), run 5a0500000000025a |
+| Linux | xdp (copy mode) | linux-server-1 | 10000 Mb/s, full | linux-client-1 1000 Mb/s full; linux-client-2 1000 Mb/s full; linux-client-3 1000 Mb/s full | `534cce2e10159b52074ea9b10f7a2f0b074f7298` | 1000 | 300 | yes | 0 | 2:pass, 3:pass, 6:pass, 7:pass | 3:pass, 7:pass | 1:pass, 4:pass; sequenced_skipped=1112 | 0:pass, 1:pass, 5:pass; unreliable_lost=1457 | receipt_errors=0, receipts_dropped=0 | checksum_errors=0 | 283 | small:pass, fragmented:pass | pass | [lan-1000-proof-xdp.md](lan-1000-proof-xdp.md), run 5a0be0000000c1e0 |
 
 The same rows in the eleven-field result-row form of
 [LAN-PROOF.md](../LAN-PROOF.md), with the values of the records' cell
@@ -39,6 +40,7 @@ tables:
 gso|linux-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|278|pass
 io_uring|linux-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|276|pass
 msgx|macos-server-1|1000|1000|600|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|281|pass
+xdp|linux-server-1|10000|1000|300|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|283|pass
 ```
 
 Merger verdict lines (`tools/check_split_load.py --load proof`), from the
@@ -48,6 +50,7 @@ records:
 split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=24000000 messages_delivered=24000000 unreliable_lost=0 sequenced_skipped=0 timing_verdict=FAIL
 split_proof_cell: verdict=PASS transport=io_uring total=1000 streams=26000 messages_sent=24000000 messages_delivered=23887088 unreliable_lost=110680 sequenced_skipped=2232 timing_verdict=FAIL
 split_proof_cell: verdict=PASS transport=msgx total=1000 streams=26000 messages_sent=24000000 messages_delivered=23953736 unreliable_lost=25662 sequenced_skipped=20602 timing_verdict=FAIL
+split_proof_cell: verdict=PASS transport=xdp total=1000 streams=26000 messages_sent=12000000 messages_delivered=11997431 unreliable_lost=1457 sequenced_skipped=1112 timing_verdict=FAIL
 ```
 
 Skips on RELIABLE_SEQUENCED and losses on the unreliable modes are counted
@@ -61,7 +64,6 @@ counts as far as it was measured.
 
 | platform | server transport | status | reason | record it would come from |
 | --- | --- | --- | --- | --- |
-| Linux | xdp | NOT MADE | the xdp server needs a dedicated, cabled test port bridged to the LAN switch (see [LAN-PROOF.md](../LAN-PROOF.md)); the server machine has no cabled test NIC yet | docs/runs/lan-1000-proof-xdp.md (not yet written) |
 | Windows | iocp | NOT MADE | the Windows server machine has no inbound firewall rule for the proof's UDP port 40000 yet, so the clients cannot reach the server | docs/runs/lan-1000-proof-windows.md (not yet written) |
 | Windows | rio | NOT MADE | the same firewall rule on the Windows server machine | docs/runs/lan-1000-proof-windows.md (not yet written) |
 | Linux | portable | NOT MADE | void: the proof covers native server transports only (ruling of 2026-10-24) | none |

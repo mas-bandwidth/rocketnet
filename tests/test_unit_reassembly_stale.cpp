@@ -304,7 +304,7 @@ static void test_reassembly_one_bad_fragment_costs_at_most_the_window()
 }
 
 // The connection index range check (audit finding 4,
-// docs/audits/2026-10-24-code-quality-aurora.md). rocketnet_assert compiles out
+// docs/audits/2026-10-24-code-quality-a.md). rocketnet_assert compiles out
 // when NDEBUG is set, so every Release build relies on the real range check in
 // rocketnet_reassembly_process_fragment and rocketnet_reassembly_set_reset_connection:
 // an index outside [0, num_connections) is refused before anything is read or

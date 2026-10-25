@@ -4,7 +4,7 @@
 RocketNet is client/server: a client talks to a server and never to another
 client. Every name, comment, log string, document and model says client,
 server, the remote endpoint, the other side of the connection, the sender or
-the receiver, whichever is exactly right (Glenn, 2026-10-22). This check
+the receiver, whichever is exactly right (owner, 2026-10-22). This check
 fails when the word appears, in any case and inside any compound, in a
 tracked file's path or text, outside the exceptions below.
 
