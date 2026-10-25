@@ -17,6 +17,10 @@
 #   start-xdp-server <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
 #   guest-server <commit> <total> <duration> <run-id> <port> <cap-kbps>
 #   xdp-command <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
+#   check-xdp-uplink <commit> <iface>
+#   arm-xdp-detach <iface> <run-id> <seconds>
+#   start-xdp-uplink-server <commit> <dir> <iface> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   detach-xdp-uplink <iface> <run-id>
 #   start-shard <commit> <dir> <name> <total> <duration> <run-id> <first> <count> <server-endpoint> <key> <cap-kbps>
 #   alive <pidfile>
 #   stop <pidfile>
@@ -38,7 +42,7 @@ fail()
 
 usage()
 {
-    echo "usage: lan-proof-remote build|build-inner|build-windows|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
+    echo "usage: lan-proof-remote build|build-inner|build-windows|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|check-xdp-uplink|arm-xdp-detach|start-xdp-uplink-server|detach-xdp-uplink|start-shard|alive|stop|collect ..." >&2
     exit 2
 }
 
@@ -512,6 +516,103 @@ cmd_xdp_command()
     printf '\n'
 }
 
+# The bare metal xdp server on a named interface, which may be the
+# machine's uplink. The self-detach is a systemd-run timer owned by the
+# machine's own service manager, so it fires whether or not any ssh session
+# survives: it kills this run's server and detaches XDP from the interface.
+# The server is refused unless that timer is armed. Privileged steps use
+# sudo -n and never prompt.
+XDP_UPLINK_QUEUES="${LAN_PROOF_XDP_QUEUES:-7}"
+
+uplink_args_safe()
+{
+    case "$1" in
+        ''|*[!A-Za-z0-9_.-]*) fail "xdp uplink: interface '$1' has characters outside A-Z a-z 0-9 _ . -" ;;
+    esac
+    case "$2" in
+        ''|*[!0-9a-fA-F]*) fail "xdp uplink: run id '$2' is not hex" ;;
+    esac
+}
+
+detach_unit()
+{
+    echo "lan-proof-xdp-detach-$1"
+}
+
+# The one command both the timer and the normal detach run. The bracket in
+# the pattern keeps it from matching the shell that carries it.
+detach_script()
+{
+    local iface=$1 run_id=$2
+    printf '%s' "pkill -KILL -f 'load_split serve[r] [0-9]+ [0-9]+ $run_id'; ip link set dev $iface xdpgeneric off; ip link set dev $iface xdpdrv off; ip link set dev $iface xdp off; true"
+}
+
+link_has_xdp()
+{
+    ip link show dev "$1" 2>/dev/null | sed "s/$1//g" | grep -q xdp
+}
+
+cmd_check_xdp_uplink()
+{
+    local commit=$1 iface=$2 provision isolated
+    uplink_args_safe "$iface" 0
+    [ -e "/sys/class/net/$iface" ] || fail "xdp uplink: no interface $iface"
+    ip link show dev "$iface" | grep -q ',UP' || fail "xdp uplink: $iface is not up"
+    link_has_xdp "$iface" && fail "xdp uplink: $iface already has an XDP program attached"
+    sudo -n true 2>/dev/null || fail "xdp uplink: sudo -n is refused"
+    command -v systemd-run >/dev/null 2>&1 || fail "xdp uplink: no systemd-run for the self-detach"
+    provision="$( checkout_dir "$commit" )/scripts/rocketnet-provision"
+    [ -x "$provision" ] || fail "xdp uplink: no $provision"
+    isolated=$( cat /sys/devices/system/cpu/isolated 2>/dev/null )
+    [ -n "$isolated" ] || fail "xdp uplink: no isolated cpus"
+    # read only: an uplink is never reprovisioned by this runner
+    sudo -n "$provision" "$iface" "$XDP_UPLINK_QUEUES" verify "$isolated" ||
+        fail "xdp uplink: $iface is not provisioned for $XDP_UPLINK_QUEUES queues"
+    echo "xdp-uplink-ok: iface=$iface queues=$XDP_UPLINK_QUEUES isolated=$isolated xdp=none"
+}
+
+cmd_arm_xdp_detach()
+{
+    local iface=$1 run_id=$2 seconds=$3 unit
+    uplink_args_safe "$iface" "$run_id"
+    is_count "$seconds" || fail "xdp detach: '$seconds' is not a whole number of seconds"
+    unit=$( detach_unit "$run_id" )
+    sudo -n systemd-run --quiet --unit "$unit" --on-active="${seconds}s" --timer-property=AccuracySec=1s \
+        /bin/sh -c "$( detach_script "$iface" "$run_id" )" || fail "xdp detach: systemd-run refused"
+    sudo -n systemctl is-active --quiet "$unit.timer" || fail "xdp detach: $unit.timer is not active"
+    echo "xdp-detach-armed: unit=$unit.timer iface=$iface fires_in_s=$seconds"
+}
+
+cmd_start_xdp_uplink_server()
+{
+    local commit=$1 dir=$2 iface=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
+    local bin unit
+    uplink_args_safe "$iface" "$run_id"
+    unit=$( detach_unit "$run_id" )
+    sudo -n systemctl is-active --quiet "$unit.timer" ||
+        fail "start-xdp-uplink-server: the self-detach $unit.timer is not armed; refusing the attach"
+    ip -4 -o addr show dev "$iface" | awk '{ split($4, a, "/"); print a[1] }' | grep -qx "$address" ||
+        fail "start-xdp-uplink-server: $address is not on $iface"
+    bin=$( load_split_bin "$commit" ) || fail "start-xdp-uplink-server: no built load_split for $commit"
+    start_recorded "$dir" server timeout "$(( duration + 180 ))" sudo -n env ROCKETNET_SERVER_TRANSPORT=xdp \
+        "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+cmd_detach_xdp_uplink()
+{
+    local iface=$1 run_id=$2 unit
+    uplink_args_safe "$iface" "$run_id"
+    unit=$( detach_unit "$run_id" )
+    sudo -n /bin/sh -c "$( detach_script "$iface" "$run_id" )"
+    sudo -n systemctl stop "$unit.timer" 2>/dev/null
+    sudo -n systemctl stop "$unit.service" 2>/dev/null
+    sudo -n systemctl reset-failed "$unit.service" 2>/dev/null
+    link_has_xdp "$iface" && fail "xdp detach: $iface still has XDP: $( ip link show dev "$iface" | head -n 1 )"
+    sudo -n systemctl is-active --quiet "$unit.timer" && fail "xdp detach: $unit.timer is still armed"
+    echo "xdp-detached: iface=$iface xdp=none timer=$unit.timer not armed"
+    echo "ip-link: $( ip link show dev "$iface" | head -n 1 )"
+}
+
 cmd_start_shard()
 {
     local commit=$1 dir=$2 name=$3 total=$4 duration=$5 run_id=$6 first=$7 count=$8 endpoint=$9 key=${10} cap=${11}
@@ -566,6 +667,10 @@ case "${1:-}" in
     start-xdp-server) [ $# -eq 9 ] || usage; cmd_start_xdp_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
     guest-server) [ $# -eq 7 ] || usage; cmd_guest_server "$2" "$3" "$4" "$5" "$6" "$7" ;;
     xdp-command) [ $# -eq 9 ] || usage; cmd_xdp_command "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
+    check-xdp-uplink) [ $# -eq 3 ] || usage; cmd_check_xdp_uplink "$2" "$3" ;;
+    arm-xdp-detach) [ $# -eq 4 ] || usage; cmd_arm_xdp_detach "$2" "$3" "$4" ;;
+    start-xdp-uplink-server) [ $# -eq 10 ] || usage; cmd_start_xdp_uplink_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    detach-xdp-uplink) [ $# -eq 3 ] || usage; cmd_detach_xdp_uplink "$2" "$3" ;;
     start-shard)  [ $# -eq 12 ] || usage; cmd_start_shard "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" ;;
     alive)        [ $# -eq 2 ] || usage; cmd_alive "$2" ;;
     stop)         [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
