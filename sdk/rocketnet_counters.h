@@ -92,6 +92,7 @@
  * Append new rows at the end to keep existing indices stable.
  * @param X Expansion callback invoked with each counter name, class, and family.
  */
+// clang-format off
 #define ROCKETNET_COUNTER_ROWS( X ) \
     /* One counter per distinct reason, arrival counted separately, per packet */ \
     /* type. The indices are a contract: new counters append. */ \
@@ -974,6 +975,7 @@
     /* are the contract. */ \
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL: Counts connection requests refused because the request-claim table has no free or expired slot. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_CLAIM_TABLE_FULL, REFUSAL, CONNECTION_REQUEST_RECEIVED )
+// clang-format on
 
 /**
  * @brief Integer indices for the cumulative protocol counters.

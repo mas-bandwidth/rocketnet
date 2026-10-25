@@ -20,14 +20,13 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
 #endif
 
-static const rn_standard_vector_t standard_packet_protection_table[] =
-{
+static const rn_standard_vector_t standard_packet_protection_table[] = {
     RN_STANDARD_VECTOR( "t9.challenge-ad", "931a7c4e88776655443322110253414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24" ),
     RN_STANDARD_VECTOR( "t9.challenge-sealed", "686fb709435ff00e1ac260eeeafbb29120201086c8276255d7d387c39232947b3da13ddd6856b09415f3086c59f76f88" ),
     RN_STANDARD_VECTOR( "t9.denied-ad", "931a7c4e88776655443322110153414c5430303031" ),
@@ -57,15 +56,16 @@ static int standard_packet_protection_ad( uint8_t * out, int capacity, uint8_t p
         return -1;
     const uint8_t * client_ephemeral = ( packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ||
                                          packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
-                                           ? rocketnet_test_client_eph_public : NULL;
+                                           ? rocketnet_test_client_eph_public
+                                           : NULL;
     return rocketnet_write_packet_associated_data( out, ROCKETNET_TEST_PROTOCOL_ID, packet_type,
                                                    rocketnet_test_salt, client_ephemeral );
 }
 
 static int standard_packet_protection_sealed( uint8_t * out, int capacity, uint8_t packet_type,
-                                               uint64_t sequence, const uint8_t * session_nonce,
-                                               const uint8_t * data, int data_bytes,
-                                               const uint8_t * client_ephemeral, const uint8_t * key )
+                                              uint64_t sequence, const uint8_t * session_nonce,
+                                              const uint8_t * data, int data_bytes,
+                                              const uint8_t * client_ephemeral, const uint8_t * key )
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const int bytes = rocketnet_write_sealed_packet( packet, packet_type, rocketnet_test_filter_value,
@@ -125,48 +125,47 @@ static int standard_packet_protection_generate( const char * id, uint8_t * out, 
 
     if ( strcmp( id, "t9.challenge-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_CHALLENGE_PACKET, 1,
-                                                   rocketnet_test_session_nonce, rocketnet_test_server_eph_public,
-                                                   ROCKETNET_KEY_BYTES, rocketnet_test_client_eph_public,
-                                                   rocketnet_test_handshake_s2c_key );
+                                                  rocketnet_test_session_nonce, rocketnet_test_server_eph_public,
+                                                  ROCKETNET_KEY_BYTES, rocketnet_test_client_eph_public,
+                                                  rocketnet_test_handshake_s2c_key );
     if ( strcmp( id, "t9.denied-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_DENIED_PACKET, 2,
-                                                   rocketnet_test_session_nonce, NULL, 0, NULL,
-                                                   rocketnet_test_handshake_s2c_key );
+                                                  rocketnet_test_session_nonce, NULL, 0, NULL,
+                                                  rocketnet_test_handshake_s2c_key );
     if ( strcmp( id, "t9.response-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_RESPONSE_PACKET, 1,
-                                                   NULL, response_plaintext, ROCKETNET_RESPONSE_PADDING_BYTES,
-                                                   rocketnet_test_client_eph_public, rocketnet_test_handshake_c2s_key );
+                                                  NULL, response_plaintext, ROCKETNET_RESPONSE_PADDING_BYTES,
+                                                  rocketnet_test_client_eph_public, rocketnet_test_handshake_c2s_key );
     if ( strcmp( id, "t9.keepalive-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1,
-                                                   NULL, rocketnet_test_keepalive_plaintext,
-                                                   (int) sizeof( rocketnet_test_keepalive_plaintext ), NULL,
-                                                   rocketnet_test_session_s2c_key );
+                                                  NULL, rocketnet_test_keepalive_plaintext,
+                                                  (int) sizeof( rocketnet_test_keepalive_plaintext ), NULL,
+                                                  rocketnet_test_session_s2c_key );
     if ( strcmp( id, "t9.payload-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
-                                                   NULL, rocketnet_test_payload_plaintext,
-                                                   (int) sizeof( rocketnet_test_payload_plaintext ), NULL,
-                                                   rocketnet_test_session_c2s_key );
+                                                  NULL, rocketnet_test_payload_plaintext,
+                                                  (int) sizeof( rocketnet_test_payload_plaintext ), NULL,
+                                                  rocketnet_test_session_c2s_key );
     if ( strcmp( id, "t9.disconnect-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 4,
-                                                   NULL, rocketnet_test_disconnect_plaintext,
-                                                   (int) sizeof( rocketnet_test_disconnect_plaintext ), NULL,
-                                                   rocketnet_test_session_c2s_key );
+                                                  NULL, rocketnet_test_disconnect_plaintext,
+                                                  (int) sizeof( rocketnet_test_disconnect_plaintext ), NULL,
+                                                  rocketnet_test_session_c2s_key );
     if ( strcmp( id, "t9.ack-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_ACK_PACKET, 5,
-                                                   NULL, rocketnet_test_ack_plaintext,
-                                                   (int) sizeof( rocketnet_test_ack_plaintext ), NULL,
-                                                   rocketnet_test_session_c2s_key );
+                                                  NULL, rocketnet_test_ack_plaintext,
+                                                  (int) sizeof( rocketnet_test_ack_plaintext ), NULL,
+                                                  rocketnet_test_session_c2s_key );
     if ( strcmp( id, "t9.fragment-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_FRAGMENT_PACKET, 6,
-                                                   NULL, rocketnet_test_fragment_plaintext,
-                                                   (int) sizeof( rocketnet_test_fragment_plaintext ), NULL,
-                                                   rocketnet_test_session_c2s_key );
+                                                  NULL, rocketnet_test_fragment_plaintext,
+                                                  (int) sizeof( rocketnet_test_fragment_plaintext ), NULL,
+                                                  rocketnet_test_session_c2s_key );
 
     return standard_packet_protection_tamper( id, out, capacity );
 }
 
-static const char * const standard_packet_protection_tamper_ids[] =
-{
+static const char * const standard_packet_protection_tamper_ids[] = {
     "t9.version-tampered",
     "t9.protocol-id-tampered",
     "t9.packet-type-tampered",

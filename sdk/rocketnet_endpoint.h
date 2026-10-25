@@ -57,6 +57,7 @@ struct rn_endpoint_config_t
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
+// clang-format off
 #define RN_ENDPOINT_LAYOUT_FIELDS( X ) \
     X( region, rn_region_t * region )                                                                                                                 \
     X( ordered, rn_ordered_t ordered ) /* layers 3 to 6 over the region */                                                                            \
@@ -100,6 +101,7 @@ struct rn_endpoint_config_t
     X( packet_records, uint32_t packet_records ) /* UNRELIABLE: the records the written packet carries */                                             \
     X( receipt_count, uint32_t receipt_count ) /* UNRELIABLE: the code-5 serials the written packet carries */                                        \
     X( receipt_serials, uint32_t receipt_serials[ROCKETNET_PACKET_BUILDER_MAX_RECORDS] )
+// clang-format on
 
 struct rn_endpoint_t
 {

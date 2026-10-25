@@ -41,8 +41,7 @@
 #include <filesystem>
 #include <string>
 
-static const uint8_t rocketnet_fuzz_c2s_types[] =
-{
+static const uint8_t rocketnet_fuzz_c2s_types[] = {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
     ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET
 };
@@ -58,7 +57,7 @@ static void rocketnet_fuzz_server_step( struct rocketnet_fuzz_pair_t * pair )
     const struct rocketnet_server_transport_t * transport = pair->transport;
     for ( int i = 0; i < transport->payloads.num_payloads; i++ )
         rocketnet_fuzz_pair_require( transport->payloads.payload_bytes[i] > 0 &&
-                                     transport->payloads.payload_bytes[i] <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+                                         transport->payloads.payload_bytes[i] <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
                                      "a delivered payload is within the payload bound" );
 
     rocketnet_fuzz_pair_client_update( pair );
@@ -174,15 +173,14 @@ struct rocketnet_fuzz_server_seed_type_t
     int accepted;           // -1: no sealed seed (the request is not sealed)
 };
 
-static const struct rocketnet_fuzz_server_seed_type_t rocketnet_fuzz_server_seed_types[] =
-{
-    { ROCKETNET_CONNECTION_REQUEST_PACKET,    ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED,  -1 },
-    { ROCKETNET_CONNECTION_RESPONSE_PACKET,   ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED },
-    { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED,          ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED },
-    { ROCKETNET_CONNECTION_PAYLOAD_PACKET,    ROCKETNET_COUNTER_PAYLOAD_RECEIVED,             ROCKETNET_COUNTER_PAYLOAD_DELIVERED },
-    { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_DISCONNECT_RECEIVED,          ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED },
-    { ROCKETNET_CONNECTION_ACK_PACKET,        ROCKETNET_COUNTER_ACK_RECEIVED,                 ROCKETNET_COUNTER_ACK_ACCEPTED },
-    { ROCKETNET_CONNECTION_FRAGMENT_PACKET,   ROCKETNET_COUNTER_FRAGMENT_RECEIVED,            ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
+static const struct rocketnet_fuzz_server_seed_type_t rocketnet_fuzz_server_seed_types[] = {
+    { ROCKETNET_CONNECTION_REQUEST_PACKET, ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, -1 },
+    { ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED },
+    { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED },
+    { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_COUNTER_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_PAYLOAD_DELIVERED },
+    { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED },
+    { ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_COUNTER_ACK_RECEIVED, ROCKETNET_COUNTER_ACK_ACCEPTED },
+    { ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_COUNTER_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
 };
 
 static int rocketnet_fuzz_server_type_index( uint8_t type )

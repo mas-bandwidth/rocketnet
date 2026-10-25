@@ -23,7 +23,8 @@
 #include "rocketnet_wire.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 // config zeroed, every socket slot empty, every counter zeroed, every replay

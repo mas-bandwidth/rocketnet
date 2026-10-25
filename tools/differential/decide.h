@@ -126,7 +126,7 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, time,
-                                                          payload, sizeof(payload), &payload_bytes );
+                                                          payload, sizeof( payload ), &payload_bytes );
         }
         if ( rocketnet_client_slots_num_connected( server->client_slots ) > connected_before )
             return 1;
@@ -146,8 +146,8 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
 
     struct rocketnet_counters_t first_counters;
     struct rocketnet_counters_t replay_counters;
-    memset( &first_counters, 0, sizeof(first_counters) );
-    memset( &replay_counters, 0, sizeof(replay_counters) );
+    memset( &first_counters, 0, sizeof( first_counters ) );
+    memset( &replay_counters, 0, sizeof( replay_counters ) );
     struct rocketnet_client_protocol_t first;
     struct rocketnet_client_protocol_t replay;
     rocketnet_client_protocol_init( &first, &first_counters );
@@ -187,8 +187,8 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
 
 static void rocketnet_server_setup( struct rocketnet_server_protocol_t * server, struct rocketnet_counters_t * counters, uint64_t now )
 {
-    memset( server, 0, sizeof(*server) );
-    memset( counters, 0, sizeof(*counters) );
+    memset( server, 0, sizeof( *server ) );
+    memset( counters, 0, sizeof( *counters ) );
 
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
@@ -270,8 +270,8 @@ static void rocketnet_admit_request( struct rocketnet_server_protocol_t * server
     int response_bytes = 0;
 
     int result = rocketnet_server_protocol_process_connection_request(
-                    server, &client_address, request, sizeof(request), now, (double) now,
-                    response, &response_bytes );
+        server, &client_address, request, sizeof( request ), now, (double) now,
+        response, &response_bytes );
 
     if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
     {
@@ -279,8 +279,8 @@ static void rocketnet_admit_request( struct rocketnet_server_protocol_t * server
                 response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
                 ROCKETNET_COOKIE_FIELD_BYTES );
         result = rocketnet_server_protocol_process_connection_request(
-                    server, &client_address, request, sizeof(request), now, (double) now,
-                    response, &response_bytes );
+            server, &client_address, request, sizeof( request ), now, (double) now,
+            response, &response_bytes );
     }
 
     if ( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
@@ -301,7 +301,7 @@ static void rocketnet_admit_request( struct rocketnet_server_protocol_t * server
 static struct decision_t rocketnet_decide_case( const struct differential_case_t * c, uint64_t now )
 {
     struct decision_t d;
-    memset( &d, 0, sizeof(d) );
+    memset( &d, 0, sizeof( d ) );
 
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
@@ -309,8 +309,8 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
 
     struct rocketnet_signed_connect_data_t sf;
     struct rocketnet_connect_token_private_t pf;
-    memset( &sf, 0, sizeof(sf) );
-    memset( &pf, 0, sizeof(pf) );
+    memset( &sf, 0, sizeof( sf ) );
+    memset( &pf, 0, sizeof( pf ) );
 
     sf.version = ROCKETNET_WIRE_VERSION;
     sf.protocol_id = c->protocol_wrong ? 0xdeadbeefdeadbeefULL : ROCKETNET_TEST_PROTOCOL_ID;
@@ -371,7 +371,7 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
         for ( uint32_t i = 0; i < slots; i++ )
         {
             uint8_t dummy[ROCKETNET_USER_DATA_BYTES];
-            memset( dummy, 0, sizeof(dummy) );
+            memset( dummy, 0, sizeof( dummy ) );
             rocketnet_client_slots_assign( server.client_slots, 0xD000 + (uint64_t) i, -1, dummy );
         }
 
@@ -408,7 +408,11 @@ static const char * NC_REPLAY_ADDRESS = "198.51.100.50:40000";
 static const char * NC_OTHER_ADDRESS = "203.0.113.11:40000";
 static const uint64_t NC_PROTOCOL_ID = 0x1122334455667788ULL;
 
-enum { NC_PIPE_SLOTS = 8, NC_PIPE_BYTES = 2048 };
+enum
+{
+    NC_PIPE_SLOTS = 8,
+    NC_PIPE_BYTES = 2048
+};
 
 struct nc_pipe_packet_t
 {

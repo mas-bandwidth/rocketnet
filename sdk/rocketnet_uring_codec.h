@@ -22,7 +22,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_coalesce.h"
 
-#if defined(__linux__)
+#if defined( __linux__ )
 
 #include <linux/io_uring.h>
 #include <sys/socket.h>
@@ -63,9 +63,7 @@
 // packs kind in bits 56..63, queue in bits 32..47 and index in bits 0..31.
 static inline uint64_t rocketnet_uring_tag( int kind, int queue, uint32_t index )
 {
-    return ( (uint64_t)(uint8_t) kind << 56 )
-         | ( (uint64_t)(uint16_t) queue << 32 )
-         | index;
+    return ( (uint64_t) (uint8_t) kind << 56 ) | ( (uint64_t) (uint16_t) queue << 32 ) | index;
 }
 
 static inline int rocketnet_uring_tag_kind( uint64_t tag )
@@ -192,10 +190,10 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in6 ) )
             return false;
-        const struct sockaddr_in6 * addr = (const struct sockaddr_in6*) input;
+        const struct sockaddr_in6 * addr = (const struct sockaddr_in6 *) input;
         out->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
-            out->data.ipv6[i] = ntohs( ( (const uint16_t*) &addr->sin6_addr )[i] );
+            out->data.ipv6[i] = ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] );
         out->port = ntohs( addr->sin6_port );
         return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
@@ -203,7 +201,7 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in ) )
             return false;
-        rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in*) input, out );
+        rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
         return true;
     }
     return false;
@@ -243,7 +241,7 @@ static inline int rocketnet_uring_gso_message(
         iovecs[i].iov_len = (size_t) packet_bytes[i];
     }
 
-    memset( message, 0, sizeof(*message) );
+    memset( message, 0, sizeof( *message ) );
     message->msg_name = name;
     message->msg_namelen = namelen;
     message->msg_iov = iovecs;
@@ -257,9 +255,9 @@ static inline int rocketnet_uring_gso_message(
         struct cmsghdr * cmsg = CMSG_FIRSTHDR( message );
         cmsg->cmsg_level = IPPROTO_UDP;
         cmsg->cmsg_type = UDP_SEGMENT;
-        cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+        cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
         const uint16_t stride = (uint16_t) packet_bytes[0];
-        memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
     }
 
     return run;

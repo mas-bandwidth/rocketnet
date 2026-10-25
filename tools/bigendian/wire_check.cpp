@@ -357,7 +357,6 @@ static void check_base64_and_config()
     CHECK( rocketnet_transport_ladder_parse( "portable", available, num_available, &ladder ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
     CHECK( !rocketnet_transport_ladder_parse( "rocket", available, num_available, &ladder ) );
-
 }
 
 int main()

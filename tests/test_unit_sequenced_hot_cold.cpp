@@ -12,7 +12,7 @@ extern thread_local unsigned long long g_sequenced_hold_visit_count;
 #endif
 
 static rocketnet_message_record_t hot_cold_record( int code, uint32_t channel,
-    uint32_t ordering, uint32_t sequencing, const uint8_t * data, int bytes )
+                                                   uint32_t ordering, uint32_t sequencing, const uint8_t * data, int bytes )
 {
     rocketnet_message_record_t record = {};
     record.code = code;
@@ -46,11 +46,12 @@ static void test_sequenced_hot_cold_layout_and_reset()
         rocketnet_unit_check( hot == region->base + layout.offset[RN_PART_SEQUENCED_HOLDS] );
         rocketnet_unit_check( cold == hot + (size_t) count * sizeof( rn_sequenced_hold_t ) );
         rocketnet_unit_check( cold + (size_t) count * sizeof( rn_sequenced_payload_t ) +
-            (size_t) count * 2 * sizeof( uint32_t ) == hot + layout.bytes[RN_PART_SEQUENCED_HOLDS] );
+                                  (size_t) count * 2 * sizeof( uint32_t ) ==
+                              hot + layout.bytes[RN_PART_SEQUENCED_HOLDS] );
         rocketnet_unit_check( (const uint8_t *) region->sequenced_hold_free_stack ==
-            cold + (size_t) count * sizeof( rn_sequenced_payload_t ) );
+                              cold + (size_t) count * sizeof( rn_sequenced_payload_t ) );
         rocketnet_unit_check( (const uint8_t *) region->sequenced_holds_delivered ==
-            cold + (size_t) count * sizeof( rn_sequenced_payload_t ) + (size_t) count * sizeof( uint32_t ) );
+                              cold + (size_t) count * sizeof( rn_sequenced_payload_t ) + (size_t) count * sizeof( uint32_t ) );
         if ( count )
         {
             memset( cold, 0xA7, (size_t) count * sizeof( rn_sequenced_payload_t ) );

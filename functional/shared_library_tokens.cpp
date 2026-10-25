@@ -17,7 +17,7 @@
 #include <string.h>
 #include <type_traits>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -59,7 +59,7 @@ static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level
 static api_polish_dev_minter_t api_polish_dev_minter()
 {
     api_polish_dev_minter_t minter = NULL;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     rocketnet_check( library != NULL );
     minter = (api_polish_dev_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
@@ -116,7 +116,7 @@ typedef enum rocketnet_status_t ( *ctv_dev_token_minter_t )( const char * server
 static ctv_dev_token_minter_t ctv_dev_token_minter()
 {
     ctv_dev_token_minter_t minter = NULL;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
     rocketnet_check( library != NULL );
     minter = (ctv_dev_token_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );

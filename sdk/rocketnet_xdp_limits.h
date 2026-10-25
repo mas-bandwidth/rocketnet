@@ -27,4 +27,3 @@
 #if ROCKETNET_XDP_REPLAY_MAX_ENTRIES < ROCKETNET_MAX_CLIENTS
 #error the XDP replay map must hold an entry for every client
 #endif
-

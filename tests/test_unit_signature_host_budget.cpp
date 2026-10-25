@@ -12,7 +12,7 @@ static void test_signature_failure_budget_tracks_hosts()
     for ( int family = 0; family < 2; ++family )
     {
         struct rocketnet_signature_verify_budget_t budget;
-        memset( &budget, 0, sizeof(budget) );
+        memset( &budget, 0, sizeof( budget ) );
         struct rocketnet_address_t source;
         rocketnet_unit_check( rocketnet_address_parse( &source, hosts[family] ) );
         for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; ++i )
@@ -27,7 +27,7 @@ static void test_signature_failure_budget_tracks_hosts()
         rocketnet_unit_check( rocketnet_address_parse( &other, family ? "[2001:db8::8]:20000" : "198.51.100.8:20000" ) );
         rocketnet_unit_check( rocketnet_signature_verify_budget_allow( &budget, &other, 1000 ) );
         rocketnet_unit_check( rocketnet_signature_verify_budget_allow( &budget, &source,
-                             1000 + ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS ) );
+                                                                       1000 + ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS ) );
     }
 }
 REGISTER_UNIT_TEST( test_signature_failure_budget_tracks_hosts );
@@ -39,7 +39,7 @@ static void test_signature_budget_window_restarts_on_backwards_clock()
     // length of clock movement in either direction
     // (tla/RNSecurityTables.tla FloodWindowBounded).
     struct rocketnet_signature_verify_budget_t budget;
-    memset( &budget, 0, sizeof(budget) );
+    memset( &budget, 0, sizeof( budget ) );
     struct rocketnet_address_t source;
     rocketnet_unit_check( rocketnet_address_parse( &source, "198.51.100.7:10000" ) );
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; ++i )

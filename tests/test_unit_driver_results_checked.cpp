@@ -21,7 +21,7 @@
 
 // The GRO case reads a Linux recvmmsg header: the GSO server, and with it
 // rocketnet_server_gso_gro_segment_bytes, is built on Linux only.
-#if defined(__linux__)
+#if defined( __linux__ )
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -137,8 +137,8 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
 static rocketnet_client_io_rig_t * transport_results_rig = NULL;
 
 static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_client_transport_io_operations_t * ops,
-    rocketnet_client_transport_io_t * transport, rocketnet_client_io_t * io,
-    rocketnet_client_receive_buffer_t ** buffers, transport_results_clock_t * clock, bool batch )
+                                       rocketnet_client_transport_io_t * transport, rocketnet_client_io_t * io,
+                                       rocketnet_client_receive_buffer_t ** buffers, transport_results_clock_t * clock, bool batch )
 {
     *ops = rocketnet_fake_client_operations_base;
     ops->create = transport_results_lie_create;
@@ -414,7 +414,8 @@ static rocketnet_server_transport_t * transport_results_make_server( transport_r
     rn_test_server_io_stop_and_close( &server->io );
     memset( operations, 0, sizeof( *operations ) );
     operations->destroy = transport_results_server_destroy;
-    operations->stop = transport_results_server_stop; operations->stopped = transport_results_server_stopped;
+    operations->stop = transport_results_server_stop;
+    operations->stopped = transport_results_server_stopped;
     operations->send_batch = transport_results_server_send_batch;
     operations->receive_batch = transport_results_server_receive_batch;
     server->io.instance = lie;
@@ -656,7 +657,7 @@ static void test_loopback_transport_io_results_matches_destination_or_wildcard()
 }
 REGISTER_UNIT_TEST( test_loopback_transport_io_results_matches_destination_or_wildcard );
 
-#if defined(__linux__)
+#if defined( __linux__ )
 
 static void transport_results_fill_gro( struct msghdr * header, char * control, size_t control_bytes, int stride, bool valid_len )
 {

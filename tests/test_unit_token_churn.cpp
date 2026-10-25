@@ -58,7 +58,7 @@ struct tc_server_t
 static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -70,7 +70,7 @@ static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = client_id;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = signed_fields.expire_timestamp;
@@ -85,7 +85,7 @@ static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
 
 static void tc_server_setup( struct tc_server_t * t, int max_clients, int history_capacity )
 {
-    memset( t, 0, sizeof(*t) );
+    memset( t, 0, sizeof( *t ) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
@@ -128,7 +128,7 @@ struct tc_client_t
 
 static void tc_client_init( struct tc_client_t * c, const char * address )
 {
-    memset( c, 0, sizeof(*c) );
+    memset( c, 0, sizeof( *c ) );
     rocketnet_client_protocol_init( &c->client, &c->counters );
     c->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
     check( c->client.reassembly );
@@ -168,7 +168,7 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
                                                   payload, &payload_bytes, &payload_client_index );
         if ( response_bytes > 0 )
             rocketnet_client_protocol_process_packet( &c->client, response, response_bytes, t->time + 0.01,
-                                                      payload, (int) sizeof(payload), &payload_bytes );
+                                                      payload, (int) sizeof( payload ), &payload_bytes );
     }
     return c->client.state;
 }
@@ -213,7 +213,7 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
     for ( int cycle = 0; cycle < 5; cycle++ )
     {
         struct tc_client_t c;
-        snprintf( address, sizeof(address), "198.51.100.%d:56789", 10 + cycle );
+        snprintf( address, sizeof( address ), "198.51.100.%d:56789", 10 + cycle );
         tc_client_init( &c, address );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
         tc_mint_token( token_data, UINT64_C( 0x3000 ) + (uint64_t) cycle );
@@ -411,8 +411,8 @@ static void test_response_replay_does_not_refresh_connected_slot()
     uint8_t response[ROCKETNET_RECEIVE_CEILING], payload[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0, payload_bytes = 0, client_index = -1;
     check( rocketnet_server_protocol_process_packet( &t.server, &c.address,
-        c.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, TC_NOW,
-        received + 1.0, response, &response_bytes, payload, &payload_bytes, &client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                     c.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, TC_NOW,
+                                                     received + 1.0, response, &response_bytes, payload, &payload_bytes, &client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( mapping->control->last_receive_time == received );
     rocketnet_server_protocol_update( &t.server, received + mapping->control->timeout_seconds );
     check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );

@@ -34,7 +34,8 @@ static const struct rocketnet_reassembly_counters_t stale_rule_counters = {
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 // every payload is two fragments: a 100-byte stride and a 60-byte final
 
@@ -53,7 +54,7 @@ struct stale_rule_harness_t
 
 static void stale_rule_begin( struct stale_rule_harness_t * h, int num_slots )
 {
-    memset( h, 0, sizeof(*h) );
+    memset( h, 0, sizeof( *h ) );
     h->counters = h->counters_storage.values;
     h->set = rocketnet_reassembly_set_create( NULL, 1, num_slots, 8192, 4 );
     rocketnet_unit_check( h->set != NULL );
@@ -312,7 +313,10 @@ static void test_reassembly_one_bad_fragment_costs_at_most_the_window()
 
 static void connection_index_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 // offers one fragment of a two-fragment payload on a connection; a completion is
@@ -342,7 +346,7 @@ static int connection_index_offer( struct stale_rule_harness_t * h, int connecti
 
 static void connection_index_begin( struct stale_rule_harness_t * h )
 {
-    memset( h, 0, sizeof(*h) );
+    memset( h, 0, sizeof( *h ) );
     h->counters = h->counters_storage.values;
     h->set = rocketnet_reassembly_set_create( NULL, 2, 8, 8192, 4 );
     rocketnet_unit_check( h->set != NULL );

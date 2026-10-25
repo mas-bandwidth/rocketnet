@@ -71,7 +71,7 @@ static int production_client_transport_create( const uint8_t * filter, const uin
         memcpy( config.packet_filter, filter, sizeof( config.packet_filter ) );
     int status = -1;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( fake, token, &config, 1000.0,
-        &rocketnet_fake_client_operations_base, fake, &status );
+                                                                                                 &rocketnet_fake_client_operations_base, fake, &status );
     check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
     if ( transport )
     {

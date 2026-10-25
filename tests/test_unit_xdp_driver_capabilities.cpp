@@ -93,7 +93,7 @@ static bool power_of_two( uint32_t value )
 static void test_xdp_transport_umem_config_sizes_fill_and_completion_rings()
 {
     struct xsk_umem_config config;
-    memset( &config, 0xFF, sizeof(config) );
+    memset( &config, 0xFF, sizeof( config ) );
 
     rocketnet_xdp_umem_config( &config );
 
@@ -133,7 +133,7 @@ static void test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing()
 static void test_xdp_transport_send_queue_is_one_per_destination()
 {
     struct rocketnet_address_t client;
-    memset( &client, 0, sizeof(client) );
+    memset( &client, 0, sizeof( client ) );
     client.type = ROCKETNET_ADDRESS_IPV4;
     client.data.ipv4[0] = 198;
     client.data.ipv4[1] = 51;
@@ -167,7 +167,7 @@ static void test_xdp_transport_send_queue_is_one_per_destination()
     check( seen[0] && seen[1] && seen[2] && seen[3] );
 
     struct rocketnet_address_t client_ipv6;
-    memset( &client_ipv6, 0, sizeof(client_ipv6) );
+    memset( &client_ipv6, 0, sizeof( client_ipv6 ) );
     client_ipv6.type = ROCKETNET_ADDRESS_IPV6;
     client_ipv6.data.ipv6[0] = 0x2001;
     client_ipv6.data.ipv6[7] = 7;
@@ -200,28 +200,28 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
 {
     rocketnet_xdp_attached_t attached;
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     check( !rocketnet_xdp_attached_any( &attached ) );
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     attached.prog_id = 11;
     check( rocketnet_xdp_attached_any( &attached ) );
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     attached.drv_prog_id = 12;
     check( rocketnet_xdp_attached_any( &attached ) );
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     attached.skb_prog_id = 13;
     check( rocketnet_xdp_attached_any( &attached ) );
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     attached.hw_prog_id = 14;
     check( rocketnet_xdp_attached_any( &attached ) );
 
     // the multi-mode shape: no single id, a native and a generic program
 
-    memset( &attached, 0, sizeof(attached) );
+    memset( &attached, 0, sizeof( attached ) );
     attached.drv_prog_id = 12;
     attached.skb_prog_id = 13;
     check( rocketnet_xdp_attached_any( &attached ) );

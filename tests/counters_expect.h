@@ -71,8 +71,8 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
 {
     uint64_t named[ROCKETNET_NUM_COUNTERS];
     bool is_named[ROCKETNET_NUM_COUNTERS];
-    memset( named, 0, sizeof(named) );
-    memset( is_named, 0, sizeof(is_named) );
+    memset( named, 0, sizeof( named ) );
+    memset( is_named, 0, sizeof( is_named ) );
 
     std::string lines;
     bool ok = true;
@@ -110,11 +110,11 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
 
         char line[256];
         if ( is_named[i] )
-            snprintf( line, sizeof(line), "  %s: expected +%llu, got %s%llu%s\n", rocketnet_counter_name( i ),
+            snprintf( line, sizeof( line ), "  %s: expected +%llu, got %s%llu%s\n", rocketnet_counter_name( i ),
                       (unsigned long long) named[i], backwards ? "-" : "+", (unsigned long long) actual,
                       matches ? "" : "  <-- wrong delta" );
         else
-            snprintf( line, sizeof(line), "  %s: moved %s%llu and was not named  <-- unnamed move\n", rocketnet_counter_name( i ),
+            snprintf( line, sizeof( line ), "  %s: moved %s%llu and was not named  <-- unnamed move\n", rocketnet_counter_name( i ),
                       backwards ? "-" : "+", (unsigned long long) actual );
         lines += line;
     }
@@ -178,7 +178,7 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
         if ( explained )
             continue;
         char line[128];
-        snprintf( line, sizeof(line), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+        snprintf( line, sizeof( line ), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
         lines += line;
         moved++;
     }

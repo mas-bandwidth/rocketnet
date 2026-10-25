@@ -18,7 +18,7 @@
 
 #include "../sdk/rocketnet_server_uring.h"
 
-#if defined(__linux__)
+#if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
 #endif
 
@@ -30,7 +30,7 @@
 
 #define check rocketnet_unit_check
 
-#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 
 #define URING_FAKE_CAPACITY             ( 1 << 18 )
 
@@ -86,7 +86,7 @@ static bool uring_fake_flooding( struct uring_fake_t * fake )
 
 static int uring_fake_peek( void * context, struct rocketnet_server_uring_test_completion_t * completions, int max )
 {
-    struct uring_fake_t * fake = (struct uring_fake_t*) context;
+    struct uring_fake_t * fake = (struct uring_fake_t *) context;
 
     if ( fake->consumed >= fake->guard )
     {
@@ -114,7 +114,7 @@ static int uring_fake_peek( void * context, struct rocketnet_server_uring_test_c
 
 static void uring_fake_advance( void * context, int count )
 {
-    struct uring_fake_t * fake = (struct uring_fake_t*) context;
+    struct uring_fake_t * fake = (struct uring_fake_t *) context;
     check( count >= 0 && count <= uring_fake_size( fake ) );
     fake->head += (uint64_t) count;
     fake->consumed += count;
@@ -122,7 +122,7 @@ static void uring_fake_advance( void * context, int count )
 
 static int uring_fake_ready( void * context )
 {
-    struct uring_fake_t * fake = (struct uring_fake_t*) context;
+    struct uring_fake_t * fake = (struct uring_fake_t *) context;
     return uring_fake_size( fake ) + ( uring_fake_flooding( fake ) ? 1 : 0 );
 }
 
@@ -133,7 +133,7 @@ static int uring_fake_ready( void * context )
 
 static void uring_fake_submitted( void * context, uint64_t user_data )
 {
-    struct uring_fake_t * fake = (struct uring_fake_t*) context;
+    struct uring_fake_t * fake = (struct uring_fake_t *) context;
     const int kind = rocketnet_uring_tag_kind( user_data );
     const int queue = rocketnet_uring_tag_queue( user_data );
     check( queue >= 0 && queue < ROCKETNET_URING_MAX_QUEUES );
@@ -141,7 +141,8 @@ static void uring_fake_submitted( void * context, uint64_t user_data )
     if ( kind == ROCKETNET_URING_TAG_SEND )
     {
         fake->sends_submitted++;
-        if ( fake->hold_send ) return;
+        if ( fake->hold_send )
+            return;
         uring_fake_push( fake, user_data, 64, 0 );
     }
     else if ( kind == ROCKETNET_URING_TAG_RECV )
@@ -152,7 +153,8 @@ static void uring_fake_submitted( void * context, uint64_t user_data )
     {
         fake->cancels_submitted++;
         fake->flood[queue] = false;
-        if ( fake->hold_cancel ) return;
+        if ( fake->hold_cancel )
+            return;
         uring_fake_push( fake, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, queue, 0 ), -ECANCELED, 0 );
         uring_fake_push( fake, user_data, 0, 0 );
     }
@@ -171,7 +173,7 @@ static int64_t uring_send_case_guard()
 
 static struct uring_fake_t * uring_fake_create( int64_t guard, struct rocketnet_server_uring_test_source_t * source )
 {
-    struct uring_fake_t * fake = (struct uring_fake_t*) calloc( 1, sizeof(struct uring_fake_t) );
+    struct uring_fake_t * fake = (struct uring_fake_t *) calloc( 1, sizeof( struct uring_fake_t ) );
     check( fake );
     fake->flood_on_arm = true;
     fake->guard = guard;
@@ -208,7 +210,7 @@ static uint64_t uring_counter( struct rocketnet_server_uring_t * uring, int inde
 static void uring_stage_sends( struct rocketnet_server_uring_t * uring, int count, uint8_t ** frames )
 {
     rocketnet_address_t to;
-    memset( &to, 0, sizeof(to) );
+    memset( &to, 0, sizeof( to ) );
     to.type = ROCKETNET_ADDRESS_IPV4;
     to.data.ipv4[0] = 127;
     to.data.ipv4[3] = 1;
@@ -289,7 +291,7 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     for ( int i = 0; i < 2 * ROCKETNET_URING_SEND_BUDGET; i++ )
         uring_fake_push_receive( fake, 0 );
 
-    #define URING_TEST_SENDS 1000
+#define URING_TEST_SENDS 1000
 
     static uint8_t * frames[URING_TEST_SENDS];
     uring_stage_sends( uring, URING_TEST_SENDS, frames );
@@ -477,7 +479,8 @@ static void test_io_uring_shutdown_flush_never_waits_for_saturated_sends()
     rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
     check( uring );
     uring_stage_sends( uring, ROCKETNET_URING_SEND_QUEUE_SIZE, NULL );
-    for ( int i = 0; i < 16; ++i ) rocketnet_server_uring_send_packets( uring );
+    for ( int i = 0; i < 16; ++i )
+        rocketnet_server_uring_send_packets( uring );
     check( fake->sends_submitted == ROCKETNET_URING_SEND_QUEUE_SIZE );
     check( rocketnet_server_uring_test_wait_calls( uring ) == 0 );
     rocketnet_server_uring_stop( uring );

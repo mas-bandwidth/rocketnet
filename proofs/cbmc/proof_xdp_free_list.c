@@ -92,9 +92,8 @@ int main( void )
                 __CPROVER_assert( count == before, "refused push leaves the count" );
                 for ( int i = 0; i < CAP; i++ )
                     __CPROVER_assert( frames[i] == saved[i], "refused push leaves the slots" );
-                __CPROVER_assert( before >= CAP || frame < region_begin || frame >= region_end
-                                  || ( frame - region_begin ) % ROCKETNET_XDP_FRAME_SIZE != 0,
-                    "refused push was full, outside the region, or misaligned" );
+                __CPROVER_assert( before >= CAP || frame < region_begin || frame >= region_end || ( frame - region_begin ) % ROCKETNET_XDP_FRAME_SIZE != 0,
+                                  "refused push was full, outside the region, or misaligned" );
             }
         }
         else

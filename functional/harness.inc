@@ -70,7 +70,7 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // with; an epoch of zero returns the wall clock both ends then read.
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time )
 {
-    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : (uint64_t) ::time( NULL );
+    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : ( uint64_t )::time( NULL );
 }
 
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
@@ -91,8 +91,8 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
-    const int line_length = snprintf( line, sizeof(line), "%s", message );
-    if ( line_length < 0 || (size_t) line_length >= sizeof(line) )
+    const int line_length = snprintf( line, sizeof( line ), "%s", message );
+    if ( line_length < 0 || (size_t) line_length >= sizeof( line ) )
         return;
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
@@ -150,7 +150,7 @@ struct rocketnet_test_env_guard_t
 static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     guard->name = name;
-    guard->was_set = rocketnet_test_getenv( name, guard->saved, sizeof(guard->saved) ) != 0;
+    guard->was_set = rocketnet_test_getenv( name, guard->saved, sizeof( guard->saved ) ) != 0;
 }
 
 static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
@@ -173,50 +173,59 @@ static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level
     (void) length;
     (void) level;
     char line[1024];
-    snprintf( line, sizeof(line), "%s", message );
+    snprintf( line, sizeof( line ), "%s", message );
     const size_t used = strlen( rocketnet_test_captured_log );
-    snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
+    snprintf( rocketnet_test_captured_log + used, sizeof( rocketnet_test_captured_log ) - used, "%s\n", line );
 }
 
 class rocketnet_test_environment_t
 {
-    struct entry_t { std::string name, value; bool present; };
-    std::vector<entry_t> entries;
-    void clear(const char * name)
+    struct entry_t
     {
-        if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
-        if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
-        for (const auto & entry : entries) if (entry.name == name) return;
+        std::string name, value;
+        bool present;
+    };
+    std::vector<entry_t> entries;
+    void clear( const char * name )
+    {
+        if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
+            return;
+        if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
+            return;
+        for ( const auto & entry : entries )
+            if ( entry.name == name )
+                return;
         char value[4096];
-        const bool present = rocketnet_test_getenv(name, value, sizeof(value)) != 0;
-        entries.push_back({name, value, present});
-        rocketnet_check(unsetenv(name) == 0);
+        const bool present = rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+        entries.push_back( { name, value, present } );
+        rocketnet_check( unsetenv( name ) == 0 );
     }
+
 public:
     rocketnet_test_environment_t()
     {
-        for (int side = 0; side < 2; ++side)
+        for ( int side = 0; side < 2; ++side )
         {
             int count = 0;
-            const auto * fields = side ? rocketnet_server_transport_config_fields(&count)
-                                       : rocketnet_client_transport_config_fields(&count);
-            for (int i = 0; i < count; ++i)
+            const auto * fields = side ? rocketnet_server_transport_config_fields( &count )
+                                       : rocketnet_client_transport_config_fields( &count );
+            for ( int i = 0; i < count; ++i )
             {
                 char name[128];
-                rocketnet_check(rocketnet_config_env_var_name_for(side ? "server" : "client", fields[i].name, name, sizeof(name)));
-                clear(name);
+                rocketnet_check( rocketnet_config_env_var_name_for( side ? "server" : "client", fields[i].name, name, sizeof( name ) ) );
+                clear( name );
             }
         }
-        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
-        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
-        clear("ROCKETNET_SERVER_NUM_OS_CPUS");
-        clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
+        clear( "ROCKETNET_SERVER_IPV4_ADDRESS" );
+        clear( "ROCKETNET_SERVER_IPV6_ADDRESS" );
+        clear( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+        clear( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
     }
     ~rocketnet_test_environment_t()
     {
-        for (const auto & entry : entries)
-            rocketnet_check((entry.present ? setenv(entry.name.c_str(), entry.value.c_str(), 1)
-                                           : unsetenv(entry.name.c_str())) == 0);
+        for ( const auto & entry : entries )
+            rocketnet_check( ( entry.present ? setenv( entry.name.c_str(), entry.value.c_str(), 1 )
+                                             : unsetenv( entry.name.c_str() ) ) == 0 );
     }
 };
 

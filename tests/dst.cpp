@@ -31,13 +31,12 @@ static uint32_t dst_keys_random( void )
 
 static void dst_keys_buf( void * const buffer, const size_t size )
 {
-    uint8_t * out = (uint8_t*) buffer;
+    uint8_t * out = (uint8_t *) buffer;
     for ( size_t i = 0; i < size; i++ )
         out[i] = (uint8_t) rocketnet_dst_substream_draw( &dst_keys_stream );
 }
 
-static struct randombytes_implementation dst_keys_implementation =
-{
+static struct randombytes_implementation dst_keys_implementation = {
     dst_keys_name,
     dst_keys_random,
     NULL,
@@ -52,13 +51,12 @@ static int dst_fault_name( const char * name, size_t bytes, uint32_t * mask )
     {
         const char * name;
         uint32_t bit;
-    } kinds[] =
-    {
+    } kinds[] = {
         { "loss", ROCKETNET_DST_FAULT_LOSS },
         { "dup", ROCKETNET_DST_FAULT_DUP },
         { "jitter", ROCKETNET_DST_FAULT_JITTER },
     };
-    for ( size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++ )
+    for ( size_t i = 0; i < sizeof( kinds ) / sizeof( kinds[0] ); i++ )
     {
         if ( strlen( kinds[i].name ) == bytes && memcmp( kinds[i].name, name, bytes ) == 0 )
         {
@@ -106,7 +104,7 @@ static const char * dst_usage =
 static int dst_set_sequence_start( uint64_t start )
 {
     char text[32];
-    snprintf( text, sizeof(text), "%llu", (unsigned long long) start );
+    snprintf( text, sizeof( text ), "%llu", (unsigned long long) start );
 #if defined( _WIN32 )
     if ( _putenv_s( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text ) != 0 )
         return 0;
@@ -120,7 +118,7 @@ static int dst_set_sequence_start( uint64_t start )
 int main( int argc, char ** argv )
 {
     struct rocketnet_dst_options_t options;
-    memset( &options, 0, sizeof(options) );
+    memset( &options, 0, sizeof( options ) );
     options.shape = ROCKETNET_DST_SHAPE_FULL;
     options.faults = ROCKETNET_DST_FAULT_ALL;
     options.force_fail_step = -1;
@@ -258,7 +256,7 @@ int main( int argc, char ** argv )
     struct rocketnet_dst_trace_t range_trace;
     rocketnet_dst_trace_init( &range_trace );
 
-    for ( uint64_t seed = seeds_a; ; )
+    for ( uint64_t seed = seeds_a;; )
     {
         rocketnet_dst_substream_init( &dst_keys_stream, seed, "keys" );
 
@@ -287,7 +285,7 @@ int main( int argc, char ** argv )
         if ( !result.passed )
         {
             char line[768];
-            rocketnet_dst_format_failure( &result, &options, line, sizeof(line) );
+            rocketnet_dst_format_failure( &result, &options, line, sizeof( line ) );
             printf( "%s\n", line );
             failed++;
             if ( (int) failed >= max_fails )
@@ -303,7 +301,7 @@ int main( int argc, char ** argv )
     // a schedule's summary also says on how many seeds it fired
     char schedule_text[96] = "";
     if ( options.schedule != ROCKETNET_DST_SCHEDULE_NONE )
-        snprintf( schedule_text, sizeof(schedule_text), " schedule=%s fired=%llu",
+        snprintf( schedule_text, sizeof( schedule_text ), " schedule=%s fired=%llu",
                   rocketnet_dst_schedule_name( options.schedule ), (unsigned long long) fired_seeds );
 
     if ( failed )

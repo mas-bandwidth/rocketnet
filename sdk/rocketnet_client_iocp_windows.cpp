@@ -65,7 +65,7 @@ int rocketnet_client_iocp_init( rocketnet_client_iocp_t * iocp, const rocketnet_
     {
         iocp->state[i] = (uint8_t) ROCKETNET_CLIENT_IOCP_RECEIVE_IDLE;
         iocp->packet_bytes[i] = 0;
-        memset( &iocp->from[i], 0, sizeof(iocp->from[i]) );
+        memset( &iocp->from[i], 0, sizeof( iocp->from[i] ) );
     }
     for ( int i = 0; i < num_receives; i++ )
         rocketnet_client_iocp_post( iocp, i );
@@ -248,15 +248,15 @@ struct rocketnet_client_iocp_io_t
 
 static bool rocketnet_client_iocp_address_read( const sockaddr_storage * storage, int bytes, bool dual_stack, rocketnet_address_t * address )
 {
-    memset( address, 0, sizeof(*address) );
-    if ( storage->ss_family == AF_INET && bytes >= (int) sizeof(sockaddr_in) )
+    memset( address, 0, sizeof( *address ) );
+    if ( storage->ss_family == AF_INET && bytes >= (int) sizeof( sockaddr_in ) )
     {
-        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in*) storage, address );
+        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, address );
         return true;
     }
-    if ( storage->ss_family == AF_INET6 && bytes >= (int) sizeof(sockaddr_in6) )
+    if ( storage->ss_family == AF_INET6 && bytes >= (int) sizeof( sockaddr_in6 ) )
     {
-        const sockaddr_in6 * from = (const sockaddr_in6*) storage;
+        const sockaddr_in6 * from = (const sockaddr_in6 *) storage;
         address->type = ROCKETNET_ADDRESS_IPV6;
         address->port = ntohs( from->sin6_port );
         for ( int i = 0; i < 8; ++i )
@@ -268,16 +268,16 @@ static bool rocketnet_client_iocp_address_read( const sockaddr_storage * storage
 
 static bool rocketnet_client_iocp_win32_post_receive( void * context, int receive, uint8_t * buffer, int buffer_bytes )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) context;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     rocketnet_client_iocp_receive_t * op = &client->receives[receive];
-    memset( &op->overlapped, 0, sizeof(op->overlapped) );
-    op->buffer.buf = (char*) buffer;
+    memset( &op->overlapped, 0, sizeof( op->overlapped ) );
+    op->buffer.buf = (char *) buffer;
     op->buffer.len = (ULONG) buffer_bytes;
     op->flags = 0;
-    op->from_bytes = (INT) sizeof(op->from);
+    op->from_bytes = (INT) sizeof( op->from );
     op->index = receive;
     const int result = WSARecvFrom( (SOCKET) client->socket->handle, &op->buffer, 1, NULL, &op->flags,
-                                    (sockaddr*) &op->from, &op->from_bytes, &op->overlapped, NULL );
+                                    (sockaddr *) &op->from, &op->from_bytes, &op->overlapped, NULL );
     if ( result == 0 )
         return true; // completed at once; the completion is still queued on the port
     const int error = WSAGetLastError();
@@ -289,7 +289,7 @@ static bool rocketnet_client_iocp_win32_post_receive( void * context, int receiv
 
 static int rocketnet_client_iocp_win32_dequeue( void * context, rocketnet_client_iocp_completion_t * completions, int max_completions, double timeout_seconds )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) context;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     rocketnet_assert( max_completions <= ROCKETNET_CLIENT_IOCP_RECEIVES + 1 );
     DWORD timeout_ms = 0;
     if ( timeout_seconds > 0.0 )
@@ -332,7 +332,7 @@ static int rocketnet_client_iocp_win32_dequeue( void * context, rocketnet_client
 
 static void rocketnet_client_iocp_win32_post_wake( void * context )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) context;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     if ( !PostQueuedCompletionStatus( client->port, 0, ROCKETNET_CLIENT_IOCP_WAKE_KEY, NULL ) )
         rocketnet_debug( "iocp client: wake post failed: %lu", GetLastError() );
 }
@@ -341,13 +341,12 @@ static void rocketnet_client_iocp_win32_post_wake( void * context )
 // which stays open until the drain is done
 static void rocketnet_client_iocp_win32_close( void * context )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) context;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     rocketnet_platform_socket_destroy( client->socket );
     client->socket = NULL;
 }
 
-static const rocketnet_client_iocp_port_t rocketnet_client_iocp_win32_port =
-{
+static const rocketnet_client_iocp_port_t rocketnet_client_iocp_win32_port = {
     rocketnet_client_iocp_win32_post_receive,
     rocketnet_client_iocp_win32_dequeue,
     rocketnet_client_iocp_win32_post_wake,
@@ -367,7 +366,7 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
     client->ipv6 = bind->type == ROCKETNET_ADDRESS_IPV6;
 
     client->socket = rocketnet_platform_socket_create( context, bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-        ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     if ( !client->socket )
     {
         client->~rocketnet_client_iocp_io_t();
@@ -405,7 +404,7 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
 // when every posted receive has completed.
 static void rocketnet_client_iocp_destroy( void * transport )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     if ( !client )
         return;
     void * context = client->context;
@@ -422,13 +421,13 @@ static void rocketnet_client_iocp_destroy( void * transport )
 
 static void rocketnet_client_iocp_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     rocketnet_platform_socket_send_packet( client->socket, to, data, bytes );
 }
 
 static int rocketnet_client_iocp_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     int bytes = 0;
     if ( rocketnet_client_iocp_receive_batch( &client->core, from, data, capacity, &bytes, 1 ) == 0 )
         return 0;
@@ -439,33 +438,33 @@ static int rocketnet_client_iocp_receive( void * transport, rocketnet_address_t 
 // datagram (overlapped send is rn-win-client-overlapped-send)
 static void rocketnet_client_iocp_send_batch( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     rocketnet_platform_socket_send_packets( client->socket, sends, num_packets );
 }
 
 // RNClientIo IoReceive: the completed receives, re-posted after the copy
 static int rocketnet_client_iocp_receive_batch_operation( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     return rocketnet_client_iocp_receive_batch( &client->core, from, packet_data, packet_stride, packet_bytes, max_packets );
 }
 
 // RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake)
 static bool rocketnet_client_iocp_wait_operation( void * transport, bool readable, double timeout_seconds )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     return rocketnet_client_iocp_wait( &client->core, readable, timeout_seconds );
 }
 
 static void rocketnet_client_iocp_wake_operation( void * transport )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     rocketnet_client_iocp_wake( &client->core );
 }
 
 static uint64_t rocketnet_client_iocp_send_failures( void * transport )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     return client->socket ? rocketnet_platform_socket_send_failures( client->socket ) : 0;
 }
 
@@ -473,12 +472,11 @@ static uint64_t rocketnet_client_iocp_send_failures( void * transport )
 // kernel drops datagrams from any other source (TRANSPORT.md t11)
 static bool rocketnet_client_iocp_connect( void * transport, const rocketnet_address_t * server_address )
 {
-    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t*) transport;
+    rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     return rocketnet_platform_socket_connect( client->socket, server_address );
 }
 
-const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operations =
-{
+const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operations = {
     rocketnet_client_iocp_create, rocketnet_client_iocp_destroy, rocketnet_client_iocp_send, rocketnet_client_iocp_receive,
     rocketnet_client_iocp_send_batch, rocketnet_client_iocp_receive_batch_operation, rocketnet_client_iocp_wait_operation,
     rocketnet_client_iocp_wake_operation, rocketnet_client_iocp_send_failures, rocketnet_client_iocp_connect

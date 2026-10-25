@@ -32,8 +32,7 @@ struct delivery_step_t
 };
 
 // Code 2: delivered as its number is accepted, out of number order, once.
-static const delivery_step_t reliable_steps[] =
-{
+static const delivery_step_t reliable_steps[] = {
     { 2, 0, 2, 0, 0, 0, 0x12 },
     { 2, 0, 0, 0, 0, 0, 0x10 },
     { 2, 0, 3, 0, 0, 0, 0x13 },
@@ -44,8 +43,7 @@ static const delivery_step_t reliable_steps[] =
 
 // Code 3: ahead of its ordering index it is held; a delivery in turn drains
 // the held successors; behind is a violation.
-static const delivery_step_t ordered_steps[] =
-{
+static const delivery_step_t ordered_steps[] = {
     { 3, 0, 0, 1, 1, 0, 0x21 },
     { 3, 0, 1, 3, 3, 0, 0x23 },
     { 3, 0, 2, 0, 0, 0, 0x20 },
@@ -57,8 +55,7 @@ static const delivery_step_t ordered_steps[] =
 // Code 4: delivered in its epoch while its sequencing index is not behind the
 // watermark; held as the newest future state; dropped when superseded; drained
 // when an ordered delivery opens its epoch.
-static const delivery_step_t sequenced_steps[] =
-{
+static const delivery_step_t sequenced_steps[] = {
     { 3, 0, 0, 0, 0, 0, 0x30 },
     { 4, 0, 1, 1, 1, 0, 0x31 },
     { 4, 0, 2, 1, 1, 1, 0x32 },
@@ -71,21 +68,20 @@ static const delivery_step_t sequenced_steps[] =
     { 4, 0, 9, 3, 66, 0, 0x39 },
 };
 
-static const rn_standard_vector_t standard_delivery_reliable_table[] =
-{
+static const rn_standard_vector_t standard_delivery_reliable_table[] = {
     RN_STANDARD_VECTOR( "m7.reliable-loss-reorder",
-        "01 00 01 02 00 01 00 12 01 00 01 02 00 01 00 10"
-        "01 00 01 02 00 01 00 13 01 00 01 02 00 01 00 11"
-        "00 00 00 00 01 00" ),
+                        "01 00 01 02 00 01 00 12 01 00 01 02 00 01 00 10"
+                        "01 00 01 02 00 01 00 13 01 00 01 02 00 01 00 11"
+                        "00 00 00 00 01 00" ),
     RN_STANDARD_VECTOR( "m7.reliable-ordered-hold-drain",
-        "02 00 00 02 00 00 01 00 02 03 00 01 00 20 03 00"
-        "01 00 21 01 00 02 03 00 01 00 22 03 00 01 00 23"
-        "00 00 00 00 01 00" ),
+                        "02 00 00 02 00 00 01 00 02 03 00 01 00 20 03 00"
+                        "01 00 21 01 00 02 03 00 01 00 22 03 00 01 00 23"
+                        "00 00 00 00 01 00" ),
     RN_STANDARD_VECTOR( "m7.reliable-sequenced-hold-drain",
-        "01 00 01 03 00 01 00 30 01 00 01 04 00 01 00 31"
-        "01 00 01 04 00 01 00 32 03 00 00 02 00 00 02 00"
-        "00 03 00 00 01 00 02 03 00 01 00 37 04 00 01 00"
-        "35 01 00 01 04 00 01 00 38 00 01 00" ),
+                        "01 00 01 03 00 01 00 30 01 00 01 04 00 01 00 31"
+                        "01 00 01 04 00 01 00 32 03 00 00 02 00 00 02 00"
+                        "00 03 00 00 01 00 02 03 00 01 00 37 04 00 01 00"
+                        "35 01 00 01 04 00 01 00 38 00 01 00" ),
 };
 
 static bool trace_append( uint8_t * out, int capacity, int * used, const uint8_t * bytes, int count )
@@ -203,8 +199,8 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
             if ( rocketnet_message_reader_next( &reader, &parsed ) )
             {
                 const bool numbered = parsed.code == ROCKETNET_MESSAGE_CODE_RELIABLE ||
-                    parsed.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ||
-                    parsed.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
+                                      parsed.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ||
+                                      parsed.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
                 bool dispatch = true;
                 if ( numbered )
                 {

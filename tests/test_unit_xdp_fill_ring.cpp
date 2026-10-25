@@ -86,9 +86,12 @@ namespace
     bool flush( rocketnet_pending_frames_t<FILL_FRAMES> * pending, fake_fill_ring_t * ring )
     {
         return pending->flush(
-            [&]( uint32_t count, uint32_t * index ) { return fake_reserve( ring, count, index ); },
-            [&]( uint32_t index, uint64_t frame ) { ring->addr[index & ( ring->size - 1 )] = frame; },
-            [&]( uint32_t count ) { ring->producer += count; } );
+            [&]( uint32_t count, uint32_t * index )
+            { return fake_reserve( ring, count, index ); },
+            [&]( uint32_t index, uint64_t frame )
+            { ring->addr[index & ( ring->size - 1 )] = frame; },
+            [&]( uint32_t count )
+            { ring->producer += count; } );
     }
 
     // the server's start: every receive frame on the fill ring

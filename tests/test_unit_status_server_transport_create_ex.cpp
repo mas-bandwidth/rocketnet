@@ -39,7 +39,7 @@ struct env_pin_saved
 
 static void env_pin_set_aside( env_pin_saved * saved )
 {
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
+    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
     rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 }
 
@@ -60,25 +60,25 @@ struct allocator_state
 
 static void * allocate( void * context, size_t bytes )
 {
-    allocator_state * state = (allocator_state*) context;
+    allocator_state * state = (allocator_state *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
-    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
-    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
-    memset( (void*) address, 0xA5, bytes );
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    memset( (void *) address, 0xA5, bytes );
     ++state->live;
-    return (void*) address;
+    return (void *) address;
 }
 
 static void release( void * context, void * pointer )
 {
-    allocator_state * state = (allocator_state*) context;
+    allocator_state * state = (allocator_state *) context;
     void * base = NULL;
-    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     --state->live;
     free( base );
 }
@@ -136,7 +136,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // before init (the public NULL guard runs first)
     status = -1;
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     server_create_ex_expected_null_asserts = 0;
     rocketnet_assert_function( server_create_ex_expected_null_assert );
 #endif

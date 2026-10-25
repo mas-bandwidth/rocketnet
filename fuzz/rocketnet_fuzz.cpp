@@ -49,7 +49,8 @@ static const uint8_t rocketnet_fuzz_filter_value[ROCKETNET_FILTER_VALUE_BYTES] =
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -69,7 +70,8 @@ static const struct rocketnet_reassembly_counters_t rocketnet_fuzz_fragment_coun
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 static struct rocketnet_reassembly_set_t * rocketnet_fuzz_reassembly = NULL;
 
@@ -144,43 +146,42 @@ struct rocketnet_fuzz_type_info_t
 // fragment below the header or above the receive ceiling, so that row
 // cannot be reached from here and no seed can raise it.
 
-static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FUZZ_TYPE_COUNT] =
-{
-    { "prefilter_request",            -1 },
-    { "prefilter_denied",             -1 },
-    { "prefilter_challenge",          -1 },
-    { "prefilter_response",           -1 },
-    { "prefilter_keep_alive",         -1 },
-    { "prefilter_payload",            -1 },
-    { "prefilter_disconnect",         -1 },
-    { "prefilter_cookie",             -1 },
-    { "prefilter_ack",                -1 },
-    { "prefilter_fragment",           -1 },
-    { "prefilter_reserved_type",      -1 },
-    { "prefilter_too_short",          ROCKETNET_COUNTER_PREFILTER_TOO_SHORT },
-    { "prefilter_too_large",          ROCKETNET_COUNTER_PREFILTER_TOO_LARGE },
-    { "prefilter_wrong_epoch",        ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH },
-    { "prefilter_wrong_value",        ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE },
-    { "fragment_accepted",            ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
-    { "fragment_zero_payload_id",     ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID },
-    { "fragment_stale",               ROCKETNET_COUNTER_FRAGMENT_STALE },
-    { "fragment_count_invalid",       ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID },
-    { "fragment_index_out_of_range",  ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE },
-    { "fragment_count_mismatch",      ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH },
-    { "fragment_payload_too_large",   ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE },
-    { "fragment_duplicate_index",     ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX },
-    { "fragment_reassembled",         ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED },
-    { "fragment_abandoned",           ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED },
-    { "fragment_batch_full",          ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL },
-    { "base64_decoded",               -1 },
-    { "base64_over_capacity",         -1 },
-    { "base64_encoded",               -1 },
-    { "config_int_parsed",            -1 },
-    { "config_int_refused",           -1 },
-    { "config_ladder_parsed",         -1 },
-    { "config_ladder_refused",        -1 },
-    { "config_env_name",              -1 },
-    { "config_env_name_refused",      -1 }
+static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FUZZ_TYPE_COUNT] = {
+    { "prefilter_request", -1 },
+    { "prefilter_denied", -1 },
+    { "prefilter_challenge", -1 },
+    { "prefilter_response", -1 },
+    { "prefilter_keep_alive", -1 },
+    { "prefilter_payload", -1 },
+    { "prefilter_disconnect", -1 },
+    { "prefilter_cookie", -1 },
+    { "prefilter_ack", -1 },
+    { "prefilter_fragment", -1 },
+    { "prefilter_reserved_type", -1 },
+    { "prefilter_too_short", ROCKETNET_COUNTER_PREFILTER_TOO_SHORT },
+    { "prefilter_too_large", ROCKETNET_COUNTER_PREFILTER_TOO_LARGE },
+    { "prefilter_wrong_epoch", ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH },
+    { "prefilter_wrong_value", ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE },
+    { "fragment_accepted", ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
+    { "fragment_zero_payload_id", ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID },
+    { "fragment_stale", ROCKETNET_COUNTER_FRAGMENT_STALE },
+    { "fragment_count_invalid", ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID },
+    { "fragment_index_out_of_range", ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE },
+    { "fragment_count_mismatch", ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH },
+    { "fragment_payload_too_large", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE },
+    { "fragment_duplicate_index", ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX },
+    { "fragment_reassembled", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED },
+    { "fragment_abandoned", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED },
+    { "fragment_batch_full", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL },
+    { "base64_decoded", -1 },
+    { "base64_over_capacity", -1 },
+    { "base64_encoded", -1 },
+    { "config_int_parsed", -1 },
+    { "config_int_refused", -1 },
+    { "config_ladder_parsed", -1 },
+    { "config_ladder_refused", -1 },
+    { "config_env_name", -1 },
+    { "config_env_name_refused", -1 }
 };
 
 // the library counters the harness raises, and the harness's own counters
@@ -334,7 +335,7 @@ static void rocketnet_fuzz_fragment( const uint8_t * data, size_t bytes )
     if ( bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES )
     {
         uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
-        memcpy( header, data, sizeof(header) );
+        memcpy( header, data, sizeof( header ) );
         uint32_t payload_id = 0;
         int fragment_index = 0;
         int fragment_count = 0;
@@ -407,7 +408,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     }
     if ( wide_bytes > 0 && wide_bytes <= (int) sizeof( key_field ) )
         rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, (size_t) wide_bytes ) == 0,
-                               "base64 fitting field must preserve all bytes" );
+                                "base64 fitting field must preserve all bytes" );
 
     char small_string[8];
     const int small_string_bytes = rocketnet_base64_decode_string( text, small_string, sizeof( small_string ) );
@@ -415,7 +416,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
         rocketnet_fuzz_require( small_string_bytes == 0, "base64 string must reserve its terminator" );
     if ( wide_bytes > 0 && wide_bytes < (int) sizeof( small_string ) )
         rocketnet_fuzz_require( small_string_bytes == wide_bytes && memcmp( small_string, decoded, (size_t) wide_bytes ) == 0 && small_string[wide_bytes] == '\0',
-                               "base64 fitting string must preserve bytes and terminator" );
+                                "base64 fitting string must preserve bytes and terminator" );
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
     // whatever these bytes are, encoding then decoding them must return
@@ -432,7 +433,7 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
         rocketnet_fuzz_require( small_encoded_length == -1, "base64 encode must refuse insufficient capacity" );
     if ( encoded_length > 0 && encoded_length < (int) sizeof( small_encoded ) )
         rocketnet_fuzz_require( small_encoded_length == encoded_length && memcmp( small_encoded, encoded, (size_t) encoded_length + 1 ) == 0,
-                               "base64 fitting encode must preserve bytes and terminator" );
+                                "base64 fitting encode must preserve bytes and terminator" );
     if ( encoded_length > 0 )
     {
         uint8_t round_trip[4097];
@@ -530,7 +531,7 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
 // payload
 
 static int rocketnet_fuzz_fragment_record( uint8_t * out, int at, uint32_t payload_id, int index, int count_minus_one,
-                                            int payload_bytes, uint8_t fill )
+                                           int payload_bytes, uint8_t fill )
 {
     const int bytes = ROCKETNET_FRAGMENT_HEADER_BYTES + payload_bytes;
     if ( at + 2 + bytes > ROCKETNET_FUZZ_SEED_MAX )
@@ -868,9 +869,9 @@ static void rocketnet_fuzz_run( const uint8_t * data, size_t size )
     switch ( data[0] & 3 )
     {
         case 0: rocketnet_fuzz_prefilter( body, body_size ); break;
-        case 1: rocketnet_fuzz_fragment( body, body_size );  break;
-        case 2: rocketnet_fuzz_base64( body, body_size );    break;
-        case 3: rocketnet_fuzz_config( body, body_size );    break;
+        case 1: rocketnet_fuzz_fragment( body, body_size ); break;
+        case 2: rocketnet_fuzz_base64( body, body_size ); break;
+        case 3: rocketnet_fuzz_config( body, body_size ); break;
     }
 }
 

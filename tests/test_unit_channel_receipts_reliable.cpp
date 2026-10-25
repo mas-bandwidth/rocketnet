@@ -119,7 +119,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     config.send_message_buffer_bytes = 800000;
     rn_message_link_t link = reliable_link( &f->transport );
     f->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
-                                                                          ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
+                                                                         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( f->client != NULL );
     if ( allocations_after_create )
         *allocations_after_create = reliable_receipt_allocations;
@@ -144,8 +144,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
         rocketnet_unit_check( rocketnet_message_reader_begin( &reader, f->transport.sent_payloads[i], f->transport.sent_bytes[i],
                                                               &connection->ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
-        rocketnet_unit_check( record.code == ( type == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ?
-                                                ROCKETNET_MESSAGE_CODE_RELIABLE : ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ) );
+        rocketnet_unit_check( record.code == ( type == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ? ROCKETNET_MESSAGE_CODE_RELIABLE : ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ) );
     }
 }
 

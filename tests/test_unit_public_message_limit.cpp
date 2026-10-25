@@ -93,11 +93,11 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     check( payload == 16384 );
     // at the build's most clients, since the budget scales with them (512 MiB per 1000)
     check( rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, payload,
-        rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, payload ) ) );
+                                                          rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, payload ) ) );
     // A naive assignment of the application default to the transport cap
     // exceeds its budget before any allocation. Exercise the actual planner.
     check( !rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, 262144,
-        rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, 262144 ) ) );
+                                                           rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, 262144 ) ) );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
 

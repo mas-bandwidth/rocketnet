@@ -11,10 +11,10 @@
 #include <math.h>
 #include <string.h>
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 // Unit-library instrumentation only: no production state or per-ACK writes.
 static thread_local rn_ack_cost_t rn_ack_cost;
-void rn_window_ack_cost_reset() { memset( &rn_ack_cost, 0, sizeof(rn_ack_cost) ); }
+void rn_window_ack_cost_reset() { memset( &rn_ack_cost, 0, sizeof( rn_ack_cost ) ); }
 rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 #endif
 
@@ -28,7 +28,7 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
     if ( region && region->counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &region->counters->values[counter], 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &region->counters->values[counter], 1 );
 }
 
 // ----------------------------------------------------------------
@@ -330,7 +330,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
         config = &defaults;
     }
 
-    memset( ack, 0, sizeof(*ack) );
+    memset( ack, 0, sizeof( *ack ) );
     ack->send = send;
     ack->region = region;
     ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
@@ -404,10 +404,14 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
     const double early = gap - rn_window_ack_class_delay( ack, c == 1 );
     const double late = gap - gaps->prev_delay[c];
     gaps->count[c]++;
-    if ( gap < gaps->gap_min[c] ) gaps->gap_min[c] = gap;
-    if ( gap > gaps->gap_max[c] ) gaps->gap_max[c] = gap;
-    if ( early < gaps->early_min[c] ) gaps->early_min[c] = early;
-    if ( late > gaps->late_max[c] ) gaps->late_max[c] = late;
+    if ( gap < gaps->gap_min[c] )
+        gaps->gap_min[c] = gap;
+    if ( gap > gaps->gap_max[c] )
+        gaps->gap_max[c] = gap;
+    if ( early < gaps->early_min[c] )
+        gaps->early_min[c] = early;
+    if ( late > gaps->late_max[c] )
+        gaps->late_max[c] = late;
 }
 
 #endif // #if ROCKETNET_DEV
@@ -614,7 +618,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
         rn_ack_cost.completed_numbers++;
 #endif
         rn_resend_fifo_unlink( ack, slot_index );
@@ -630,7 +634,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             {
                 for ( uint16_t j = 0; j < slot->fragment; j++ )
                 {
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
                     rn_ack_cost.predecessor_visits++;
 #endif
                     const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );

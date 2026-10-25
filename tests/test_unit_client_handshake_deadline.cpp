@@ -40,7 +40,7 @@
 static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint64_t expire, int32_t timeout )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = create;
@@ -52,7 +52,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = expire;
@@ -75,7 +75,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
 
@@ -106,7 +106,7 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 static void test_client_connect_at_the_expire_timestamp_is_refused()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
 

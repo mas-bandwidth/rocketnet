@@ -76,10 +76,10 @@ struct rocketnet_client_config_t;
 struct rocketnet_server_config_t;
 
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
-                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+                                      struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
-                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+                                      struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
@@ -164,7 +164,7 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 
 bool rocketnet_public_link_simulator_development( void );
 
-#if defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 void rocketnet_public_link_simulator_test_development( int enabled );
 #endif
 

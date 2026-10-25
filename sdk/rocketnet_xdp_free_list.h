@@ -18,6 +18,6 @@ static inline bool rocketnet_xdp_free_list_push( uint64_t * frames, int * count,
         return false;
     if ( ( frame - region_begin ) % ROCKETNET_XDP_FRAME_SIZE != 0 )
         return false;
-    frames[(*count)++] = frame;
+    frames[( *count )++] = frame;
     return true;
 }

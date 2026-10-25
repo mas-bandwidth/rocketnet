@@ -17,7 +17,7 @@
 static struct rocketnet_dst_options_t dst_test_options( uint64_t steps )
 {
     struct rocketnet_dst_options_t options;
-    memset( &options, 0, sizeof(options) );
+    memset( &options, 0, sizeof( options ) );
     options.steps = steps;
     options.fault_steps = steps;
     options.shape = ROCKETNET_DST_SHAPE_FULL;
@@ -96,11 +96,11 @@ static void test_dst_fail_names_seed()
 
     char first_line[768];
     char replay_line[768];
-    rocketnet_dst_format_failure( &first, &options, first_line, sizeof(first_line) );
-    rocketnet_dst_format_failure( &replay, &options, replay_line, sizeof(replay_line) );
+    rocketnet_dst_format_failure( &first, &options, first_line, sizeof( first_line ) );
+    rocketnet_dst_format_failure( &replay, &options, replay_line, sizeof( replay_line ) );
 
     char seed_text[32];
-    snprintf( seed_text, sizeof(seed_text), "%llu", (unsigned long long) seed );
+    snprintf( seed_text, sizeof( seed_text ), "%llu", (unsigned long long) seed );
 
     rocketnet_unit_check( !first.passed );
     rocketnet_unit_check( first.step == 37 );

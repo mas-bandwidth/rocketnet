@@ -454,7 +454,12 @@ static int reliable_block_arrive( reliable_test_node_t * node, const rocketnet_m
     return rn_channels_dispatch( &node->ordered.channels, record, delivery );
 }
 
-enum { RELIABLE_BLOCK_IN_ORDER, RELIABLE_BLOCK_REVERSED, RELIABLE_BLOCK_SHUFFLED };
+enum
+{
+    RELIABLE_BLOCK_IN_ORDER,
+    RELIABLE_BLOCK_REVERSED,
+    RELIABLE_BLOCK_SHUFFLED
+};
 
 static void reliable_block_case( int order )
 {
@@ -468,8 +473,8 @@ static void reliable_block_case( int order )
     reliable_test_init( &node, &config );
     check( count <= node.region->window );
 
-    uint8_t * data = (uint8_t*) malloc( total );
-    uint32_t * arrival = (uint32_t*) malloc( count * sizeof( uint32_t ) );
+    uint8_t * data = (uint8_t *) malloc( total );
+    uint32_t * arrival = (uint32_t *) malloc( count * sizeof( uint32_t ) );
     check( data && arrival );
     for ( uint32_t i = 0; i < total; i++ )
         data[i] = (uint8_t) ( i * 131 + ( i >> 8 ) * 7 + 1 );
@@ -488,7 +493,7 @@ static void reliable_block_case( int order )
         }
     }
 
-#if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
     rn_channels_block_cost_reset();
 #endif
 
@@ -514,7 +519,7 @@ static void reliable_block_case( int order )
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK] == 0 );
 
-#if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
     // Every chunk does bounded work: the block's completion never rescans the
     // descriptors already in (a 1 MiB block in order was ~415k visits).
     const rn_block_cost_t cost = rn_channels_block_cost_read();
@@ -558,7 +563,11 @@ REGISTER_UNIT_TEST( test_reliable_block_shuffled_delivered_once );
 // completes the block: MESSAGE_BAD_BLOCK counted once, the error set, and
 // nothing delivered.
 
-enum { RELIABLE_BLOCK_WRONG_RING, RELIABLE_BLOCK_WRONG_COUNT };
+enum
+{
+    RELIABLE_BLOCK_WRONG_RING,
+    RELIABLE_BLOCK_WRONG_COUNT
+};
 
 static void reliable_block_refused_case( int wrong )
 {

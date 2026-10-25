@@ -146,8 +146,8 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
-        MASS_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
-        1000, 1300, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     MASS_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
+                                                     1000, 1300, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );

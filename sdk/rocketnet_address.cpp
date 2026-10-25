@@ -13,9 +13,9 @@
 void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t big_endian_ipv4, uint16_t big_endian_port )
 {
     rocketnet_assert( address );
-    memset( address, 0, sizeof(rocketnet_address_t) );
+    memset( address, 0, sizeof( rocketnet_address_t ) );
     address->type = ROCKETNET_ADDRESS_IPV4;
-    memcpy( address->data.ipv4, (uint8_t*) &big_endian_ipv4, 4 );
+    memcpy( address->data.ipv4, (uint8_t *) &big_endian_ipv4, 4 );
     address->port = rocketnet_platform_ntohs( big_endian_port );
 }
 
@@ -48,9 +48,9 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
 
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     size_t length = 0;
-    while ( length < sizeof(buffer) && address_string_in[length] )
+    while ( length < sizeof( buffer ) && address_string_in[length] )
         ++length;
-    if ( !length || length == sizeof(buffer) )
+    if ( !length || length == sizeof( buffer ) )
         return false;
     memcpy( buffer, address_string_in, length + 1 );
 
@@ -171,8 +171,8 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
     }
 
     const int result = ( address->type == ROCKETNET_ADDRESS_IPV6 )
-        ? snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port )
-        : snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s:%d", address_string, address->port );
+                           ? snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port )
+                           : snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "%s:%d", address_string, address->port );
     if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
     {
         rocketnet_error( "address formatting failed or string truncated: %s port %d", address_string, address->port );
@@ -284,8 +284,8 @@ void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * addres
     address->data.ipv6[3] = 0x0000;
     address->data.ipv6[4] = 0x0000;
     address->data.ipv6[5] = 0xFFFF;
-    address->data.ipv6[6] = (uint16_t) ( ( uint16_t(a) << 8 ) | uint16_t(b) );
-    address->data.ipv6[7] = (uint16_t) ( ( uint16_t(c) << 8 ) | uint16_t(d) );
+    address->data.ipv6[6] = (uint16_t) ( ( uint16_t( a ) << 8 ) | uint16_t( b ) );
+    address->data.ipv6[7] = (uint16_t) ( ( uint16_t( c ) << 8 ) | uint16_t( d ) );
 }
 
 void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * address )
@@ -308,6 +308,6 @@ uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address )
 {
     rocketnet_assert( address );
     uint32_t ipv4;
-    memcpy( (char*) &ipv4, address->data.ipv4, 4 );
+    memcpy( (char *) &ipv4, address->data.ipv4, 4 );
     return ipv4;
 }

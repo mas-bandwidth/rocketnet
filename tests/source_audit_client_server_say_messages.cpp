@@ -54,7 +54,7 @@ static bool read_source_file( const std::string & relative_path, std::string & c
     char buffer[4096];
     size_t n;
     contents.clear();
-    while ( ( n = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+    while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         contents.append( buffer, n );
     fclose( file );
     return true;
@@ -78,8 +78,7 @@ struct allowlist_row_t
 #define F_O "sdk/rocketnet_message_object.h"
 #define F_M "sdk/rocketnet_message.cpp"
 
-static const allowlist_row_t allowlist[] =
-{
+static const allowlist_row_t allowlist[] = {
     // TRANSPORT SIZE: the UDP payload of one datagram, a transport quantity.
     { F_H, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
     { F_H, "UDP payload bytes per packet", "TRANSPORT SIZE" },
@@ -207,7 +206,7 @@ static const allowlist_row_t allowlist[] =
     { F_O, "rn_message_object_send_packets", "SEND PACKETS" },
 };
 
-static const size_t allowlist_count = sizeof(allowlist) / sizeof(allowlist[0]);
+static const size_t allowlist_count = sizeof( allowlist ) / sizeof( allowlist[0] );
 
 static bool scan_file( const char * relative_path, std::vector<std::string> & failures,
                        std::vector<size_t> & used_rows, std::vector<int> & per_reason_hits )
@@ -247,7 +246,7 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
                 if ( !covered )
                 {
                     char buf[32];
-                    snprintf( buf, sizeof(buf), "%zu", line_no );
+                    snprintf( buf, sizeof( buf ), "%zu", line_no );
                     failures.push_back( std::string( relative_path ) + ":" + buf + ": " + line );
                 }
             }
@@ -266,7 +265,7 @@ static void test_client_server_say_messages_not_packets()
     std::vector<int> per_reason_hits( allowlist_count, 0 );
 
     const char * files[] = { F_H, F_API, F_C, F_S, F_O, F_M, "sdk/rocketnet_message.h" };
-    for ( size_t f = 0; f < sizeof(files) / sizeof(files[0]); f++ )
+    for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
         scan_file( files[f], failures, used_rows, per_reason_hits );
 
     for ( size_t r = 0; r < allowlist_count; r++ )
@@ -274,7 +273,7 @@ static void test_client_server_say_messages_not_packets()
         if ( !used_rows[r] )
         {
             char buf[64];
-            snprintf( buf, sizeof(buf), "%llu", (unsigned long long) (r + 1) );
+            snprintf( buf, sizeof( buf ), "%llu", (unsigned long long) ( r + 1 ) );
             failures.push_back( std::string( "allowlist entry " ) + buf + " ( " + allowlist[r].file +
                                 " : " + allowlist[r].phrase + " ) matched no line" );
         }

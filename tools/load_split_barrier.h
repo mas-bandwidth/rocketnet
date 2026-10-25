@@ -44,9 +44,9 @@ static inline const char * split_start_step_name( enum split_start_step_t step )
     switch ( step )
     {
         case SPLIT_START_STEP_ARM: return "arm";
-        case SPLIT_START_STEP_GO: return "go";
+        case SPLIT_START_STEP_GO:  return "go";
         case SPLIT_START_STEP_RUN: return "run";
-        default: return "running";
+        default:                   return "running";
     }
 }
 
@@ -54,10 +54,10 @@ static inline const char * split_start_verdict_name( enum split_start_verdict_t 
 {
     switch ( verdict )
     {
-        case SPLIT_START_WAITING: return "waiting";
-        case SPLIT_START_COMPLETE: return "complete";
+        case SPLIT_START_WAITING:   return "waiting";
+        case SPLIT_START_COMPLETE:  return "complete";
         case SPLIT_START_TIMED_OUT: return "timed_out";
-        default: return "disconnected";
+        default:                    return "disconnected";
     }
 }
 
@@ -65,9 +65,12 @@ static inline const char * split_start_verdict_name( enum split_start_verdict_t 
  * once it is sent, not when ARM or GO arrives. */
 static inline enum split_start_step_t split_start_client_step( const struct split_startup_t * startup )
 {
-    if ( startup->running ) return SPLIT_START_STEP_RUNNING;
-    if ( startup->go ) return SPLIT_START_STEP_RUN;
-    if ( startup->armed ) return SPLIT_START_STEP_GO;
+    if ( startup->running )
+        return SPLIT_START_STEP_RUNNING;
+    if ( startup->go )
+        return SPLIT_START_STEP_RUN;
+    if ( startup->armed )
+        return SPLIT_START_STEP_GO;
     return SPLIT_START_STEP_ARM;
 }
 
@@ -88,9 +91,12 @@ static inline void split_shard_start_begin( struct split_shard_start_t * start, 
 static inline enum split_start_verdict_t split_shard_start_update( const struct split_shard_start_t * start, double now,
                                                                    int count, int running, int disconnected )
 {
-    if ( disconnected ) return SPLIT_START_DISCONNECTED;
-    if ( running == count ) return SPLIT_START_COMPLETE;
-    if ( now >= start->deadline ) return SPLIT_START_TIMED_OUT;
+    if ( disconnected )
+        return SPLIT_START_DISCONNECTED;
+    if ( running == count )
+        return SPLIT_START_COMPLETE;
+    if ( now >= start->deadline )
+        return SPLIT_START_TIMED_OUT;
     return SPLIT_START_WAITING;
 }
 
@@ -98,9 +104,12 @@ static inline enum split_start_verdict_t split_shard_start_update( const struct 
 static inline enum split_start_verdict_t split_server_start_update( double now, double phase_start,
                                                                     int total, int acked, int disconnected )
 {
-    if ( disconnected ) return SPLIT_START_DISCONNECTED;
-    if ( acked == total ) return SPLIT_START_COMPLETE;
-    if ( now - phase_start >= SPLIT_START_DEADLINE_S ) return SPLIT_START_TIMED_OUT;
+    if ( disconnected )
+        return SPLIT_START_DISCONNECTED;
+    if ( acked == total )
+        return SPLIT_START_COMPLETE;
+    if ( now - phase_start >= SPLIT_START_DEADLINE_S )
+        return SPLIT_START_TIMED_OUT;
     return SPLIT_START_WAITING;
 }
 

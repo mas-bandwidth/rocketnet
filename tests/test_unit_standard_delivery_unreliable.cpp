@@ -133,8 +133,7 @@ static int code0_delivery_trace( rn_delivery_trace_t * trace )
     static const uint8_t two[] = { 0x74, 0x77, 0x6f };
     static const uint8_t three[] = { 0x74, 0x68, 0x72, 0x65, 0x65 };
     static const uint8_t four[] = { 0x66, 0x6f, 0x75, 0x72 };
-    const rn_delivery_step_t steps[] =
-    {
+    const rn_delivery_step_t steps[] = {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, 0, one, (int) sizeof( one ) },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, 0, two, (int) sizeof( two ) },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, 0, three, (int) sizeof( three ) },
@@ -157,8 +156,7 @@ static int code1_sequenced_trace( rn_delivery_trace_t * trace )
     static const uint8_t k[] = { 0x6b }, x[] = { 0x78 };
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    const rn_delivery_step_t steps[] =
-    {
+    const rn_delivery_step_t steps[] = {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, 0, a, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 1, 0, b, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, 0, c, 1 },
@@ -185,8 +183,7 @@ static int code1_hold_full_trace( rn_delivery_trace_t * trace )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.sequenced_messages_held = 1;
-    const rn_delivery_step_t steps[] =
-    {
+    const rn_delivery_step_t steps[] = {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, 0, x, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 1, 1, 0, 0, y, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, 0, z, 1 },
@@ -208,8 +205,7 @@ static int standard_delivery_generate( const char * id, uint8_t * out, int capac
     return result == 0 ? trace.at : -1;
 }
 
-static const rn_standard_vector_t standard_delivery_table[] =
-{
+static const rn_standard_vector_t standard_delivery_table[] = {
     RN_STANDARD_VECTOR( "m6.code0-delivery-trace", "0001000003006f6e6500010000030074776f03000300" ),
     RN_STANDARD_VECTOR( "m6.code1-sequenced-trace", "000100010100610001000101006202000100010002000002000301006f0001010065020000010001010068010000020003010070000101006902000001000101006b0500" ),
     RN_STANDARD_VECTOR( "m6.code1-hold-full-trace", "0100040001000002000301006f000101007a" ),

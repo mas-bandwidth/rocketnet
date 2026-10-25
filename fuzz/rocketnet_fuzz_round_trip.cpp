@@ -52,7 +52,8 @@
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -160,8 +161,7 @@ static void fuzz_cookie( struct fuzz_reader_t * r )
 //  2: sealed packets
 // -----------------------------------------------------------------------
 
-static const uint8_t fuzz_sealed_types[] =
-{
+static const uint8_t fuzz_sealed_types[] = {
     ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET,
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
     ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
@@ -250,7 +250,7 @@ static void fuzz_ack_read_write( struct fuzz_reader_t * r )
     if ( bytes <= 0 )
         return;
     // a slice of its own, so ASan bounds the reader at the declared size
-    uint8_t * slice = (uint8_t*) malloc( (size_t) bytes );
+    uint8_t * slice = (uint8_t *) malloc( (size_t) bytes );
     if ( !slice )
         abort();
     memcpy( slice, r->data + r->pos, (size_t) bytes );
@@ -285,7 +285,7 @@ static void fuzz_ack_build_read( struct fuzz_reader_t * r )
     if ( shape & 1 )
         highest &= 0xFFFF;
     replay.highest_opened = highest;
-    fuzz_bytes( r, (uint8_t*) replay.window, sizeof( replay.window ) );
+    fuzz_bytes( r, (uint8_t *) replay.window, sizeof( replay.window ) );
     if ( highest != 0 )
     {
         // the window always holds the highest opened sequence itself
@@ -365,11 +365,11 @@ static void fuzz_token_layouts( struct fuzz_reader_t * r )
     memset( &t, 0xA5, sizeof( t ) );
     rocketnet_read_signed_connect_data( &t, signed_data );
     rocketnet_fuzz_require( t.version == s.version && t.protocol_id == s.protocol_id && t.create_timestamp == s.create_timestamp &&
-                            t.expire_timestamp == s.expire_timestamp && t.timeout_seconds == s.timeout_seconds && t.address_flags == s.address_flags &&
-                            memcmp( t.ipv4_address, s.ipv4_address, sizeof( s.ipv4_address ) ) == 0 &&
-                            memcmp( t.ipv6_address, s.ipv6_address, sizeof( s.ipv6_address ) ) == 0 &&
-                            memcmp( t.server_public_key, s.server_public_key, sizeof( s.server_public_key ) ) == 0 &&
-                            memcmp( t.sealed_private_block, s.sealed_private_block, sizeof( s.sealed_private_block ) ) == 0,
+                                t.expire_timestamp == s.expire_timestamp && t.timeout_seconds == s.timeout_seconds && t.address_flags == s.address_flags &&
+                                memcmp( t.ipv4_address, s.ipv4_address, sizeof( s.ipv4_address ) ) == 0 &&
+                                memcmp( t.ipv6_address, s.ipv6_address, sizeof( s.ipv6_address ) ) == 0 &&
+                                memcmp( t.server_public_key, s.server_public_key, sizeof( s.server_public_key ) ) == 0 &&
+                                memcmp( t.sealed_private_block, s.sealed_private_block, sizeof( s.sealed_private_block ) ) == 0,
                             "the signed connect data round-trips every field" );
 
     struct rocketnet_connect_token_private_t p;
@@ -386,9 +386,9 @@ static void fuzz_token_layouts( struct fuzz_reader_t * r )
     memset( &q, 0xA5, sizeof( q ) );
     rocketnet_read_connect_token_private( &q, block );
     rocketnet_fuzz_require( q.client_id == p.client_id && q.protocol_id == p.protocol_id && q.expire_timestamp == p.expire_timestamp &&
-                            memcmp( q.client_to_server_key, p.client_to_server_key, sizeof( p.client_to_server_key ) ) == 0 &&
-                            memcmp( q.server_to_client_key, p.server_to_client_key, sizeof( p.server_to_client_key ) ) == 0 &&
-                            memcmp( q.user_data, p.user_data, sizeof( p.user_data ) ) == 0,
+                                memcmp( q.client_to_server_key, p.client_to_server_key, sizeof( p.client_to_server_key ) ) == 0 &&
+                                memcmp( q.server_to_client_key, p.server_to_client_key, sizeof( p.server_to_client_key ) ) == 0 &&
+                                memcmp( q.user_data, p.user_data, sizeof( p.user_data ) ) == 0,
                             "the private block round-trips every field" );
     sodium_memzero( &p, sizeof( p ) );
     sodium_memzero( &q, sizeof( q ) );
@@ -471,8 +471,7 @@ static void fuzz_write_seeds( const char * dir )
 
     // 0, 1, 5, 6: the fields at their defaults
     body[0] = 1;
-    fuzz_write_seed( dir, "request_with_cookie", 0, body, 1 + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES +
-                     ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES );
+    fuzz_write_seed( dir, "request_with_cookie", 0, body, 1 + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES + ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES );
     fuzz_write_seed( dir, "cookie_fields", 1, body, ROCKETNET_CONNECTION_SALT_BYTES + 8 + ROCKETNET_COOKIE_MAC_BYTES );
     fuzz_write_seed( dir, "fragment_header_fields", 5, body, 10 );
     fuzz_write_seed( dir, "token_layout_fields", 6, body, 900 );
@@ -518,8 +517,8 @@ static void fuzz_write_seeds( const char * dir )
     body[2] = 0x03;
     for ( int i = 0; i < 64; i++ )
         body[9 + i] = (uint8_t) ( 0xB6 ^ i );
-    body[9 + sizeof( ((struct rocketnet_replay_protection_t*) 0)->window )] = 0xFF;
-    fuzz_write_seed( dir, "ack_window_small_highest", 4, body, 9 + sizeof( ((struct rocketnet_replay_protection_t*) 0)->window ) + 2 );
+    body[9 + sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window )] = 0xFF;
+    fuzz_write_seed( dir, "ack_window_small_highest", 4, body, 9 + sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window ) + 2 );
 
     // 7: addresses as the formatter prints them
     const char * addresses[] = { "127.0.0.1:40000", "203.0.113.10", "[::1]:40000", "2001:db8::1" };
@@ -560,14 +559,14 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     struct fuzz_reader_t r = { data, size, 1 };
     switch ( data[0] % 8 )
     {
-        case 0: fuzz_request( &r );         break;
-        case 1: fuzz_cookie( &r );          break;
-        case 2: fuzz_sealed( &r );          break;
-        case 3: fuzz_ack_read_write( &r );  break;
-        case 4: fuzz_ack_build_read( &r );  break;
+        case 0: fuzz_request( &r ); break;
+        case 1: fuzz_cookie( &r ); break;
+        case 2: fuzz_sealed( &r ); break;
+        case 3: fuzz_ack_read_write( &r ); break;
+        case 4: fuzz_ack_build_read( &r ); break;
         case 5: fuzz_fragment_header( &r ); break;
-        case 6: fuzz_token_layouts( &r );   break;
-        case 7: fuzz_address( &r );         break;
+        case 6: fuzz_token_layouts( &r ); break;
+        case 7: fuzz_address( &r ); break;
     }
     return 0;
 }

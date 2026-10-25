@@ -73,7 +73,7 @@ struct rocketnet_handshake_server_t
 static void rocketnet_handshake_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                                     struct rocketnet_connect_token_private_t * private_fields )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -84,7 +84,7 @@ static void rocketnet_handshake_fill_vector_fields( struct rocketnet_signed_conn
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -107,7 +107,7 @@ static void rocketnet_handshake_mint_token( uint8_t * token_data, uint64_t clien
 
 static void rocketnet_handshake_server_setup( struct rocketnet_handshake_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -271,11 +271,11 @@ static void rocketnet_handshake_to_challenge( struct rocketnet_handshake_server_
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    rocketnet_unit_check( rocketnet_handshake_process_at( test, from, request, sizeof(request), response, &response_bytes,
+    rocketnet_unit_check( rocketnet_handshake_process_at( test, from, request, sizeof( request ), response, &response_bytes,
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 
-    rocketnet_unit_check( rocketnet_handshake_process_at( test, from, request, sizeof(request), response, &response_bytes,
+    rocketnet_unit_check( rocketnet_handshake_process_at( test, from, request, sizeof( request ), response, &response_bytes,
                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
 
@@ -314,7 +314,7 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
             rocketnet_handshake_process_at( test, &test->client_address, packet, packet_bytes,
                                             response, &response_bytes, payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
-                rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
+                rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
         }
 
         if ( time - last_keep_alive_time >= 0.1 )
@@ -326,7 +326,7 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
                     continue;
                 int bytes = rocketnet_server_write_keep_alive( &test->server, i, time, response );
                 if ( bytes > 0 )
-                    rocketnet_client_protocol_process_packet( client, response, bytes, time, payload, sizeof(payload), &payload_bytes );
+                    rocketnet_client_protocol_process_packet( client, response, bytes, time, payload, sizeof( payload ), &payload_bytes );
             }
         }
 
@@ -347,7 +347,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                                                   struct rocketnet_counters_t * counters,
                                                   int terminal_state )
 {
-    memset( counters, 0, sizeof(*counters) );
+    memset( counters, 0, sizeof( *counters ) );
     rocketnet_client_protocol_init( client, counters );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -404,7 +404,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                     // deliver cookies; swallow challenges, so the client waits
                     // in state 2 until its timeout
                     if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET )
-                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
+                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -434,7 +434,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                     rocketnet_handshake_process_at( &test, &test.client_address, packet, packet_bytes,
                                                     response, &response_bytes, payload, &payload_bytes, &payload_client_index );
                     if ( response_bytes > 0 )
-                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
+                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -460,7 +460,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             struct rocketnet_handshake_server_t test;
             rocketnet_handshake_server_setup( &test );
             uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
-            memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+            memset( dummy_user_data, 0, sizeof( dummy_user_data ) );
             for ( int i = 0; i < 4; i++ )
                 rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
 
@@ -600,7 +600,7 @@ static void test_one_connection_per_token_after_history_flush()
         uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
         for ( int i = 0; i < 64; i++ )
         {
-            memset( identifier, 0, sizeof(identifier) );
+            memset( identifier, 0, sizeof( identifier ) );
             identifier[0] = (uint8_t) ( i + 1 );
             rocketnet_used_token_history_record( test.server.used_token_history, identifier, &test.second_address,
                                                  ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS );
@@ -620,7 +620,7 @@ static void test_one_connection_per_token_after_history_flush()
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
         int payload_client_index = -1;
-        rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, response, sizeof(response),
+        rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, response, sizeof( response ),
                                                               out, &out_bytes, payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     }
@@ -636,7 +636,7 @@ static void test_one_connection_per_token_after_history_flush()
         int payload_bytes = 0;
         int payload_client_index = -1;
         const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
-        int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof(response),
+        int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof( response ),
                                                      out, &out_bytes, payload, &payload_bytes, &payload_client_index );
         rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
@@ -663,7 +663,7 @@ static void test_one_connection_per_token_after_history_flush()
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
         int payload_client_index = -1;
-        int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof(response),
+        int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof( response ),
                                                      out, &out_bytes, payload, &payload_bytes, &payload_client_index );
         rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
@@ -701,7 +701,7 @@ static void test_server_repeats_keep_alive_while_idle()
 
     // the response seats the client and sends the first keep-alive at 100.0,
     // stamping the keep-alive clock
-    rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, client_response, sizeof(client_response),
+    rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, client_response, sizeof( client_response ),
                                                           response, &response_bytes, payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     rocketnet_unit_check( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
 
@@ -740,7 +740,7 @@ static void test_keep_alive_clock_counts_only_keep_alives()
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, client_response, sizeof(client_response),
+    rocketnet_unit_check( rocketnet_handshake_process_at( &test, &test.client_address, client_response, sizeof( client_response ),
                                                           response, &response_bytes, payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     rocketnet_unit_check( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
 
@@ -783,9 +783,9 @@ static void test_token_created_past_skew_is_refused()
     uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE];
 
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                        response, &response_bytes );
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                       response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == before + 1 );
@@ -808,9 +808,9 @@ static void test_token_created_within_skew_passes_the_rung()
     uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
 
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                        response, &response_bytes );
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                       response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
@@ -832,9 +832,9 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
     const struct rocketnet_counters_t before = test.counters;
 
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                        response, &response_bytes );
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                       response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
     rocketnet_counters_expect( &before, &test.counters,
@@ -848,9 +848,9 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
                                                    ROCKETNET_TEST_CREATE_TS + 30 );
     const struct rocketnet_counters_t after_refusal = test.counters;
     result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                     request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                     response, &response_bytes );
+                                                                   request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                   ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                   response, &response_bytes );
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
     rocketnet_counters_expect( &after_refusal, &test.counters,
@@ -913,7 +913,7 @@ static void test_claim_written_only_after_signature_verifies()
 
     // the same request from the same address with its signature corrupted
     uint8_t forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    memcpy( forged, request, sizeof(forged) );
+    memcpy( forged, request, sizeof( forged ) );
     forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1] ^= 0x01;
     const uint64_t bad_signatures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
     rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.client_address, forged, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
@@ -922,7 +922,7 @@ static void test_claim_written_only_after_signature_verifies()
     // the captured valid request from a second address: the first address's
     // claim still stands, so the claim rung refuses it before any signature
     const uint64_t already_used = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
-    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
     rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.second_address, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == already_used + 1 );

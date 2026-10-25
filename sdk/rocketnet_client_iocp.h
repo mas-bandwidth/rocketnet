@@ -84,10 +84,10 @@ struct rocketnet_client_iocp_completion_t
 //   close         closes the socket: every posted receive then completes
 struct rocketnet_client_iocp_port_t
 {
-    bool (*post_receive)( void * context, int receive, uint8_t * buffer, int buffer_bytes );
-    int (*dequeue)( void * context, rocketnet_client_iocp_completion_t * completions, int max_completions, double timeout_seconds );
-    void (*post_wake)( void * context );
-    void (*close)( void * context );
+    bool ( *post_receive )( void * context, int receive, uint8_t * buffer, int buffer_bytes );
+    int ( *dequeue )( void * context, rocketnet_client_iocp_completion_t * completions, int max_completions, double timeout_seconds );
+    void ( *post_wake )( void * context );
+    void ( *close )( void * context );
 };
 
 // a receive's owner: idle (the I/O thread, not posted), posted (the kernel)

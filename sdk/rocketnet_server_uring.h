@@ -172,7 +172,7 @@ uint64_t rocketnet_server_uring_leaked_transports();
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring );
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 // development library only. fail_receive cancels the queue's multishot
 // receive and hands its terminating CQE to the reap with error (negative
 // errno) in place of -ECANCELED, the path a kernel-side receive failure
@@ -184,7 +184,7 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * u
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
 #endif
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 // unit suite only (the test hook library): a transport over a fake completion
 // source, with no kernel ring and no socket. the source stands in for the
 // completion queue: peek copies at most max completions, oldest first, and

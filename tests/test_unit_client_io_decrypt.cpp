@@ -106,7 +106,7 @@ static int client_io_decrypt_plaintext( uint8_t * out, uint8_t payload_byte )
 
 // seals a payload packet from the server under the known key and pushes it
 static int client_io_decrypt_push_payload_from( client_io_decrypt_fixture_t * f, const rocketnet_address_t * from,
-                                               uint64_t sequence, uint8_t payload_byte, bool forge )
+                                                uint64_t sequence, uint8_t payload_byte, bool forge )
 {
     uint8_t plaintext[64];
     const int plaintext_bytes = client_io_decrypt_plaintext( plaintext, payload_byte );
@@ -320,7 +320,8 @@ static void test_client_io_decrypt_verdicts_counted_in_order()
     // the third is accepted, or refused by the state check if the limit ended
     // the session: exactly one of the two moved
     check( ( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] - delivered_before_third ) +
-           ( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] - wrong_state_before_third ) == 1 );
+               ( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] - wrong_state_before_third ) ==
+           1 );
     check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED] == 3 );
 
     rocketnet_client_io_return( &f.io );

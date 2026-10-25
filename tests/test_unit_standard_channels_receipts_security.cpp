@@ -14,20 +14,19 @@
 
 #define check rocketnet_unit_check
 
-static const rn_standard_vector_t standard_channels_receipts_security_table[] =
-{
+static const rn_standard_vector_t standard_channels_receipts_security_table[] = {
     RN_STANDARD_VECTOR( "m10.narrow-channel", "030200050000000000000003686901" ),
     RN_STANDARD_VECTOR( "m10.wide-channel", "13020005000000000000002c01686901" ),
     RN_STANDARD_VECTOR( "m12.promotion",
-                    "0a04010100004800010001004141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414141414141414141414141414141414141"
-                    "4141414141414141414141414141414101" ),
+                        "0a04010100004800010001004141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414141414141414141414141414141414141"
+                        "4141414141414141414141414141414101" ),
 
 };
 
@@ -44,7 +43,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         record.ring = 0;
         record.ordering = 0;
         record.channel = strcmp( id, "m10.wide-channel" ) == 0 ? 300 : 3;
-        record.data = (const uint8_t*) "hi";
+        record.data = (const uint8_t *) "hi";
         record.bytes = 2;
         rocketnet_message_writer_begin( &writer, out, capacity );
         if ( !rocketnet_message_writer_add( &writer, &record ) )
@@ -98,9 +97,8 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
 
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_CODE_MASK ) == ROCKETNET_MESSAGE_CODE_RELIABLE );
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_BLOCK ) != 0 );
-            const uint32_t chunk_bytes = (uint32_t) frame[1] + ((uint32_t) frame[2] << 8);
-            check( chunk_bytes == ( fragment == 0 ? ROCKETNET_MESSAGE_FRAGMENT_BYTES :
-                                    (uint32_t) bytes - ROCKETNET_MESSAGE_FRAGMENT_BYTES ) );
+            const uint32_t chunk_bytes = (uint32_t) frame[1] + ( (uint32_t) frame[2] << 8 );
+            check( chunk_bytes == ( fragment == 0 ? ROCKETNET_MESSAGE_FRAGMENT_BYTES : (uint32_t) bytes - ROCKETNET_MESSAGE_FRAGMENT_BYTES ) );
             check( frame[8] == (uint8_t) fragment && frame[9] == 0 );
             check( frame[10] == 1 && frame[11] == 0 );
             check( memcmp( frame + 12, data + fragment * ROCKETNET_MESSAGE_FRAGMENT_BYTES,

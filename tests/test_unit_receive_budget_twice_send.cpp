@@ -33,7 +33,7 @@ static void test_portable_transport_receive_budget_twice_send()
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
 
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
 static void test_msgx_transport_receive_budget_twice_send()
 {
     // msgx shares the portable transport budgets.
@@ -48,7 +48,7 @@ static void test_loopback_transport_receive_budget_twice_send()
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
 
-#if defined(__linux__)
+#if defined( __linux__ )
 static void test_gso_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE > 0 );
@@ -66,7 +66,7 @@ static void test_io_uring_transport_receive_budget_twice_send()
 }
 #endif
 
-#if defined(ROCKETNET_XDP_SEND_QUEUE_SIZE) && defined(ROCKETNET_XDP_RECV_QUEUE_SIZE)
+#if defined( ROCKETNET_XDP_SEND_QUEUE_SIZE ) && defined( ROCKETNET_XDP_RECV_QUEUE_SIZE )
 static void test_xdp_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_XDP_SEND_QUEUE_SIZE > 0 );
@@ -75,7 +75,7 @@ static void test_xdp_transport_receive_budget_twice_send()
 }
 #endif
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 static void test_iocp_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_IOCP_SEND_QUEUE_SIZE > 0 );
@@ -92,23 +92,23 @@ static void test_rio_transport_receive_budget_twice_send()
 #endif
 
 REGISTER_UNIT_TEST( test_portable_transport_receive_budget_twice_send );
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
 REGISTER_UNIT_TEST( test_msgx_transport_receive_budget_twice_send );
 #endif
 REGISTER_UNIT_TEST( test_loopback_transport_receive_budget_twice_send );
-#if defined(__linux__)
+#if defined( __linux__ )
 REGISTER_UNIT_TEST( test_gso_transport_receive_budget_twice_send );
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_budget_twice_send );
 #endif
-#if defined(ROCKETNET_XDP_SEND_QUEUE_SIZE) && defined(ROCKETNET_XDP_RECV_QUEUE_SIZE)
+#if defined( ROCKETNET_XDP_SEND_QUEUE_SIZE ) && defined( ROCKETNET_XDP_RECV_QUEUE_SIZE )
 REGISTER_UNIT_TEST( test_xdp_transport_receive_budget_twice_send );
 #endif
-#if defined(_WIN32)
+#if defined( _WIN32 )
 REGISTER_UNIT_TEST( test_iocp_transport_receive_budget_twice_send );
 REGISTER_UNIT_TEST( test_rio_transport_receive_budget_twice_send );
 #endif
 
-#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 
 #include <errno.h>
 
@@ -147,7 +147,7 @@ static void receive_budget_fake_push_receive( struct receive_budget_fake_t * fak
 
 static int receive_budget_fake_peek( void * context, struct rocketnet_server_uring_test_completion_t * completions, int max )
 {
-    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) context;
+    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t *) context;
     int count = receive_budget_fake_size( fake );
     if ( count > max )
         count = max;
@@ -158,20 +158,20 @@ static int receive_budget_fake_peek( void * context, struct rocketnet_server_uri
 
 static void receive_budget_fake_advance( void * context, int count )
 {
-    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) context;
+    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t *) context;
     check( count >= 0 && count <= receive_budget_fake_size( fake ) );
     fake->head += (uint64_t) count;
 }
 
 static int receive_budget_fake_ready( void * context )
 {
-    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) context;
+    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t *) context;
     return receive_budget_fake_size( fake );
 }
 
 static void receive_budget_fake_submitted( void * context, uint64_t user_data )
 {
-    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) context;
+    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t *) context;
     const int kind = rocketnet_uring_tag_kind( user_data );
     const int queue = rocketnet_uring_tag_queue( user_data );
     check( queue >= 0 && queue < ROCKETNET_URING_MAX_QUEUES );
@@ -193,7 +193,7 @@ static void receive_budget_fake_submitted( void * context, uint64_t user_data )
 static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
 {
     struct rocketnet_server_uring_test_source_t source;
-    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t*) calloc( 1, sizeof(struct receive_budget_fake_t) );
+    struct receive_budget_fake_t * fake = (struct receive_budget_fake_t *) calloc( 1, sizeof( struct receive_budget_fake_t ) );
     check( fake );
     source.context = fake;
     source.peek = receive_budget_fake_peek;
@@ -210,7 +210,7 @@ static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
         receive_budget_fake_push_receive( fake, 0 );
 
     rocketnet_address_t to;
-    memset( &to, 0, sizeof(to) );
+    memset( &to, 0, sizeof( to ) );
     to.type = ROCKETNET_ADDRESS_IPV4;
     to.data.ipv4[0] = 127;
     to.data.ipv4[3] = 1;
@@ -232,7 +232,8 @@ static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
 
     rocketnet_server_uring_stop( uring );
     bool stopped = false;
-    for ( int i = 0; i < 64 && !stopped; ++i ) stopped = rocketnet_server_uring_stopped( uring );
+    for ( int i = 0; i < 64 && !stopped; ++i )
+        stopped = rocketnet_server_uring_stopped( uring );
     check( stopped );
     rocketnet_server_uring_destroy( uring );
     free( fake );

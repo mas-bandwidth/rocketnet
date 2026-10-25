@@ -15,10 +15,10 @@
 
 #include <rocketnet.h>
 
-#if defined(EXPECT_SHARED) && !defined(ROCKETNET_SHARED)
+#if defined( EXPECT_SHARED ) && !defined( ROCKETNET_SHARED )
 #error Shared consumer did not inherit the DLL import contract
 #endif
-#if !defined(EXPECT_SHARED) && defined(ROCKETNET_SHARED)
+#if !defined( EXPECT_SHARED ) && defined( ROCKETNET_SHARED )
 #error Static consumer inherited the DLL import contract
 #endif
 /* This consumer builds in the package's configuration, so its NDEBUG is the
@@ -284,7 +284,8 @@ int main( void )
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
-    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
+    if ( !server )
+        printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     CHECK( server != NULL );
     CHECK( !rocketnet_server_running( server ) );
     CHECK( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -338,7 +339,8 @@ int main( void )
 
     enum rocketnet_status_t create_status_2 = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status_2 );
-    if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
+    if ( !client )
+        printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
     CHECK( client != NULL );
     CHECK( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     CHECK( rocketnet_client_index( client ) == -1 );

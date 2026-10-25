@@ -26,7 +26,7 @@
       bytes fails bounds checking.
 */
 
-#if defined(ROCKETNET_ESBMC) || defined(__ESBMC__)
+#if defined( ROCKETNET_ESBMC ) || defined( __ESBMC__ )
 #include "../esbmc_shim.h"
 #endif
 
@@ -52,7 +52,7 @@ static inline void * proof_memset_record( struct rocketnet_message_record_t * r,
 #define __CPROVER_assume( c ) ( (void) ( c ) )
 static int nondet_int( void ) { return 0; }
 static unsigned int nondet_uint( void ) { return 0; }
-#elif !defined(ROCKETNET_ESBMC) && !defined(__ESBMC__)
+#elif !defined( ROCKETNET_ESBMC ) && !defined( __ESBMC__ )
 int nondet_int( void );
 unsigned int nondet_uint( void );
 #endif
@@ -101,12 +101,12 @@ void harness_message_reader( void )
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
-            "refused payload yields no record" );
+                          "refused payload yields no record" );
         return;
     }
 
     __CPROVER_assert( payload != NULL && bytes >= 2,
-        "accepted payload has at least two bytes" );
+                      "accepted payload has at least two bytes" );
 
     const uint8_t * end = payload + bytes - 1;
     int yielded = 0;
@@ -116,7 +116,7 @@ void harness_message_reader( void )
         __CPROVER_assert( record.bytes >= 1, "record length is at least one" );
         __CPROVER_assert( record.data + record.bytes <= end, "record does not read past the given length" );
         __CPROVER_assert( __CPROVER_r_ok( record.data, (size_t) record.bytes ),
-            "record slice is readable within the payload object" );
+                          "record slice is readable within the payload object" );
 
         if ( record.block )
         {
@@ -126,13 +126,12 @@ void harness_message_reader( void )
             const int span = (int) record.fragments * F + ( last ? round16( record.bytes ) : 16 );
             __CPROVER_assert( base >= 0, "block base is inside the ring" );
             __CPROVER_assert( (long long) base * 16 + span <= limits.receive_message_buffer_bytes,
-                "block span fits the ring" );
+                              "block span fits the ring" );
         }
-        else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED
-                  || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
+        else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
         {
             __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_message_buffer_bytes,
-                "holdable span fits the ring" );
+                              "holdable span fits the ring" );
         }
 
         yielded++;
@@ -160,22 +159,22 @@ void harness_message_reader_single_max( void )
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
-            "refused payload yields no record" );
+                          "refused payload yields no record" );
         return;
     }
 
     __CPROVER_assert( payload != NULL && bytes >= 2,
-        "accepted payload has at least two bytes" );
+                      "accepted payload has at least two bytes" );
     __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 1,
-        "single-message payload yields one record" );
+                      "single-message payload yields one record" );
     __CPROVER_assert( record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE,
-        "single-message payload code is unreliable" );
+                      "single-message payload code is unreliable" );
     __CPROVER_assert( record.data == payload && record.bytes == bytes - 1,
-        "single-message record spans payload body" );
+                      "single-message record spans payload body" );
     __CPROVER_assert( __CPROVER_r_ok( record.data, (size_t) record.bytes ),
-        "single-message record slice is readable within the payload object" );
+                      "single-message record slice is readable within the payload object" );
     __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
-        "single-message payload yields at most one record" );
+                      "single-message payload yields at most one record" );
 }
 
 void harness_message_read_config_body( void )
@@ -192,7 +191,7 @@ void harness_message_read_config_body( void )
     if ( data == NULL || bytes != ROCKETNET_MESSAGE_CONFIG_BYTES || data[0] != ROCKETNET_MESSAGE_CONTROL_CONFIG )
     {
         __CPROVER_assert( violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL,
-            "invalid config length, null buffer, or unknown control kind is refused" );
+                          "invalid config length, null buffer, or unknown control kind is refused" );
         return;
     }
 
@@ -204,7 +203,7 @@ void harness_message_read_config_body( void )
         {
             __CPROVER_assert( data[3] == 0, "version 1 reserved byte 3 is zero" );
             __CPROVER_assert( data[24] == 0 && data[25] == 0 && data[26] == 0 && data[27] == 0,
-                "version 1 reserved tail is zero" );
+                              "version 1 reserved tail is zero" );
         }
     }
 }

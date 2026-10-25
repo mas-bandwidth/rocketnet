@@ -20,8 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static const char * const source_audit_cases[] =
-{
+static const char * const source_audit_cases[] = {
     "test_client_server_say_messages_not_packets",
     "test_config_env_every_name_read_is_documented",
     "test_counters_every_counter_is_named_by_a_test",
@@ -36,7 +35,7 @@ static const char * const source_audit_cases[] =
 // same names before it runs them.
 static int source_audit_clear_environment()
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
     const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );

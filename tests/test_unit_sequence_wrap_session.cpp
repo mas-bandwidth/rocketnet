@@ -96,8 +96,8 @@ struct sequence_wrap_seam_t
     int samples_past_wrap;
     double sample_min;
     double sample_max;
-    int (*finish_next)( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
-    int (*acked_next)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
+    int ( *finish_next )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+    int ( *acked_next )( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 };
 
 static struct sequence_wrap_seam_t sequence_wrap_seams[2];      // 0 server, 1 client
@@ -272,9 +272,7 @@ static void sequence_wrap_send( struct sequence_wrap_pair_t * pair, int from_cli
     uint8_t message[8] = { 0x5E, 0, 0, 0, 0, 0, 0, 0 };
     const uint32_t index = (uint32_t) d->sent;
     memcpy( message + 4, &index, sizeof( index ) );
-    const uint32_t id = from_client ?
-        rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) :
-        rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
+    const uint32_t id = from_client ? rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) : rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
     check( id != 0 );
     d->sent++;
 }
@@ -338,7 +336,8 @@ static void test_sequence_wrap_session_both_directions( void )
     }
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_message_server_client_connected( pair.server, 0 ) ); i++ )
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
         sequence_wrap_step( &pair, false, NULL, NULL );
     if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
@@ -481,7 +480,8 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     objects[1]->link.acked = sequence_wrap_client_acked;
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_message_server_client_connected( pair.server, 0 ) ); i++ )
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
         sequence_wrap_step( &pair, false, NULL, NULL );
 
     const struct rocketnet_counters_t * client_counters = rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );

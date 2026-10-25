@@ -87,7 +87,7 @@ static inline void rn_native_server_io_stop_and_close( rocketnet_server_transpor
 
 template <typename transport_t>
 static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
-    void (*stop)( transport_t * ), bool (*stopped)( transport_t * ), void (*destroy)( transport_t * ) )
+                                                       void ( *stop )( transport_t * ), bool ( *stopped )( transport_t * ), void ( *destroy )( transport_t * ) )
 {
     if ( transport )
     {
