@@ -176,6 +176,16 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     snprintf( override_text, sizeof( override_text ), "granted %d of", warning_decision_grant );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, override_text ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, server_receive_low_tick_limit_name() ) != NULL );
+    char expected_warning[384];
+    const char * warning_reason = warning_grant_override_used ?
+        "DEV test warning grant override; actual socket grant was reported above" :
+        "packets arriving between updates past the grant are dropped by the kernel";
+    snprintf( expected_warning, sizeof( expected_warning ),
+        "socket receive buffer granted %d of %d requested bytes; %s: raise %s",
+        warning_decision_grant, request, warning_reason, server_receive_low_tick_limit_name() );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected_warning ) != NULL );
+    printf( "server_receive_buffer_observed_log_begin\n%sserver_receive_buffer_observed_log_end\n",
+            server_receive_low_tick_log );
 #endif
 
     rocketnet_server_transport_stop( server );
