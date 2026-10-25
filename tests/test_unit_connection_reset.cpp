@@ -5,6 +5,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -40,23 +41,15 @@ struct reset_env_pin_t
 static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 {
     pin->name = name;
-    pin->was_set = rocketnet_test_getenv( name, pin->value, sizeof(pin->value) ) != 0;
-#if defined(_WIN32)
-    _putenv_s( name, "" );
-#else
-    unsetenv( name );
-#endif
+    pin->was_set = rocketnet_test_env_getenv( name, pin->value, sizeof(pin->value) ) != 0;
+    rocketnet_test_env_unsetenv( name );
 }
 
 static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 {
     if ( !pin->was_set )
         return;
-#if defined(_WIN32)
-    _putenv_s( pin->name, pin->value );
-#else
-    setenv( pin->name, pin->value, 1 );
-#endif
+    rocketnet_test_env_setenv( pin->name, pin->value, 1 );
 }
 
 #define check rocketnet_unit_check

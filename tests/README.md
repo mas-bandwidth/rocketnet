@@ -77,6 +77,11 @@ latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
 [BUILDING.md](../BUILDING.md) for the 60-second target and 120-second cap.
 
+Unit cases do not read or change the process environment. SDK environment
+parsing and validation use the in-memory table in `test_env_source.h`, which
+is available only in the unit hook library. The functional environment-wiring
+cases change and restore real process variables and observe each SDK reader.
+
 The process thread-count cases `test_server_stats_creates_no_thread` and
 `test_public_step_driven_client_connects_without_a_thread` read the process's
 OS thread count from `/proc/self/task`, so they are functional cases in

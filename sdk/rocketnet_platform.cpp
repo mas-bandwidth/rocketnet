@@ -15,11 +15,77 @@
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#include <map>
+#include <string>
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+
+// The unit suite installs this table before main. Reads then stop at the
+// table, including an absent name, so ambient process values cannot enter a
+// unit case. Standard strings keep test values exact and impose no SDK limit;
+// the caller's buffer remains the only limit rocketnet_platform_getenv reports.
+static bool rocketnet_platform_test_environment_installed;
+
+static std::map<std::string, std::string> & rocketnet_platform_test_environment()
+{
+    static std::map<std::string, std::string> environment;
+    return environment;
+}
+
+void rocketnet_platform_test_environment_install()
+{
+    rocketnet_platform_test_environment_installed = true;
+}
+
+void rocketnet_platform_test_environment_set( const char * name, const char * value )
+{
+    rocketnet_assert( name && value );
+    rocketnet_platform_test_environment()[name] = value;
+}
+
+void rocketnet_platform_test_environment_unset( const char * name )
+{
+    rocketnet_assert( name );
+    rocketnet_platform_test_environment().erase( name );
+}
+
+void rocketnet_platform_test_environment_reset()
+{
+    rocketnet_platform_test_environment().clear();
+}
+
+// Returns true when the installed table answered the read. An unset name is
+// an answer (0), distinct from no table, which leaves the real platform path.
+static bool rocketnet_platform_test_environment_getenv( const char * name, char * buffer, size_t size, int * result )
+{
+    if ( !rocketnet_platform_test_environment_installed )
+        return false;
+    buffer[0] = '\0';
+    const std::map<std::string, std::string> & environment = rocketnet_platform_test_environment();
+    const std::map<std::string, std::string>::const_iterator entry = environment.find( name );
+    if ( entry == environment.end() )
+    {
+        *result = 0;
+        return true;
+    }
+    if ( entry->second.size() >= size )
+    {
+        *result = -1;
+        return true;
+    }
+    memcpy( buffer, entry->second.c_str(), entry->second.size() + 1 );
+    *result = 1;
+    return true;
+}
+
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -664,6 +730,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -2532,6 +2603,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -4314,6 +4390,11 @@ int rocketnet_platform_connection_type()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+    int test_result = 0;
+    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+        return test_result;
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     // getenv_s with no buffer reports the bytes the value needs, terminator
     // included, and zero when the variable is unset

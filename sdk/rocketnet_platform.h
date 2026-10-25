@@ -141,6 +141,20 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
 
 #define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
 
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+/** Installs the unit suite's empty in-memory environment. */
+void rocketnet_platform_test_environment_install( void );
+
+/** Sets one variable in the installed in-memory environment. */
+void rocketnet_platform_test_environment_set( const char * name, const char * value );
+
+/** Removes one variable from the installed in-memory environment. */
+void rocketnet_platform_test_environment_unset( const char * name );
+
+/** Removes every variable while keeping the in-memory environment installed. */
+void rocketnet_platform_test_environment_reset( void );
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+
 /**
  * @brief Converts a 16-bit value from network byte order to host byte order.
  *
