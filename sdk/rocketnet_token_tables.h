@@ -95,4 +95,9 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
                                                  const uint8_t * token_identifier,
                                                  const struct rocketnet_address_t * address );
 
+// the number of claim-table slots on the free list: a count kept on every
+// push and pop, O(1), read by the unit tests.
+
+int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history );
+
 #endif // #ifndef ROCKETNET_TOKEN_TABLES_H

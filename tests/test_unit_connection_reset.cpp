@@ -1061,7 +1061,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.send_sequence_handshake = 7;
         client.send_sequence_session = 9;
         client.next_fragment_payload_id = 12;
-        memset( &client.replay_handshake, 0xA5, sizeof(client.replay_handshake) );
+        client.handshake_highest_opened = 0xA5A5A5A5A5A5A5A5ULL;
         memset( &client.replay_session, 0xA5, sizeof(client.replay_session) );
         memset( &client.accepted_session, 0xA5, sizeof(client.accepted_session) );
         client.received_session_sequence = 99;
@@ -1093,7 +1093,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.client_index == -1 );
         rocketnet_replay_protection_t no_replay;
         memset( &no_replay, 0, sizeof(no_replay) );
-        check( memcmp( &client.replay_handshake, &no_replay, sizeof(no_replay) ) == 0 );
+        check( client.handshake_highest_opened == 0 );
         check( memcmp( &client.replay_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( memcmp( &client.accepted_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( client.received_session_sequence == 0 );

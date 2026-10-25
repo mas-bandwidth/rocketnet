@@ -814,8 +814,8 @@ static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_
 }
 
 // Mirrors RNSimFaults::CrashedEndpointSilent: an endpoint (the server or a client) that is not up sends and
-// receives nothing. The injector is not part of this card; every endpoint is up,
-// so the check runs and holds.
+// receives nothing. No crash fault is injected (docs/DST.md, "Fault kinds");
+// every endpoint is up, so the check runs and holds.
 static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_check_state_t * st, int endpoint,
                                                        int live, int sent_or_received )
 {
@@ -828,9 +828,10 @@ static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_chec
 }
 
 // Mirrors RNSimFaults::SkewBounded and ClockMonotone: every endpoint's clock is
-// within its bound of the true clock and never below its value the step
-// before. The clock injector is not part of this card, so the true clock is
-// passed and the bound is checked.
+// within its bound of the true clock. The harness passes each endpoint's own
+// clock (docs/DST.md, clock-back) and the shared step clock; clock-back
+// steps one endpoint's clock back on purpose, so ClockMonotone is not
+// checked here.
 static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t * st, int endpoint,
                                               double clock, double true_clock, double bound )
 {
@@ -972,12 +973,13 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 }
 
 // Mirrors soak_sim's explained table (no model). A refusal not explained by
-// the faults this run injects is a FAIL.
+// the faults this run injects is a FAIL. The duplicate fault (or the dup-storm
+// schedule) is the one that can replay a packet, so it is the one that
+// explains a replayed ACK or a payload taken twice.
 static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst_check_state_t * st,
                                                             const struct rocketnet_counters_t * counters,
                                                             const char * end,
-                                                            int duplicate_ack_faults_enabled,
-                                                            int duplicate_faults_enabled )
+                                                            int duplicates_enabled )
 {
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
@@ -986,13 +988,13 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             continue;
         const int explained =
             i == ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW ||
-            // A replayed standalone ACK is a benign refusal when seeded
-            // duplicate/reorder/delay faults can replay next-update ACKs.
-            ( duplicate_ack_faults_enabled && i == ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED ) ||
+            // A replayed standalone ACK is a benign refusal when the
+            // duplicate fault can replay next-update ACKs.
+            ( duplicates_enabled && i == ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED ) ||
             // The server's standalone ACK replayed at the client: only the
             // duplicate fault moves it (seeds 1-200, one fault at a time),
             // as soak_sim's table explains the same row.
-            ( duplicate_faults_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
+            ( duplicates_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||
