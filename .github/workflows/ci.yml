@@ -897,6 +897,7 @@ jobs:
           TRANSPORT_MATRIX_WINDOWS: |
             portable portable
             iocp portable
+            portable iocp
             rio portable
             loopback loopback
         run: |

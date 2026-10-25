@@ -18,3 +18,6 @@ A NIC's advertised speed does not prove the complete path speed. Missing switch
 or route evidence is recorded as unknown. Unreachable or unallocated hosts are
 not results. Bench work follows the allocation and safety procedure in the
 current sprint environment.
+
+The procedure and results table for proof cells are in
+[LAN proof](../LAN-PROOF.md).

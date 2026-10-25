@@ -115,8 +115,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         if ( forget )
         {
-            sink->forget( sink->context, &slot->seen_address );
-            memset( slot, 0, sizeof(*slot) );
+            // Queue acceptance transfers responsibility to the transport's
+            // pending buffer. Until then this slot keeps the old identity.
+            if ( sink->forget( sink->context, &slot->seen_address ) )
+                memset( slot, 0, sizeof(*slot) );
         }
     }
 
@@ -139,6 +141,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
 
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
+
+        // A refused forget for an old mapping must be retried before the
+        // current mapping replaces its seen or marked identity.
+        if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
+            continue;
+
         slot->seen = 1;
         slot->seen_address = *address;
 
@@ -158,9 +166,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 }
 
 #if ROCKETNET_TEST_SEAMS
-static void rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
+static bool rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
     (*(int *) context)++;
+    return true;
 }
 
 static void rocketnet_replay_witness_mark( void *, const rocketnet_address_t *, uint32_t ) {}
