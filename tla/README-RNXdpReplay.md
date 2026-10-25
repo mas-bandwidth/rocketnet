@@ -12,7 +12,9 @@ The model was written before the code. `server_xdp/server_xdp.c` now holds
 the replay map, names its steps after the actions below and cites this
 module; the `xdp-replay-*` rows of `tla/COVERAGE.tsv` are `current`.
 
-`tla/MCRNXdpReplay.tla` and `tla/MCRNXdpReplay.cfg` are the small instance.
+`tla/MCRNXdpReplay.tla` and `tla/MCRNXdpReplay.cfg` are the small instance;
+`tla/MCRNXdpReplayReconnect.cfg` is the reconnect control and
+`tla/MCRNXdpReplayRefusedMark.cfg` the refused-mark control.
 `tla/MCRNXdpReplayBrokenKernelAdvances.cfg`,
 `tla/MCRNXdpReplayBrokenNoForget.cfg`,
 `tla/MCRNXdpReplayBrokenNarrowWindow.cfg`,
@@ -37,21 +39,50 @@ are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
 - Userspace, once per update after packet processing and before the transport
   flush: FORGET the old address of every slot that held a mark and is no
   longer connected (or whose mapping changed address); then MARK every
-  connected slot whose `highest_opened` is nonzero and differs from what it
-  last marked. The transport applies all forgets, then all marks, in one commit.
+  connected slot whose `highest_opened` differs from what it last marked
+  (none counting as zero), and every slot the walk first sees, zero
+  included. The transport applies all forgets, then all marks, in one commit.
   For one session the map lags the truth by at most one update and is never
-  ahead of it; the exception is a reconnect from the same address before the
-  old forget lands, which meets the old session's entry (the reconnect
-  freshness witness below, owned by a separate remedy).
+  ahead of it.
+- A reconnect: a new session from the same address may arrive before the
+  old session's forget is queued (the same slot, before any walk saw the
+  release) or while the kernel refuses that delete. Its `highest_opened` is
+  0 (it has sent nothing: a client sends no session packet before the
+  server's first keep-alive), so the walk marks it at 0, as a fall below the
+  slot's old mark or as a slot first seen, and that zero entry, which drops
+  nothing, replaces the old session's entry in the commit. The server
+  publishes the first keep-alive after that commit (the replay walk and
+  commit come before the update's send flush in
+  `sdk/rocketnet_server_transport.cpp`), so no packet of the new session
+  meets the old entry, whether or not the old forget has landed.
 - A refused forget: the kernel may refuse a delete (any error but a missing
   key). A refused batch delete is walked one element at a time so each
   forget's outcome is known, and every forget refused stays pending at the
   front of the buffer (`rocketnet_xdp_replay_marks_reset_keeping`), applied
   first in the next commit, ahead of that commit's marks. The stale entry
   then outlives the released slot only by the commits the forget took to
-  land; a reconnect from the same address inside that time is dropped in
-  the kernel until it does. The buffer's own refusals (a full buffer) are
-  added to the socket's commit failure count.
+  land; a reconnect from the same address inside that time replaces it
+  with its own zero mark first (above). The buffer's own refusals (a full
+  buffer) are added to the socket's commit failure count.
+- A refused mark: the kernel may refuse an update too. The walk's per-slot
+  cache has already advanced, so it would never take that mark again; the
+  pending buffer keeps every refused mark (`rocketnet_xdp_replay_marks_reset_keeping`,
+  `mark_applied`) and the next commit applies it again, until it lands. A
+  newer mark of the same key replaces the kept one in place, and a forget
+  the walk queues for the key drops it: the commit applies forgets before
+  marks, so a kept mark of a released slot would otherwise rewrite the
+  address's entry after its forget. A mark the pending buffer cannot queue
+  leaves the walk's cache where it was and the slot owes it (`mark_owed` in
+  the walk's slot record), so the next walk asks again.
+- A held greeting: a new session's first mark is a zero, and until the kernel
+  has applied it the old session's entry may stand for the address. The
+  socket therefore holds every keep-alive to that address at publish
+  (`rocketnet_server_socket_hold_greetings`), the keep-alive being how the
+  client learns it is connected; a zero mark the buffer could not queue
+  names no key, so that publish holds every keep-alive. Only keep-alives
+  are held: the client refuses payloads before connected, and a disconnect
+  still leaves. The keep-alive is sent again when next due, after the retry
+  lands, so the new session's first packet never meets the old entry.
 - A superseded forget: a kept forget belongs to the session it was queued
   for. When a mark of the same key lands in a later commit while the kept
   forget is refused again, that entry is the newer session's, so the reset
@@ -66,8 +97,7 @@ are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
   `ROCKETNET_XDP_REPLAY_WINDOW` = `ROCKETNET_REPLAY_WINDOW_BITS`
   (`ROCKETNET_HISTORY_PACKETS`, 4096 by default; a static_assert ties them).
   A session's own mark is never ahead of its `highest_opened`, so the kernel
-  drops only what the userspace window refuses (the reconnect exception
-  above aside): a packet reordered by less than a window is
+  drops only what the userspace window refuses: a packet reordered by less than a window is
   accepted on XDP exactly as on every other transport. The rule is one
   compare against the entry, so the window's size costs no map memory and no
   verifier work.
@@ -97,20 +127,28 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `phase` | the update | `"run"` while packets are processed, `"flush"` between the walk and the commit |
 | `reached[s]` | (ghost) | the highest `highest_opened` session `s` reached |
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
-| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1; the control and the superseded-forget witness raise it to 2) |
+| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1; the controls raise it to 2, the superseded-forget witness to 3) |
+| `markFailures` | (bound) | the marks refused so far by the kernel or by the pending buffer, at most `MarkFailureBudget` (0; the refused-mark control raises it to 2, its witnesses to 1) |
+| `markOwed[a]` | the walk's `mark_owed` | the buffer refused the walk's mark, so the walk takes it again |
+| `greeted[a]` | the client's connected state | the live session's first keep-alive has left: set by the `Commit` after its `Connect`, cleared by `Connect` and `Release` |
 | `nextSession` | (ghost) | the id the next connection takes |
 
-Six rule switches are definitions with the design's values, each
+Eleven rule switches are definitions with the design's values, each
 overridden by one witness configuration: `KernelAdvances` (`FALSE`),
 `WalkForgets` (`TRUE`), `WalkForgetsUnmarked` (`TRUE`), `KernelWindow` (`W`),
-`KeepFailedForgets` (`TRUE`) and `SupersedeStaleForgets` (`TRUE`).
+`KeepFailedForgets` (`TRUE`), `SupersedeStaleForgets` (`TRUE`) and
+`MarkNewSessions` (`TRUE`), `KeepRefusedMarks` (`TRUE`),
+`ForgetDropsKeptMark` (`TRUE`), `HoldGreetingUntilMarked` (`TRUE`) and
+`AdvanceOnQueueRefusal` (`FALSE`).
 
 Actions, each against the design sentence it models:
 
 - `Connect(a)`: a new session; sequences restart at 1 and `highest_opened` is
-  0. It may reconnect while an older delete is still owed, preserving that
-  interleaving rather than suppressing it with a handshake assumption.
-- `ClientSend(a)`: the live session sends its next genuine sequence.
+  0. It may reconnect while an older delete is still owed (not yet queued,
+  or refused): there is no settle guard. The session is not greeted.
+- `ClientSend(a)`: the live session sends its next genuine sequence, once it
+  is greeted: the client sends session packets only once the server's first
+  keep-alive has reached it.
 - `Forge(a, s)`: an attacker spoofing `a` sends any sequence `s`; it never
   opens.
 - `Duplicate(p)`: the network delivers a second copy of a packet.
@@ -124,17 +162,29 @@ Actions, each against the design sentence it models:
   `highest_opened`; a forged one fails the AEAD open, and a packet of an
   ended session has no mapping: neither moves anything.
 - `Release(a)`: the session ends.
-- `Walk`: forgets first (every address with `marked[a] # 0` and no live
-  session), then marks (every live session with `opened[a] # 0` and
-  `opened[a] # marked[a]`), into the pending sets; `marked` records them.
+- `Walk`: forgets first (every seen address with no live session), then
+  marks (every live session with `opened[a] # marked[a]`, or not yet seen,
+  zero included; the broken shape `MarkNewSessions = FALSE` marks only
+  `opened[a] # 0`), into the pending sets; `marked` records them.
 - `Commit`: the transport applies all forgets, then all marks, to `kmap`. The
   only action that writes `kmap` in the design. The kernel may refuse any set
   of the pending forgets, within `ForgetFailureBudget` over the run; a refused
   forget leaves its entry and stays pending (the walk adds to the pending set
   rather than replacing it), so the next commit applies it before its marks,
   unless a mark of the same address was applied in the same commit: then the
-  forget is superseded and dropped. Marks always apply in the model. The
-  broken shapes drop every refused forget, or keep one over the newer mark.
+  forget is superseded and dropped; only an applied mark supersedes. The
+  kernel may refuse any set of the marks too, within `MarkFailureBudget`: a
+  refused mark leaves the entry as it was and stays pending; the walk adds
+  its marks to the kept ones, a newer mark of an address replacing the kept
+  one, and an accepted forget dropping a kept mark of its address. A mark of
+  0 is an entry that drops nothing. The update's send flush follows the
+  commit and greets every live session except one whose zero mark is kept
+  after a refusal or owed by the walk (`HoldGreetingUntilMarked`); a greeted
+  session stays greeted. The walk may find the buffer full for a mark of an
+  address with no kept mark: it then leaves `marked` and sets `markOwed`.
+  The broken shapes drop every refused forget, keep one over the newer mark,
+  drop every refused mark, keep a mark over the forget of its address,
+  greet over a refused zero mark, or advance the cache on a refused queue.
 
 `Connect`, `UserOpen`, `Release` and `Walk` are userspace steps of one
 update, so they run only in phase `"run"`; `Commit` ends the flush.
@@ -146,12 +196,17 @@ Properties:
   `kmap` unchanged.
 - `ReleasedSlotForgetsItsReplyMac`: an accepted forget removes the learned reply MAC, including for a released slot that was seen before it acquired a mark.
 - `ForgetOwedUntilApplied`: an entry for an address with no live session is
-  owed a forget: the walk has yet to take it (`marked[a] # 0`) or it is
+  owed a forget: the walk has yet to take it (`marked[a] # 0`, or `seen[a]`:
+  the walk forgets every seen released slot, and a refused zero mark leaves
+  an older entry under a seen slot whose cache reads 0) or it is
   pending, kept across every commit the kernel refused it. No stale entry
   outlives a released slot by more than the commits it took to succeed.
 - `MarkNeverAhead`: with a live session, the entry for its address is none,
-  or was taken from that session and is at most its `highest_opened`. With
-  no live session the forget is owed (`ForgetOwedUntilApplied`, a conjunct).
+  or was taken from that session and is at most its `highest_opened`, or a
+  mark of that session is pending (for this commit, or kept after a refusal),
+  or the session is not yet greeted and the walk still owes it its first
+  mark. With no live
+  session the forget is owed (`ForgetOwedUntilApplied`, a conjunct).
 - `RetryNeverDeletesNewerMark`: no pending forget is held over the live
   session's own entry at its address, so no retry ever deletes a newer
   session's mark.
@@ -161,7 +216,13 @@ Properties:
   against a mark of its own session is never fresh: its sequence is at most
   `opened[a] - W`, so the userspace window, `W` deep, would refuse it too.
 - `NewSessionNeverDroppedByOldMark`: no genuine packet is dropped against a
-  mark taken in an earlier session.
+  mark taken in an earlier session, whether or not that session's forget had
+  been queued or accepted, or whether the kernel or the buffer refused the
+  new session's first mark. All three controls check it.
+- `MarkOwedUntilApplied`: a greeted live session's entry is the walk's last
+  mark for it (an entry of 0 drops nothing, whichever session took it), or
+  that mark is pending, kept across every commit the kernel refused it: a
+  refused mark is retried until it is applied.
 
 The last two split one statement by the session of the mark: together they
 say no genuine packet of the live session within `W` of its last opened
@@ -172,14 +233,15 @@ one of them.
 userspace window or not: a genuine packet the window would refuse is at or
 below `highest_opened`, so refusing it and opening it leave the same state.
 
-## Reconnect freshness witness
+## Reconnect freshness
 
-The retention control deliberately checks ownership of a refused delete. A
-reconnect is allowed before that delete lands. `MCRNXdpReplayBrokenReconnectFreshness.cfg`
-keeps that behavior and expectedly finds `NewSessionNeverDroppedByOldMark`:
-the retained old kernel high-water can reject early packets of the new session.
-That witness is documentation for the separate reconnect-freshness remedy; it
-is not excluded by a settle guard and it does not weaken the retention control.
+A reconnect is allowed before the old delete is queued or lands, with no
+settle guard on `Connect` and no trace suppression. The new session's first
+mark, zero included, replaces the old entry in the commit that greets it, so
+`MarkNeverAhead` and `NewSessionNeverDroppedByOldMark` hold in both controls.
+`MCRNXdpReplayBrokenReconnectFreshness.cfg` restores the old walk rule (a
+nonzero `highest_opened` only, `MarkNewSessions <- MarkNewSessionsBroken`)
+and fails `NewSessionNeverDroppedByOldMark`.
 
 ## Left out
 
@@ -190,11 +252,18 @@ is not excluded by a settle guard and it does not weaken the retention control.
   (`high_water`, pad) structs in `sdk/rocketnet_wire.h`, the little-endian
   sequence after the 6-byte prefilter header, and the packet type list are
   not modelled; an address in `Addresses` stands for a key.
-- **Map capacity.** `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` is not modelled: a
-  full map refuses a mark, which leaves no entry, and no entry passes.
+- **Map capacity.** `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` is not modelled; a
+  full map refusing a mark is one of the refused marks above.
 - **Slots and addresses.** A slot is identified with its address. A slot
   whose mapping changes address forgets the old address exactly as a release
-  does; a reconnect landing in a different slot is a reconnect here.
+  does; a reconnect landing in a different slot is a reconnect here (the
+  walk sees that slot first, `~seen[a]` after the old slot's forget was
+  queued, and the fake-map regression covers both slots).
+- **A disconnect before the first keep-alive.** A client that gives up while
+  still sending its connection response sends a disconnect burst, session
+  packets, before it is greeted; the kernel may drop that burst against an
+  old entry, and the server then times the slot out instead of ending it at
+  once. No session is lost, so `ClientSend` is enabled only once greeted.
 - **Addresses are independent.** Every action touches one address. The
   retention control uses two addresses and one pending-forget entry, so it
   reaches a full buffer while another unique delete remains owed.
@@ -225,31 +294,42 @@ done
 duplicate, kernel pass or drop, open, release, walk and commit interleaving,
 with up to two refused forgets anywhere in the run
 (`ForgetFailureBudget <- ForgetFailureBudgetTwo`, so a kept forget can be
-refused again in the commit that lands a newer session's mark): 299,086
-distinct states (744,729 generated, depth 36) in about 3 seconds on two
-workers, and `TypeOK`, `ForgetOwedUntilApplied`, `MarksTakenFromTheTruth`,
-`FreshGenuineNeverDropped`, `ReleasedSlotForgetsItsReplyMac`,
-`RetryNeverDeletesNewerMark` and `KernelNeverWrites` hold.
+refused again in the commit that lands a newer session's mark): 239,206
+distinct states (596,195 generated, depth 36), and `TypeOK`,
+`ForgetOwedUntilApplied`, `MarkNeverAhead`, `MarksTakenFromTheTruth`,
+`FreshGenuineNeverDropped`, `NewSessionNeverDroppedByOldMark`,
+`ReleasedSlotForgetsItsReplyMac`, `RetryNeverDeletesNewerMark` and
+`KernelNeverWrites` hold. The measured records are in `tla/RUNS.tsv`.
 
-`MarkNeverAhead` is not in the control. With no settle guard on `Connect`,
-it fails at depth 9: `Connect(A1)`, a genuine sequence 1 opens, `Walk` and
-`Commit` write `high_water = 1` for session 1, `Release(A1)`, then
-`Connect(A1)` takes session 2 before any walk has queued the forget, so the
-live session 2 meets the entry taken from session 1. That is the
-reconnect-freshness gap of the witness above, owned by the separate remedy;
-`NewSessionNeverDroppedByOldMark` is checked there.
+`MCRNXdpReplayReconnect.cfg`: the same, with `Sessions = 3`, so a reconnect
+at one address can meet a release, a full pending buffer or a refused
+delete at the other: 4,527,982 distinct states (11,919,449 generated, depth
+49), every property of the control holding.
+
+`MCRNXdpReplayRefusedMark.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
+`Sessions = 2`, `MaxInFlight = 1`, `ForgetCapacity = 1`, one refused forget
+and up to two refused marks, by the kernel or by the buffer
+(`MarkFailureBudget <- MarkFailureBudgetTwo`), so a reconnect's zero mark
+can be refused, kept or owed, refused again and applied, with its greeting
+held throughout. `NewSessionNeverDroppedByOldMark`, `MarkOwedUntilApplied`,
+`MarkNeverAhead`, `ForgetOwedUntilApplied`, `RetryNeverDeletesNewerMark` and
+the rest hold. The measured records are in `tla/RUNS.tsv`.
 
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
 | `MCRNXdpReplayBrokenKernelAdvances.cfg` | the kernel never writes: `KernelAdvances <- KernelAdvancesBroken`, `kmap[a] := seq` on every pass | `FreshGenuineNeverDropped`, exit 12, depth 6 |
-| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
+| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `ReleasedSlotForgetsItsReplyMac`, exit 12, a 6-state trace |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
 | `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
-| `MCRNXdpReplayBrokenSupersededForget.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, depth 13 |
-| `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
+| `MCRNXdpReplayBrokenSupersededForget.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, a 15-state trace |
+| `MCRNXdpReplayBrokenReconnectFreshness.cfg` | a new session is marked at zero: `MarkNewSessions <- MarkNewSessionsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, a 19-state trace |
+| `MCRNXdpReplayBrokenRefusedMarkDropped.cfg` | a refused mark stays pending: `KeepRefusedMarks <- KeepRefusedMarksBroken` | `MarkOwedUntilApplied`, exit 12 |
+| `MCRNXdpReplayBrokenKeptMarkAfterForget.cfg` | a queued forget drops a kept mark of its address: `ForgetDropsKeptMark <- ForgetDropsKeptMarkBroken` | `ForgetOwedUntilApplied`, exit 12 |
+| `MCRNXdpReplayBrokenGreetBeforeMark.cfg` | the greeting waits for the zero mark: `HoldGreetingUntilMarked <- HoldGreetingUntilMarkedBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, a 21-state trace |
+| `MCRNXdpReplayBrokenQueueRefusedAdvances.cfg` | a refused queue leaves the cache: `AdvanceOnQueueRefusal <- AdvanceOnQueueRefusalBroken` | `MarkOwedUntilApplied`, exit 12, a 9-state trace |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
@@ -257,8 +337,9 @@ every property of the control, the same overrides fail one step after the
 broken rule acts: the kernel-advances shape fails `MarksTakenFromTheTruth` at
 depth 3 (a forged packet passes and its sequence becomes the entry), and the
 no-forget shape fails `MarkNeverAhead` at depth 11 (the reconnect, with the
-old session's entry still in the map). Both were bench experiments, not
-cases.
+old session's entry still in the map; with this design's zero mark that
+reconnect is now covered, and the shape fails `ReleasedSlotForgetsItsReplyMac`
+instead). Both were bench experiments, not cases.
 
 ### KernelAdvances, checked by hand against the design
 
@@ -277,19 +358,36 @@ traffic: one spoofed packet would silence a client.
 
 ### NoForget, checked by hand against the design
 
-1. `Connect(A1)`: session 1 sends 1, 2, 3; the kernel passes 1 and 3, and
-   userspace opens both (`highest_opened = 3`); 2 is still on the wire.
-2. `Walk` marks 3; `Commit` writes `high_water = 3`.
-3. `Release(A1)`; `Walk` (the broken walk forgets nothing); `Commit`.
-4. `Connect(A1)`: session 2, whose sequences restart at 1; it sends 1.
-5. `KernelFilter` on session 2's sequence 1: `3 - 1 >= 2`, dropped against
-   session 1's mark.
+1. `Connect(A1)`: session 1, its reply MAC learned; `Walk` sees the slot;
+   `Commit`.
+2. `Release(A1)`; `Walk`: the broken walk forgets nothing, so the flush
+   phase holds the released address's reply MAC with no MAC forget pending.
 
-In the design the walk at step 3 queues `A1` and the next successful commit
-deletes the entry. A reconnect can still arrive before that delete lands; the
-separate reconnect-freshness witness records that stale-map behavior. Once the
-delete succeeds, session 2's first packets pass. The loss here is that the
-broken walk never records the delete at all.
+In the design the walk queues `A1` with its MAC forget. The kernel entry
+the broken walk leaves no longer harms a reconnect (the new session's zero
+mark replaces it), so `NewSessionNeverDroppedByOldMark` holds here; the
+loss is the reply MAC and the map space a stale entry keeps.
+
+### ReconnectFreshness, checked by hand against the design
+
+The TLC trace, 19 states:
+
+1. `Connect(A1)`: session 1; `Walk`, `Commit` greet it; it sends 1, 2, 3,
+   all opened (`highest_opened = 3`).
+2. `Walk` marks 3; `Commit` writes `high_water = 3`.
+3. `Release(A1)`, then `Connect(A1)`: session 2 before any walk saw the
+   release, so the slot is still seen at `A1` with `marked = 3`.
+4. `Walk`: no forget (the slot is connected), and the broken walk takes no
+   mark (nothing opened). `Commit` greets session 2 with session 1's entry.
+5. Session 2 sends 1; `KernelFilter`: `3 - 1 >= 2`, dropped against session
+   1's mark.
+
+In the code this was the walk's `highest_opened == 0` skip in
+`rocketnet_server_replay_marks_walk`: the same slot reconnected between two
+walks matched its seen address and was never forgotten or re-marked, and a
+reconnect into another slot met a forget the kernel refused. The design
+marks session 2 at 0 at step 4. The fake-map regression is
+`test_xdp_transport_replay_marks_reconnect_admits_the_new_session`.
 
 ### NarrowWindow, checked by hand against the design
 
@@ -323,20 +421,89 @@ the walk having already cleared the slot's mark record, so a reconnect from
 the same address and port had its session packets dropped in the kernel as
 replayed until it timed out.
 
+### RefusedMarkDropped, checked by hand against the design
+
+The TLC trace, 9 states:
+
+1. `Connect(A1)`: session 1; `Walk` marks it at 0 (first seen); `Commit`.
+2. Session 1 sends 1, opened (`highest_opened = 1`); `Walk` marks 1, and
+   the walk's cache reads 1.
+3. `Commit`: the kernel refuses the mark and the broken commit drops it.
+   The entry is still `[hw 0, sess 1]` while the cache reads 1, and nothing
+   takes the mark again until a fresh sequence opens.
+
+In the design step 3 keeps the mark and the next commit applies it. In the
+code this was `rocketnet_xdp_replay_marks_reset_keeping` clearing every
+mark: a reconnect's refused zero mark left the old session's entry, and the
+walk, already at 0 for the slot, never asked again. The fake-map regression
+is `test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried`.
+
+### KeptMarkAfterForget, checked by hand against the design
+
+The TLC trace, 12 states:
+
+1. `Connect(A1)`: session 1, marked at 0 and greeted; it sends 1, opened;
+   `Walk` marks 1.
+2. `Commit`: the kernel refuses the mark, which is kept.
+3. `Release(A1)`; `Walk` queues the forget of `A1`, and the broken walk
+   leaves the kept mark in place.
+4. `Commit`: the forget lands, then the kept mark of the released session
+   writes `[hw 1, sess 1]`: an entry for a released address with no forget
+   owed.
+
+In the design step 3 drops the kept mark (`rocketnet_xdp_replay_marks_forget`
+drops a kept mark of the key it queues), so the forget is the last word.
+
+### GreetBeforeMark, checked by hand against the design
+
+The TLC trace, 21 states:
+
+1. Session 1 at `A1` opens to 3; `Walk` marks 3; `Commit` writes
+   `[hw 3, sess 1]`.
+2. `Release(A1)`, then `Connect(A1)` as session 2 before any walk; `Walk`
+   takes its zero mark.
+3. `Commit`: the kernel refuses the zero mark, which is kept, and the broken
+   commit greets session 2 anyway.
+4. Session 2 sends 1; `KernelFilter`: `3 - 1 >= 2`, dropped against session
+   1's mark.
+
+In the design step 3 holds the greeting: session 2 is greeted only by the
+commit that applies its zero mark, so its sequence 1 meets that entry. In
+the code this was the keep-alive leaving at publish whatever the commit did;
+`rocketnet_server_socket_hold_greetings` now drops it while the zero mark is
+kept, and the regression is
+`test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried` with the
+publish case in `rocketnet_server_socket_test_replay_marks`.
+
+### QueueRefusedAdvances, checked by hand against the design
+
+The TLC trace, 9 states:
+
+1. Session 1 at `A1`, marked at 0 and greeted; it sends 1, opened.
+2. `Walk`: the buffer refuses the mark of 1, and the broken walk advances
+   its cache to 1 anyway; nothing is pending.
+3. `Commit`: the entry stays `[hw 0, sess 1]` behind a cache of 1, and no
+   later walk asks for that mark again.
+
+In the design the walk leaves `marked` at 0 and owes the mark, and the next
+walk takes it. In the code `sink->mark` returned nothing and the walk
+advanced unconditionally; it now returns false on a full buffer and the slot
+records `mark_owed` (`test_server_replay_marks_refused_mark_is_owed`).
+
 ### SupersededForget, checked by hand against the design
 
-The TLC trace, depth 13:
+The TLC trace, 15 states:
 
-1. `Connect(A1)`: session 1; `Walk` sees the slot (nothing opened, so no
-   mark); `Commit`.
+1. `Connect(A1)`: session 1; `Walk` marks it at 0 (first seen); `Commit`.
 2. `Release(A1)`; `Walk` forgets `A1` (a seen slot is forgotten marked or
    not); `Commit` with the kernel refusing the forget (the first refusal):
    the forget stays pending.
-3. `Connect(A1)`: session 2 sends 1; there is no entry, so the kernel passes
-   it and userspace opens it. `Walk` marks 1 for session 2.
-4. `Commit`: the kept forget is refused again (the second refusal) and the
-   mark lands, `kmap[A1] = [hw 1, sess 2]`. The broken commit keeps the
-   forget, so `A1` is pending over the live session's entry.
+3. `Connect(A1)`: session 2; `Walk` marks it at 0; `Commit` refuses the
+   kept forget again (the second refusal) and greets session 2.
+4. Session 2 sends 1, opened; `Walk` marks 1 for session 2.
+5. `Commit`: the kept forget is refused a third time and the mark lands,
+   `kmap[A1] = [hw 1, sess 2]`. The broken commit keeps the forget, so `A1`
+   is pending over the live session's entry.
 
 The same holds with an old entry for session 1 in place; TLC reports the
 shortest trace.

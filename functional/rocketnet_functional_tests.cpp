@@ -8709,6 +8709,11 @@ void wire_totals_reset_per_connection_not_per_server()
     for ( int i = 0; i < 200 && rocketnet_server_transport_num_connected_clients( server ) > 0; i++ )
         wire_totals_pump( first, server, &time, 1 );
 
+    // the first client's queued sends may still be in flight after the
+    // disconnect: wait on the totals agreeing so a late packet cannot land
+    // after the baseline below
+    rocketnet_check( wire_totals_drain( first, server, &time ) );
+
     wire_totals_t free_slot;
     wire_totals_slot( server, 0, &free_slot );
     rocketnet_check( free_slot.packets_sent == 0 );
