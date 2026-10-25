@@ -16,8 +16,14 @@ carrier yet), iocp, rio, msgx.
 ## gso, run a1000c0062026101
 
 Executable head `59c266ff1fbcc3e3edca82998cf7f54697b6e7c2`, built by the
-script on every host. Later commits on the branch change only this file and
-the procedure.
+script on every host. The orchestrator at that head had SHA-256
+`7471b69160f4f2a0a10fae7e44da79f9fe6e7c6774bbf5c872dc823cbc71ec21`
+(`scripts/lan-proof`) and
+`5a0ed01869ab832d6766b2dc5c4e2e7b1a3417fc487502ea1082257e986b1643`
+(`scripts/lan-proof-remote`). Later commits changed both scripts: per-OS host
+facts with numeric validation, the Windows build and its locks, the macOS
+timeout check, the build bound's structure and the xdp guest sizing. The row
+was produced by the scripts at those digests, not by the current ones.
 
 Command:
 

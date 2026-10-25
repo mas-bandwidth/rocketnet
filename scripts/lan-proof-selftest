@@ -60,11 +60,27 @@ sed 's/server linux/server macos/' "$tmp/inventory" > "$tmp/nonlinux"
     say "xdp accepted a non-Linux server"
 grep -q 'needs a Linux server' "$tmp/xdp-nonlinux" || say "xdp non-Linux refusal was unclear"
 
-xdp_command=$(LAN_PROOF_BASE=/tmp/lan-proof-live "$here/lan-proof-remote" xdp-command \
-    0123456789abcdef "$tmp/run" test-bridge 100 60 0123456789abcdef 40000 600000) ||
+# the xdp guest is sized from a fake server plan and refused when the host
+# cannot hold it
+mkdir -p "$tmp/xdpbase/0123456789abcdef/bin"
+cat > "$tmp/xdpbase/0123456789abcdef/bin/load_split" <<'EOF'
+#!/bin/sh
+[ "$1" = "plan-server" ] && [ "$2" = "1000" ] &&
+    echo 'split_plan: role=server total=1000 local=1000 server_public_required_bytes=18394142400 verdict=PASS'
+EOF
+chmod +x "$tmp/xdpbase/0123456789abcdef/bin/load_split"
+printf 'MemTotal:       131072000 kB\nMemAvailable:   125829120 kB\n' > "$tmp/meminfo-large"
+printf 'MemTotal:       16777216 kB\nMemAvailable:   16252928 kB\n' > "$tmp/meminfo-small"
+xdp_command=$(LAN_PROOF_BASE="$tmp/xdpbase" LAN_PROOF_MEMINFO="$tmp/meminfo-large" "$here/lan-proof-remote" xdp-command \
+    0123456789abcdef "$tmp/run" test-bridge 1000 60 0123456789abcdef 40000 600000) ||
     say "xdp command exited $?"
 echo "$xdp_command" | grep -q 'vng --run' || say "xdp command missed vng"
-echo "$xdp_command" | grep -q -- '--memory 1536M --cpus 3' || say "xdp command missed guest sizing"
+# (18394142400 + 1000 * 9848630) * 5 / 4 + 1 GiB = 33.9 GiB, rounded up
+echo "$xdp_command" | grep -q -- '--memory 34G --cpus 3' || say "xdp command missed the planned guest size: $xdp_command"
+LAN_PROOF_BASE="$tmp/xdpbase" LAN_PROOF_MEMINFO="$tmp/meminfo-small" "$here/lan-proof-remote" xdp-command \
+    0123456789abcdef "$tmp/run" test-bridge 1000 60 0123456789abcdef 40000 600000 >"$tmp/xdp-small" 2>&1 &&
+    say "xdp command accepted a host that cannot hold the guest"
+grep -q 'needs 34 GiB and the host has 15 GiB available' "$tmp/xdp-small" || say "xdp memory refusal was unclear: $(cat "$tmp/xdp-small")"
 echo "$xdp_command" | grep -q 'irqaffinity=0.*isolcpus=1-2.*nohz_full=1-2' || say "xdp command missed boot isolation"
 echo "$xdp_command" | grep -q -- '--network bridge=test-bridge' || say "xdp command missed the dedicated bridge"
 echo "$xdp_command" | grep -q 'guest-server' || say "xdp command missed the guest server"

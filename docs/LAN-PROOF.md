@@ -25,9 +25,13 @@ OS, kernel and every test interface's model, driver, negotiated speed and
 duplex, and refuses to start when a host's foreign load is at or above
 half its core count. Samples are retained every 60 seconds while the cell
 runs and at its end; server runtime load may not exceed its logical cores,
-and client end load may not exceed each client's logical cores. SSH and copy steps have a
-60-second overall bound, and each remote build has a 900-second overall
-bound. It starts the server pinned to the transport (Linux
+and client end load may not exceed each client's logical cores. On Linux
+and macOS hosts, SSH and copy steps have a 60-second overall bound and each
+remote build has a 900-second overall bound. A Windows host's commands may
+first queue for its bench lock, so their bounds add a 900-second lock wait:
+960 seconds for an SSH step, 1800 seconds for a build, and the lock wait
+plus the cell duration plus 600 seconds for the copy step and for the
+server's exclusive hold. It starts the server pinned to the transport (Linux
 and macOS by ssh with the copied remote script, the open-file limit raised
 on macOS; Windows under an exclusive lock; the xdp server inside a guest
 on a dedicated test interface), starts shards of at most 250 clients on
@@ -74,9 +78,18 @@ For an xdp cell, the inventory's server interface is a dedicated Linux bridge
 backed by X540 port 0, cabled to the LAN switch. It must not be the host's
 uplink. The XDP cell has no recorded result until that test port is cabled and
 the bridge exists. The script starts the server with the host's own kernel
-inside a `virtme-ng` guest, using 1536 MiB,
-three CPUs, `irqaffinity=0 isolcpus=1-2 nohz_full=1-2`, and
-`--network bridge=<test bridge>`. The guest provisions its bridged LAN
+inside a `virtme-ng` guest with three CPUs,
+`irqaffinity=0 isolcpus=1-2 nohz_full=1-2`, and
+`--network bridge=<test bridge>`. The guest holds the whole server, so its
+memory is computed, not fixed: the script runs `load_split plan-server
+<clients>` on the built head and sizes the guest as
+`(server_public_required_bytes + clients * 9848630) * 5 / 4 + 1 GiB`, rounded
+up to whole GiB. The 9848630-byte per-client reserve is the measured run
+reserve (start-time allocations and UMEM) from
+[LOAD.md](LOAD.md#the-nightly-af_xdp-cells-guest-memory); the 1 GiB is the
+guest kernel's own. At 1000 clients the plan is 18394142400 bytes and the
+guest is 34 GiB. The script refuses the xdp cell when the host's
+`MemAvailable` is below the guest size. The guest provisions its bridged LAN
 interface, and the clients use the address printed by the guest's ready line.
 The script refuses the xdp cell when the inventory marks this interface as the
 uplink.

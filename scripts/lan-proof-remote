@@ -451,15 +451,44 @@ cmd_guest_server()
         "$address:$port" "$address" "$cap" proof
 }
 
+# The xdp guest holds the whole server, so it is sized from the server's
+# create-only plan plus the measured run reserve per client (the start-time
+# allocations and UMEM; docs/LOAD.md), with a quarter of headroom and 1 GiB
+# for the guest kernel, rounded up to whole GiB. The cell is refused when
+# the host has less memory available than that.
+XDP_RESERVE_PER_CLIENT="${LAN_PROOF_XDP_RESERVE_PER_CLIENT:-9848630}"
+MEMINFO="${LAN_PROOF_MEMINFO:-/proc/meminfo}"
+
+xdp_guest_gib()
+{
+    local commit=$1 total=$2 bin plan gib avail_kib
+    bin="$BASE/$commit/bin/load_split"
+    [ -x "$bin" ] || fail "xdp: no built load_split for $commit to plan the guest"
+    is_count "$total" || fail "xdp: client count '$total' is not a number"
+    is_count "$XDP_RESERVE_PER_CLIENT" || fail "xdp: reserve per client is not a number"
+    plan=$( "$bin" plan-server "$total" 2>/dev/null |
+        sed -n 's/.* server_public_required_bytes=\([0-9]*\).*/\1/p' | tail -n 1 )
+    is_count "$plan" || fail "xdp: load_split plan-server $total named no server size"
+    gib=$( awk -v p="$plan" -v n="$total" -v r="$XDP_RESERVE_PER_CLIENT" 'BEGIN {
+        g = (p + n * r) * 5 / 4 + 1073741824
+        printf "%d", int((g + 1073741823) / 1073741824) }' )
+    avail_kib=$( awk '/^MemAvailable:/ { print $2; exit }' "$MEMINFO" 2>/dev/null )
+    is_count "$avail_kib" || fail "xdp: cannot read the host's available memory"
+    [ $(( gib * 1048576 )) -le "$avail_kib" ] ||
+        fail "xdp: the guest for $total clients needs $gib GiB and the host has $(( avail_kib / 1048576 )) GiB available; refusing the xdp cell"
+    echo "$gib"
+}
+
 make_xdp_command()
 {
     local commit=$1 dir=$2 bridge=$3 total=$4 duration=$5 run_id=$6 port=$7 cap=$8
-    local repo="$BASE/$commit" self="$BASE/$commit/scripts/lan-proof-remote" guest
+    local repo="$BASE/$commit" self="$BASE/$commit/scripts/lan-proof-remote" guest gib
+    gib=$( xdp_guest_gib "$commit" "$total" ) || exit 1
     printf -v guest '%q ' sudo env "LAN_PROOF_BASE=$BASE" "$self" guest-server \
         "$commit" "$total" "$duration" "$run_id" "$port" "$cap"
     guest=${guest% }
     XDP_COMMAND=( vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)"
-        --memory 1536M --cpus 3
+        --memory "${gib}G" --cpus 3
         --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2"
         --network "bridge=$bridge" --rwdir "$repo" -- "$guest" )
 }
