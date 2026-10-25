@@ -16,18 +16,27 @@ half of the retained window,
 and, for loss, the part of it at or below `highest - H` (the newest half of the
 ring is still in flight). The aggregates must equal the reference after every
 write and every ack. Every edge is a function of `highest`, so the code stores
-none. A write that raises `highest` from `h0` to `h1`:
+none. On the sent side, a write that raises `highest` from `h0` to `h1`:
 
 1. moves the window in one step, before anything is overwritten
-   (`rocketnet_ack_stats_sent_advance`, `rocketnet_ack_stats_received_advance`):
+   (`rocketnet_ack_stats_sent_advance`):
    the counted records below the new base leave (all at once, in O(1), when
-   the new base is past the old top, so a sequence the remote end chose costs
-   nothing to jump); the counted survivors crossing into the loss-eligible
+   the new base is past the old top, so a large sequence gap costs nothing to
+   traverse); the counted survivors crossing into the loss-eligible
    part are counted there; the present records between the old top and the
    new one, and no higher than `h0` (nothing above it is written yet), enter;
-2. retires the record it replaces, when that one is counted (on the received
-   side a duplicate sequence replaces itself anywhere in the window);
+2. retires the record it replaces, when that one is counted;
 3. writes, and counts the new record if it lands in the window.
+
+The received side instead keeps 64 fixed physical-slot summaries for the
+2,048-record ring. `rocketnet_ack_stats_received_advance` clears summaries for
+whole physical blocks that leave the retained full window and rebuilds at most
+two partial edge blocks. A write then replaces the exact full-width sequence
+tag, rebuilds that one 32-slot block, and
+`rocketnet_ack_stats_received_query` reduces the older-half range from whole
+summaries plus at most two query edges. Exact tags keep a stale physical alias
+out of every rebuild and query; receive-time order is never inferred from
+sequence order.
 
 The received side refuses a sequence below the window base (at least one ring
 behind `highest`) before any of this, and leaves the ring and the aggregates
@@ -39,26 +48,30 @@ duplicate) or one at least a ring older (below the base, never counted), so
 the replace path stays. The sent side already refuses a stale write the same
 way (`rocketnet_ack_endpoint_record_sent_classified`).
 
-Each sequence enters and leaves once, so the work is O(1) per sequence
-amortized and at most half a ring per call. A removed low bound moves to the
-next counted sequence. The sent side's send times follow its sequences
-(update refuses a time that goes backwards, and concurrent fill writers of one
-phase share its time), so its spans come from the sequence bounds. The
-received side writes any sequence at any time, so its counted records are
-kept on a list ordered by receive time (inserted by walking back from the
-tail, the links held in the records' padding) and its span comes from the
-list's ends.
+Each sent sequence enters and leaves once, so sent-side work is O(1) per
+sequence amortized and at most half a ring per call. A removed low bound moves
+to the next counted sequence. Sent times follow sequence (update refuses a
+time that goes backwards, and concurrent fill writers of one phase share its
+time), so sent spans come from the sequence bounds. Received writes may arrive
+in any sequence or time order, so each block summary holds count, bytes, and
+receive-time extrema. The immutable 2,048-slot layout has a fixed worst case
+of 224 block/record visits per receive: at most 129 for retention, 32 for the
+point-block rebuild and 63 for the 1,024-slot query. Its 2,048 summary bytes
+reuse the former four link bytes in each received record, so endpoint memory
+does not grow.
 
 ## What the model has
 
 - Constants: `N`, `MaxSeq`, `MaxWrites`, `Late` (the received side's writes),
   `Reorder` (sent writes below `highest`, as fill writers record out of
-  order), `SeqTimes` (spans from the sequence bounds rather than the list) and
+  order), `SeqTimes` (received spans from sequence bounds rather than the
+  exact-tagged range reduction) and
   three defect switches, `BrokenEntering`, `BrokenCrossing` and `BrokenAlias`
   (the received write without its floor below the window base).
 - Variables: the ring (`seq`, `acked`, `time` per record), `highest`, `base`,
   `writes` (also the clock), `agg` (the counted set, `cnt`, `unacked`, the
-  eligible `ecnt` and `eunacked`, the four bounds and the time-ordered list),
+  eligible `ecnt` and `eunacked`, the four bounds and the exact-tagged
+  `leaves` reduced for the received range),
   `pc`/`pending` for a write's two micro-steps, and the history `written`
   (every sequence handed to `Write`).
 - Actions: `Send(s)`, `Slide` (the one-step window move, raising `highest`),
@@ -76,7 +89,8 @@ the numbers; `LateNeverShrinks` is an action property over every step.
 | `CountedIsWindow` | the counted set, `cnt` and `unacked` are exactly the reference window's |
 | `EligibleExact` | `ecnt` and `eunacked` are exactly the reference's loss-eligible sends |
 | `BoundsExact` | the lowest/highest present and acknowledged sequences are the reference's |
-| `OrderedByTime` | the list holds the counted records once each, in time order |
+| `RangeAggregateExact` | exact-tagged reduced leaves are precisely the reference window |
+| `OrderedByTime` | historical checked name; aliases `RangeAggregateExact` |
 | `PublishedSpanExact` | the published span is the reference's earliest-to-latest time |
 | `AckedSpanExact` | the acknowledged span is the reference's (sent side) |
 | `RetainedIsNewest` | every sequence written at or above the base is still in the ring |
@@ -127,8 +141,8 @@ case.
 sequences. TLC's trace: receive 2 (time 1), then 1 late (time 2). The window
 holds 1 and 2, the earliest time is 1 (at sequence 2), but the sequence bounds
 give time 2 at sequence 1: the span is negative and the published received rate
-reads 0 where the reference has a rate. The code reads it from the list's head
-and tail instead.
+reads 0 where the reference has a rate. The code instead reduces receive-time
+extrema from exact-tagged block summaries and partial edge records.
 
 `BrokenAlias` is the received write without its floor. TLC's trace: receive 5
 (window `[2, 3]`, the retained range `[2, 5]`), then 1, admitted by replay
