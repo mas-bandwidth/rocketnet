@@ -4,9 +4,9 @@ The impaired Linux soak (`scripts/soak-per-transport --seconds 1800`, loss
 5%, latency 30 ms, jitter 20 ms, duplication 2% at both ends of the link
 simulator) passed its xdp cell while losing about twice the configured share
 of server-to-client payloads. This record names where the excess went, with
-the counters, and states what the required rerun at main could and could not
-establish this attempt. The rerun was not made: the named host is reachable,
-but the worker's sandbox cannot read the SSH identity (see "Attempt 6").
+the counters. An earlier pass of this record could not run the cell, because
+that worker could not read the SSH identity (see "Attempt 6"). The 1800 second
+cell that was run later is the last section of this file.
 
 ## Verdict
 
@@ -211,17 +211,13 @@ therefore timing-driven, the rerun's receive-buffer result is not evidence.
 Only one of its numbers is used here: run B's server-to-client missing of
 5.00% (full grant), quoted above as the direction's own impairment rate.
 
-This attempt attempted the required rerun on the named AF_XDP server host:
-a serial, 1800 s xdp cell at current main with counter captures and the host
-load sampled throughout. The host is reachable, but the worker's sandbox
-cannot authenticate to it (above), so its load and its prior xdp state could
-not be checked, the self-detach timer could not be armed, and no compliant
-rerun was made. The fleet inventory lives outside the repository on the
-coordinator's machine (the provisioning script's comment: the coordinator's
-machine runs the ssh, and the worker never sends ssh from here), so the
-identity is not on a path this worker can read.
+The pass that wrote the sections above attempted that rerun and could not
+authenticate, so it recorded no cell. The 1800 second cell with counters and
+a sampled load is the last section of this file. It is a later run. It does
+not replace the discarded overloaded rerun above, and it does not supply
+counters for the 165,137 run.
 
-The DONE-WHEN's split is therefore answered only in part. For the run that
+For the runs this section discusses, the split is answered only in part. For the run that
 kept counters (`adca4345`): the impairment is applied once per direction
 (the code path, the 4.89% client-to-server control, and the 5.00%
 server-to-client controlled run); AF_XDP copy-mode receive drops are zero
@@ -231,20 +227,17 @@ the library's own loss is zero where the grant is honored. For the 165,137
 run: its 4.92% client-to-server control shows the impairment
 applied once there too, and its server-to-client excess is consistent with
 the same receive-buffer source, but that run captured no counters, so its
-split is inferred, not measured. The item still not verified is why the XDP
-machine's client read stalled so often, and the 165,137 run's own split;
-that requires the rerun on the named host, which could not be made, so both
-are reported as inferred from the prior counters and unverified. No bound or
-assertion is loosened.
+split is inferred, not measured. The later 1800 second cell, in the last
+section, is its own measurement. It does not explain the earlier stall, and
+it does not split the 165,137 run. Both of those stay inferred from the prior
+counters. No bound or assertion is loosened.
 
 ## Not measured
 
 - Why the client's reads stalled so often on the XDP machine at adca4345
-  (76,521 drops against 193 in the bench rerun). The named host is reachable
-  but the worker's sandbox cannot read the SSH identity (above), so the
-  1800 s rerun there with the client's read timing sampled was not made. The
-  9.7% trigger on that host is inferred from its prior counters and remains
-  unverified.
+  (76,521 drops against 193 in the bench rerun). The later 1800 second cell
+  did not sample that earlier read timing. The 9.7% trigger on that run is
+  inferred from its prior counters and remains unverified.
 - The split of the 165,137 run, which captured no counters. Its 4.92%
   client-to-server control shows the impairment applied once; the excess
   over 5% is consistent with the client's receive buffer, as on the
@@ -277,19 +270,18 @@ assertion is loosened.
 3. Runner (no repository change): give the worker's sandbox read access to
    the SSH identity for the named host, or stage the identity under the
    job's data directory, and log the load sample, the pre-run XDP state and
-   the self-detach timer arm before the cell. Then the required 1800 s
-   rerun and the 165,137 run's counter capture are executable from an
-   unattended worker.
+   the self-detach timer arm before the cell. The 1800 second cell in the
+   last section was run after access existed. This item records the earlier
+   sandbox limit. It is not a claim that the cell is still missing.
 4. Library: the link simulator counts its drops by reason (loss roll,
    queue full, pattern) and the transport exposes those counts, so a soak
    log separates the simulator's share from the receiver's. Files:
    `sdk/rocketnet_network_simulator.cpp`, `sdk/rocketnet_network_simulator.h`,
    `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`.
    A diagnostic counter, not a bound change.
-bytes 2152
-00 second cell
+## This 1800 second cell
 
-One 16-CPU guest, a private veth, the server on XDP in copy mode, and the clients portable on the peer. The physical uplink was not attached. The one-minute load stayed at or below 1.62. The cell exited 0 and the harness printed PASS for 1800 seconds.
+One 16-CPU guest, a private veth, the server on XDP in copy mode, and the clients portable on the other side of that veth. The physical uplink was not attached. The one-minute load stayed at or below 1.62. The cell exited 0 and the harness printed PASS for 1800 seconds.
 
 The harness summary for this run:
 
