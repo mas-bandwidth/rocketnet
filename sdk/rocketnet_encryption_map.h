@@ -19,10 +19,10 @@
 
 // The encryption mapping table: the server's per-address record of derived
 // keys and handshake state, created only for a request that carried a valid
-// backend signature. Constant time by address: chained buckets under a
-// per-run SipHash of the canonical address bytes, parallel fixed arrays,
-// the hot address array split from the cold mapping payload and walked
-// alone by find.
+// backend signature. Expected constant time by address: a flat open-addressed
+// index under a per-run SipHash of the canonical address bytes points to
+// generation-tagged fixed slots. Every probe validates the full slot handle
+// and full canonical address; a hash or physical index is never identity.
 //
 // A mapping is bound by two independent deadlines: a handshake deadline
 // fixed at creation and never refreshed -- connect within it or be
@@ -101,6 +101,12 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map );
 
+// Wipes every live mapping and reconstructs the index and free-handle
+// sequence. The full-width generation stream never restarts, so every old
+// handle stays stale. Refuses without mutation only after it is exhausted.
+
+bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map );
+
 // returns the mapping index for this address, or -1. one keyed hash, one
 // short chain walk over the hot address array.
 
@@ -145,6 +151,19 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
 // The keyed hashes this map has computed since create: one per find, add and
 // remove. The unit suite pins the receive path's cost per packet with it.
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
+
+// Deterministic operation accounting and handle access for the DEV-only
+// collision/stale-generation oracles. The home slot exposes no key material;
+// it lets a test discover real collisions under the map's random keyed hash.
+uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption_map_t * map );
+uint64_t rocketnet_encryption_map_test_updates( const struct rocketnet_encryption_map_t * map );
+uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encryption_map_t * map );
+int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t * map,
+                                        const struct rocketnet_address_t * address );
+bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
+                                           struct rn_sequence_buffer_handle_t * handle );
+bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
+                                                  const struct rn_sequence_buffer_handle_t * handle );
 #endif // #if ROCKETNET_TEST_SEAMS
 
 #endif // #ifndef ROCKETNET_ENCRYPTION_MAP_H
