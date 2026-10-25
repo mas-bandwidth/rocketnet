@@ -532,8 +532,8 @@ int rocketnet_platform_send_errnos_format( rocketnet_platform_send_errnos_t * er
                                          (unsigned long long) count );
             if ( result < 0 || (size_t) result >= size - used )
             {
-                // truncated: keep what fit, still terminated
-                buffer[size - 1] = '\0';
+                // truncated: keep the whole words that fit, still terminated
+                buffer[used] = '\0';
                 return written;
             }
             used += (size_t) result;
