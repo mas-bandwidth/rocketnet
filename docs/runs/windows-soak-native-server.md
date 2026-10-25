@@ -1,33 +1,36 @@
 # Windows soak, native server transports
 
 The iocp and rio server cells of `soak-windows` (`.github/workflows/nightly-soak.yml`)
-each ran once for 1800 seconds on the fleet's Windows bench, at one head, as
-same-host loopback runs (correctness only; no NIC is exercised). Both cells
-FAILED `--assert-flat` on the handle count, and the verdict is HOLD.
+each ran once for 1800 seconds on the fleet's Windows bench, at one head, one
+after the other inside one exclusive hold of the bench, as same-host loopback
+runs (correctness only; no NIC is exercised). Both cells PASSED
+`--assert-flat`, and the verdict is LAND.
 
-- Date (`date -u`): Sun Oct 25 2026 UTC. iocp start 04:52:55, finish 05:22:55;
-  rio start 05:27:56, finish 05:57:57.
+- Date (`date -u`): Sun Oct 25 2026 UTC. iocp start 10:21:56, finish 10:51:56;
+  rio start 10:51:56, finish 11:21:57.
 - Source head for the build and both cells:
-  `19b80d62608fe23a5448638f334c5d42095dfd95` (main at `ccd72256` plus the two cells).
-- Machine: `hostname` = `<Windows bench>` (Windows 11, MSVC 18 Community);
-  `uname -r` from the bench's bash = `6.18.33.2-microsoft-standard-WSL2`. The
-  Windows build number was not captured.
+  `3f900fa1254d938e50150bcb3386a5a0bb857e1a` (main at `dda29fba` merged, plus
+  the cells taking the `ROCKETNET_DEV_*` impairment names).
+- Machine: `hostname` = `<Windows bench>`; `ver` = `Microsoft Windows [Version 10.0.26200.9711]`
+  (Windows 11), MSVC 18 Community; `uname -r` from the bench's bash =
+  `6.18.33.2-microsoft-standard-WSL2`.
 - Build: `cmake -B build -A x64` then `cmake --build build --config Release --parallel 4`
   under a shared bench slot; exit 0, 0 MSVC warnings, last line
-  `test.vcxproj -> ...\bin\Release\test.exe`.
+  `functional.vcxproj -> ...\bin\Release\functional.exe`.
 - `./bin/Release/test.exe`: exit 0, `*** ALL TESTS PASSED ***`.
 
 ## Commands
 
-Each cell held the bench's exclusive lock for its whole run. Both ends were
-impaired with the values `scripts/soak-per-transport` uses, and the bench's
-bash forwarded them to the Windows process through `WSLENV`:
+Both ends were impaired with the values `scripts/soak-per-transport` uses, under
+the names soak writes into the transport configs it creates from. The bench's
+bash is WSL, so `WSLENV` forwarded them to the Windows process (the workflow's
+Git Bash step needs no `WSLENV`):
 
 ```sh
 export ROCKETNET_SERVER_TRANSPORT=<iocp|rio> ROCKETNET_CLIENT_TRANSPORT=portable
 for end in SERVER CLIENT; do
-  export "ROCKETNET_${end}_SIMULATED_LOSS_PERCENT=5" "ROCKETNET_${end}_SIMULATED_LATENCY_MS=30" \
-         "ROCKETNET_${end}_SIMULATED_JITTER_MS=20" "ROCKETNET_${end}_SIMULATED_DUPLICATE_PERCENT=2"
+  export "ROCKETNET_DEV_${end}_PACKET_LOSS_PERCENT=5" "ROCKETNET_DEV_${end}_LATENCY_MS=30" \
+         "ROCKETNET_DEV_${end}_JITTER_MS=20" "ROCKETNET_DEV_${end}_DUPLICATE_PERCENT=2"
 done
 export WSLENV=$(env | grep -oE '^ROCKETNET_[A-Z_]+' | paste -sd: -)
 timeout 1920 ./bin/Release/soak.exe --seconds 1800 --assert-flat
@@ -35,61 +38,70 @@ timeout 1920 ./bin/Release/soak.exe --seconds 1800 --assert-flat
 
 ## Cells
 
-| cell | granted server | handles start/end/peak | threads | os_threads | private_bytes start/end/peak | library_bytes start/end | exit | result |
-|---|---|---|---|---|---|---|---|---|
-| iocp | iocp | 115 / 113 / 121 | 3 / 3 / 4 | 2 / 0 / 2 | 133611520 / 133591040 / 153202688 | 131279561 / 131279561 | 1 | FAIL |
-| rio | rio | 106 / 104 / 112 | 2 / 2 / 3 | 2 / 0 / 2 | 146481152 / 146436096 / 166088704 | 125110653 / 125110653 | 1 | FAIL |
-
-Memory guard printed: iocp `memory guard library_bytes`; rio
-`memory guard library_bytes and private_bytes (server rio, client portable)`.
+| cell | granted server | applied link (server and client) | missing c->s / s->c | duplicates refused at server / client | handles start/end/peak | threads | os_threads | private_bytes start/end/peak | library_bytes start/end | verified | exit | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| iocp | iocp | latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2 | 55898 / 56326 | 33158 / 33714 | 115 / 113 / 122 | 3 / 3 / 4 | 2 / 0 / 2 | 133632000 / 133582848 / 153231360 | 131279641 / 131279641 | 2139928 of 2139928 received | 0 | PASS |
+| rio | rio | latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2 | 55955 / 56469 | 33365 / 34044 | 106 / 104 / 113 | 2 / 2 / 3 | 2 / 0 / 2 | 146993152 / 146939904 / 166105088 | 143198772 / 143198772 | 2143993 of 2143993 received | 0 | PASS |
 
 iocp log lines:
 
 ```
+soak link simulator: server latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
 soak transport: server iocp
-soak resources: handles start=115 end=113 peak=121
-soak: --assert-flat FAILED: handles start=115 end=113
+soak transport: client portable
+soak link simulator: client latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
+soak link witness: client_to_server missing=55898 late=665116 repeated=0 duplicates_refused=33158
+soak link witness: server_to_client missing=56326 late=665330 repeated=0 duplicates_refused=33714
+soak resources: memory guard library_bytes
+soak resources: handles start=115 end=113 peak=122
 soak resources: threads start=3 end=3 peak=4
-soak resources: private_bytes start=133611520 end=133591040 peak=153202688
+soak resources: private_bytes start=133632000 end=133582848 peak=153231360
 soak resources: os_threads start=2 end=0 peak=2
-soak resources: library_bytes start=131279561 end=131279561 peak=151151286
-soak summary: sent 2168660
-soak summary: received 2168483
-soak summary: verified 2168483
+soak resources: library_bytes start=131279641 end=131279641 peak=151151422
+soak summary: sent 2255398
+soak summary: received 2139928
+soak summary: verified 2139928
 soak summary: reconnects 59
 soak summary: server_transport_io iocp
+soak summary: client_transport_io portable
+SOAK cell=iocp PASS server=iocp seconds=1800
 ```
 
 rio log lines:
 
 ```
+soak link simulator: server latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
 soak transport: server rio
-soak resources: handles start=106 end=104 peak=112
-soak: --assert-flat FAILED: handles start=106 end=104
+soak transport: client portable
+soak link simulator: client latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2
+soak link witness: client_to_server missing=55955 late=666954 repeated=0 duplicates_refused=33365
+soak link witness: server_to_client missing=56469 late=667394 repeated=0 duplicates_refused=34044
+soak resources: memory guard library_bytes and private_bytes (server rio, client portable)
+soak resources: handles start=106 end=104 peak=113
 soak resources: threads start=2 end=2 peak=3
-soak resources: private_bytes start=146481152 end=146436096 peak=166088704
+soak resources: private_bytes start=146993152 end=146939904 peak=166105088
 soak resources: os_threads start=2 end=0 peak=2
-soak resources: library_bytes start=125110653 end=125110653 peak=144982378
-soak summary: sent 2175878
-soak summary: received 2175699
-soak summary: verified 2175699
+soak resources: library_bytes start=143198772 end=143198772 peak=163070553
+soak summary: sent 2259658
+soak summary: received 2143993
+soak summary: verified 2143993
 soak summary: reconnects 59
 soak summary: server_transport_io rio
+soak summary: client_transport_io portable
+SOAK cell=rio PASS server=rio seconds=1800
 ```
 
 ## Reading
 
-Threads, private bytes and library bytes are flat on both cells; every
-received payload verified. The only failure is the handle count, and it
-FALLS by 2 on both cells in the same run in which os_threads falls from 2
-to 0. The flat rule (`tests/process_resources.h`) already lets os_threads
-fall on Windows, since the OS retires its pool workers on its own timers,
-but it holds the handle count to exact equality, so a fall in handles that
-comes with those retired workers fails the run. This record does not change
-that rule; whether a handle fall that matches an os_threads fall is allowed
-is a change to `tests/process_resources.h`, outside this record.
+The requested impairment was applied at both ends and left its trace: about
+2.5% of the payloads in each direction never arrived and every planted
+duplicate was refused as already received, so the flat lines below were taken
+under loss, jitter and duplication, not on a clean link. Every received payload
+verified. Threads, private bytes and library bytes are flat on both cells. The
+handle count ends 2 below its start on both cells in the same run in which
+os_threads falls from 2 to 0, as the OS retires its pool workers; the flat rule
+(`tests/process_resources.h`) fails only on growth, and neither cell grew.
 
 ## Verdict
 
-HOLD. iocp: FAIL (handles 115 -> 113). rio: FAIL (handles 106 -> 104).
-Not made: a PASS of either cell; the Windows build number of the bench.
+LAND. iocp: PASS. rio: PASS.
