@@ -176,8 +176,8 @@ receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-955,710,336 bytes (955,710 bytes per slot on average), and
-`rocketnet_client_required_memory` for the client profile is 3,063,168 bytes.
+956,510,400 bytes (956,510 bytes per slot on average), and
+`rocketnet_client_required_memory` for the client profile is 3,064,000 bytes.
 These are configuration calculations and measured create-block sizes, not
 measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` public block size. Those figures exclude the

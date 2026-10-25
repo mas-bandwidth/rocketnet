@@ -388,9 +388,9 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 955,710,336 bytes (about 0.96 GB, 955,710 bytes per slot on average).
+reports 956,510,400 bytes (about 0.96 GB, 956,510 bytes per slot on average).
 The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 3,063,168 bytes.
+`rocketnet_client_required_memory` report 3,064,000 bytes.
 
 Both figures are the SDK's create block only. They exclude the transport
 allocations made at connect and start, native resources, and process

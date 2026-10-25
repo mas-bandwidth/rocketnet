@@ -2,11 +2,11 @@
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
 (* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate and budget, used token lookup, the        *)
-(* token-to-address claim and the mapping capacity, restart rule,          *)
-(* signature, seal open, slots, keypair.  Keyed hashes (the cookie MAC,    *)
-(* the token identifier, key derivation) are the cheap tier and spend no   *)
-(* counted cryptography.                                                   *)
+(* and key compares, cookie gate and handshake budget, used token lookup,  *)
+(* the failed-signature budget, the token-to-address claim, the mapping    *)
+(* capacity, the claim-table capacity, restart rule, signature, seal open, *)
+(* slots, keypair.  Keyed hashes (the cookie MAC, the token identifier,    *)
+(* key derivation) are the cheap tier and spend no counted cryptography.   *)
 (*                                                                         *)
 (* CheapRefusalsFirst: a refusal at a rung above the signature spends no   *)
 (* cryptography at all, and the slot refusal, which must wait for a        *)
@@ -16,15 +16,17 @@
 (* rule, each replayed against the code by hand in README-ReceiveOrder.md. *)
 (*                                                                         *)
 (* The claim is split in two.  ClaimCheck, the claim rung, is read-only:   *)
-(* it refuses a second address while another holds the token's claim (and  *)
-(* a full claim table).  ClaimWrite records the request's address for its  *)
-(* token only as the request passes the signature rung, so a request that  *)
-(* proves nothing writes nothing: ClaimOnlyAfterSignature.  The capacity   *)
-(* rung refuses a full mapping table.  OneLiveMappingPerToken is the       *)
-(* consequence of check and write together: a token holds at most one     *)
-(* live half-open mapping.  The claim expires with the mapping on the      *)
-(* Deadline step.  The witness ClaimBeforeSignature writes at the check    *)
-(* rung, the code before the split, and breaks ClaimOnlyAfterSignature.    *)
+(* it refuses a second address while another holds the token's claim.      *)
+(* ClaimWrite records the request's address for its token only as the      *)
+(* request passes the signature rung, so a request that proves nothing     *)
+(* writes nothing: ClaimOnlyAfterSignature.  The capacity rung refuses a   *)
+(* full mapping table; the claimfull rung after it refuses a full          *)
+(* request-claim table, the code's claim_can_record check.                 *)
+(* OneLiveMappingPerToken is the consequence of check and write together:  *)
+(* a token holds at most one live half-open mapping.  The claim expires    *)
+(* with the mapping on the Deadline step.  The witness ClaimBeforeSignature*)
+(* writes at the check rung, the code before the split, and breaks         *)
+(* ClaimOnlyAfterSignature.                                                *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -33,27 +35,33 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
           PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "capacity", "claim", "admitted", "restart", "signature", "seal",
-          "slots", "keypair"}
+          "verifybudget", "claim", "capacity", "claimfull", "admitted",
+          "restart", "signature", "seal", "slots", "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
-                "capacity", "claim", "admitted", "restart"}
+                "verifybudget", "claim", "capacity", "claimfull",
+                "admitted", "restart"}
 
 Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "admitted", "signature", "seal"}
+           "budget", "claimfull", "admitted", "signature", "seal"}
 
-\* Positions are scaled by ten so the two new cheap rungs sit between the
-\* used rung and the next configured rung without a new config constant.
+\* Positions are scaled by ten so the four cheap rungs below sit between
+\* the used rung and the next configured rung without a new config constant.
+\* The order is the code's: used, failed-signature budget, claim, mapping
+\* capacity, claim-table capacity (sdk/rocketnet_server_protocol.cpp;
+\* TRANSPORT.md t12 rule 9).
 Pos(r) ==
     CASE r = "version"   -> 10 * PosVersion
       [] r = "timestamps" -> 10 * PosTimestamps
       [] r = "compares"  -> 10 * PosCompares
       [] r = "cookie"    -> 10 * PosCookie
       [] r = "used"      -> 10 * PosUsed
-      [] r = "capacity"  -> 10 * PosUsed + 2
-      [] r = "claim"     -> 10 * PosUsed + 5
+      [] r = "verifybudget" -> 10 * PosUsed + 1
+      [] r = "claim"     -> 10 * PosUsed + 2
+      [] r = "capacity"  -> 10 * PosUsed + 5
+      [] r = "claimfull" -> 10 * PosUsed + 6
       [] r = "admitted"  -> 10 * PosAdmitted
       [] r = "restart"   -> 10 * PosRestart
       [] r = "signature" -> 10 * PosSignature
@@ -66,6 +74,12 @@ MinPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p <= q
 MaxPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p >= q
 RungAt(p) == CHOOSE r \in Rungs : Pos(r) = p
 NextPos(p) == CHOOSE q \in RungPositions : q > p /\ \A s \in RungPositions : s > p => q <= s
+
+RequestRungOrder ==
+    /\ Pos("used") < Pos("verifybudget")
+    /\ Pos("verifybudget") < Pos("claim")
+    /\ Pos("claim") < Pos("capacity")
+    /\ Pos("capacity") < Pos("claimfull")
 
 \* The token claim and the mapping table are the same small instance as the
 \* code: two addresses, two tokens, room for two half-open mappings.
@@ -97,8 +111,10 @@ ClaimOther == claims[reqToken] /= None /\ claims[reqToken] /= reqAddr
 Refuses(r, f) ==
     \/ (r = "version" /\ f = "version")
     \/ (r = "timestamps" /\ f = "expired")
-    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
+    \/ (r = "verifybudget" /\ f = "budget")
     \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
+    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
+    \/ (r = "claimfull" /\ f = "claimfull")
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
     \/ (r = "signature" /\ f = "signature")
