@@ -141,6 +141,10 @@ struct rocketnet_server_iocp_t
     void * context;
     SOCKET socket = INVALID_SOCKET;
     HANDLE port;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    uint64_t socket_generation = 0;
+    uint64_t port_generation = 0;
+#endif
     bool ipv6;
     int num_workers;
     rocketnet_iocp_worker_t * workers;
@@ -607,8 +611,30 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
             worker->~rocketnet_iocp_worker_t();
         }
     rocketnet_assert( iocp->pending.load() == 0 );
-    if ( iocp->socket != INVALID_SOCKET ) closesocket( iocp->socket );
-    if ( iocp->port ) CloseHandle( iocp->port );
+    if ( iocp->socket != INVALID_SOCKET )
+    {
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, iocp->socket_generation ) )
+        {
+            const int closed = closesocket( iocp->socket );
+            rocketnet_lifecycle_track_close_end( iocp->socket_generation, closed == 0 );
+        }
+#else
+        closesocket( iocp->socket );
+#endif
+    }
+    if ( iocp->port )
+    {
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->port, iocp->port_generation ) )
+        {
+            const BOOL closed = CloseHandle( iocp->port );
+            rocketnet_lifecycle_track_close_end( iocp->port_generation, closed != 0 );
+        }
+#else
+        CloseHandle( iocp->port );
+#endif
+    }
     if ( iocp->sends )
         for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE; ++i ) iocp->sends[i].~rocketnet_iocp_operation_t();
     if ( iocp->receives )
@@ -699,6 +725,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     for ( int i = 0; i < num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i ) new (&iocp->receives[i]) rocketnet_iocp_operation_t();
 
     iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( iocp->socket != INVALID_SOCKET )
+        iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );
+#endif
     if ( iocp->socket == INVALID_SOCKET || fail_stage == 1 ) goto failed;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &enabled, sizeof(enabled) ) == SOCKET_ERROR ) goto failed;
     if ( iocp->ipv6 && setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &v6_only, sizeof(v6_only) ) == SOCKET_ERROR ) goto failed;
@@ -745,6 +775,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     }
 
     iocp->port = CreateIoCompletionPort( (HANDLE) iocp->socket, NULL, 0, (DWORD) num_workers );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( iocp->port )
+        iocp->port_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->port, "iocp completion port" );
+#endif
     if ( !iocp->port || fail_stage == 2 ) goto failed;
     if ( !rocketnet_platform_mutex_create( &iocp->send_mutex ) ) goto failed;
     iocp->send_wake = rocketnet_platform_wake_create( context, NULL );

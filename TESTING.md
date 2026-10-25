@@ -24,10 +24,21 @@ Each case runs one warm cycle, then counts process handles
 allocated bytes (`HeapSummary`) and private bytes (`GetProcessMemoryInfo`
 `PrivateUsage`). After 1000 cycles it prints one line with the before and
 after counts, allocated bytes for every process heap, and the run time.
+The Windows functional fixture first warms the calling thread's reusable sleep
+timer and records the pre-cycle SDK identity set, so a one-time warm-cycle
+leak fails too. It then records each SDK-created Thread, Event,
+socket, IOCP port and timer by its creation generation and raw identity, then
+checks that the same set remains after the loop. For a resident server it checks
+again after destroy that every resource created since server construction has
+closed. RIO buffer registrations and completion and request queue IDs are
+accounted separately: they are SDK resources, not Windows kernel handles.
+Unknown closes, duplicate live identities and ledger overflow fail the case.
 Each case installs a HeapCreate-backed allocator through `rocketnet_init` so
 RocketNet's own allocations are counted apart from Winsock and other Windows
 allocations in the process heap. All process heaps appear in the result for
-diagnosis. Handles must match, threads must not grow, library heap growth is
+diagnosis. Process-wide handle deltas are printed as **UNATTRIBUTED** with
+their counts; they are not evidence of SDK or OS ownership. The SDK-created
+identities must close, threads must not grow, library heap growth is
 limited to one page per ten minutes (at least one page), and private-byte
 growth must stay under one page per cycle.
 Same host is correctness only: run times are printed, never judged.
@@ -37,6 +48,10 @@ in `./bin/Release/functional.exe`; the iocp and rio cells are in the table and
 registered by a follow-up change. On other platforms the file builds empty.
 Run one with `./bin/Release/functional.exe --run <name>`, one at a time on
 an otherwise idle Windows machine.
+`test_windows_lifecycle_ledger` runs in the same functional executable and
+checks balanced generations, reuse of a raw value while the old generation is
+closing, a stale close that must terminate a bounded child run, and a capacity
+overflow that must be reported as an error.
 
 ## Preview-2 exact-head qualification
 

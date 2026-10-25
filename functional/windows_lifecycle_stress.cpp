@@ -16,7 +16,7 @@
     That keeps SDK allocations distinct from Winsock and other Windows code
     that can allocate from the process heap. The counts are taken after one
     warm cycle, so every path the case repeats has run once; at the end the
-    handle count must equal its warm count exactly and the thread count must
+    SDK-owned handle generations must close and the thread count must
     not exceed it (the system thread pool retires idle workers of its own, so
     fewer threads pass; a thread left behind is one more). The case-owned heap's
     bytes in use, the Windows form of the POSIX file's mallinfo2 bytes, may exceed
@@ -27,8 +27,9 @@
     any mapping left behind by a cycle exceeds. Counts below the warm count
     pass. The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
-    Each case prints one line with the before and after counts, every heap's
-    allocated bytes and the run time, and fails when a checked count moved.
+    Each case prints the before and after counts, every heap's allocated
+    bytes, SDK-owned resource identities and the run time. Process-wide
+    handle deltas remain unattributed unless ownership is proven separately.
 
     The cells are the Windows server transports (portable, iocp, rio), each
     with the portable client, and each case is one function per cell:
@@ -249,17 +250,16 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     if ( before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
         return false;
-    return after->handles == before->handles && after->threads <= before->threads &&
+    return after->threads <= before->threads &&
            after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
            after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
 }
 
 // A transport's threads are joined inside destroy, and a joined thread leaves
-// the Toolhelp list once the kernel has run it down; the handles it held close
-// with it. The after counts are polled every millisecond until they are flat
-// against the before counts or WINDOWS_SETTLE_SECONDS have passed. A handle,
-// thread or allocation really left keeps its count, and the case still fails
-// at the deadline.
+// the Toolhelp list once the kernel has run it down. The after counts are
+// polled every millisecond until the checked thread and memory counts settle
+// or WINDOWS_SETTLE_SECONDS has passed. SDK handle identities are checked by
+// the generation ledger below, independent of process-wide count changes.
 static const double WINDOWS_SETTLE_SECONDS = 10.0;
 
 static windows_resource_counts_t windows_settled_counts( const windows_resource_counts_t * before, double seconds )
@@ -463,7 +463,7 @@ static bool windows_wait_server_empty( rocketnet_server_transport_t * server, ro
 }
 
 // one result line per case: the before and after counts and the run time
-static void windows_case_result( const char * case_name, const windows_cell_t * cell, const windows_resource_counts_t * before,
+static bool windows_case_result( const char * case_name, const windows_cell_t * cell, const windows_resource_counts_t * before,
                                  const windows_resource_counts_t * after, double seconds )
 {
     const bool flat = windows_counts_flat( before, after, seconds );
@@ -505,10 +505,140 @@ static void windows_case_result( const char * case_name, const windows_cell_t * 
         if ( !found )
             printf( ", heap[%p:new] -1 -> %lld", after->heap_handles[j], (long long) after->heap_used_bytes[j] );
     }
-    printf( "\n" );
+    printf( ", process_handle_delta %lld UNATTRIBUTED\n", (long long) ( after->handles - before->handles ) );
     fflush( stdout );
-    if ( !flat )
-        exit( 1 );
+    return flat;
+}
+
+static void windows_ledger_read( rocketnet_lifecycle_resources_t * resources )
+{
+    const bool ok = rocketnet_lifecycle_track_read( resources );
+    if ( !ok ) printf( "SDK resource ledger read failed: %u errors\n", resources->errors );
+    windows_lifecycle_check( ok );
+}
+
+static bool windows_ledger_same_live( const rocketnet_lifecycle_resources_t * expected,
+                                      const rocketnet_lifecycle_resources_t * actual )
+{
+    if ( expected->live_count != actual->live_count ) return false;
+    for ( unsigned i = 0; i < expected->live_count; ++i )
+    {
+        bool found = false;
+        for ( unsigned j = 0; j < actual->live_count; ++j )
+            if ( expected->live[i].generation == actual->live[j].generation &&
+                 expected->live[i].kind == actual->live[j].kind && expected->live[i].raw == actual->live[j].raw )
+                found = true;
+        if ( !found ) return false;
+    }
+    return true;
+}
+
+static bool windows_ledger_result( const char * case_name, const windows_cell_t * cell,
+                                   const rocketnet_lifecycle_resources_t * expected,
+                                   const rocketnet_lifecycle_resources_t * actual, const char * phase )
+{
+    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] =
+    { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
+    const bool same = windows_ledger_same_live( expected, actual ) && actual->errors == 0;
+    printf( "%s [%s] SDK identities %s: %u -> %u live%s", case_name, cell->name, phase,
+            expected->live_count, actual->live_count, same ? "" : " FAIL" );
+    for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+        printf( ", %s created +%llu closed +%llu", kinds[kind],
+                (unsigned long long) ( actual->created[kind] - expected->created[kind] ),
+                (unsigned long long) ( actual->closed[kind] - expected->closed[kind] ) );
+    printf( "\n" );
+    if ( !same )
+    {
+        for ( unsigned i = 0; i < actual->live_count; ++i )
+            printf( "  SDK live kind=%s raw=0x%llx generation=%llu site=%s\n", kinds[actual->live[i].kind],
+                    (unsigned long long) actual->live[i].raw, (unsigned long long) actual->live[i].generation,
+                    actual->live[i].site ? actual->live[i].site : "unknown" );
+    }
+    fflush( stdout );
+    return same;
+}
+
+// The same functional executable exercises the ledger's fail-closed paths in
+// bounded child runs. Synthetic raw values are never passed to Windows APIs.
+void rocketnet_test_windows_lifecycle_ledger()
+{
+    static const char * mode_name = "ROCKETNET_LIFECYCLE_LEDGER_CASE";
+    static const uintptr_t raw = (uintptr_t) 0x70000000u;
+    char mode[16] = {};
+    const DWORD mode_bytes = GetEnvironmentVariableA( mode_name, mode, (DWORD) sizeof(mode) );
+    if ( mode_bytes != 0 )
+    {
+        windows_lifecycle_check( mode_bytes < (DWORD) sizeof(mode) );
+        rocketnet_lifecycle_track_begin();
+        if ( strcmp( mode, "stale" ) == 0 )
+        {
+            const uint64_t old_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw, "stale fixture old" );
+            windows_lifecycle_check( old_generation != 0 );
+            windows_lifecycle_check( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, raw, old_generation ) );
+            rocketnet_lifecycle_track_close_end( old_generation, true );
+            windows_lifecycle_check( rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw, "stale fixture new" ) != 0 );
+            rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, raw, old_generation );
+            windows_lifecycle_check( false ); // the stale close must terminate the child first
+        }
+        windows_lifecycle_check( strcmp( mode, "overflow" ) == 0 );
+        for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
+            windows_lifecycle_check( rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw + i, "overflow fixture" ) != 0 );
+        windows_lifecycle_check( rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT,
+                                 raw + ROCKETNET_LIFECYCLE_MAX_LIVE, "overflow fixture" ) == 0 );
+        rocketnet_lifecycle_resources_t full;
+        windows_lifecycle_check( !rocketnet_lifecycle_track_read( &full ) && full.errors != 0 &&
+                                 full.live_count == ROCKETNET_LIFECYCLE_MAX_LIVE );
+        printf( "SDK lifecycle ledger overflow detected at capacity %u\n", (unsigned) ROCKETNET_LIFECYCLE_MAX_LIVE );
+        return;
+    }
+
+    rocketnet_lifecycle_resources_t before;
+    windows_ledger_read( &before );
+    rocketnet_lifecycle_track_begin();
+    const uint64_t old_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw, "reuse fixture old" );
+    windows_lifecycle_check( old_generation != 0 );
+    windows_lifecycle_check( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, raw, old_generation ) );
+    const uint64_t new_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw, "reuse fixture new" );
+    windows_lifecycle_check( new_generation != 0 && new_generation != old_generation );
+    rocketnet_lifecycle_track_close_end( old_generation, true );
+    windows_lifecycle_check( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, raw, new_generation ) );
+    rocketnet_lifecycle_track_close_end( new_generation, true );
+    rocketnet_lifecycle_track_end();
+    rocketnet_lifecycle_resources_t after;
+    windows_ledger_read( &after );
+    windows_lifecycle_check( windows_ledger_same_live( &before, &after ) &&
+                             after.created[ROCKETNET_LIFECYCLE_EVENT] == before.created[ROCKETNET_LIFECYCLE_EVENT] + 2 &&
+                             after.closed[ROCKETNET_LIFECYCLE_EVENT] == before.closed[ROCKETNET_LIFECYCLE_EVENT] + 2 );
+
+    wchar_t path[MAX_PATH];
+    const DWORD path_bytes = GetModuleFileNameW( NULL, path, MAX_PATH );
+    windows_lifecycle_check( path_bytes != 0 && path_bytes < MAX_PATH );
+    for ( int i = 0; i < 2; ++i )
+    {
+        const char * child_mode = i == 0 ? "stale" : "overflow";
+        wchar_t command[MAX_PATH + 80];
+        _snwprintf_s( command, MAX_PATH + 80, _TRUNCATE, L"\"%s\" --run test_windows_lifecycle_ledger", path );
+        windows_lifecycle_check( _putenv_s( mode_name, child_mode ) == 0 );
+        STARTUPINFOW startup = {};
+        startup.cb = (DWORD) sizeof(startup);
+        PROCESS_INFORMATION process = {};
+        const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                                             NULL, NULL, &startup, &process );
+        windows_lifecycle_check( _putenv_s( mode_name, "" ) == 0 );
+        windows_lifecycle_check( created != 0 );
+        const DWORD waited = WaitForSingleObject( process.hProcess, 15000 );
+        if ( waited != WAIT_OBJECT_0 )
+        {
+            TerminateProcess( process.hProcess, 1 );
+            WaitForSingleObject( process.hProcess, 5000 );
+        }
+        DWORD exit_code = STILL_ACTIVE;
+        const BOOL exited = GetExitCodeProcess( process.hProcess, &exit_code );
+        CloseHandle( process.hThread );
+        CloseHandle( process.hProcess );
+        windows_lifecycle_check( waited == WAIT_OBJECT_0 && exited && exit_code == ( i == 0 ? 86u : 0u ) );
+    }
+    printf( "SDK lifecycle ledger balanced, reused-raw, stale-generation and overflow checks passed\n" );
 }
 
 // ---------------------------------------------------------------
@@ -629,14 +759,24 @@ static void windows_init_term_1000( const char * server_transport )
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
     windows_library_heap_begin();
+    rocketnet_platform_sleep( 0.001 );
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
     windows_init_term_cycle();
     const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_init_term_cycle();
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
-    windows_case_result( "init_term_1000", cell, &before, &after, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
+    const bool counts_ok = windows_case_result( "init_term_1000", cell, &before, &after, seconds );
+    const bool loop_ok = windows_ledger_result( "init_term_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool full_ok = windows_ledger_result( "init_term_1000", cell, &initial_resources, &after_resources, "after warm and loop" );
+    windows_lifecycle_check( counts_ok && loop_ok && full_ok );
     windows_library_heap_end();
 }
 
@@ -645,14 +785,24 @@ static void windows_server_create_destroy_1000( const char * server_transport )
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
     windows_library_heap_begin();
+    rocketnet_platform_sleep( 0.001 );
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
     windows_server_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_server_create_destroy_cycle( cell );
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
-    windows_case_result( "server_create_destroy_1000", cell, &before, &after, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
+    const bool counts_ok = windows_case_result( "server_create_destroy_1000", cell, &before, &after, seconds );
+    const bool loop_ok = windows_ledger_result( "server_create_destroy_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool full_ok = windows_ledger_result( "server_create_destroy_1000", cell, &initial_resources, &after_resources, "after warm and loop" );
+    windows_lifecycle_check( counts_ok && loop_ok && full_ok );
     windows_library_heap_end();
 }
 
@@ -661,14 +811,24 @@ static void windows_client_create_destroy_1000( const char * server_transport )
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
     windows_library_heap_begin();
+    rocketnet_platform_sleep( 0.001 );
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
     windows_client_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_client_create_destroy_cycle( cell );
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
-    windows_case_result( "client_create_destroy_1000", cell, &before, &after, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
+    const bool counts_ok = windows_case_result( "client_create_destroy_1000", cell, &before, &after, seconds );
+    const bool loop_ok = windows_ledger_result( "client_create_destroy_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool full_ok = windows_ledger_result( "client_create_destroy_1000", cell, &initial_resources, &after_resources, "after warm and loop" );
+    windows_lifecycle_check( counts_ok && loop_ok && full_ok );
     windows_library_heap_end();
 }
 
@@ -677,18 +837,32 @@ static void windows_connect_disconnect_1000( const char * server_transport )
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
     windows_library_heap_begin();
+    // The caller's reusable sleep timer belongs to the process thread; warm
+    // it before marking the server/client ownership interval.
+    rocketnet_platform_sleep( 0.001 );
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
     rocketnet_server_transport_t * server = windows_server_create( cell, "127.0.0.1:0", 8 );
     char server_address[64];
     windows_server_address( server, server_address, sizeof( server_address ) );
     windows_connect_disconnect_cycle( cell, server, server_address, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_connect_disconnect_cycle( cell, server, server_address, i );
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
     rn_native_server_transport_stop_and_destroy( server );
-    windows_case_result( "connect_disconnect_1000", cell, &before, &after, seconds );
+    rocketnet_lifecycle_resources_t final_resources;
+    windows_ledger_read( &final_resources );
+    const bool counts_ok = windows_case_result( "connect_disconnect_1000", cell, &before, &after, seconds );
+    const bool loop_ok = windows_ledger_result( "connect_disconnect_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool destroy_ok = windows_ledger_result( "connect_disconnect_1000", cell, &initial_resources, &final_resources, "after server destroy" );
+    windows_lifecycle_check( counts_ok && loop_ok && destroy_ok );
     windows_library_heap_end();
 }
 
@@ -697,6 +871,9 @@ static void windows_server_restart_1000( const char * server_transport )
     const windows_cell_t * cell = windows_cell( server_transport );
     windows_clear_transport_env();
     windows_library_heap_begin();
+    rocketnet_platform_sleep( 0.001 );
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
     const unsigned fixed_port = windows_reserved_restart_port( cell );
     windows_lifecycle_check( fixed_port != 0 );
     char fixed_address[64];
@@ -714,13 +891,22 @@ static void windows_server_restart_1000( const char * server_transport )
     windows_lifecycle_check( server != NULL );
     windows_server_restart_cycle( cell, server, fixed_address, fixed_port, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
         windows_server_restart_cycle( cell, server, fixed_address, fixed_port, i );
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
     rocketnet_server_destroy( server );
-    windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
+    rocketnet_lifecycle_resources_t final_resources;
+    windows_ledger_read( &final_resources );
+    const bool counts_ok = windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
+    const bool loop_ok = windows_ledger_result( "server_restart_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool destroy_ok = windows_ledger_result( "server_restart_1000", cell, &initial_resources, &final_resources, "after server destroy" );
+    windows_lifecycle_check( counts_ok && loop_ok && destroy_ok );
     windows_library_heap_end();
 }
 
@@ -729,7 +915,9 @@ static void windows_server_restart_1000( const char * server_transport )
 void rocketnet_test_windows_##case_name##_##transport();                                    \
 void rocketnet_test_windows_##case_name##_##transport()                                     \
 {                                                                                           \
+    rocketnet_lifecycle_track_begin();                                                      \
     windows_##case_name( #transport );                                                      \
+    rocketnet_lifecycle_track_end();                                                        \
 }
 
 #define WINDOWS_LIFECYCLE_CELL_CASES( transport )                                           \

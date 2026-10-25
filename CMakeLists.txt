@@ -349,6 +349,11 @@ add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
 # archive or a shared library, so no shipped symbol carries it.
 target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
 target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+if(WIN32 AND ROCKETNET_BUILD_TESTS)
+    # The lifecycle fixture alone links this instrumented static development
+    # library. Production and shared libraries have no ledger code or cost.
+    target_compile_definitions(rocketnet_dev PUBLIC ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
+endif()
 
 # The soname follows SDK layout/calling compatibility, independently of wire version.
 # the shared library's soname follows the major version
@@ -866,6 +871,9 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
         "ROCKETNET_RELEASE_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared>\""
         ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV=$<BOOL:${ROCKETNET_DEV}>)
+    if(WIN32)
+        target_compile_definitions(functional PRIVATE ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
+    endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
