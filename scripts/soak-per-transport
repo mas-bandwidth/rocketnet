@@ -28,18 +28,20 @@
 #              machine or the nightly's VM-tier runner; a machine with
 #              no VM tier fails the cell by name.
 #
-# The impairment, at both ends through the env overlay
-# (ROCKETNET_SERVER_SIMULATED_* and ROCKETNET_CLIENT_SIMULATED_*), the values
-# tools/macos/soak_matrix.py runs: loss 5 percent, latency 30 ms, jitter 20 ms,
-# duplicate 2 percent.
+# The impairment, at both ends of the link simulator
+# (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, which soak writes into
+# the transport configs it creates from), the values tools/macos/soak_matrix.py
+# runs: loss 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent.
 #
 # Each cell prints one line, PASS or FAIL:
-#   SOAK cell=<name> PASS server=<granted> client=<granted> seconds=<S> verified=<n> fds=<start>/<end>/<peak> threads=... resident_bytes=...
+#   SOAK cell=<name> PASS server=<granted> client=<granted> seconds=<S> verified=<n> fds=<start>/<end>/<peak> threads=... resident_bytes=... link=<impaired|clean> missing=<client to server>/<server to client> duplicates_refused=<at server>/<at client>
 #   SOAK cell=<name> FAIL <why>
 # A cell passes only when soak exits 0 (no verify failure, no counter
 # conservation failure, no unplanned disconnect, no refusal other than the
-# planted duplicates', and --assert-flat holding) and the server transport it
-# names is the one the cell pins.
+# planted duplicates', and --assert-flat holding, which includes the
+# impairment leaving its trace: drops missing and duplicates refused in each
+# direction), the server transport it names is the one the cell pins, and
+# both ends' "soak link simulator:" lines show the setting the cell asked for.
 #
 # Options:
 #   --seconds S      seconds each cell runs (default 120)
@@ -117,11 +119,19 @@ LOG_DIR=$(cd "$LOG_DIR" && pwd)
 
 IMPAIRMENT=()
 [ "$CLEAN" = 1 ] || for end in SERVER CLIENT; do
-    IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_LOSS_PERCENT=5")
-    IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_LATENCY_MS=30")
-    IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_JITTER_MS=20")
-    IMPAIRMENT+=("ROCKETNET_${end}_SIMULATED_DUPLICATE_PERCENT=2")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_PACKET_LOSS_PERCENT=5")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_LATENCY_MS=30")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_JITTER_MS=20")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_DUPLICATE_PERCENT=2")
 done
+# the setting each end's "soak link simulator:" line must show
+if [ "$CLEAN" = 1 ]; then
+    WANT_LINK="latency_ms=0 jitter_ms=0 loss_percent=0 duplicate_percent=0"
+    LINK_NAME=clean
+else
+    WANT_LINK="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+    LINK_NAME=impaired
+fi
 
 # the bound past the run itself: soak's teardown, plus the guest's boot for xdp
 TIMEOUT=$(( SECONDS_PER_CELL + 120 ))
@@ -152,13 +162,21 @@ judge()
         fail_reason="soak exited $status: $(grep -E '^(soak: |PAYLOAD VERIFY FAILED)' "$log" | grep -vE '^soak: ([0-9]+ iterations|conservation ok|planted duplicates)' | head -n 3 | tr '\n' ';')"
     elif [ "$server" != "$want" ]; then
         fail_reason="server transport granted '${server:-none}', the cell pins $want"
+    else
+        local end
+        for end in server client; do
+            if ! grep -qx "soak link simulator: $end $WANT_LINK" "$log"; then
+                fail_reason="the $end link simulator shows '$(sed -n "s/^soak link simulator: $end //p" "$log" | head -n 1)', the cell asks for '$WANT_LINK'"
+                break
+            fi
+        done
     fi
     if [ -n "$fail_reason" ]; then
         echo "SOAK cell=$cell FAIL $fail_reason (log $log)"
         failures=$(( failures + 1 ))
         return 1
     fi
-    echo "SOAK cell=$cell PASS server=$server client=$client seconds=$SECONDS_PER_CELL verified=$verified fds=$(resource_field "$log" fds) threads=$(resource_field "$log" threads) resident_bytes=$(resource_field "$log" resident_bytes)"
+    echo "SOAK cell=$cell PASS server=$server client=$client seconds=$SECONDS_PER_CELL verified=$verified fds=$(resource_field "$log" fds) threads=$(resource_field "$log" threads) resident_bytes=$(resource_field "$log" resident_bytes) link=$LINK_NAME missing=$(summary_value "$log" client_to_server_missing)/$(summary_value "$log" server_to_client_missing) duplicates_refused=$(summary_value "$log" duplicates_refused_at_server)/$(summary_value "$log" duplicates_refused_at_client)"
 }
 
 run_host_cell()
