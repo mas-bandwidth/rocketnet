@@ -191,6 +191,8 @@ grep -q 'cmake -B build -G "Visual Studio 18 2026" -A x64' "$tmp/log/build.bat" 
 grep -q 'cmake --build build --config Release --parallel 4' "$tmp/log/build.bat" ||
     say "windows build did not build Release with 4 jobs"
 grep -q -- '--slots 3' "$tmp/log/winlock.args" || say "windows build did not take a shared slot"
+grep -q -- '-- .*lan-proof-remote build-windows' "$tmp/log/winlock.args" ||
+    say "windows checkout and build did not run inside the shared slot"
 grep -q -- '--exclusive' "$tmp/log/winlock.args" && say "windows build took the exclusive lock"
 
 # hold-server returns only after the server it started has exited

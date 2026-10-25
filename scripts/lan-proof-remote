@@ -8,6 +8,7 @@
 #
 #   build <commit>
 #   build-inner <commit>      (the bounded body of build)
+#   build-windows <commit>    (the Windows checkout and build, run inside winlock)
 #   hostinfo <iface>
 #   load
 #   check-xdp-bridge <bridge>
@@ -37,7 +38,7 @@ fail()
 
 usage()
 {
-    echo "usage: lan-proof-remote build|build-inner|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
+    echo "usage: lan-proof-remote build|build-inner|build-windows|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
     exit 2
 }
 
@@ -121,39 +122,55 @@ cmd_build()
 
 cmd_build_inner()
 {
-    local commit=$1 os dir bin bat cmd_exe windir
+    local commit=$1 os bin
     os=$( host_os )
-    dir=$( checkout_dir "$commit" )
-    mkdir -p "${dir%/*}" || fail "build: cannot create ${dir%/*}"
-    [ -d "$dir/.git" ] || git clone --quiet "$REPO_URL" "$dir" || fail "build: clone failed"
-    git -C "$dir" fetch --quiet origin || fail "build: fetch failed"
-    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$commit" || fail "build: checkout failed"
-    [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ] || fail "build: checkout is not $commit"
     case "$os" in
         linux|macos)
+            build_checkout "$commit"
             "$HOME/bin/benchslot" -- bash -c 'cd "$1" && mkdir -p build && cd build &&
                 cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null &&
-                nice make -j4 --no-print-directory load_split' bash "$dir" ||
+                nice make -j4 --no-print-directory load_split' bash "$( checkout_dir "$commit" )" ||
                 fail "build: Release build failed"
             ;;
         windows)
-            cmd_exe=$( windows_tool cmd.exe /mnt/c/Windows/System32/cmd.exe ) || fail "build: no cmd.exe"
-            windir=$( wslpath -w "$dir" ) || fail "build: cannot name the checkout as a Windows path"
-            bat="${dir%/*}/lan-proof-build-$commit.bat"
-            printf '%s\r\n' '@echo off' \
-                "call \"$VCVARS\" >nul || exit /b 1" \
-                "cd /d \"$windir\" || exit /b 1" \
-                "cmake -B build -G \"$VS_GENERATOR\" -A x64 > lan-proof-configure.log 2>&1 || exit /b 1" \
-                "cmake --build build --config Release --parallel 4 --target load_split > lan-proof-build.log 2>&1 || exit /b 1" \
-                > "$bat" || fail "build: cannot write the build batch file"
-            winlock --slots 3 --card "${LAN_PROOF_CARD:-lan-proof}" -- \
-                "$cmd_exe" /c "$( wslpath -w "$bat" )" ||
+            # Every step on a shared Windows bench, the checkout included,
+            # runs inside one shared build slot.
+            winlock --slots 3 --card "${LAN_PROOF_CARD:-lan-proof}" -- "$0" build-windows "$commit" ||
                 fail "build: Release build failed; see lan-proof-build.log in the checkout"
             ;;
         *) fail "build: unsupported OS $( uname -s )" ;;
     esac
     bin=$( load_split_bin "$commit" ) || fail "build: no load_split after the Release build"
     echo "bin=$bin"
+}
+
+build_checkout()
+{
+    local commit=$1 dir
+    dir=$( checkout_dir "$commit" )
+    mkdir -p "${dir%/*}" || fail "build: cannot create ${dir%/*}"
+    [ -d "$dir/.git" ] || git clone --quiet "$REPO_URL" "$dir" || fail "build: clone failed"
+    git -C "$dir" fetch --quiet origin || fail "build: fetch failed"
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$commit" || fail "build: checkout failed"
+    [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ] || fail "build: checkout is not $commit"
+}
+
+# The body of a Windows build, run by winlock in a shared slot.
+cmd_build_windows()
+{
+    local commit=$1 dir bat cmd_exe windir
+    build_checkout "$commit"
+    dir=$( checkout_dir "$commit" )
+    cmd_exe=$( windows_tool cmd.exe /mnt/c/Windows/System32/cmd.exe ) || fail "build: no cmd.exe"
+    windir=$( wslpath -w "$dir" ) || fail "build: cannot name the checkout as a Windows path"
+    bat="${dir%/*}/lan-proof-build-$commit.bat"
+    printf '%s\r\n' '@echo off' \
+        "call \"$VCVARS\" >nul || exit /b 1" \
+        "cd /d \"$windir\" || exit /b 1" \
+        "cmake -B build -G \"$VS_GENERATOR\" -A x64 > lan-proof-configure.log 2>&1 || exit /b 1" \
+        "cmake --build build --config Release --parallel 4 --target load_split > lan-proof-build.log 2>&1 || exit /b 1" \
+        > "$bat" || fail "build: cannot write the build batch file"
+    "$cmd_exe" /c "$( wslpath -w "$bat" )" || fail "build: the Windows Release build failed"
 }
 
 is_decimal()
@@ -465,6 +482,7 @@ cmd_collect()
 case "${1:-}" in
     build)        [ $# -eq 2 ] || usage; cmd_build "$2" ;;
     build-inner)  [ $# -eq 2 ] || usage; cmd_build_inner "$2" ;;
+    build-windows) [ $# -eq 2 ] || usage; cmd_build_windows "$2" ;;
     hostinfo)     [ $# -eq 2 ] || usage; cmd_hostinfo "$2" ;;
     load)         cmd_load ;;
     check-xdp-bridge) [ $# -eq 2 ] || usage; cmd_check_xdp_bridge "$2" ;;
