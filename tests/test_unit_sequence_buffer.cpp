@@ -103,6 +103,7 @@ static void test_sequence_buffer_owned_sparse_lap_refuses_live_overwrite()
     check( buffer.size() == 1 );
 
     rn_sequence_buffer_handle_t h0 = put_owned( buffer, 8, 80 );
+    check( h0.ticket == held.ticket + 1 );
     rn_sequence_buffer_handle_t h1 = put_owned( buffer, 9, 90 );
     rn_sequence_buffer_handle_t h2 = put_owned( buffer, 10, 100 );
     check( buffer.size() == 4 );
@@ -120,9 +121,12 @@ static void test_sequence_buffer_late_history_refusal_has_no_mutation()
     const size_t before = buffer.size();
     rn_sequence_buffer_handle_t ignored;
     check( buffer.insert( 7, 7, &ignored ) == RN_SEQUENCE_BUFFER_TOO_OLD );
+    check( buffer.insert( 10, 10, &ignored ) == RN_SEQUENCE_BUFFER_DUPLICATE );
     check( buffer.size() == before );
     check( buffer.find( ten ) != NULL && *buffer.find( ten ) == 10 );
     check( buffer.find( eleven ) != NULL && *buffer.find( eleven ) == 11 );
+    rn_sequence_buffer_handle_t twelve = put_history( buffer, 12, 12 );
+    check( twelve.ticket == eleven.ticket + 1 );
 }
 
 static void test_sequence_buffer_stale_generation_and_double_remove()
@@ -137,10 +141,21 @@ static void test_sequence_buffer_stale_generation_and_double_remove()
     check( !buffer.remove( first ) );
     check( buffer.find( second ) != NULL && *buffer.find( second ) == 2 );
 
+    rn_sequence_buffer_handle_t wrong_identity = second;
+    wrong_identity.identity += 4;
+    check( buffer.find( wrong_identity ) == NULL );
+    check( !buffer.remove( wrong_identity ) );
+
     rn_sequence_buffer_handle_t wrong_owner = second;
     ++wrong_owner.owner_epoch;
     check( buffer.find( wrong_owner ) == NULL );
     check( !buffer.remove( wrong_owner ) );
+
+    rn_sequence_buffer_handle_t wrong_ticket = second;
+    ++wrong_ticket.ticket;
+    check( buffer.find( wrong_ticket ) == NULL );
+    check( !buffer.remove( wrong_ticket ) );
+    check( buffer.find( second ) != NULL && *buffer.find( second ) == 2 );
 }
 
 static void test_sequence_buffer_cancel_requeue_leaves_no_tombstones()
