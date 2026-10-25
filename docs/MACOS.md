@@ -128,6 +128,18 @@ owned RX banks and publishes them to the caller, which copies their packets and
 performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
+Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
+configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+the three banks are one allocation made at create. A packet sent while all
+three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
+a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
+packet in `sendmsg_x`, so 45,000 packets a second keep it about 80% busy and a
+burst backs up for tens of milliseconds. With fixed banks of 1000 packets that
+backlog found every bank in flight thousands of times a minute
+(`SEND_FAILED` 9,240 in 60 s, all of them for want of a free bank, none a
+socket errno); banks sized to the client count hold it. A failed socket send
+is counted apart, by call and errno, and the first of each is logged once.
+
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
 (`rocketnet_msgx_transport` in `sdk/rocketnet_driver_builtin.cpp`), so the two
