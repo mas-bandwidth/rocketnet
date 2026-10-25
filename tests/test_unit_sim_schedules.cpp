@@ -659,6 +659,87 @@ static void test_address_equal_degenerate_types_never_equal()
     rocketnet_unit_check( !rocketnet_address_equal( &a, &a ) );
 }
 
+// The shard index is a two-level flat bitmap, not a timing claim. This case
+// crosses physical-slot word boundaries, removes and reuses an interior slot,
+// proves the old generation cannot remove its replacement, and observes the
+// exact bounded word work. A dense shard with only its final slot due also
+// pins ascending enumeration and the scan bound to occupied entries plus
+// summary/occupancy words.
+static void test_simulator_bitmap_membership_generation_and_bounds()
+{
+    const int capacity = 130;
+    struct rocketnet_network_simulator_t * sim = rocketnet_network_simulator_create( NULL, capacity, 1 );
+    rocketnet_unit_check( sim != NULL );
+
+    struct rocketnet_address_t from;
+    struct rocketnet_address_t to;
+    rocketnet_unit_check( rocketnet_address_parse( &from, "198.51.100.10:10000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &to, "198.51.100.20:10000" ) );
+
+    rocketnet_network_simulator_test_reset_index_stats( sim );
+    for ( int i = 0; i < capacity; i++ )
+    {
+        const uint8_t byte = (uint8_t) i;
+        const uint8_t * packet = &byte;
+        const int bytes = 1;
+        rocketnet_unit_check( rocketnet_network_simulator_deliver_packets( sim, &from, &to, &packet, &bytes, 1, 10.0 ) == 1 );
+    }
+
+    struct rocketnet_network_simulator_slot_handle_t old_handle;
+    rocketnet_unit_check( rocketnet_network_simulator_test_handle_for_slot( sim, 64, &old_handle ) );
+    rocketnet_unit_check( rocketnet_network_simulator_test_remove_handle( sim, &old_handle ) );
+
+    const uint8_t replacement = 0xee;
+    const uint8_t * replacement_packet = &replacement;
+    const int replacement_bytes = 1;
+    rocketnet_unit_check( rocketnet_network_simulator_deliver_packets( sim, &from, &to,
+                                                                        &replacement_packet, &replacement_bytes,
+                                                                        1, 10.0 ) == 1 );
+    struct rocketnet_network_simulator_slot_handle_t replacement_handle;
+    rocketnet_unit_check( rocketnet_network_simulator_test_handle_for_slot( sim, 64, &replacement_handle ) );
+    rocketnet_unit_check( replacement_handle.generation != old_handle.generation );
+    rocketnet_unit_check( !rocketnet_network_simulator_test_remove_handle( sim, &old_handle ) );
+
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t received_from;
+    for ( int i = 0; i < capacity; i++ )
+    {
+        rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 10.0, &received_from, received ) == 1 );
+        rocketnet_unit_check( received[0] == ( i == 64 ? replacement : (uint8_t) i ) );
+    }
+    rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 10.0, &received_from, received ) == 0 );
+
+    struct rocketnet_network_simulator_index_stats_t stats;
+    rocketnet_network_simulator_test_index_stats( sim, &stats );
+    rocketnet_unit_check( stats.max_membership_word_updates <= 2 );
+    rocketnet_unit_check( stats.membership_word_updates == 268 );
+    rocketnet_unit_check( stats.stale_removals == 1 );
+    rocketnet_unit_check( stats.max_selection_summary_words == 1 );
+    rocketnet_unit_check( stats.max_selection_occupancy_words <= 1 );
+    rocketnet_unit_check( stats.max_selection_slots <= 1 );
+    rocketnet_network_simulator_destroy( sim );
+
+    sim = rocketnet_network_simulator_create( NULL, capacity, 2 );
+    rocketnet_unit_check( sim != NULL );
+    for ( int i = 0; i < capacity; i++ )
+    {
+        const uint8_t byte = (uint8_t) i;
+        const uint8_t * packet = &byte;
+        const int bytes = 1;
+        const double delivery_time = i == capacity - 1 ? 0.0 : 1000.0;
+        rocketnet_unit_check( rocketnet_network_simulator_deliver_packets( sim, &from, &to, &packet, &bytes, 1, delivery_time ) == 1 );
+    }
+    rocketnet_network_simulator_test_reset_index_stats( sim );
+    rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 0.0, &received_from, received ) == 1 );
+    rocketnet_unit_check( received[0] == (uint8_t) ( capacity - 1 ) );
+    rocketnet_network_simulator_test_index_stats( sim, &stats );
+    rocketnet_unit_check( stats.max_selection_summary_words == 1 );
+    rocketnet_unit_check( stats.max_selection_occupancy_words == 3 );
+    rocketnet_unit_check( stats.max_selection_slots == (uint64_t) capacity );
+    rocketnet_unit_check( stats.max_membership_word_updates <= 2 );
+    rocketnet_network_simulator_destroy( sim );
+}
+
 // ---------------------------------------------------------------------------
 
 REGISTER_UNIT_TEST( test_sim_schedule_final_fragment_first );
@@ -668,3 +749,4 @@ REGISTER_UNIT_TEST( test_sim_schedule_sequence_wrap );
 REGISTER_UNIT_TEST( test_sim_schedule_long_skip_stragglers );
 REGISTER_UNIT_TEST( test_simulator_created_active_is_sticky );
 REGISTER_UNIT_TEST( test_address_equal_degenerate_types_never_equal );
+REGISTER_UNIT_TEST( test_simulator_bitmap_membership_generation_and_bounds );
