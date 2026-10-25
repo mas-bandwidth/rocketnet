@@ -72,7 +72,9 @@ build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
-(tests/README.md).
+(tests/README.md). Peak resident set is telemetry in this unit run: an
+over-bound line names the measured peak and bound without changing the unit
+verdict.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -92,6 +94,12 @@ case, including sibling binaries, runs alone on every platform. Setting
 `ROCKETNET_TEST_JOBS` cannot increase functional concurrency; deterministic
 unit cases may still run in parallel. Run separate functional invocations and
 other network workloads separately on the same test host as well.
+
+The functional suite enforces peak-resident-set bounds. Its
+`test_unit_case_memory` sibling row runs the complete unit binary in enforcement
+mode, so the bound declarations beside unit cases and the suite-wide fallback
+are reused directly. The row and every unit case inside it retain the
+existing time limits.
 
 Functional assertions check delivery, ordering, state transitions and eventual
 recovery. Wall-clock latency and receive gaps are diagnostics, not pass/fail

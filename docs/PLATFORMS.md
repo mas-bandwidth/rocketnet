@@ -68,6 +68,13 @@ cross-compiles the library and suite for s390x and runs the wire and sodium
 checks under qemu-user; the socket-crossing suite runs on s390x only in the
 nightly full-system guest. The nightly row is how that suite is claimed.
 
+A row's memory bounds follow the same split as its suites: the unit suite
+reports memory, printing each case's peak resident set against its bound
+without making that OS measurement part of its verdict, and the functional
+suite enforces memory, failing on the same bounds through its
+`test_unit_case_memory` row, which runs the unit cases and reads the same
+bound registry.
+
 ### Adding a platform
 
 1. Register a runner with a stable label and add a leg to `ci.yml` that builds
