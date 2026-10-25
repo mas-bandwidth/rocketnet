@@ -1,14 +1,17 @@
 # ReceiveOrder: cheap refusals first
 
 `ReceiveOrder.tla` models a receive path as ordered rungs, each cheap or
-crypto. The invariant is `CheapRefusalsFirst`: no packet refused at a cheap
-rung has passed a crypto rung. Keyed hashes (the cookie MAC, the token
+crypto. `RequestRungOrder` pins the request rungs to the code's order, and
+`CheapRefusalsFirst` says no packet refused at a cheap rung has passed a crypto
+rung. Keyed hashes (the cookie MAC, the token
 identifier, key derivation) are the cheap tier; keypair generation, scalar
 multiplication, AEAD seal or open, signature verification and sealed-box open
 are crypto.
 
-The request path runs in the ruled order. Each rung maps to its code and
-STANDARD step in _Processing Connection Requests_:
+The request path runs in the ruled order. `Pos` puts the rungs in the code's
+order: used, verifybudget, claim, capacity, claimfull (t12 rule 9 steps 1 to
+5; the per-update handshake work budget stays inside the cookie rung). Each
+rung maps to its code and STANDARD step in _Processing Connection Requests_:
 
 | Rung | Kind | Code | STANDARD step |
 |---|---|---|---|
@@ -17,9 +20,11 @@ STANDARD step in _Processing Connection Requests_:
 | timestamps | cheap | expire and creation skew compares, then the timeout compare | t12 rule 5: expiry, creation skew; t12 rule 6: timeout seconds |
 | compares | cheap | address flags, advertised address, server key compares, in that order | t12 rule 6: address flags; advertised address; server public key |
 | cookie | cheap | cookie MAC and budget gate | recompute the cookie MAC |
-| used | cheap | used-token history lookup | token identifier in used-token history |
-| capacity | cheap | rocketnet_encryption_map_full in sdk/rocketnet_server_protocol.cpp | a full encryption mapping table refuses before any signature, seal or keypair work |
-| claim | cheap | ClaimCheck: rocketnet_used_token_history_claim_check, then (after the capacity rung) the read-only rocketnet_used_token_history_claim_can_record, in sdk/rocketnet_token_tables.cpp; ClaimWrite: rocketnet_used_token_history_claim_record, run only after the signature verifies | the first request whose signature verifies claims its token for its source address until the handshake deadline; a second address is refused |
+| used | cheap | used-token history lookup | token identifier in used-token history (t12 rule 9 step 1) |
+| verifybudget | cheap | rocketnet_signature_verify_budget_allow in sdk/rocketnet_server_protocol.cpp | the failed-signature budget refuses a source with a recorded failure in the spent window (t12 rule 9 step 2) |
+| claim | cheap | ClaimCheck: rocketnet_used_token_history_claim_check in sdk/rocketnet_token_tables.cpp; ClaimWrite: rocketnet_used_token_history_claim_record, run only after the signature verifies | the first request whose signature verifies claims its token for its source address until the handshake deadline; a second address is refused (t12 rule 9 step 3) |
+| capacity | cheap | rocketnet_encryption_map_full in sdk/rocketnet_server_protocol.cpp | a full encryption mapping table refuses before any signature, seal or keypair work (t12 rule 9 step 4) |
+| claimfull | cheap | the read-only rocketnet_used_token_history_claim_can_record in sdk/rocketnet_token_tables.cpp, run after the mapping-capacity rung | a request-claim table with no free or expired slot refuses with its own counter, CONNECTION_REQUEST_CLAIM_TABLE_FULL, and not as a mapping failure (t12 rule 9 step 5) |
 | admitted | cheap | removed with the admitted-token set (`docs/SESSION.md` 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds, from any other address; the model keeps the position | (none) |
 | signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
 | seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block |
@@ -41,7 +46,7 @@ them with `CheapRefusalsFirst` or `OneLiveMappingPerToken`:
 | ClaimBeforeSignature | claim written at its check rung (ClaimWriteRung "claim") | BASE before the split: rocketnet_used_token_history_claim_record ran at the claim rung, ahead of rocketnet_verify_signed_connect_data, and a failed signature released it after; every unauthenticated request past the cookie wrote (and then released) a claim-table entry. ClaimOnlyAfterSignature fails |
 
 Replayed by hand: in ClaimBeforeSignature a request with fault `signature`
-advances past the claim rung (position 65) with no other claim on its token,
+advances past the claim rung (position 62) with no other claim on its token,
 so `claimWritten` holds while `verified` does not, and the signature rung
 then refuses it; this is the BASE code writing the claim at the rung and
 releasing it on the failed verify. With the split the write happens on

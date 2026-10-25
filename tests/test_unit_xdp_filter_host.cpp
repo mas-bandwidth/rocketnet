@@ -1618,61 +1618,6 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 // file as a row's XDP_HOST_COUNTS(...), so a new counter cannot land without
 // a case that makes it move.
 
-static std::string xdp_host_read_file( const char * relative )
-{
-    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
-    std::string text;
-    FILE * file = rocketnet_test_fopen( path, "rb" );
-    if ( file == NULL )
-    {
-        printf( "test_xdp_transport_host_every_counter_has_a_case: cannot read %s\n", path.c_str() );
-        fflush( stdout );
-        return text;
-    }
-    char buffer[4096];
-    size_t got;
-    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
-        text.append( buffer, got );
-    fclose( file );
-    return text;
-}
-
-static void test_xdp_transport_host_every_counter_has_a_case()
-{
-    const std::string wire = xdp_host_read_file( "sdk/rocketnet_wire.h" );
-    const std::string self = xdp_host_read_file( "tests/test_unit_xdp_filter_host.cpp" );
-    rocketnet_unit_check( !wire.empty() );
-    rocketnet_unit_check( !self.empty() );
-
-    const std::string define = "#define ROCKETNET_SERVER_XDP_COUNTER_";
-    std::vector<std::string> names;
-    size_t at = 0;
-    while ( ( at = wire.find( define, at ) ) != std::string::npos )
-    {
-        size_t end = at + strlen( "#define " );
-        size_t stop = end;
-        while ( stop < wire.size() && ( isalnum( (unsigned char) wire[stop] ) || wire[stop] == '_' ) )
-            stop++;
-        names.push_back( wire.substr( end, stop - end ) );
-        at = stop;
-    }
-
-    rocketnet_unit_check( (int) names.size() == ROCKETNET_SERVER_XDP_NUM_COUNTERS );
-
-    int missing = 0;
-    for ( size_t i = 0; i < names.size(); i++ )
-    {
-        const std::string needle = std::string( "XDP_HOST_" ) + "COUNTS( " + names[i] + " )";
-        if ( self.find( needle ) == std::string::npos )
-        {
-            printf( "test_xdp_transport_host_every_counter_has_a_case: %s has no case\n", names[i].c_str() );
-            fflush( stdout );
-            missing++;
-        }
-    }
-    rocketnet_unit_check( missing == 0 );
-}
-
 
 static void test_xdp_transport_host_udp_length_drops()
 {
@@ -1837,7 +1782,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_filter_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_invalid_type_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_type_and_size_sweep_matches_the_standard );
-REGISTER_UNIT_TEST( test_xdp_transport_host_every_counter_has_a_case );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 

@@ -84,7 +84,7 @@ The steps for adding a field:
    revision's `sizeof`, with a default that equals the old behaviour.
 2. Write its default in the library's default fill, and its environment
    variable beside the field in the header, as for every other field.
-3. Add a case to `test_unit_sized_config.cpp` that passes the previous
+3. Add a case to `tests/test_unit_sized_config.cpp` that passes the previous
    revision's size as `config_bytes` and checks the new field reads its
    default.
 4. Leave the major version unchanged.
@@ -171,7 +171,7 @@ enum in `sdk/rocketnet.h` is the size of `int`. A static assert in
 A zero-filled receipt reads NONE. The library writes ACKED or LOSS.
 
 `rocketnet_disconnect_reason_t` keeps its values. NONE is 0 and each reason
-is negative, -1 to -5. `rocketnet_disconnect_reason_name` returns a name for
+is negative, -1 to -6. `rocketnet_disconnect_reason_name` returns a name for
 every value in the enum. It returns `"UNKNOWN"` for any other value. The same rule
 holds for `rocketnet_status_name`, `rocketnet_log_level_name` and
 `rocketnet_client_state_name`.

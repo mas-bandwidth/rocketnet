@@ -14726,7 +14726,6 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
-void rocketnet_test_dev_token_minting_absent_in_release();
 void rocketnet_test_public_connect_token_string_refused();
 void rocketnet_test_public_dev_connect_token_round_trip();
 
@@ -14888,7 +14887,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_reassembly", rocketnet_test_fragment_reassembly },
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
-    { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
     { "test_public_connect_token_string_refused", rocketnet_test_public_connect_token_string_refused },
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
@@ -14993,46 +14991,6 @@ void rocketnet_run_tests()
     rocketnet_unit_prepare();
     for ( int i = 0; i < rocketnet_unit_test_count(); i++ )
         rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
-}
-
-// Verify that rocketnet_create_dev_connect_token is absent from the release
-// surface. In a production build (ROCKETNET_DEV=0) the development token
-// minting helper and its backend secret key are compiled out, so the shipped
-// shared library must not carry the symbol. The suite links the static
-// archive, whose own symbols cannot prove the shared ABI is clean, so probe
-// the shared library directly (the `test` target depends on it, so it is
-// always present beside ./bin/test). In a development build the helper must
-// remain callable -- the functional suite mints its tokens with it -- so that
-// configuration asserts the call succeeds instead.
-void rocketnet_test_dev_token_minting_absent_in_release()
-{
-#if ROCKETNET_DEV
-    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
-    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-#else
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    HMODULE library = LoadLibraryA( ROCKETNET_RELEASE_LIBRARY_PATH );
-    rocketnet_check( library != NULL );
-    if ( library != NULL )
-    {
-        rocketnet_check( GetProcAddress( library, "rocketnet_create_dev_connect_token" ) == NULL );
-        FreeLibrary( library );
-    }
-#else
-    // CMake may place the shared library outside the source tree. Probe the
-    // exact release target built alongside this test, independent of cwd.
-    void * library = dlopen( ROCKETNET_RELEASE_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    rocketnet_check( library != NULL );
-    if ( library != NULL )
-    {
-        rocketnet_check( dlsym( library, "rocketnet_create_dev_connect_token" ) == NULL );
-        dlclose( library );
-    }
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif
 }
 
 // A public loopback server for the connect token cases: the development

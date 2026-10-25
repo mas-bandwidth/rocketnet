@@ -47,6 +47,19 @@ Run the unit suite with:
 
     ./bin/test
 
+The repository text audits that used to be unit cases run in the static
+source-audit binary `./bin/source_audit` instead: the client/server
+"says messages, not packets" scan
+(`test_client_server_say_messages_not_packets`), the environment-name
+documentation check (`test_config_env_every_name_read_is_documented`), the
+counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
+the one-family-per-outcome check
+(`test_counters_every_outcome_in_at_most_one_family`) and the XDP counter-row
+check (`test_xdp_transport_host_every_counter_has_a_case`). It reads
+source, header and doc files through `ROCKETNET_SOURCE_DIR`, opens no socket
+and starts no thread; CI runs it on a Linux leg beside
+`tools/check_client_server_words.py`.
+
 `./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator, and reads and writes no
 file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
@@ -173,7 +186,7 @@ named functional, never as a unit step.
 | `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
-| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
@@ -184,6 +197,12 @@ named functional, never as a unit step.
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+
+The shared-library export cases are functional because they load the built
+libraries through the OS loader: `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant`, and
+`test_dev_token_minting_absent_in_release`. They run from `./bin/functional`,
+not `./bin/test`.
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory

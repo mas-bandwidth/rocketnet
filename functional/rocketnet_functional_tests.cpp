@@ -8987,6 +8987,9 @@ extern void windows_server_drops_runt_and_garbage_iocp_ipv4();
 extern void windows_server_drops_runt_and_garbage_iocp_ipv6();
 extern void windows_server_drops_runt_and_garbage_rio_ipv4();
 extern void windows_server_drops_runt_and_garbage_rio_ipv6();
+extern void windows_server_counts_oversize_as_prefilter_too_large_iocp();
+extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
+extern void windows_server_counts_runt_as_prefilter_too_short_rio();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
@@ -9608,6 +9611,9 @@ extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void test_api_polish_dev_token_string();
+extern void test_dev_connect_token_timeout_is_the_named_constant();
+extern void test_dev_token_minting_absent_in_release();
 
 // the corpus-consistency cases (functional/corpus_consistency.cpp): each walks a
 // directory of committed inputs that grows, so none is a unit case
@@ -9655,6 +9661,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
     { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
+    { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
+    { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
@@ -9917,6 +9926,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_iocp_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_iocp_ipv6, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv4", windows_server_drops_runt_and_garbage_rio_ipv4, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_iocp", windows_server_counts_oversize_as_prefilter_too_large_iocp, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_rio", windows_server_counts_oversize_as_prefilter_too_large_rio, NULL },
+    { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4, NULL },
