@@ -55,7 +55,7 @@ struct token_time_server_t
 static void token_time_mint( uint8_t * token_data, uint64_t create, uint64_t expire )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = create;
@@ -67,7 +67,7 @@ static void token_time_mint( uint8_t * token_data, uint64_t create, uint64_t exp
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = expire;
@@ -79,7 +79,7 @@ static void token_time_mint( uint8_t * token_data, uint64_t create, uint64_t exp
 
 static void token_time_setup( struct token_time_server_t * t )
 {
-    memset( t, 0, sizeof(*t) );
+    memset( t, 0, sizeof( *t ) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );

@@ -7,17 +7,17 @@
 
 static rocketnet_ack_endpoint_t * stats_endpoint()
 {
-    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof(rocketnet_ack_endpoint_t) );
+    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( endpoint );
     // the rings zeroed and every record marked written: the tests write
     // records straight into the rings, and the projection below reads all of
     // them, so each starts as the empty record (sequence 0) that a reset's
     // written bits stand for
-    memset( (void *) endpoint, 0, sizeof(rocketnet_ack_endpoint_t) );
+    memset( (void *) endpoint, 0, sizeof( rocketnet_ack_endpoint_t ) );
     rocketnet_ack_endpoint_reset( endpoint );
-    memset( endpoint->sent_written, 0xFF, sizeof(endpoint->sent_written) );
-    memset( endpoint->received_written, 0xFF, sizeof(endpoint->received_written) );
-    memset( endpoint->aggregates_written, 0xFF, sizeof(endpoint->aggregates_written) );
+    memset( endpoint->sent_written, 0xFF, sizeof( endpoint->sent_written ) );
+    memset( endpoint->received_written, 0xFF, sizeof( endpoint->received_written ) );
+    memset( endpoint->aggregates_written, 0xFF, sizeof( endpoint->aggregates_written ) );
     return endpoint;
 }
 
@@ -29,7 +29,7 @@ static void stats_sent( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, 
 static void stats_ack( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
 {
     rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = sequence;
     block.first_range_length = 1;
     uint64_t ids[1], unknown = 0, full = 0;
@@ -44,10 +44,10 @@ static void stats_ack( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, d
 static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
 {
     auto * history = new rocketnet_ack_stats_history_t;
-    memset(history, 0, sizeof(*history));
+    memset( history, 0, sizeof( *history ) );
     history->highest_sent = endpoint->highest_sequence;
     history->highest_received = endpoint->highest_received_sequence;
-    memcpy(history->rtt_history, endpoint->rtt_history, sizeof(history->rtt_history));
+    memcpy( history->rtt_history, endpoint->rtt_history, sizeof( history->rtt_history ) );
     // a record the endpoint has not written since its reset is the empty
     // record, as its written bits say: the projection leaves it zero
     for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
@@ -68,16 +68,16 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
         history->received[i].wire_bytes = endpoint->received[i].wire_bytes;
     }
     rocketnet_ack_stats_result_t result = {};
-    rocketnet_ack_stats_history_compute(history, &result);
-    rocketnet_ack_endpoint_update_stats(endpoint);
+    rocketnet_ack_stats_history_compute( history, &result );
+    rocketnet_ack_endpoint_update_stats( endpoint );
     // Equal inputs must retain the exact float operation order, not merely
     // approximate a six-field result after the scratch removal.
-    rocketnet_unit_check(result.rtt == endpoint->rtt);
-    rocketnet_unit_check(result.jitter == endpoint->jitter);
-    rocketnet_unit_check(result.packet_loss == endpoint->packet_loss);
-    rocketnet_unit_check(result.sent_kbps == endpoint->bandwidth_sent_kbps);
-    rocketnet_unit_check(result.received_kbps == endpoint->bandwidth_received_kbps);
-    rocketnet_unit_check(result.acked_kbps == endpoint->bandwidth_acked_kbps);
+    rocketnet_unit_check( result.rtt == endpoint->rtt );
+    rocketnet_unit_check( result.jitter == endpoint->jitter );
+    rocketnet_unit_check( result.packet_loss == endpoint->packet_loss );
+    rocketnet_unit_check( result.sent_kbps == endpoint->bandwidth_sent_kbps );
+    rocketnet_unit_check( result.received_kbps == endpoint->bandwidth_received_kbps );
+    rocketnet_unit_check( result.acked_kbps == endpoint->bandwidth_acked_kbps );
     delete history;
 }
 
@@ -207,12 +207,12 @@ static void test_ack_stats_direct_history_uint64_high_water()
         auto & record = endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
         record.sequence = sequence;
         record.send_time = 1000.0 + 0.25 * i;
-        record.wire_bytes = 100 * (i + 1);
+        record.wire_bytes = 100 * ( i + 1 );
         record.acked = i != 1;
     }
     // An overwritten record at a hole and a newest-half record cannot enter
     // the old cohort's byte sum or loss denominator.
-    auto & stale = endpoint->sent[(sent_base + 1) % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    auto & stale = endpoint->sent[( sent_base + 1 ) % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     stale.sequence = sent_base + 1 - ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     stale.wire_bytes = 10000;
     const uint64_t newest_sequence = sent_base + ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
@@ -230,85 +230,86 @@ static void test_ack_stats_direct_history_uint64_high_water()
         record.receive_time = 1000.0 + 0.5 * i;
         record.wire_bytes = 100 + 200 * i;
     }
-    stats_update_and_compare_history(endpoint);
+    stats_update_and_compare_history( endpoint );
     // Independent known sums, in addition to entry-point parity.
-    rocketnet_unit_check(endpoint->rtt == 20.0f && endpoint->jitter == 10.0f);
-    rocketnet_unit_check(fabsf(endpoint->packet_loss - 100.0f / 3.0f) < 0.001f);
-    rocketnet_unit_check(fabsf(endpoint->bandwidth_sent_kbps - 9.6f) < 0.001f);
-    rocketnet_unit_check(fabsf(endpoint->bandwidth_acked_kbps - 6.4f) < 0.001f);
-    rocketnet_unit_check(fabsf(endpoint->bandwidth_received_kbps - 6.4f) < 0.001f);
-    rocketnet_free(NULL, endpoint);
+    rocketnet_unit_check( endpoint->rtt == 20.0f && endpoint->jitter == 10.0f );
+    rocketnet_unit_check( fabsf( endpoint->packet_loss - 100.0f / 3.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( endpoint->bandwidth_sent_kbps - 9.6f ) < 0.001f );
+    rocketnet_unit_check( fabsf( endpoint->bandwidth_acked_kbps - 6.4f ) < 0.001f );
+    rocketnet_unit_check( fabsf( endpoint->bandwidth_received_kbps - 6.4f ) < 0.001f );
+    rocketnet_free( NULL, endpoint );
 }
 
-REGISTER_UNIT_TEST(test_ack_stats_direct_history_uint64_high_water);
+REGISTER_UNIT_TEST( test_ack_stats_direct_history_uint64_high_water );
 
 // Stale records may look like current sequence numbers after slot reuse.
 // A cleared validity mask must hide them without touching the cold ring.
 static void test_ack_stats_history_ignores_unwritten_records()
 {
     auto * history = new rocketnet_ack_stats_history_t;
-    memset(history, 0xA5, sizeof(*history));
-    memset(history->rtt_history, 0, sizeof(history->rtt_history));
+    memset( history, 0xA5, sizeof( *history ) );
+    memset( history->rtt_history, 0, sizeof( history->rtt_history ) );
     history->highest_sent = history->highest_received = 3;
     uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS] = {};
     uint64_t received_written[ROCKETNET_RECEIVED_STATS_DIRTY_WORDS] = {};
-    for (int i = 1; i <= 3; ++i)
+    for ( int i = 1; i <= 3; ++i )
     {
-        history->sent[i] = { (uint64_t)i, (double)i, 100, 1, {} };
-        history->received[i] = { (uint64_t)i, (double)i, 100, 0 };
+        history->sent[i] = { (uint64_t) i, (double) i, 100, 1, {} };
+        history->received[i] = { (uint64_t) i, (double) i, 100, 0 };
     }
     rocketnet_ack_stats_result_t result = {};
-    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
-    rocketnet_unit_check(result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0);
-    sent_written[0] = received_written[0] = (1ull << 1) | (1ull << 3);
-    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
-    rocketnet_unit_check(fabsf(result.sent_kbps - 0.8f) < 0.0001f);
-    rocketnet_unit_check(fabsf(result.received_kbps - 0.8f) < 0.0001f);
-    rocketnet_unit_check(fabsf(result.acked_kbps - 0.8f) < 0.0001f);
+    rocketnet_ack_stats_history_compute( history, &result, sent_written, received_written );
+    rocketnet_unit_check( result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0 );
+    sent_written[0] = received_written[0] = ( 1ull << 1 ) | ( 1ull << 3 );
+    rocketnet_ack_stats_history_compute( history, &result, sent_written, received_written );
+    rocketnet_unit_check( fabsf( result.sent_kbps - 0.8f ) < 0.0001f );
+    rocketnet_unit_check( fabsf( result.received_kbps - 0.8f ) < 0.0001f );
+    rocketnet_unit_check( fabsf( result.acked_kbps - 0.8f ) < 0.0001f );
     // A generation reset only clears validity; the exact old records remain.
     sent_written[0] = received_written[0] = 0;
-    rocketnet_ack_stats_history_compute(history, &result, sent_written, received_written);
-    rocketnet_unit_check(result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0);
+    rocketnet_ack_stats_history_compute( history, &result, sent_written, received_written );
+    rocketnet_unit_check( result.sent_kbps == 0 && result.received_kbps == 0 && result.acked_kbps == 0 );
     delete history;
 }
-REGISTER_UNIT_TEST(test_ack_stats_history_ignores_unwritten_records);
+REGISTER_UNIT_TEST( test_ack_stats_history_ignores_unwritten_records );
 
 static void test_ack_stats_epoch_invalidation_preserves_storage()
 {
     rocketnet_stats_epoch_bits_t<2> bits;
-    memset(&bits, 0xA5, sizeof(bits));
+    memset( &bits, 0xA5, sizeof( bits ) );
     bits.initialize();
-    bits.set(7); bits.set(90);
+    bits.set( 7 );
+    bits.set( 90 );
     const uint64_t first = bits.bits[0], second = bits.bits[1];
     const uint64_t old_epoch = bits.epoch;
     bits.invalidate();
-    rocketnet_unit_check(bits.epoch == old_epoch + 1 && !bits.test(7) && !bits.test(90));
-    rocketnet_unit_check(bits.bits[0] == first && bits.bits[1] == second);
-    bits.set(8);
-    rocketnet_unit_check(bits.test(8) && !bits.test(7) && !bits.test(90));
+    rocketnet_unit_check( bits.epoch == old_epoch + 1 && !bits.test( 7 ) && !bits.test( 90 ) );
+    rocketnet_unit_check( bits.bits[0] == first && bits.bits[1] == second );
+    bits.set( 8 );
+    rocketnet_unit_check( bits.test( 8 ) && !bits.test( 7 ) && !bits.test( 90 ) );
     // Explicit rollover: an ancient epoch-1 tag must never become current.
     bits.epoch = UINT64_MAX;
     bits.tags[1] = 1;
     bits.invalidate();
-    rocketnet_unit_check(bits.epoch == 1 && !bits.test(90));
-    rocketnet_unit_check(bits.bits[1] == second);
+    rocketnet_unit_check( bits.epoch == 1 && !bits.test( 90 ) );
+    rocketnet_unit_check( bits.bits[1] == second );
 
     auto * history = new rocketnet_ack_stats_history_t;
-    memset(history, 0xA5, sizeof(*history));
+    memset( history, 0xA5, sizeof( *history ) );
     history->highest_sent = history->highest_received = 3;
     history->rtt_history[0] = 20.0f;
     rocketnet_ack_stats_validity_t valid;
     valid.initialize();
-    valid.rtt.set(0);
+    valid.rtt.set( 0 );
     rocketnet_ack_stats_result_t result;
-    rocketnet_ack_stats_history_compute(history, &result, NULL, NULL, &valid);
-    rocketnet_unit_check(result.rtt == 20.0f && result.jitter == 0 && result.sent_kbps == 0 && result.received_kbps == 0);
+    rocketnet_ack_stats_history_compute( history, &result, NULL, NULL, &valid );
+    rocketnet_unit_check( result.rtt == 20.0f && result.jitter == 0 && result.sent_kbps == 0 && result.received_kbps == 0 );
     valid.invalidate();
-    rocketnet_ack_stats_history_compute(history, &result, NULL, NULL, &valid);
-    rocketnet_unit_check(result.rtt == 0 && result.jitter == 0 && history->rtt_history[0] == 20.0f);
+    rocketnet_ack_stats_history_compute( history, &result, NULL, NULL, &valid );
+    rocketnet_unit_check( result.rtt == 0 && result.jitter == 0 && history->rtt_history[0] == 20.0f );
     delete history;
 }
-REGISTER_UNIT_TEST(test_ack_stats_epoch_invalidation_preserves_storage);
+REGISTER_UNIT_TEST( test_ack_stats_epoch_invalidation_preserves_storage );
 
 #include "rocketnet_replay.h"
 
@@ -330,7 +331,7 @@ static void test_ack_received_late_alias_keeps_counted_newer()
 {
     auto * endpoint = stats_endpoint();
     struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
 
     stats_accept( endpoint, &replay, 3000, 300, 1000.0 );
     stats_accept( endpoint, &replay, 3001, 400, 1001.0 );

@@ -38,8 +38,7 @@
 
 static void test_ack_block_empty_read_across_wrap()
 {
-    const uint64_t highest_sent[] =
-    {
+    const uint64_t highest_sent[] = {
         0,
         1,
         ACK_BLOCK_WRAP_2_31 - 1,

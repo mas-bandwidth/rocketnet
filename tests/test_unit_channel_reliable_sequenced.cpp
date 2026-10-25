@@ -93,7 +93,7 @@ static void test_reliable_sequenced_c_api_start_finish()
 {
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                               ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
+                                                             ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     check( object != NULL );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     uint8_t * data = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, 3 );

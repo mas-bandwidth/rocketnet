@@ -30,7 +30,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdarg.h>
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -58,7 +58,8 @@ static struct rocketnet_live_config_t g_live = { .seed = 0, .max_message_bytes =
 
 void interrupt_handler( int signal )
 {
-    (void) signal; quit = 1;
+    (void) signal;
+    quit = 1;
 }
 
 static void usage( void )
@@ -102,9 +103,10 @@ static void set_status( const char * path, const char * line )
 static FILE * g_results = NULL;
 
 #if defined( __GNUC__ ) || defined( __clang__ )
-__attribute__(( format( printf, 2, 3 ) ))
+__attribute__( ( format( printf, 2, 3 ) ) )
 #endif
-static void results_line( const char * kind, const char * fmt, ... )
+static void
+results_line( const char * kind, const char * fmt, ... )
 {
     if ( !g_results )
         return;
@@ -118,9 +120,10 @@ static void results_line( const char * kind, const char * fmt, ... )
 }
 
 #if defined( __GNUC__ ) || defined( __clang__ )
-__attribute__(( format( printf, 1, 2 ) ))
+__attribute__( ( format( printf, 1, 2 ) ) )
 #endif
-static void results_event( const char * fmt, ... )
+static void
+results_event( const char * fmt, ... )
 {
     if ( !g_results )
         return;
@@ -139,7 +142,7 @@ static void results_event( const char * fmt, ... )
 // macOS, which has no /proc), stdin is not watched, and no interface is found.
 static uint64_t resident_bytes( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     return 0;
 #else
     FILE * f = fopen( "/proc/self/statm", "r" );
@@ -157,7 +160,7 @@ static uint64_t resident_bytes( void )
 // the card: the server exits when its controlling ssh or stdin closes
 static void check_stdin_closed( void )
 {
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     fd_set rfds;
     FD_ZERO( &rfds );
     FD_SET( 0, &rfds );
@@ -188,8 +191,10 @@ static void dump_counters( const struct rocketnet_counters_t * counters )
 // the interface that carries an IPv4 address, via `ip -o -4 addr show`
 static int interface_for_address( const char * address, char * out, size_t out_size )
 {
-#if defined(_WIN32)
-    (void) address; (void) out; (void) out_size;
+#if defined( _WIN32 )
+    (void) address;
+    (void) out;
+    (void) out_size;
     return 0;
 #else
     char cmd[256];
@@ -200,7 +205,7 @@ static int interface_for_address( const char * address, char * out, size_t out_s
     if ( fgets( out, (int) out_size, f ) )
     {
         size_t len = strlen( out );
-        while ( len && ( out[len-1] == '\n' || out[len-1] == '\r' ) )
+        while ( len && ( out[len - 1] == '\n' || out[len - 1] == '\r' ) )
             out[--len] = 0;
         pclose( f );
         return len > 0;
@@ -214,7 +219,7 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 // string as `uname -r`); the out-of-tree build reports its own release number.
 static int in_tree_transport( const char * nic )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     (void) nic;
     return 0;
 #else
@@ -223,7 +228,7 @@ static int in_tree_transport( const char * nic )
     FILE * f = popen( cmd, "r" );
     if ( !f )
         return 1;
-    char transport[64] = {0}, version[64] = {0};
+    char transport[64] = { 0 }, version[64] = { 0 };
     if ( fscanf( f, "%63s %63s", transport, version ) != 2 )
     {
         pclose( f );
@@ -233,11 +238,11 @@ static int in_tree_transport( const char * nic )
     FILE * u = popen( "uname -r", "r" );
     if ( !u )
         return 1;
-    char kernel[64] = {0};
+    char kernel[64] = { 0 };
     if ( fgets( kernel, sizeof kernel, u ) )
     {
         size_t len = strlen( kernel );
-        while ( len && ( kernel[len-1] == '\n' || kernel[len-1] == '\r' ) )
+        while ( len && ( kernel[len - 1] == '\n' || kernel[len - 1] == '\r' ) )
             kernel[--len] = 0;
     }
     pclose( u );
@@ -360,9 +365,18 @@ static void ledger_progress( struct server_client_t * c, int mode, int channel, 
         dnums += ( L + F - 1 ) / F;
         dmsg++;
     }
-    if ( c->out_messages >= dmsg ) c->out_messages -= dmsg; else c->out_messages = 0;
-    if ( c->out_bytes >= dbytes ) c->out_bytes -= (uint32_t) dbytes; else c->out_bytes = 0;
-    if ( c->out_numbers >= dnums ) c->out_numbers -= (uint32_t) dnums; else c->out_numbers = 0;
+    if ( c->out_messages >= dmsg )
+        c->out_messages -= dmsg;
+    else
+        c->out_messages = 0;
+    if ( c->out_bytes >= dbytes )
+        c->out_bytes -= (uint32_t) dbytes;
+    else
+        c->out_bytes = 0;
+    if ( c->out_numbers >= dnums )
+        c->out_numbers -= (uint32_t) dnums;
+    else
+        c->out_numbers = 0;
     s->confirmed = new_confirm;
 }
 
@@ -457,8 +471,8 @@ static int matrix_build_progress( const struct server_client_t * c, uint8_t * bu
 // section 5: the report's one sending call, behind a pointer so the self-test
 // can observe emission without a socket (the card's test rule). The running
 // program keeps the library call.
-typedef int (*server_progress_send_fn)( struct rocketnet_message_server_t * server, int client_index, int channel,
-                                        int reliability, const uint8_t * data, int bytes );
+typedef int ( *server_progress_send_fn )( struct rocketnet_message_server_t * server, int client_index, int channel,
+                                          int reliability, const uint8_t * data, int bytes );
 
 static int server_progress_send( struct rocketnet_message_server_t * server, int client_index, int channel,
                                  int reliability, const uint8_t * data, int bytes )
@@ -714,9 +728,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
                     const uint32_t rnum = ( mode >= 2 && mode <= 7 ) ? ( length + F - 1 ) / F : 0u;
                     const int tiny = length < ROCKETNET_SERVER_TINY;
                     const int reliable = server_reliable_path( mode, length );
-                    if ( !tiny && reliable && ( c->out_bytes + length > ROCKETNET_SERVER_SEND_BUFFER_HALF ||
-                                                c->out_messages + 1 > ROCKETNET_SERVER_SEND_QUEUE_HALF ||
-                                                c->out_numbers + rnum > ROCKETNET_SERVER_WINDOW_HALF ) )
+                    if ( !tiny && reliable && ( c->out_bytes + length > ROCKETNET_SERVER_SEND_BUFFER_HALF || c->out_messages + 1 > ROCKETNET_SERVER_SEND_QUEUE_HALF || c->out_numbers + rnum > ROCKETNET_SERVER_WINDOW_HALF ) )
                     {
                         c->paced++;
                         break;
@@ -894,20 +906,37 @@ int main( int argc, char ** argv )
             usage();
             return 0;
         }
-        else if ( strcmp( a, "--matrix" ) == 0 ) matrix = 1;
-        else if ( strcmp( a, "--address" ) == 0 && i + 1 < argc ) address = argv[++i];
-        else if ( strcmp( a, "--label" ) == 0 && i + 1 < argc ) label = argv[++i];
-        else if ( strcmp( a, "--seed" ) == 0 && i + 1 < argc ) seed = (uint32_t) strtoul( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--send-kbps" ) == 0 && i + 1 < argc ) send_kbps = (uint32_t) strtoul( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--max-clients" ) == 0 && i + 1 < argc ) max_clients = (int) strtol( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc ) packets_per_update = (int) strtol( argv[++i], NULL, 10 );
-        else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc ) update_hz = strtod( argv[++i], NULL );
-        else if ( strcmp( a, "--counters-every" ) == 0 && i + 1 < argc ) counters_every = strtod( argv[++i], NULL );
-        else if ( strcmp( a, "--results" ) == 0 && i + 1 < argc ) results_path = argv[++i];
-        else if ( strcmp( a, "--status" ) == 0 && i + 1 < argc ) status_path = argv[++i];
-        else if ( strcmp( a, "--transport" ) == 0 && i + 1 < argc ) transport = argv[++i];
-        else if ( strcmp( a, "--self-test-result" ) == 0 && i + 1 < argc ) { self_test = 1; self_test_path = argv[++i]; }
-        else if ( a[0] != '-' && !address ) address = a;
+        else if ( strcmp( a, "--matrix" ) == 0 )
+            matrix = 1;
+        else if ( strcmp( a, "--address" ) == 0 && i + 1 < argc )
+            address = argv[++i];
+        else if ( strcmp( a, "--label" ) == 0 && i + 1 < argc )
+            label = argv[++i];
+        else if ( strcmp( a, "--seed" ) == 0 && i + 1 < argc )
+            seed = (uint32_t) strtoul( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--send-kbps" ) == 0 && i + 1 < argc )
+            send_kbps = (uint32_t) strtoul( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--max-clients" ) == 0 && i + 1 < argc )
+            max_clients = (int) strtol( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--max-packets-per-update" ) == 0 && i + 1 < argc )
+            packets_per_update = (int) strtol( argv[++i], NULL, 10 );
+        else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc )
+            update_hz = strtod( argv[++i], NULL );
+        else if ( strcmp( a, "--counters-every" ) == 0 && i + 1 < argc )
+            counters_every = strtod( argv[++i], NULL );
+        else if ( strcmp( a, "--results" ) == 0 && i + 1 < argc )
+            results_path = argv[++i];
+        else if ( strcmp( a, "--status" ) == 0 && i + 1 < argc )
+            status_path = argv[++i];
+        else if ( strcmp( a, "--transport" ) == 0 && i + 1 < argc )
+            transport = argv[++i];
+        else if ( strcmp( a, "--self-test-result" ) == 0 && i + 1 < argc )
+        {
+            self_test = 1;
+            self_test_path = argv[++i];
+        }
+        else if ( a[0] != '-' && !address )
+            address = a;
         else
         {
             fprintf( stderr, "server: unknown argument: %s\n", a );
@@ -944,7 +973,7 @@ int main( int argc, char ** argv )
     // section 9: when xdp is pinned, refuse the in-tree transport
     if ( strcmp( config.transport, "xdp" ) == 0 )
     {
-        char nic[64] = {0};
+        char nic[64] = { 0 };
         if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
         {
             fprintf( stderr, "server: refusing: interface %s reports the in-tree transport\n", nic );

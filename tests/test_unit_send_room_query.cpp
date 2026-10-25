@@ -31,7 +31,10 @@ static double send_room_clock( void * ) { return g_send_room_now; }
 static int g_send_room_asserts = 0;
 static void send_room_count_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
     g_send_room_asserts++;
 }
 
@@ -40,11 +43,15 @@ static void send_room_frame( rocketnet_server_t * server, rocketnet_client_t ** 
     for ( int i = 0; i < num_clients; i++ )
     {
         rocketnet_client_update( clients[i], g_send_room_now );
-        while ( rocketnet_client_receive_messages( clients[i] ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( clients[i] ) != NULL )
+        {
+        }
         rocketnet_client_send_packets( clients[i] );
     }
     rocketnet_server_update( server, g_send_room_now );
-    while ( rocketnet_server_receive_messages( server ) != NULL ) {}
+    while ( rocketnet_server_receive_messages( server ) != NULL )
+    {
+    }
     rocketnet_server_send_packets( server );
     g_send_room_now += 0.01;
 }
@@ -60,7 +67,7 @@ static void send_room_stats_unchanged_by_asking_client( rocketnet_client_t * cli
     for ( int i = 0; i < 64; i++ )
     {
         check( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) == answer );
-        (void) rocketnet_client_can_send_message( client, i % 4, (enum rocketnet_reliability_t) ( i % 8 ), i * 37 );
+        (void) rocketnet_client_can_send_message( client, i % 4, ( enum rocketnet_reliability_t )( i % 8 ), i * 37 );
     }
     rocketnet_client_stats( client, &after );
     check( memcmp( &before, &after, sizeof( before ) ) == 0 );
@@ -77,7 +84,7 @@ static void send_room_stats_unchanged_by_asking_server( rocketnet_server_t * ser
     for ( int i = 0; i < 64; i++ )
     {
         check( rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) == answer );
-        (void) rocketnet_server_can_send_message( server, slot, i % 4, (enum rocketnet_reliability_t) ( i % 8 ), i * 37 );
+        (void) rocketnet_server_can_send_message( server, slot, i % 4, ( enum rocketnet_reliability_t )( i % 8 ), i * 37 );
     }
     rocketnet_server_client_stats( server, slot, &after );
     check( memcmp( &before, &after, sizeof( before ) ) == 0 );
@@ -139,7 +146,7 @@ static void test_send_room_query_public_api_client_and_server()
 
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         check( rn_test_server_token_string( backend_secret, server, SEND_ROOM_PROTOCOL, addresses, 1,
-            (uint64_t) ( 0x51 + i ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+                                            (uint64_t) ( 0x51 + i ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
         check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
 
         // connecting: dropped like the start, so no room

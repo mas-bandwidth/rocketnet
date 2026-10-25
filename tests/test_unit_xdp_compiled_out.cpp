@@ -41,7 +41,7 @@ struct xdp_compiled_out_env_pin
 
 static void xdp_compiled_out_pin_set_aside( xdp_compiled_out_env_pin * saved )
 {
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
+    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
     rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 }
 

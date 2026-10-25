@@ -14,8 +14,7 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-static const rn_standard_vector_t standard_skeleton_table[] =
-{
+static const rn_standard_vector_t standard_skeleton_table[] = {
     RN_STANDARD_VECTOR( "t3.token-identifier", "f520da9d95fd072256b47d755f810f61" ),
 };
 

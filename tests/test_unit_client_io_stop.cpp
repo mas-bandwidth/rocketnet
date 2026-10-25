@@ -31,7 +31,7 @@ static double client_io_stop_test_time( void * context )
 }
 
 static void client_io_stop_test_open( rocketnet_fake_client_transport_io_t * fake,
-    const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
+                                      const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
 {
     rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
@@ -165,7 +165,7 @@ REGISTER_UNIT_TEST( test_client_io_stop_exits_with_nothing_new );
 static int client_io_stop_hand_off_asserts = 0;
 
 static void client_io_stop_hand_off_assert_hook( const char * condition, const char * function,
-    const char * file, int line )
+                                                 const char * file, int line )
 {
     (void) condition;
     (void) function;
@@ -176,7 +176,7 @@ static void client_io_stop_hand_off_assert_hook( const char * condition, const c
 
 static void test_client_io_hand_off_after_stop_asserts()
 {
-    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) =
+    void ( *saved_assert )( const char * condition, const char * function, const char * file, int line ) =
         rn_assert_function;
     rocketnet_assert_function( client_io_stop_hand_off_assert_hook );
     client_io_stop_hand_off_asserts = 0;
@@ -305,8 +305,7 @@ static void destroy_wait_wake( void * driver )
     rocketnet_fake_client_wake( &h->fake );
 }
 
-static const rocketnet_client_transport_io_operations_t destroy_wait_io_operations =
-{
+static const rocketnet_client_transport_io_operations_t destroy_wait_io_operations = {
     destroy_wait_create, destroy_wait_destroy, destroy_wait_send, destroy_wait_receive,
     NULL, NULL, destroy_wait_wait, destroy_wait_wake, NULL, NULL
 };

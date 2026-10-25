@@ -94,7 +94,11 @@ static uint32_t rs_server_stale( const rocketnet_channel_harness_t * h )
 // ordered record and the newest state have arrived.
 void reliable_sequenced_long_run_across_epochs()
 {
-    enum { states = 1400, ordered_every = 8 };
+    enum
+    {
+        states = 1400,
+        ordered_every = 8
+    };
     rocketnet_channel_harness_t h;
     rs_functional_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     rs_functional_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
@@ -202,9 +206,11 @@ void reliable_sequenced_held_record_released()
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     rs_functional_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) && d.bytes == 4 &&
-                         rs_state_read( d.data ) == ( rs_ordered_flag | 1 ), "the ordered record did not arrive first" );
+                             rs_state_read( d.data ) == ( rs_ordered_flag | 1 ),
+                         "the ordered record did not arrive first" );
     rs_functional_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) && d.bytes == 4 &&
-                         rs_state_read( d.data ) == 2, "the held state was not released when its epoch opened" );
+                             rs_state_read( d.data ) == 2,
+                         "the held state was not released when its epoch opened" );
 
     // Nothing more arrives: the resends the client makes are duplicates now.
     for ( int i = 0; i < 60 * 3; i++ )

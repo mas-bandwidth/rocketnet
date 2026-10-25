@@ -19,6 +19,7 @@
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
+// clang-format off
 #define ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS( X ) \
     X( context, void * context )                                                      \
     X( max_clients, int max_clients )                                                 \
@@ -41,6 +42,7 @@
     X( mapping_index, int * mapping_index )                                           \
     X( confirmed, int * confirmed )                                                   \
     X( user_data, uint8_t * user_data ) /* max_clients * ROCKETNET_USER_DATA_BYTES */
+// clang-format on
 
 struct rocketnet_client_slots_t
 {
@@ -49,13 +51,14 @@ struct rocketnet_client_slots_t
 #undef ROCKETNET_CLIENT_SLOTS_LAYOUT_FIELDS_DECLARE
 };
 
-uint64_t rocketnet_client_slots_allocation_bytes(int clients)
+uint64_t rocketnet_client_slots_allocation_bytes( int clients )
 {
-    if (clients < 1) return 0;
-    const uint64_t n = (uint64_t)clients;
-    return rocketnet_memory_allocations({sizeof(rocketnet_client_slots_t), 2*n*sizeof(int),
-        n*sizeof(int), n*sizeof(uint64_t), n*sizeof(int), n*sizeof(int), n*sizeof(int), n*sizeof(int),
-        n*ROCKETNET_USER_DATA_BYTES});
+    if ( clients < 1 )
+        return 0;
+    const uint64_t n = (uint64_t) clients;
+    return rocketnet_memory_allocations( { sizeof( rocketnet_client_slots_t ), 2 * n * sizeof( int ),
+                                           n * sizeof( int ), n * sizeof( uint64_t ), n * sizeof( int ), n * sizeof( int ), n * sizeof( int ), n * sizeof( int ),
+                                           n * ROCKETNET_USER_DATA_BYTES } );
 }
 
 struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context, int max_clients )
@@ -69,24 +72,24 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     if ( max_clients < 1 || max_clients > INT_MAX / 2 )
         return NULL;
 
-    struct rocketnet_client_slots_t * slots = (struct rocketnet_client_slots_t*) rocketnet_malloc( context, sizeof(struct rocketnet_client_slots_t) );
+    struct rocketnet_client_slots_t * slots = (struct rocketnet_client_slots_t *) rocketnet_malloc( context, sizeof( struct rocketnet_client_slots_t ) );
     if ( !slots )
         return NULL;
-    memset( slots, 0, sizeof(struct rocketnet_client_slots_t) );
+    memset( slots, 0, sizeof( struct rocketnet_client_slots_t ) );
 
     slots->context = context;
     slots->max_clients = max_clients;
     slots->num_buckets = max_clients * 2;
-    randombytes_buf( slots->hash_key, sizeof(slots->hash_key) );
+    randombytes_buf( slots->hash_key, sizeof( slots->hash_key ) );
 
-    slots->bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) slots->num_buckets );
-    slots->next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
-    slots->client_id = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) max_clients );
-    slots->connected = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
-    slots->mapping_index = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
-    slots->confirmed = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
-    slots->free_stack = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
-    slots->user_data = (uint8_t*) rocketnet_malloc( context, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) max_clients );
+    slots->bucket_head = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) slots->num_buckets );
+    slots->next = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) max_clients );
+    slots->client_id = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) max_clients );
+    slots->connected = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) max_clients );
+    slots->mapping_index = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) max_clients );
+    slots->confirmed = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) max_clients );
+    slots->free_stack = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) max_clients );
+    slots->user_data = (uint8_t *) rocketnet_malloc( context, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) max_clients );
 
     if ( !slots->bucket_head || !slots->next || !slots->client_id || !slots->connected || !slots->mapping_index || !slots->confirmed || !slots->free_stack || !slots->user_data )
     {
@@ -97,10 +100,10 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     for ( int i = 0; i < slots->num_buckets; i++ )
         slots->bucket_head[i] = -1;
 
-    memset( slots->next, 0, sizeof(int) * (size_t) max_clients );
-    memset( slots->client_id, 0, sizeof(uint64_t) * (size_t) max_clients );
-    memset( slots->connected, 0, sizeof(int) * (size_t) max_clients );
-    memset( slots->confirmed, 0, sizeof(int) * (size_t) max_clients );
+    memset( slots->next, 0, sizeof( int ) * (size_t) max_clients );
+    memset( slots->client_id, 0, sizeof( uint64_t ) * (size_t) max_clients );
+    memset( slots->connected, 0, sizeof( int ) * (size_t) max_clients );
+    memset( slots->confirmed, 0, sizeof( int ) * (size_t) max_clients );
     // Assignment writes the entire user-data record before the slot is read.
     // Unassigned records have no secret and do not need their pages touched.
 
@@ -159,7 +162,7 @@ int rocketnet_client_slots_num_free( const struct rocketnet_client_slots_t * slo
 static int rocketnet_client_slots_bucket( const struct rocketnet_client_slots_t * slots, uint64_t client_id )
 {
     uint8_t hash[crypto_shorthash_BYTES];
-    crypto_shorthash( hash, (const uint8_t*) &client_id, 8, slots->hash_key );
+    crypto_shorthash( hash, (const uint8_t *) &client_id, 8, slots->hash_key );
     uint64_t value;
     memcpy( &value, hash, 8 );
     return (int) ( value % (uint64_t) slots->num_buckets );
@@ -334,9 +337,9 @@ bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t f
 #define SLOT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_slots_t, field, #decision[0] == 'R' ),
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( SLOT_DECISION ) };
 #undef SLOT_DECISION
-    return rocketnet_reset_inventory_matches( "rocketnet_client_slots_t", members, sizeof(members) / sizeof(members[0]),
-                                              decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
-                                              sizeof(rocketnet_client_slots_t), alignof(rocketnet_client_slots_t),
+    return rocketnet_reset_inventory_matches( "rocketnet_client_slots_t", members, sizeof( members ) / sizeof( members[0] ),
+                                              decisions, sizeof( decisions ) / sizeof( decisions[0] ), 0,
+                                              sizeof( rocketnet_client_slots_t ), alignof( rocketnet_client_slots_t ),
                                               failure, failure_bytes );
 }
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -347,10 +350,10 @@ bool rocketnet_client_slots_reset_witness_for_test()
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
     if ( !slots )
         return false;
-    uint8_t key[sizeof(slots->hash_key)];
-    memcpy( key, slots->hash_key, sizeof(key) );
+    uint8_t key[sizeof( slots->hash_key )];
+    memcpy( key, slots->hash_key, sizeof( key ) );
     uint8_t user[ROCKETNET_USER_DATA_BYTES];
-    memset( user, 0xA5, sizeof(user) );
+    memset( user, 0xA5, sizeof( user ) );
     const int index = rocketnet_client_slots_assign( slots, UINT64_MAX, 77, user );
     if ( index != 0 )
     {
@@ -362,7 +365,7 @@ bool rocketnet_client_slots_reset_witness_for_test()
     bool clean = slots->num_connected == 0 && slots->free_stack_count == 1 && slots->free_stack[0] == 0 &&
                  slots->bucket_head[0] == -1 && slots->bucket_head[1] == -1 && slots->next[0] == 0 &&
                  slots->client_id[0] == 0 && slots->connected[0] == 0 && slots->mapping_index[0] == -1 &&
-                 slots->confirmed[0] == 0 && memcmp( slots->hash_key, key, sizeof(key) ) == 0;
+                 slots->confirmed[0] == 0 && memcmp( slots->hash_key, key, sizeof( key ) ) == 0;
     for ( int i = 0; clean && i < ROCKETNET_USER_DATA_BYTES; i++ )
         clean = slots->user_data[i] == 0;
     rocketnet_client_slots_destroy( slots );

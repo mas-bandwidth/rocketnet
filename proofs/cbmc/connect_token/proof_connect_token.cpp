@@ -70,7 +70,7 @@ int crypto_box_seal_open( unsigned char * m,
                           const unsigned char * sk )
 {
     __CPROVER_assert( c == g_signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,
-        "seal_open reads the sealed block at its signed-data offset" );
+                      "seal_open reads the sealed block at its signed-data offset" );
     __CPROVER_assert( clen == ROCKETNET_SEALED_BLOCK_BYTES, "seal_open reads the sealed block length" );
     __CPROVER_assert( PROOF_R_OK( c, clen ), "seal_open reads its sealed block" );
     __CPROVER_assert( PROOF_R_OK( pk, ROCKETNET_KEY_BYTES ), "seal_open reads the server public key" );
@@ -126,7 +126,7 @@ int crypto_box_seal( unsigned char * c, const unsigned char * m,
     __CPROVER_assert( PROOF_R_OK( m, mlen ), "seal reads its plaintext" );
     __CPROVER_assert( PROOF_R_OK( pk, ROCKETNET_KEY_BYTES ), "seal reads the public key" );
     __CPROVER_assert( PROOF_W_OK( c, mlen + ROCKETNET_SEALED_BLOCK_BYTES - ROCKETNET_PRIVATE_BLOCK_BYTES ),
-        "seal writes the sealed plaintext" );
+                      "seal writes the sealed plaintext" );
     PROOF_HAVOC( c, mlen + ROCKETNET_SEALED_BLOCK_BYTES - ROCKETNET_PRIVATE_BLOCK_BYTES );
     return 0;
 }
@@ -217,27 +217,14 @@ void harness_read_connect_token( void )
 
     rocketnet_read_connect_token( &output, token );
 
-    __CPROVER_assert( output.signed_connect_data[0] == token[0]
-                          && output.signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1]
-                                 == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1],
-        "the signed connect data is the first 576 token bytes" );
-    __CPROVER_assert( output.signature[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES]
-                          && output.signature[ROCKETNET_SIGNATURE_BYTES - 1]
-                                 == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES - 1],
-        "the signature follows the signed connect data" );
-    __CPROVER_assert( output.client_to_server_key[0]
-                          == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES]
-                          && output.client_to_server_key[ROCKETNET_KEY_BYTES - 1]
-                                 == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES
-                                          + ROCKETNET_KEY_BYTES - 1],
-        "the client-to-server key follows the signature" );
-    __CPROVER_assert( output.server_to_client_key[0]
-                          == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES
-                                   + ROCKETNET_KEY_BYTES]
-                          && output.server_to_client_key[ROCKETNET_KEY_BYTES - 1]
-                                 == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES
-                                          + 2 * ROCKETNET_KEY_BYTES - 1],
-        "the server-to-client key follows the client-to-server key" );
+    __CPROVER_assert( output.signed_connect_data[0] == token[0] && output.signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1],
+                      "the signed connect data is the first 576 token bytes" );
+    __CPROVER_assert( output.signature[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES] && output.signature[ROCKETNET_SIGNATURE_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES - 1],
+                      "the signature follows the signed connect data" );
+    __CPROVER_assert( output.client_to_server_key[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES] && output.client_to_server_key[ROCKETNET_KEY_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + ROCKETNET_KEY_BYTES - 1],
+                      "the client-to-server key follows the signature" );
+    __CPROVER_assert( output.server_to_client_key[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + ROCKETNET_KEY_BYTES] && output.server_to_client_key[ROCKETNET_KEY_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 2 * ROCKETNET_KEY_BYTES - 1],
+                      "the server-to-client key follows the client-to-server key" );
 }
 
 /* the signed connect data: every field read at its documented offset, all of
@@ -274,24 +261,16 @@ void harness_read_signed_connect_data( void )
     const uint8_t flags = rocketnet_read_uint8( &p );
     __CPROVER_assert( output.address_flags == flags, "address flags are read at their offset" );
 
-    __CPROVER_assert( output.ipv4_address[0] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV4]
-                          && output.ipv4_address[5] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV4 + 5],
-        "the ipv4 address is read at its offset" );
-    __CPROVER_assert( output.ipv6_address[0] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV6]
-                          && output.ipv6_address[17] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV6 + 17],
-        "the ipv6 address is read at its offset" );
-    __CPROVER_assert( output.server_public_key[0] == signed_data[ROCKETNET_SIGNED_OFFSET_SERVER_KEY]
-                          && output.server_public_key[ROCKETNET_KEY_BYTES - 1]
-                                 == signed_data[ROCKETNET_SIGNED_OFFSET_SERVER_KEY + ROCKETNET_KEY_BYTES - 1],
-        "the server public key is read at its offset" );
-    __CPROVER_assert( output.sealed_private_block[0] == signed_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK]
-                          && output.sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES - 1]
-                                 == signed_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK
-                                                + ROCKETNET_SEALED_BLOCK_BYTES - 1],
-        "the sealed private block is read at its offset" );
-    __CPROVER_assert( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES
-                          <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
-        "the sealed block ends inside the signed block" );
+    __CPROVER_assert( output.ipv4_address[0] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV4] && output.ipv4_address[5] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV4 + 5],
+                      "the ipv4 address is read at its offset" );
+    __CPROVER_assert( output.ipv6_address[0] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV6] && output.ipv6_address[17] == signed_data[ROCKETNET_SIGNED_OFFSET_IPV6 + 17],
+                      "the ipv6 address is read at its offset" );
+    __CPROVER_assert( output.server_public_key[0] == signed_data[ROCKETNET_SIGNED_OFFSET_SERVER_KEY] && output.server_public_key[ROCKETNET_KEY_BYTES - 1] == signed_data[ROCKETNET_SIGNED_OFFSET_SERVER_KEY + ROCKETNET_KEY_BYTES - 1],
+                      "the server public key is read at its offset" );
+    __CPROVER_assert( output.sealed_private_block[0] == signed_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK] && output.sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES - 1] == signed_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES - 1],
+                      "the sealed private block is read at its offset" );
+    __CPROVER_assert( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
+                      "the sealed block ends inside the signed block" );
 }
 
 /* the private block: every field read at its documented offset, all of them
@@ -308,20 +287,17 @@ void harness_read_connect_token_private( void )
     __CPROVER_assert( output.client_id == rocketnet_read_uint64( &p ), "client id is read first" );
     __CPROVER_assert( output.protocol_id == rocketnet_read_uint64( &p ), "protocol id follows the client id" );
     __CPROVER_assert( output.expire_timestamp == rocketnet_read_uint64( &p ), "expire follows the protocol id" );
-    __CPROVER_assert( output.client_to_server_key[0] == p[0]
-                          && output.client_to_server_key[ROCKETNET_KEY_BYTES - 1] == p[ROCKETNET_KEY_BYTES - 1],
-        "the client-to-server key follows the expire" );
+    __CPROVER_assert( output.client_to_server_key[0] == p[0] && output.client_to_server_key[ROCKETNET_KEY_BYTES - 1] == p[ROCKETNET_KEY_BYTES - 1],
+                      "the client-to-server key follows the expire" );
     p += ROCKETNET_KEY_BYTES;
-    __CPROVER_assert( output.server_to_client_key[0] == p[0]
-                          && output.server_to_client_key[ROCKETNET_KEY_BYTES - 1] == p[ROCKETNET_KEY_BYTES - 1],
-        "the server-to-client key follows the client-to-server key" );
+    __CPROVER_assert( output.server_to_client_key[0] == p[0] && output.server_to_client_key[ROCKETNET_KEY_BYTES - 1] == p[ROCKETNET_KEY_BYTES - 1],
+                      "the server-to-client key follows the client-to-server key" );
     p += ROCKETNET_KEY_BYTES;
-    __CPROVER_assert( output.user_data[0] == p[0]
-                          && output.user_data[ROCKETNET_USER_DATA_BYTES - 1] == p[ROCKETNET_USER_DATA_BYTES - 1],
-        "the user data follows the server-to-client key" );
+    __CPROVER_assert( output.user_data[0] == p[0] && output.user_data[ROCKETNET_USER_DATA_BYTES - 1] == p[ROCKETNET_USER_DATA_BYTES - 1],
+                      "the user data follows the server-to-client key" );
     p += ROCKETNET_USER_DATA_BYTES;
     __CPROVER_assert( (size_t) ( p - buffer ) <= ROCKETNET_PRIVATE_BLOCK_BYTES,
-        "the last private field ends inside the block" );
+                      "the last private field ends inside the block" );
 }
 
 /* the signature verifier: symbolic signed data, signature and backend public
@@ -372,9 +348,8 @@ void harness_private_consistent( void )
     const uint64_t signed_expire = rocketnet_read_uint64( &p );
 
     __CPROVER_assert( result == 0 || result == 1, "consistency returns 0 or 1" );
-    __CPROVER_assert( result == ( private_fields.protocol_id == signed_protocol_id
-                                  && private_fields.expire_timestamp == signed_expire ),
-        "consistency compares the protocol id and expire at their offsets" );
+    __CPROVER_assert( result == ( private_fields.protocol_id == signed_protocol_id && private_fields.expire_timestamp == signed_expire ),
+                      "consistency compares the protocol id and expire at their offsets" );
 }
 
 /* the identifier: the 16-byte hash of exactly 576 symbolic signed bytes. */

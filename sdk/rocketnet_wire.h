@@ -183,11 +183,11 @@ struct rocketnet_server_xdp_config_t
 };
 
 #ifdef __cplusplus
-static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
+static_assert( sizeof( struct rocketnet_server_xdp_config_t ) == 32, "the XDP config map value is 32 bytes" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
-ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_config_t ) == 32, "the XDP config map value is 32 bytes" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #endif // #ifdef __cplusplus
@@ -214,15 +214,15 @@ struct rocketnet_server_xdp_replay_value_t
 };
 
 #ifdef __cplusplus
-static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
+static_assert( sizeof( struct rocketnet_server_xdp_replay_key_t ) == 20, "the XDP replay key is 20 bytes" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
 static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
-static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
+static_assert( sizeof( struct rocketnet_server_xdp_replay_value_t ) == 8, "the XDP replay value is 8 bytes" );
 #elif defined( __GNUC__ ) || defined( __clang__ ) // C: __builtin_offsetof is a GNU form; MSVC C checks none of this
-ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_replay_key_t ) == 20, "the XDP replay key is 20 bytes" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
 ROCKETNET_WIRE_STATIC_ASSERT( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
-ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
+ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_replay_value_t ) == 8, "the XDP replay value is 8 bytes" );
 #endif // #ifdef __cplusplus
 
 // The kernel filter's counters, incremented in the XDP program per verdict

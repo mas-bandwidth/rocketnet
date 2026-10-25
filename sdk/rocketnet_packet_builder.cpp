@@ -18,7 +18,7 @@
 static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
 }
 
 // The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.

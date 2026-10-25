@@ -56,7 +56,7 @@ size_t rocketnet_loopback_queue_bytes( int packets );
 // ROCKETNET_LOOPBACK_QUEUE_PACKETS.
 int rocketnet_loopback_server_queue_packets( int max_clients );
 
-#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
 // Deterministic send-lock contention seam; test library only.
 void rocketnet_loopback_test_send_contention( bool busy );
 

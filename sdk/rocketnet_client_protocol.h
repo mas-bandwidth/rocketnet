@@ -51,8 +51,8 @@ struct rocketnet_client_protocol_t;
 // the challenge commits the session keys, retire on every terminal state
 // before the keys are zeroed. NULL on every other path.
 
-typedef void ( * rocketnet_client_publish_keys_t )( void * context, const struct rocketnet_client_protocol_t * client );
-typedef void ( * rocketnet_client_retire_keys_t )( void * context );
+typedef void ( *rocketnet_client_publish_keys_t )( void * context, const struct rocketnet_client_protocol_t * client );
+typedef void ( *rocketnet_client_retire_keys_t )( void * context );
 
 /*
     The declaration manifest is deliberately independent of the RESET/KEEP
@@ -128,9 +128,9 @@ void rocketnet_client_protocol_zero_state( struct rocketnet_client_protocol_t * 
 // is returned.
 
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
-                              const uint8_t * connect_token,
-                              double current_time,
-                              uint64_t current_timestamp );
+                                       const uint8_t * connect_token,
+                                       double current_time,
+                                       uint64_t current_timestamp );
 
 // Drives sending and deadlines. Call every frame with the current clocks; at
 // most one packet comes back per call, at the send rate -- a rate in time,
@@ -141,9 +141,9 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 // attempt began.
 
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
-                              double current_time,
-                              uint8_t * out_packet,
-                              int * out_packet_bytes );
+                                       double current_time,
+                                       uint8_t * out_packet,
+                                       int * out_packet_bytes );
 
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name
@@ -157,12 +157,12 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // and is reported through the reassembly set's completed fields instead.
 
 int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t * client,
-                                     const uint8_t * packet_data,
-                                     int packet_bytes,
-                                     double current_time,
-                                     uint8_t * out_payload,
-                                     int out_payload_capacity,
-                                     int * out_payload_bytes );
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              double current_time,
+                                              uint8_t * out_payload,
+                                              int out_payload_capacity,
+                                              int * out_payload_bytes );
 
 // tla/RNClientIoDecrypt.tla UpdateConsume: processes one record of a receive
 // buffer a client I/O thread filled, in arrival order. A raw record is
@@ -208,10 +208,10 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
                                                   double current_time );
 
 int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
-                                    const uint8_t * payload_data,
-                                    int payload_bytes,
-                                    double current_time,
-                                    uint8_t * out_packet );
+                                             const uint8_t * payload_data,
+                                             int payload_bytes,
+                                             double current_time,
+                                             uint8_t * out_packet );
 
 // The fragmented send path, per _Fragmentation_. The payload id counter is
 // this attempt's, per direction, starting at one; a sequence block is
@@ -267,9 +267,9 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
 // the state simply resets.
 
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
-                                  uint8_t * out_packets,
-                                  int * out_packet_count,
-                                  int * out_packet_bytes );
+                                           uint8_t * out_packets,
+                                           int * out_packet_count,
+                                           int * out_packet_bytes );
 
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence );

@@ -42,7 +42,7 @@ static void handshake_server_fill_token( struct rocketnet_signed_connect_data_t 
                                          uint64_t create_timestamp,
                                          uint64_t expire_timestamp )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = create_timestamp;
@@ -53,7 +53,7 @@ static void handshake_server_fill_token( struct rocketnet_signed_connect_data_t 
     memcpy( signed_fields->ipv4_address, advertised, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = expire_timestamp;
@@ -96,7 +96,7 @@ static void handshake_server_build_request( uint8_t * request,
 
 static void handshake_server_setup( struct handshake_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -209,7 +209,7 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
                                                  rocketnet_test_client_eph_public, rocketnet_test_server_eph_public ) );
 
         struct rocketnet_replay_protection_t replay;
-        memset( &replay, 0, sizeof(replay) );
+        memset( &replay, 0, sizeof( replay ) );
         uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
         const int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - 8;
         int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &replay );
@@ -243,8 +243,7 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
     return -1;
 }
 
-static const rn_standard_vector_t standard_handshake_server_table[] =
-{
+static const rn_standard_vector_t standard_handshake_server_table[] = {
     RN_STANDARD_VECTOR( "t12.cookie", "0700b759010053414c543030303103f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e9" ),
     RN_STANDARD_VECTOR( "t12.stale-cookie", "0700b759010053414c543030303103f9ac6800000000592e1f69fa21b0744b9209f79a3394fb" ),
     RN_STANDARD_VECTOR( "t12.challenge", "0200b7590100010000004e4f4e4345303031686fb709435ff00e1ac260eeeafbb29120201086c8276255d7d387c39232947b3da13ddd6856b09415f3086c59f76f88" ),
@@ -417,7 +416,7 @@ static void test_claim_released_with_integrity_limit_mapping()
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                                       rocketnet_test_filter_value, 1, NULL,
-                                                      padding, (int) sizeof(padding),
+                                                      padding, (int) sizeof( padding ),
                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                       mapping->client_ephemeral_public_key,
                                                       mapping->keys.session_client_to_server );
@@ -427,9 +426,9 @@ static void test_claim_released_with_integrity_limit_mapping()
     int payload_bytes = 0;
     int payload_client_index = -1;
     check( rocketnet_server_protocol_process_packet( &test.server, &attacker_address, packet, packet_bytes,
-                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                      response, &response_bytes,
-                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                     response, &response_bytes,
+                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
 
@@ -475,7 +474,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                                       rocketnet_test_filter_value, 1, NULL,
-                                                      padding, (int) sizeof(padding),
+                                                      padding, (int) sizeof( padding ),
                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                       mapping->client_ephemeral_public_key,
                                                       mapping->keys.handshake_client_to_server );
@@ -485,9 +484,9 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
     int payload_bytes = 0;
     int payload_client_index = -1;
     check( rocketnet_server_protocol_process_packet( &test.server, &client_address, packet, packet_bytes,
-                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                      response, &response_bytes,
-                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                     response, &response_bytes,
+                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
     // it opened, so it is not a forgery: not DID_NOT_OPEN, and the mapping's
     // integrity-failure count does not move
@@ -499,19 +498,19 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 
     // the correct response still connects: the refusal was of the contents,
     // not of the client
-    memset( padding, 0, sizeof(padding) );
+    memset( padding, 0, sizeof( padding ) );
     packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                                   rocketnet_test_filter_value, 2, NULL,
-                                                  padding, (int) sizeof(padding),
+                                                  padding, (int) sizeof( padding ),
                                                   ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                   mapping->client_ephemeral_public_key,
                                                   mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     response_bytes = 0;
     check( rocketnet_server_protocol_process_packet( &test.server, &client_address, packet, packet_bytes,
-                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                      response, &response_bytes,
-                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                     response, &response_bytes,
+                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
     check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     check( mapping->integrity_failures == 0 );
@@ -626,19 +625,19 @@ static void test_claim_released_when_response_binds_token()
     uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
-                                                           rocketnet_test_filter_value, 1, NULL,
-                                                           padding, (int) sizeof(padding),
-                                                           ROCKETNET_TEST_PROTOCOL_ID, mapping->connection_salt,
-                                                           mapping->client_ephemeral_public_key,
-                                                           mapping->keys.handshake_client_to_server );
+                                                            rocketnet_test_filter_value, 1, NULL,
+                                                            padding, (int) sizeof( padding ),
+                                                            ROCKETNET_TEST_PROTOCOL_ID, mapping->connection_salt,
+                                                            mapping->client_ephemeral_public_key,
+                                                            mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
     check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
-                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                      response, &response_bytes, payload, &payload_bytes,
-                                                      &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+                                                     ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                     response, &response_bytes, payload, &payload_bytes,
+                                                     &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     check( mapping->control->client_index != -1 );
     check( rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1000.0 ) );
     check( !rocketnet_used_token_history_check( test.server.used_token_history, mapping->token_identifier, &other, ROCKETNET_TEST_CREATE_TS ) );

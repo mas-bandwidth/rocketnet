@@ -551,7 +551,7 @@ static void test_default_mask_enables_all_eight_types()
 
     rn_channels_t narrow;
     rocketnet_unit_check( rn_channels_init( &narrow, region, region->num_channels,
-                                           1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) );
+                                            1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) );
     rocketnet_unit_check( rn_channels_send_check( &narrow, ROCKETNET_CHANNEL_TYPE_RELIABLE, 0 ) ==
                           ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == 1 );

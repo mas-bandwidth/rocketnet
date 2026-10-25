@@ -27,8 +27,7 @@ static const struct
 {
     int code;
     const char * name;
-} status_expected[] =
-{
+} status_expected[] = {
     { ROCKETNET_STATUS_OK, "OK" },
     { ROCKETNET_STATUS_ALREADY_INITIALIZED, "ALREADY_INITIALIZED" },
     { ROCKETNET_STATUS_NOT_INITIALIZED, "NOT_INITIALIZED" },
@@ -90,7 +89,7 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -32 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 32 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }

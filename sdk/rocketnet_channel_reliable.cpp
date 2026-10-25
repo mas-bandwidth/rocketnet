@@ -7,10 +7,10 @@
 
 #include <string.h>
 
-#if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
 // Unit-library instrumentation only: no production state or per-chunk writes.
 static thread_local rn_block_cost_t rn_block_cost;
-void rn_channels_block_cost_reset() { memset( &rn_block_cost, 0, sizeof(rn_block_cost) ); }
+void rn_channels_block_cost_reset() { memset( &rn_block_cost, 0, sizeof( rn_block_cost ) ); }
 rn_block_cost_t rn_channels_block_cost_read() { return rn_block_cost; }
 #define RN_BLOCK_COST( field ) ( rn_block_cost.field++ )
 #else
@@ -53,8 +53,7 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    const uint64_t span_end = base_units < 0 ? UINT64_MAX :
-        (uint64_t) base_units * 16 + (uint64_t) ( count - 1 ) * F + ( last ? rn_reliable_round16( (uint64_t) record->bytes ) : 16 );
+    const uint64_t span_end = base_units < 0 ? UINT64_MAX : (uint64_t) base_units * 16 + (uint64_t) ( count - 1 ) * F + ( last ? rn_reliable_round16( (uint64_t) record->bytes ) : 16 );
     if ( base_units < 0 || span_end > region->ring_bytes ||
          !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16, rn_reliable_round16( (uint64_t) record->bytes ) ) )
     {

@@ -18,19 +18,19 @@
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_server_uring.h"
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include "../sdk/rocketnet_server_rio.h"
 #endif
-#if defined(__linux__)
+#if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
 #endif
 
-#if defined(__linux__) && defined(IORING_RECV_MULTISHOT) && defined(ROCKETNET_URING_REAP_TEST_HOOKS) && defined(ROCKETNET_IO_URING)
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 #define DIRECT_COUNT_URING_CASE 1
 #else
 #define DIRECT_COUNT_URING_CASE 0
 #endif
-#if defined(_WIN32) && defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS)
+#if defined( _WIN32 ) && defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS )
 #define DIRECT_COUNT_RIO_CASE 1
 #else
 #define DIRECT_COUNT_RIO_CASE 0
@@ -44,14 +44,17 @@
 
 #if DIRECT_COUNT_URING_CASE || DIRECT_COUNT_RIO_CASE
 
-enum { DIRECT_COUNT_HEADER = 16 };
+enum
+{
+    DIRECT_COUNT_HEADER = 16
+};
 static size_t g_direct_live_bytes;
 static size_t g_direct_allocation_calls;
 
 static void * direct_count_malloc( void * context, size_t bytes )
 {
     ++g_direct_allocation_calls;
-    uint8_t * block = (uint8_t*) rocketnet_default_malloc_function( context, bytes + DIRECT_COUNT_HEADER );
+    uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + DIRECT_COUNT_HEADER );
     if ( !block )
         return NULL;
     memcpy( block, &bytes, sizeof( bytes ) );
@@ -63,7 +66,7 @@ static void direct_count_free( void * context, void * memory )
 {
     if ( !memory )
         return;
-    uint8_t * block = (uint8_t*) memory - DIRECT_COUNT_HEADER;
+    uint8_t * block = (uint8_t *) memory - DIRECT_COUNT_HEADER;
     size_t bytes;
     memcpy( &bytes, block, sizeof( bytes ) );
     g_direct_live_bytes -= bytes;
@@ -135,7 +138,7 @@ REGISTER_UNIT_TEST( test_io_uring_fake_create_destroy_counted );
 #if DIRECT_COUNT_RIO_CASE
 
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
-                                                  int * repost_calls, int * pending_receives, int * guard_hit );
+                                                 int * repost_calls, int * pending_receives, int * guard_hit );
 
 // red first: the fixture took its transport, region, banks and slot bytes
 // with calloc, so the allocator saw none of them. Now each is the

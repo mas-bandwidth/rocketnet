@@ -203,7 +203,7 @@ REGISTER_UNIT_TEST( test_violation_wide_reliable_sequenced_boundary_is_sent );
 // which is counted once for the connection the violation ends. A fresh node
 // per case, because the first violation ends the connection.
 static void violation_feed_refuses( violation_node_t * receiver, const uint8_t * data, int bytes,
-                                     int expected_result, int expected_counter )
+                                    int expected_result, int expected_counter )
 {
     const int result = rn_ordered_receive( &receiver->ordered, data, bytes );
     if ( expected_result >= 0 )
@@ -260,9 +260,13 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
         rocketnet_write_uint16( &p, 0 );
-        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
         rocketnet_write_uint16( &p, 0 );
-        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
         *p++ = 0;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, (int) ( p - payload ), ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH, ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH );
@@ -279,9 +283,13 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
         rocketnet_write_uint16( &p, 1 );
-        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
         rocketnet_write_uint16( &p, 0 );
-        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
         *p++ = 0;
         *p++ = 0x00;
         const int total = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
@@ -301,7 +309,9 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x22 );
         rocketnet_write_uint16( &p, 1 );
-        *p++ = 8; *p++ = 0; *p++ = 0;
+        *p++ = 8;
+        *p++ = 0;
+        *p++ = 0;
         *p++ = 0x00;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, (int) ( p - payload ), -1, ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL );
@@ -318,9 +328,13 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
         rocketnet_write_uint16( &p, 1 );
-        *p++ = 0x00; *p++ = 0x04; *p++ = 0x00;
+        *p++ = 0x00;
+        *p++ = 0x04;
+        *p++ = 0x00;
         rocketnet_write_uint16( &p, 0 );
-        *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
+        *p++ = 0;
         *p++ = 0;
         *p++ = 0x00;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
@@ -590,7 +604,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
         const rocketnet_message_record_t record = block_shape_record( codes[c], 1, 0, span_ring, (int) F, ordering );
         block_shape_refusal( &record,
-            codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK : ROCKETNET_COUNTER_MESSAGE_BAD_RING );
+                             codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK : ROCKETNET_COUNTER_MESSAGE_BAD_RING );
     }
 
     // fragment ring span past the ring: BAD_BLOCK on code 3 and 4, BAD_RING on code 2
@@ -599,7 +613,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
         const rocketnet_message_record_t record = block_shape_record( codes[c], 1, 0, ring_bytes / 16, (int) F, ordering );
         block_shape_refusal( &record,
-            codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE ? ROCKETNET_COUNTER_MESSAGE_BAD_RING : ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+                             codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE ? ROCKETNET_COUNTER_MESSAGE_BAD_RING : ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
     }
 }
 

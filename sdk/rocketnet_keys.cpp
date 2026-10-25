@@ -29,11 +29,11 @@ static void rocketnet_derive_key( uint8_t * out,
                                   const char * context )
 {
     uint8_t buffer[128];
-    rocketnet_assert( input_bytes + 8 <= (int) sizeof(buffer) );
+    rocketnet_assert( input_bytes + 8 <= (int) sizeof( buffer ) );
     memcpy( buffer, input, (size_t) input_bytes );
     memcpy( buffer + input_bytes, context, 8 );
     crypto_generichash( out, 32, buffer, (unsigned long long) ( input_bytes + 8 ), token_key, 32 );
-    sodium_memzero( buffer, sizeof(buffer) );
+    sodium_memzero( buffer, sizeof( buffer ) );
 }
 
 void rocketnet_derive_handshake_keys( struct rocketnet_connection_keys_t * keys,
@@ -89,8 +89,8 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     rocketnet_derive_key( keys->session_client_to_server, token_client_to_server_key, input, 112, ROCKETNET_KDF_CONTEXT_SESSION_C2S );
     rocketnet_derive_key( keys->session_server_to_client, token_server_to_client_key, input, 112, ROCKETNET_KDF_CONTEXT_SESSION_S2C );
 
-    sodium_memzero( shared_secret, sizeof(shared_secret) );
-    sodium_memzero( input, sizeof(input) );
+    sodium_memzero( shared_secret, sizeof( shared_secret ) );
+    sodium_memzero( input, sizeof( input ) );
 
     return 1;
 }

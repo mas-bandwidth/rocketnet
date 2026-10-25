@@ -18,20 +18,20 @@ const char * rocketnet_message_violation_name( int violation )
 {
     switch ( violation )
     {
-        case ROCKETNET_MESSAGE_VIOLATION_NONE:              return "none";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_FORM:          return "MESSAGE_BAD_FORM";
-        case ROCKETNET_MESSAGE_VIOLATION_TRUNCATED:         return "MESSAGE_TRUNCATED";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS:         return "MESSAGE_BAD_FLAGS";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH:        return "MESSAGE_BAD_LENGTH";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL:       return "MESSAGE_BAD_CHANNEL";
-        case ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:  return "MESSAGE_TYPE_NOT_ENABLED";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK:         return "MESSAGE_BAD_BLOCK";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:          return "MESSAGE_BAD_RING";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE:          return "MESSAGE_BAD_SIZE";
-        case ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL:       return "MESSAGE_BAD_CONTROL";
+        case ROCKETNET_MESSAGE_VIOLATION_NONE:                  return "none";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_FORM:              return "MESSAGE_BAD_FORM";
+        case ROCKETNET_MESSAGE_VIOLATION_TRUNCATED:             return "MESSAGE_TRUNCATED";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS:             return "MESSAGE_BAD_FLAGS";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH:            return "MESSAGE_BAD_LENGTH";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL:           return "MESSAGE_BAD_CHANNEL";
+        case ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:      return "MESSAGE_TYPE_NOT_ENABLED";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK:             return "MESSAGE_BAD_BLOCK";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:              return "MESSAGE_BAD_RING";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE:              return "MESSAGE_BAD_SIZE";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL:           return "MESSAGE_BAD_CONTROL";
         case ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW: return "MESSAGE_NUMBER_OUTSIDE_WINDOW";
         case ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION:        return "MESSAGE_SLOT_COLLISION";
-        default:                                            return "unknown";
+        default:                                                return "unknown";
     }
 }
 
@@ -44,10 +44,10 @@ const char * rocketnet_message_violation_name( int violation )
 // so the receiver can run check 2 (the header fits) before check 3 (the
 // flags are allowed), in the standard's order.
 
-static inline bool rocketnet_message_code_has_number( int code )        { return code == 2 || code == 3 || code == 4; }
-static inline bool rocketnet_message_code_has_sequencing( int code )    { return code == 1 || code == 4; }
-static inline bool rocketnet_message_code_has_channel( int code )       { return code == 1 || code == 3 || code == 4; }
-static inline bool rocketnet_message_code_is_holdable( int code )       { return code == 3 || code == 4; }
+static inline bool rocketnet_message_code_has_number( int code ) { return code == 2 || code == 3 || code == 4; }
+static inline bool rocketnet_message_code_has_sequencing( int code ) { return code == 1 || code == 4; }
+static inline bool rocketnet_message_code_has_channel( int code ) { return code == 1 || code == 3 || code == 4; }
+static inline bool rocketnet_message_code_is_holdable( int code ) { return code == 3 || code == 4; }
 
 static int rocketnet_message_flags_header_bytes( uint8_t flags )
 {
@@ -147,17 +147,17 @@ int rocketnet_message_record_valid( const struct rocketnet_message_record_t * re
 
 static inline void rocketnet_message_write_uint24( uint8_t ** p, uint32_t value )
 {
-    (*p)[0] = (uint8_t) ( value & 0xFF );
-    (*p)[1] = (uint8_t) ( ( value >> 8 ) & 0xFF );
-    (*p)[2] = (uint8_t) ( ( value >> 16 ) & 0xFF );
+    ( *p )[0] = (uint8_t) ( value & 0xFF );
+    ( *p )[1] = (uint8_t) ( ( value >> 8 ) & 0xFF );
+    ( *p )[2] = (uint8_t) ( ( value >> 16 ) & 0xFF );
     *p += 3;
 }
 
 static inline uint32_t rocketnet_message_read_uint24( const uint8_t ** p )
 {
-    uint32_t value = (uint32_t) (*p)[0];
-    value |= (uint32_t) (*p)[1] << 8;
-    value |= (uint32_t) (*p)[2] << 16;
+    uint32_t value = (uint32_t) ( *p )[0];
+    value |= (uint32_t) ( *p )[1] << 8;
+    value |= (uint32_t) ( *p )[2] << 16;
     *p += 3;
     return value;
 }
@@ -185,7 +185,7 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
-#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
 static volatile uint64_t rn_message_payload_copies = 0;
 
 uint64_t rn_message_payload_copy_count()
@@ -234,7 +234,7 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
     rocketnet_assert( p - ( writer->payload + writer->bytes ) == header );
     if ( copy )
     {
-#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
         rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 1 );
 #endif
         rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (CHANNELS.md R5)

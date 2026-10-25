@@ -11,7 +11,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <fcntl.h>
 #include <io.h>
 #endif
@@ -29,7 +29,7 @@ int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
-void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) );
+void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )( void * context, size_t bytes ), void ( **free_function )( void * context, void * p ) );
 void rocketnet_channels_prepare_log( const char * name );
 
 static int rocketnet_suite_test_count()
@@ -66,15 +66,14 @@ static bool rocketnet_unit_fake_ipv6_available()
     return true;
 }
 
-static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups =
-{
+static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups = {
     rocketnet_unit_fake_connection_type,
     rocketnet_unit_fake_ipv6_available,
 };
 
 static int rocketnet_unit_worker( const char * name )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
     // A full buffer flushes when it fills, wherever that falls in a line, so
     // it is sized above any one worker's output (the ed25519 witness alone
@@ -95,7 +94,7 @@ static int rocketnet_unit_worker( const char * name )
     // unit suite must never run against a pin-selected real-socket transport, so
     // both transport pins are cleared for every case, like LOG_LEVEL above.
     // The served address overrides are cleared too.
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
     const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
@@ -114,8 +113,8 @@ static int rocketnet_unit_worker( const char * name )
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // allocator cases pass their hooks to init
-    void * (*malloc_function)( void * context, size_t bytes ) = NULL;
-    void (*free_function)( void * context, void * p ) = NULL;
+    void * ( *malloc_function )( void * context, size_t bytes ) = NULL;
+    void ( *free_function )( void * context, void * p ) = NULL;
     rocketnet_channels_prepare( name, &malloc_function, &free_function );
 
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
@@ -152,9 +151,9 @@ static int rocketnet_unit_worker( const char * name )
     return result;
 }
 
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
 #define ROCKETNET_TEST_FP_NOINLINE __declspec(noinline)
-#elif defined(__GNUC__) || defined(__clang__)
+#elif defined( __GNUC__ ) || defined( __clang__ )
 #define ROCKETNET_TEST_FP_NOINLINE __attribute__((noinline))
 #else
 #define ROCKETNET_TEST_FP_NOINLINE
@@ -174,7 +173,7 @@ ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_float( float a, float b
     const float r = a * b + c;
     uint32_t bits;
     memcpy( &bits, &r, sizeof( bits ) );
-    if ( bits != UINT32_C(0x00000000) )
+    if ( bits != UINT32_C( 0x00000000 ) )
     {
         printf( "FAIL test_fp_contract_off: float a*b+c bits 0x%08X, expected 0x00000000\n", (unsigned) bits );
         return 1;
@@ -187,7 +186,7 @@ ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_double( double a, doubl
     const double r = a * b + c;
     uint64_t bits;
     memcpy( &bits, &r, sizeof( bits ) );
-    if ( bits != UINT64_C(0x0000000000000000) )
+    if ( bits != UINT64_C( 0x0000000000000000 ) )
     {
         printf( "FAIL test_fp_contract_off: double a*b+c bits 0x%016llX, expected 0x0000000000000000\n", (unsigned long long) bits );
         return 1;
@@ -197,8 +196,8 @@ ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_double( double a, doubl
 
 static int test_fp_contract_off()
 {
-    const uint32_t ab_bits = UINT32_C(0x3F800800);
-    const uint32_t c_bits  = UINT32_C(0xBF801000);
+    const uint32_t ab_bits = UINT32_C( 0x3F800800 );
+    const uint32_t c_bits = UINT32_C( 0xBF801000 );
     volatile float av, bv, cv;
     float a, b, c;
     memcpy( &a, &ab_bits, sizeof( a ) );
@@ -208,8 +207,8 @@ static int test_fp_contract_off()
     bv = b;
     cv = c;
 
-    const uint64_t dab_bits = UINT64_C(0x3FF0000002000000);
-    const uint64_t dc_bits  = UINT64_C(0xBFF0000004000000);
+    const uint64_t dab_bits = UINT64_C( 0x3FF0000002000000 );
+    const uint64_t dc_bits = UINT64_C( 0xBFF0000004000000 );
     volatile double dav, dbv, dcv;
     double da, db, dc;
     memcpy( &da, &dab_bits, sizeof( da ) );
@@ -241,7 +240,7 @@ int main( int argc, char ** argv )
     char saved_client_transport[256] = "";
     const bool server_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, sizeof( saved_server_transport ) ) != 0;
     const bool client_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, sizeof( saved_client_transport ) ) != 0;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 #else
@@ -267,7 +266,7 @@ int main( int argc, char ** argv )
                              NULL, 0, NULL, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
     }
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
     if ( server_pinned )
         _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
     if ( client_pinned )

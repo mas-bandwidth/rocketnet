@@ -15,7 +15,7 @@
 #include "../sdk/rocketnet_protocol.h"
 #include "../sdk/rocketnet_read_write.h"
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"

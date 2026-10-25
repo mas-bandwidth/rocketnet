@@ -171,4 +171,3 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void 
     sodium_memzero( &transport_read, sizeof( transport_read ) );
     return server;
 }
-

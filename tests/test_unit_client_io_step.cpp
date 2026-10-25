@@ -26,7 +26,7 @@ static double client_io_step_test_time( void * context )
 }
 
 static void client_io_step_test_open( rocketnet_fake_client_transport_io_t * fake,
-    const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
+                                      const rocketnet_client_transport_io_operations_t * operations, rocketnet_client_transport_io_t * transport )
 {
     rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};

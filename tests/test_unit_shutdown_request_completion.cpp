@@ -44,7 +44,7 @@ static void test_shutdown_borrowed_message_link_does_not_require_stop()
     link.stopped = shutdown_borrowed_stopped;
     shutdown_borrowed_completion_checks = 0;
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1,
-        NULL, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
+                                                             NULL, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
     rocketnet_unit_check( object != NULL );
     rn_message_object_destroy( object );
     rocketnet_unit_check( shutdown_borrowed_completion_checks == 0 );

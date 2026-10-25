@@ -15,7 +15,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_platform.h"
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
@@ -56,11 +56,10 @@ static void test_platform_sockaddr_in_round_trips_address()
         const char * text;
         uint8_t addr_bytes[4];
         uint8_t port_bytes[2];
-    } cases[] =
-    {
+    } cases[] = {
         { "203.0.113.10:40000", { 203, 0, 113, 10 }, { 0x9c, 0x40 } },
-        { "127.0.0.1:40000",    { 127, 0,   0,  1 }, { 0x9c, 0x40 } },
-        { "0.0.0.0:0",          {   0, 0,   0,  0 }, { 0x00, 0x00 } },
+        { "127.0.0.1:40000", { 127, 0, 0, 1 }, { 0x9c, 0x40 } },
+        { "0.0.0.0:0", { 0, 0, 0, 0 }, { 0x00, 0x00 } },
     };
 
     for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); ++i )

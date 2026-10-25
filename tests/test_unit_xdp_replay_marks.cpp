@@ -23,12 +23,12 @@
 #include "../sdk/rocketnet_server_replay_marks.h"
 
 // the AF_XDP code is Linux only, so its tests are built there only
-#if defined(__linux__)
+#if defined( __linux__ )
 
 static struct rocketnet_address_t replay_marks_ipv4( uint16_t port )
 {
     struct rocketnet_address_t a;
-    memset( &a, 0, sizeof(a) );
+    memset( &a, 0, sizeof( a ) );
     a.type = ROCKETNET_ADDRESS_IPV4;
     a.data.ipv4[0] = 198;
     a.data.ipv4[1] = 51;
@@ -41,7 +41,7 @@ static struct rocketnet_address_t replay_marks_ipv4( uint16_t port )
 static struct rocketnet_address_t replay_marks_ipv6( uint16_t port )
 {
     struct rocketnet_address_t a;
-    memset( &a, 0, sizeof(a) );
+    memset( &a, 0, sizeof( a ) );
     a.type = ROCKETNET_ADDRESS_IPV6;
     a.data.ipv6[0] = 0x2001;
     a.data.ipv6[1] = 0x0db8;
@@ -60,7 +60,7 @@ static void test_xdp_transport_replay_key_matches_golden_bytes()
     struct rocketnet_address_t a4 = replay_marks_ipv4( 50000 );
     struct rocketnet_server_xdp_replay_key_t key4;
     rocketnet_xdp_replay_key_from_address( &a4, &key4 );
-    rocketnet_unit_check( sizeof(key4) == 20 );
+    rocketnet_unit_check( sizeof( key4 ) == 20 );
     rocketnet_unit_check( memcmp( &key4, golden_v4, 20 ) == 0 );
 
     // [2001:db8::7]:50000 -> family 6, the 16 address bytes
@@ -71,7 +71,7 @@ static void test_xdp_transport_replay_key_matches_golden_bytes()
     struct rocketnet_address_t a6 = replay_marks_ipv6( 50000 );
     struct rocketnet_server_xdp_replay_key_t key6;
     rocketnet_xdp_replay_key_from_address( &a6, &key6 );
-    rocketnet_unit_check( sizeof(key6) == 20 );
+    rocketnet_unit_check( sizeof( key6 ) == 20 );
     rocketnet_unit_check( memcmp( &key6, golden_v6, 20 ) == 0 );
 
     // two addresses differing only in port give different keys
@@ -271,7 +271,7 @@ static int replay_fake_map_find( const struct replay_fake_map_t * map, const str
 {
     for ( int i = 0; i < REPLAY_FAKE_MAP_ENTRIES; i++ )
     {
-        if ( map->present[i] && memcmp( &map->keys[i], key, sizeof(*key) ) == 0 )
+        if ( map->present[i] && memcmp( &map->keys[i], key, sizeof( *key ) ) == 0 )
             return i;
     }
     return -1;
@@ -351,7 +351,7 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
     static struct rocketnet_xdp_replay_marks_t marks;
     rocketnet_xdp_replay_marks_reset( &marks );
     struct replay_fake_map_t kernel;
-    memset( &kernel, 0, sizeof(kernel) );
+    memset( &kernel, 0, sizeof( kernel ) );
 
     struct rocketnet_server_replay_sink_t sink;
     sink.context = &marks;
@@ -359,7 +359,7 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
     sink.mark = replay_fake_sink_mark;
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
 
     const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
     struct rocketnet_server_xdp_replay_key_t key_a;
@@ -456,7 +456,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     static struct rocketnet_xdp_replay_marks_t marks;
     rocketnet_xdp_replay_marks_reset( &marks );
     struct replay_fake_map_t kernel;
-    memset( &kernel, 0, sizeof(kernel) );
+    memset( &kernel, 0, sizeof( kernel ) );
 
     struct rocketnet_server_replay_sink_t sink;
     sink.context = &marks;
@@ -464,7 +464,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     sink.mark = replay_fake_sink_mark;
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
 
     const uint32_t old_high_water = ROCKETNET_XDP_REPLAY_WINDOW + 1000;
 
@@ -570,7 +570,7 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     static struct rocketnet_xdp_replay_marks_t marks;
     rocketnet_xdp_replay_marks_reset( &marks );
     struct replay_fake_map_t kernel;
-    memset( &kernel, 0, sizeof(kernel) );
+    memset( &kernel, 0, sizeof( kernel ) );
 
     struct rocketnet_server_replay_sink_t sink;
     sink.context = &marks;
@@ -578,7 +578,7 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     sink.mark = replay_fake_sink_mark;
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
 
     const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
     struct rocketnet_server_xdp_replay_key_t key_a;

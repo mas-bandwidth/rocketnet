@@ -45,7 +45,7 @@ static void client_required_memory_config( int which, struct rocketnet_client_co
         case CLIENT_REQUIRED_MEMORY_FRAGMENTED_OVER:     config->max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1; break;
         case CLIENT_REQUIRED_MEMORY_TRANSPORT_LIST:      config->transport = "no-such-transport"; break;
         case CLIENT_REQUIRED_MEMORY_SEND_KBPS_NEGATIVE:  config->send_kbps = -1; break;
-        default: check( false ); break;
+        default:                                         check( false ); break;
     }
 }
 

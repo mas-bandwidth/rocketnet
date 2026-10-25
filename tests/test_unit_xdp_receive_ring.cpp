@@ -17,12 +17,12 @@
 
 // the AF_XDP code is Linux only and compiled out of a build without XDP, so
 // its tests are built only where it is
-#if defined(__linux__) && ROCKETNET_XDP
+#if defined( __linux__ ) && ROCKETNET_XDP
 
 void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consumed,
-    void (*cancel)( void * ring, uint32_t count ),
-    void (*release)( void * ring, uint32_t count ),
-    void * ring );
+                                        void ( *cancel )( void * ring, uint32_t count ),
+                                        void ( *release )( void * ring, uint32_t count ),
+                                        void * ring );
 
 namespace
 {

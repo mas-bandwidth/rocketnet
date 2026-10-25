@@ -19,10 +19,10 @@
 void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client )
 {
     rocketnet_assert( client );
-    sodium_memzero( &client->keys, sizeof(client->keys) );
-    sodium_memzero( &client->token, sizeof(client->token) );
-    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
-    sodium_memzero( client->session_nonce, sizeof(client->session_nonce) );
+    sodium_memzero( &client->keys, sizeof( client->keys ) );
+    sodium_memzero( &client->token, sizeof( client->token ) );
+    sodium_memzero( client->client_ephemeral_secret_key, sizeof( client->client_ephemeral_secret_key ) );
+    sodium_memzero( client->session_nonce, sizeof( client->session_nonce ) );
 }
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client )
@@ -31,7 +31,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
     const int terminal_state = client->state;
     uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES];
-    memcpy( packet_filter, client->packet_filter, sizeof(packet_filter) );
+    memcpy( packet_filter, client->packet_filter, sizeof( packet_filter ) );
     const double send_rate = client->send_rate;
     const int defer_payload_acks = client->defer_payload_acks;
     struct rocketnet_counters_t * counters = client->counters;
@@ -48,7 +48,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     rocketnet_client_protocol_wipe_secrets( client );
     rocketnet_client_protocol_zero_state( client );
 
-    memcpy( client->packet_filter, packet_filter, sizeof(packet_filter) );
+    memcpy( client->packet_filter, packet_filter, sizeof( packet_filter ) );
     client->send_rate = send_rate;
     client->defer_payload_acks = defer_payload_acks;
     client->counters = counters;
@@ -100,7 +100,6 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
     if ( server->reassembly )
         rocketnet_reassembly_set_reset_connection( server->reassembly, client_index );
-
 }
 
 static void rocketnet_message_connection_reset( struct rn_message_object_t * object, int client_index )
@@ -120,10 +119,10 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
-    memset( &connection->unreliable_build, 0, sizeof(connection->unreliable_build) );
+    memset( &connection->unreliable_build, 0, sizeof( connection->unreliable_build ) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
     memset( connection->hot->cursors, 0,
-            sizeof(uint32_t) * (size_t) connection->region->num_channels );
+            sizeof( uint32_t ) * (size_t) connection->region->num_channels );
     connection->hot->held = 0;
     connection->hot->connection_id = 0;
     connection->hot->state = RN_MESSAGE_CONNECTION_FREE;

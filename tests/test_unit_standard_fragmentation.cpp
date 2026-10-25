@@ -74,8 +74,7 @@ static int standard_fragmentation_generate( const char * id, uint8_t * out, int 
     // the trace: payload 7 completes with its final fragment arriving first
     // and staged; payload 9 repeats a fragment; payload 10 changes its count;
     // payload 16 takes payload 10's slot unfinished.
-    static const struct rn_t16_fragment_t trace[] =
-    {
+    static const struct rn_t16_fragment_t trace[] = {
         { 7, 2, 3, 5, 'A' },
         { 7, 0, 3, 8, 'B' },
         { 7, 1, 3, 8, 'C' },
@@ -97,8 +96,7 @@ static int standard_fragmentation_generate( const char * id, uint8_t * out, int 
     return 12;
 }
 
-static const rn_standard_vector_t standard_fragmentation_table[] =
-{
+static const rn_standard_vector_t standard_fragmentation_table[] = {
     RN_STANDARD_VECTOR( "t16.reassembly-trace", "000000000100000106010100" ),
 };
 

@@ -16,7 +16,8 @@
 // public API takes and gives addresses only as strings.
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /** @brief Load an IPv4 endpoint from network-order integers.

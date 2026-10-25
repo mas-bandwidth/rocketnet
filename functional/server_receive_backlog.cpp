@@ -22,7 +22,7 @@
 // functional/harness.inc: the token stamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <stdlib.h>
 #else
 #include <unistd.h>
@@ -43,7 +43,7 @@ static void server_receive_backlog_check( bool condition, const char * expressio
 
 static void server_receive_backlog_set_env( const char * name, const char * value )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     _putenv_s( name, value ? value : "" );
 #else
     if ( value )
@@ -74,7 +74,7 @@ struct server_receive_backlog_env_t
     }
 };
 
-static int server_receive_backlog_connected_clients( const std::vector<struct rocketnet_client_transport_t*> & clients )
+static int server_receive_backlog_connected_clients( const std::vector<struct rocketnet_client_transport_t *> & clients )
 {
     int connected = 0;
     for ( size_t i = 0; i < clients.size(); ++i )
@@ -83,7 +83,7 @@ static int server_receive_backlog_connected_clients( const std::vector<struct ro
     return connected;
 }
 
-static bool server_receive_backlog_all_connected( const std::vector<struct rocketnet_client_transport_t*> & clients )
+static bool server_receive_backlog_all_connected( const std::vector<struct rocketnet_client_transport_t *> & clients )
 {
     return server_receive_backlog_connected_clients( clients ) == (int) clients.size();
 }
@@ -109,7 +109,7 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
     const uint64_t server_bytes = rocketnet_server_transport_required_memory( &server_config, "portable" );
     const uint64_t client_bytes = rocketnet_client_transport_required_memory( &client_config, "portable" );
     const uint64_t queues = uint64_t( server_receive_backlog_max_clients + 1 ) *
-        rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS );
+                            rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS );
     if ( !server_bytes || !client_bytes )
         return 0; // A missing plan falls back to the strict default bound.
     const uint64_t bytes = server_bytes + server_receive_backlog_max_clients * client_bytes + queues;
@@ -159,7 +159,7 @@ void rocketnet_test_server_async_delivery_with_max_clients()
     client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
 
-    std::vector<struct rocketnet_client_transport_t*> clients;
+    std::vector<struct rocketnet_client_transport_t *> clients;
     clients.reserve( max_clients );
     for ( int i = 0; i < max_clients; ++i )
     {
@@ -227,8 +227,8 @@ void rocketnet_test_server_async_delivery_with_max_clients()
             server_receive_backlog_require( payload != NULL && capacity >= 8 );
             for ( int byte = 0; byte < 4; ++byte )
             {
-                payload[byte] = (uint8_t) ( ((uint32_t) i >> ( byte * 8 )) & 0xff );
-                payload[4 + byte] = (uint8_t) ( ((uint32_t) frame >> ( byte * 8 )) & 0xff );
+                payload[byte] = (uint8_t) ( ( (uint32_t) i >> ( byte * 8 ) ) & 0xff );
+                payload[4 + byte] = (uint8_t) ( ( (uint32_t) frame >> ( byte * 8 ) ) & 0xff );
             }
             server_receive_backlog_require( rocketnet_client_transport_finish_packet( clients[i], &context, 8 ) > 0 );
         }
@@ -244,8 +244,10 @@ void rocketnet_test_server_async_delivery_with_max_clients()
             rocketnet_server_transport_update( server, time );
             ++updates;
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
-            if ( num_payloads < read_min ) read_min = num_payloads;
-            if ( num_payloads > read_max ) read_max = num_payloads;
+            if ( num_payloads < read_min )
+                read_min = num_payloads;
+            if ( num_payloads > read_max )
+                read_max = num_payloads;
             for ( int packet = 0; packet < num_payloads; ++packet )
             {
                 int client_index = -1, payload_bytes = 0;
@@ -264,14 +266,16 @@ void rocketnet_test_server_async_delivery_with_max_clients()
                 ++frame_received;
                 ++delivered;
             }
-            if ( frame_received == max_clients ) break;
+            if ( frame_received == max_clients )
+                break;
             rocketnet_platform_sleep( 0.0001 );
         } while ( rocketnet_platform_time() < deadline );
         if ( frame_received != max_clients )
             printf( "server_receive_backlog deadline: frame=%d received=%d expected=%d\n", frame, frame_received, max_clients );
         server_receive_backlog_require( frame_received == max_clients );
         const double elapsed = rocketnet_platform_time() - frame_start;
-        if ( elapsed > worst_frame_seconds ) worst_frame_seconds = elapsed;
+        if ( elapsed > worst_frame_seconds )
+            worst_frame_seconds = elapsed;
         time += frame_step;
     }
     server_receive_backlog_require( delivered == uint64_t( max_clients ) * frames );
@@ -285,5 +289,4 @@ void rocketnet_test_server_async_delivery_with_max_clients()
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, time );
     rn_native_server_transport_stop_and_destroy( server );
-
 }

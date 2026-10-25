@@ -35,13 +35,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <tlhelp32.h>
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <libproc.h>
@@ -88,7 +88,7 @@ struct load_census_survivors_t
     long init_scope_handles; /* reported, not counted, when init_scope allows */
 };
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 
 typedef struct
 {
@@ -109,9 +109,9 @@ typedef struct
     load_census_handle_entry_t Handles[1];
 } load_census_handle_info_t;
 
-typedef LONG ( WINAPI * load_census_query_system_t )( ULONG, PVOID, ULONG, PULONG );
-typedef LONG ( WINAPI * load_census_query_thread_t )( HANDLE, ULONG, PVOID, ULONG, PULONG );
-typedef LONG ( WINAPI * load_census_query_object_t )( HANDLE, ULONG, PVOID, ULONG, PULONG );
+typedef LONG( WINAPI * load_census_query_system_t )( ULONG, PVOID, ULONG, PULONG );
+typedef LONG( WINAPI * load_census_query_thread_t )( HANDLE, ULONG, PVOID, ULONG, PULONG );
+typedef LONG( WINAPI * load_census_query_object_t )( HANDLE, ULONG, PVOID, ULONG, PULONG );
 
 #define LOAD_CENSUS_SYSTEM_EXTENDED_HANDLE_INFORMATION 64
 #define LOAD_CENSUS_THREAD_QUERY_SET_WIN32_START_ADDRESS 9
@@ -128,7 +128,7 @@ static FARPROC load_census_ntdll( const char * name )
    in its own code or the C runtime. */
 static int load_census_thread_is_os_pool( DWORD tid )
 {
-    load_census_query_thread_t query = (load_census_query_thread_t) (void (*)( void )) load_census_ntdll( "NtQueryInformationThread" );
+    load_census_query_thread_t query = (load_census_query_thread_t) (void ( * )( void )) load_census_ntdll( "NtQueryInformationThread" );
     HMODULE ntdll = GetModuleHandleA( "ntdll.dll" );
     if ( !query || !ntdll )
         return 0;
@@ -148,13 +148,17 @@ static int load_census_thread_is_os_pool( DWORD tid )
 static void load_census_type_name( uint64_t handle, char * name, size_t bytes )
 {
     snprintf( name, bytes, "?" );
-    load_census_query_object_t query = (load_census_query_object_t) (void (*)( void )) load_census_ntdll( "NtQueryObject" );
+    load_census_query_object_t query = (load_census_query_object_t) (void ( * )( void )) load_census_ntdll( "NtQueryObject" );
     if ( !query )
         return;
     union
     {
         char raw[1024];
-        struct { USHORT length, maximum; PWSTR buffer; } type_name;
+        struct
+        {
+            USHORT length, maximum;
+            PWSTR buffer;
+        } type_name;
     } info;
     if ( query( (HANDLE) (uintptr_t) handle, LOAD_CENSUS_OBJECT_TYPE_INFORMATION, &info, sizeof( info ), NULL ) < 0 || !info.type_name.buffer )
         return;
@@ -193,7 +197,7 @@ static int load_census_take( struct load_census_t * census )
     }
     CloseHandle( thread_list );
 
-    load_census_query_system_t query = (load_census_query_system_t) (void (*)( void )) load_census_ntdll( "NtQuerySystemInformation" );
+    load_census_query_system_t query = (load_census_query_system_t) (void ( * )( void )) load_census_ntdll( "NtQuerySystemInformation" );
     if ( !query )
         return 0;
     ULONG bytes = 1u << 22;
@@ -238,7 +242,7 @@ static int load_census_take( struct load_census_t * census )
 
 #else // #if defined(_WIN32)
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined( __APPLE__ ) || defined( __linux__ )
 static uint64_t load_census_fd_kind( int fd )
 {
     struct stat info;
@@ -262,7 +266,7 @@ static int load_census_take( struct load_census_t * census )
     census->valid = 0;
     census->threads = 0;
     census->handles = 0;
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
     thread_act_array_t threads = NULL;
     mach_msg_type_number_t count = 0;
     if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
@@ -306,7 +310,7 @@ static int load_census_take( struct load_census_t * census )
     free( fds );
     if ( used <= 0 || num_fds >= LOAD_CENSUS_MAX )
         return 0;
-#elif defined(__linux__)
+#elif defined( __linux__ )
     DIR * tasks = opendir( "/proc/self/task" );
     if ( !tasks )
         return 0;
@@ -396,7 +400,7 @@ static int load_census_survivors( const char * prefix, const char * label, int i
                 printf( "%s: census=%s survivor=thread id=%llu\n", prefix, label, (unsigned long long) thread->id );
         }
     }
-#if defined(_WIN32)
+#if defined( _WIN32 )
     /* each OS pool worker brings one Thread handle (to itself) and one Event */
     long pool_events = 0;
 #endif
@@ -410,7 +414,7 @@ static int load_census_survivors( const char * prefix, const char * label, int i
             survivors->init_scope_handles++;
             continue;
         }
-#if defined(_WIN32)
+#if defined( _WIN32 )
         char type[128];
         load_census_type_name( handle->id, type, sizeof( type ) );
         if ( strcmp( type, "Thread" ) == 0 )
@@ -440,10 +444,10 @@ static int load_census_survivors( const char * prefix, const char * label, int i
         if ( prefix )
         {
             char path[1024] = "?";
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
             if ( fcntl( (int) handle->id, F_GETPATH, path ) != 0 )
                 snprintf( path, sizeof( path ), "?" );
-#elif defined(__linux__)
+#elif defined( __linux__ )
             char link[64];
             snprintf( link, sizeof( link ), "/proc/self/fd/%llu", (unsigned long long) handle->id );
             const ssize_t used = readlink( link, path, sizeof( path ) - 1 );

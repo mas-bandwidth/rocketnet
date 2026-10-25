@@ -44,7 +44,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
     const uint64_t unix_timestamp = ROCKETNET_TEST_CREATE_TS;
 
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = unix_timestamp;
@@ -56,7 +56,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = 1;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = unix_timestamp + 30;

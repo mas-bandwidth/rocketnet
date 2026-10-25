@@ -12,8 +12,7 @@
 
 #include <string.h>
 
-static const rn_standard_vector_t standard_acks_table[] =
-{
+static const rn_standard_vector_t standard_acks_table[] = {
     RN_STANDARD_VECTOR( "t15.fresh", "00000000000000" ),
     RN_STANDARD_VECTOR( "t15.fully-received", "e803000000e803" ),
     RN_STANDARD_VECTOR( "t15.one-loss", "e8030000010a0001005a00" ),
@@ -43,7 +42,7 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
     }
 
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     uint64_t highest_sent = 0;
     bool invalid = false;
 
@@ -148,7 +147,7 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
     else if ( strcmp( id, "t15.truncated-oldest" ) == 0 )
     {
         struct rocketnet_replay_protection_t replay;
-        memset( &replay, 0, sizeof(replay) );
+        memset( &replay, 0, sizeof( replay ) );
         for ( uint64_t sequence = 1; sequence <= 5; sequence++ )
             rocketnet_replay_advance( &replay, sequence );
         rocketnet_replay_advance( &replay, 7 );

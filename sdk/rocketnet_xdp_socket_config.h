@@ -36,7 +36,7 @@
 
 static inline void rocketnet_xdp_socket_config( struct xsk_socket_config * config, uint32_t rx_size, uint32_t tx_size, bool zero_copy )
 {
-    memset( config, 0, sizeof(*config) );
+    memset( config, 0, sizeof( *config ) );
     config->rx_size = rx_size;
     config->tx_size = tx_size;
     config->libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
@@ -46,7 +46,7 @@ static inline void rocketnet_xdp_socket_config( struct xsk_socket_config * confi
 
 static inline void rocketnet_xdp_umem_config( struct xsk_umem_config * config )
 {
-    memset( config, 0, sizeof(*config) );
+    memset( config, 0, sizeof( *config ) );
     config->fill_size = ROCKETNET_XDP_FILL_RING_SIZE;
     config->comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
     config->frame_size = ROCKETNET_XDP_FRAME_SIZE;

@@ -35,7 +35,11 @@ static int receipt_receiver_has_whole( int matched, const uint8_t * seen )
 
 void reliable_receipts_over_lossy_link()
 {
-    enum { messages = 6, max_bytes = 8192 };
+    enum
+    {
+        messages = 6,
+        max_bytes = 8192
+    };
     static const int lengths[messages] = { 3, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17, 8192,
                                            4, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 31, 8191 };
     static const int types[messages] = { ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
@@ -104,7 +108,8 @@ void reliable_receipts_over_lossy_link()
         {
             int matched = -1;
             for ( int i = 0; i < messages; i++ )
-                if ( events[j].serial == client_serial[i] ) matched = i;
+                if ( events[j].serial == client_serial[i] )
+                    matched = i;
             check_receipt( matched >= 0 && !client_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             check_receipt( receipt_receiver_has_whole( matched, server_seen ) );
             client_receipt[matched] = 1;
@@ -115,7 +120,8 @@ void reliable_receipts_over_lossy_link()
         {
             int matched = -1;
             for ( int i = 0; i < messages; i++ )
-                if ( events[j].serial == server_serial[i] ) matched = i;
+                if ( events[j].serial == server_serial[i] )
+                    matched = i;
             check_receipt( matched >= 0 && !server_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             check_receipt( receipt_receiver_has_whole( matched, client_seen ) );
             server_receipt[matched] = 1;

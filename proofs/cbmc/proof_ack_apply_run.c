@@ -117,7 +117,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     int newly_acked = 0;
 
-    for ( uint64_t sequence = high; ; sequence-- )
+    for ( uint64_t sequence = high;; sequence-- )
     {
         g_ack_visit_count++;
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
@@ -149,7 +149,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
                 if ( record->has_packet_id )
                 {
-                    acked_packet_ids[(*acked_count)++] = record->packet_id;
+                    acked_packet_ids[( *acked_count )++] = record->packet_id;
                 }
                 else if ( record->aggregate_id != 0 )
                 {
@@ -158,7 +158,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                     {
                         aggregate->remaining--;
                         if ( aggregate->remaining == 0 )
-                            acked_packet_ids[(*acked_count)++] = aggregate->packet_id;
+                            acked_packet_ids[( *acked_count )++] = aggregate->packet_id;
                     }
                 }
             }

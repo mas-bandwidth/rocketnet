@@ -41,7 +41,11 @@ static void unreliable_receipts_settle_config( rocketnet_channel_harness_t * h )
 
 void unreliable_receipts_over_lossy_link()
 {
-    enum { messages = 48, steps = 60 * 12 };
+    enum
+    {
+        messages = 48,
+        steps = 60 * 12
+    };
     rocketnet_channel_harness_t h;
     receipt_check( rocketnet_channel_harness_create( &h ) );
     rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 12.0f, 5.0f );
@@ -96,7 +100,10 @@ void unreliable_receipts_over_lossy_link()
             receipt_check( i >= 0 && !client_outcome[i] );
             receipt_check( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED || events[j].status == ROCKETNET_RECEIPT_STATUS_LOSS );
             client_outcome[i] = (uint8_t) events[j].status;
-            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED ) client_acked++; else client_lost++;
+            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                client_acked++;
+            else
+                client_lost++;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
         receipt_check( count >= 0 && count <= 256 );
@@ -106,7 +113,10 @@ void unreliable_receipts_over_lossy_link()
             receipt_check( i >= 0 && !server_outcome[i] );
             receipt_check( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED || events[j].status == ROCKETNET_RECEIPT_STATUS_LOSS );
             server_outcome[i] = (uint8_t) events[j].status;
-            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED ) server_acked++; else server_lost++;
+            if ( events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                server_acked++;
+            else
+                server_lost++;
         }
         if ( step >= messages && client_acked + client_lost == messages && server_acked + server_lost == messages )
             break;
@@ -115,8 +125,10 @@ void unreliable_receipts_over_lossy_link()
     for ( int i = 0; i < messages; i++ )
     {
         receipt_check( client_outcome[i] != 0 && server_outcome[i] != 0 );
-        if ( client_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED ) receipt_check( at_server[i] );
-        if ( server_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED ) receipt_check( at_client[i] );
+        if ( client_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED )
+            receipt_check( at_server[i] );
+        if ( server_outcome[i] == ROCKETNET_RECEIPT_STATUS_ACKED )
+            receipt_check( at_client[i] );
     }
     rocketnet_channel_harness_read_counters( &h );
     printf( "receipt lossy: sent=%d each client_acked=%d client_lost=%d server_acked=%d server_lost=%d delivered_server=%d delivered_client=%d elapsed_ms=%.1f resends=%llu wire_to_server=%lld wire_to_client=%lld\n",

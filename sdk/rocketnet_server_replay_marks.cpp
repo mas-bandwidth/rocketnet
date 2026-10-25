@@ -43,14 +43,14 @@ struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( v
     if ( max_clients < 1 )
         return NULL;
 
-    struct rocketnet_server_replay_marks_t * marks = (struct rocketnet_server_replay_marks_t *) rocketnet_malloc( context, sizeof(struct rocketnet_server_replay_marks_t) );
+    struct rocketnet_server_replay_marks_t * marks = (struct rocketnet_server_replay_marks_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_replay_marks_t ) );
     if ( !marks )
         return NULL;
-    memset( marks, 0, sizeof(struct rocketnet_server_replay_marks_t) );
+    memset( marks, 0, sizeof( struct rocketnet_server_replay_marks_t ) );
 
     marks->context = context;
     marks->max_clients = max_clients;
-    marks->slots = (struct rocketnet_server_replay_slot_mark_t *) rocketnet_malloc( context, sizeof(struct rocketnet_server_replay_slot_mark_t) * (size_t) max_clients );
+    marks->slots = (struct rocketnet_server_replay_slot_mark_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_replay_slot_mark_t ) * (size_t) max_clients );
 
     if ( !marks->slots )
     {
@@ -58,7 +58,7 @@ struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( v
         return NULL;
     }
 
-    memset( marks->slots, 0, sizeof(struct rocketnet_server_replay_slot_mark_t) * (size_t) max_clients );
+    memset( marks->slots, 0, sizeof( struct rocketnet_server_replay_slot_mark_t ) * (size_t) max_clients );
 
     return marks;
 }
@@ -119,7 +119,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             // Queue acceptance transfers responsibility to the transport's
             // pending buffer. Until then this slot keeps the old identity.
             if ( sink->forget( sink->context, &slot->seen_address ) )
-                memset( slot, 0, sizeof(*slot) );
+                memset( slot, 0, sizeof( *slot ) );
         }
     }
 
@@ -184,7 +184,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 #if ROCKETNET_TEST_SEAMS
 static bool rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
-    (*(int *) context)++;
+    ( *(int *) context )++;
     return true;
 }
 
@@ -201,14 +201,14 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
     // RESET decisions are listed here so that every member of the struct has
     // one and the inventory covers the whole struct.
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
-                                                           MARK_DECISION( RESET, seen )
-                                                           MARK_DECISION( RESET, seen_address )
-                                                           MARK_DECISION( RESET, mark_owed ) };
+                                                              MARK_DECISION( RESET, seen )
+                                                                  MARK_DECISION( RESET, seen_address )
+                                                                      MARK_DECISION( RESET, mark_owed ) };
 #undef MARK_DECISION
-    return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof(members) / sizeof(members[0]),
-                                              decisions, sizeof(decisions) / sizeof(decisions[0]), 0,
-                                              sizeof(rocketnet_server_replay_slot_mark_t),
-                                              alignof(rocketnet_server_replay_slot_mark_t), failure, failure_bytes );
+    return rocketnet_reset_inventory_matches( "rocketnet_server_replay_slot_mark_t", members, sizeof( members ) / sizeof( members[0] ),
+                                              decisions, sizeof( decisions ) / sizeof( decisions[0] ), 0,
+                                              sizeof( rocketnet_server_replay_slot_mark_t ),
+                                              alignof( rocketnet_server_replay_slot_mark_t ), failure, failure_bytes );
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
@@ -220,9 +220,12 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );
     if ( !marks || !slots || !map )
     {
-        if ( marks ) rocketnet_server_replay_marks_destroy( marks );
-        if ( slots ) rocketnet_client_slots_destroy( slots );
-        if ( map ) rocketnet_encryption_map_destroy( map );
+        if ( marks )
+            rocketnet_server_replay_marks_destroy( marks );
+        if ( slots )
+            rocketnet_client_slots_destroy( slots );
+        if ( map )
+            rocketnet_encryption_map_destroy( map );
         return false;
     }
     rocketnet_address_t address;
@@ -245,8 +248,8 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
         rocketnet_encryption_map_remove( map, mapping );
         rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
     }
-    const uint8_t zero[sizeof(rocketnet_server_replay_slot_mark_t)] = {};
-    const bool clean = index == 0 && forgets == 1 && memcmp( &marks->slots[0], zero, sizeof(zero) ) == 0;
+    const uint8_t zero[sizeof( rocketnet_server_replay_slot_mark_t )] = {};
+    const bool clean = index == 0 && forgets == 1 && memcmp( &marks->slots[0], zero, sizeof( zero ) ) == 0;
     rocketnet_server_replay_marks_destroy( marks );
     rocketnet_client_slots_destroy( slots );
     rocketnet_encryption_map_destroy( map );

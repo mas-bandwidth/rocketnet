@@ -207,7 +207,7 @@ static windows_resource_counts_t windows_read_counts()
     PROCESS_MEMORY_COUNTERS_EX memory;
     memset( &memory, 0, sizeof( memory ) );
     memory.cb = sizeof( memory );
-    if ( GetProcessMemoryInfo( GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*) &memory, sizeof( memory ) ) )
+    if ( GetProcessMemoryInfo( GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *) &memory, sizeof( memory ) ) )
         counts.private_bytes = (int64_t) memory.PrivateUsage;
 
     return counts;
@@ -292,11 +292,10 @@ struct windows_cell_t
     const char * server_transport;
 };
 
-static const windows_cell_t windows_cells[] =
-{
+static const windows_cell_t windows_cells[] = {
     { "server portable, client portable", "portable" },
-    { "server iocp, client portable",     "iocp" },
-    { "server rio, client portable",      "rio" },
+    { "server iocp, client portable", "iocp" },
+    { "server rio, client portable", "rio" },
 };
 
 static const int windows_cell_count = (int) ( sizeof( windows_cells ) / sizeof( windows_cells[0] ) );
@@ -356,7 +355,7 @@ static double windows_client_clock_now( windows_client_clock_t * clock )
 
 static double windows_client_clock_callback( void * context )
 {
-    return windows_client_clock_now( (windows_client_clock_t*) context );
+    return windows_client_clock_now( (windows_client_clock_t *) context );
 }
 
 // server_public_key NULL: the token is sealed to the development server key,
@@ -496,9 +495,9 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
                 break;
             }
         }
-        const char * role = before->heap_handles[i] == library_heap && before->heap_handles[i] == process_heap ? "library/process" :
-                            before->heap_handles[i] == library_heap ? "library" :
-                            before->heap_handles[i] == process_heap ? "process" : "windows";
+        const char * role = before->heap_handles[i] == library_heap && before->heap_handles[i] == process_heap ? "library/process" : before->heap_handles[i] == library_heap ? "library"
+                                                                                                                                 : before->heap_handles[i] == process_heap   ? "process"
+                                                                                                                                                                             : "windows";
         printf( ", heap[%p:%s] %lld -> %lld", before->heap_handles[i], role,
                 (long long) before->heap_used_bytes[i], (long long) after_bytes );
     }
@@ -524,14 +523,16 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
 static void windows_ledger_read( rocketnet_lifecycle_resources_t * resources )
 {
     const bool ok = rocketnet_lifecycle_track_read( resources );
-    if ( !ok ) printf( "SDK resource ledger read failed: %u errors\n", resources->errors );
+    if ( !ok )
+        printf( "SDK resource ledger read failed: %u errors\n", resources->errors );
     windows_lifecycle_check( ok );
 }
 
 static bool windows_ledger_same_live( const rocketnet_lifecycle_resources_t * expected,
                                       const rocketnet_lifecycle_resources_t * actual )
 {
-    if ( expected->live_count != actual->live_count ) return false;
+    if ( expected->live_count != actual->live_count )
+        return false;
     for ( unsigned i = 0; i < expected->live_count; ++i )
     {
         bool found = false;
@@ -539,7 +540,8 @@ static bool windows_ledger_same_live( const rocketnet_lifecycle_resources_t * ex
             if ( expected->live[i].generation == actual->live[j].generation &&
                  expected->live[i].kind == actual->live[j].kind && expected->live[i].raw == actual->live[j].raw )
                 found = true;
-        if ( !found ) return false;
+        if ( !found )
+            return false;
     }
     return true;
 }
@@ -548,8 +550,7 @@ static bool windows_ledger_result( const char * case_name, const windows_cell_t 
                                    const rocketnet_lifecycle_resources_t * expected,
                                    const rocketnet_lifecycle_resources_t * actual, const char * phase )
 {
-    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] =
-    { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
+    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
     const bool same = windows_ledger_same_live( expected, actual ) && actual->errors == 0;
     printf( "%s [%s] SDK identities %s: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
@@ -602,8 +603,7 @@ static bool windows_ledger_held_result( const char * case_name, const windows_ce
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
         if ( expected_kind_count[kind] != actual_kind_count[kind] )
             same = false;
-    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] =
-    { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
+    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
     printf( "%s [%s] SDK identities %s, the last stop's transport held: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
@@ -630,10 +630,10 @@ void rocketnet_test_windows_lifecycle_ledger()
     static const char * mode_name = "ROCKETNET_LIFECYCLE_LEDGER_CASE";
     static const uintptr_t raw = (uintptr_t) 0x70000000u;
     char mode[16] = {};
-    const DWORD mode_bytes = GetEnvironmentVariableA( mode_name, mode, (DWORD) sizeof(mode) );
+    const DWORD mode_bytes = GetEnvironmentVariableA( mode_name, mode, (DWORD) sizeof( mode ) );
     if ( mode_bytes != 0 )
     {
-        windows_lifecycle_check( mode_bytes < (DWORD) sizeof(mode) );
+        windows_lifecycle_check( mode_bytes < (DWORD) sizeof( mode ) );
         rocketnet_lifecycle_track_begin();
         if ( strcmp( mode, "stale" ) == 0 )
         {
@@ -649,7 +649,7 @@ void rocketnet_test_windows_lifecycle_ledger()
         for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
             windows_lifecycle_check( rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, raw + i, "overflow fixture" ) != 0 );
         windows_lifecycle_check( rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT,
-                                 raw + ROCKETNET_LIFECYCLE_MAX_LIVE, "overflow fixture" ) == 0 );
+                                                                 raw + ROCKETNET_LIFECYCLE_MAX_LIVE, "overflow fixture" ) == 0 );
         rocketnet_lifecycle_resources_t full;
         windows_lifecycle_check( !rocketnet_lifecycle_track_read( &full ) && full.errors != 0 &&
                                  full.live_count == ROCKETNET_LIFECYCLE_MAX_LIVE );
@@ -685,7 +685,7 @@ void rocketnet_test_windows_lifecycle_ledger()
         _snwprintf_s( command, MAX_PATH + 80, _TRUNCATE, L"\"%s\" --run test_windows_lifecycle_ledger", path );
         windows_lifecycle_check( _putenv_s( mode_name, child_mode ) == 0 );
         STARTUPINFOW startup = {};
-        startup.cb = (DWORD) sizeof(startup);
+        startup.cb = (DWORD) sizeof( startup );
         PROCESS_INFORMATION process = {};
         const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW,
                                              NULL, NULL, &startup, &process );
@@ -812,7 +812,7 @@ static unsigned windows_reserved_restart_port( const windows_cell_t * cell )
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         address.sin_port = htons( (u_short) port );
-        const int result = bind( probe, (const struct sockaddr*) &address, (int) sizeof( address ) );
+        const int result = bind( probe, (const struct sockaddr *) &address, (int) sizeof( address ) );
         closesocket( probe );
         if ( result == 0 )
             return port;

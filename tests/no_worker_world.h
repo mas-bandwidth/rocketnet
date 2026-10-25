@@ -143,8 +143,8 @@ static void no_worker_connect_all( no_worker_world_t * world )
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         check( rocketnet_write_production_connect_token( world->backend_secret, world->server_public,
-            NO_WORKER_PROTOCOL, addresses, 1, 0x7000 + (uint64_t) i, 1000, 1ULL << 40, 300, NULL,
-            token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+                                                         NO_WORKER_PROTOCOL, addresses, 1, 0x7000 + (uint64_t) i, 1000, 1ULL << 40, 300, NULL,
+                                                         token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
         check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) ==
                ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
         check( rocketnet_client_connect( world->clients[i], token_string ) == ROCKETNET_STATUS_OK );
@@ -162,7 +162,9 @@ static void no_worker_step( no_worker_world_t * world, bool send_messages, doubl
     for ( int i = 0; i < world->num_clients; i++ )
     {
         rocketnet_client_update( world->clients[i], world->time );
-        while ( rocketnet_client_receive_messages( world->clients[i] ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( world->clients[i] ) != NULL )
+        {
+        }
         if ( send_messages && rocketnet_client_state( world->clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             uint8_t * out = rocketnet_client_start_message( world->clients[i], NO_WORKER_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE, 8 );
@@ -177,7 +179,9 @@ static void no_worker_step( no_worker_world_t * world, bool send_messages, doubl
     }
 
     rocketnet_server_update( world->server, world->time );
-    while ( rocketnet_server_receive_messages( world->server ) != NULL ) {}
+    while ( rocketnet_server_receive_messages( world->server ) != NULL )
+    {
+    }
     if ( send_messages )
     {
         for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )

@@ -74,7 +74,7 @@ int rocketnet_prefilter_counter( int refusal_code )
         case ROCKETNET_PREFILTER_TOO_LARGE:   return ROCKETNET_COUNTER_PREFILTER_TOO_LARGE;
         case ROCKETNET_PREFILTER_WRONG_EPOCH: return ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH;
         case ROCKETNET_PREFILTER_WRONG_VALUE: return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
-        default: break;
+        default:                              break;
     }
 
     // every refusal code has a case above. a code arriving here is a caller
@@ -492,4 +492,3 @@ int rocketnet_generate_cookie_mac( uint8_t * mac,
 
     return 1;
 }
-

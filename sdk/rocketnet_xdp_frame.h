@@ -76,7 +76,7 @@ static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t m
         const int low = rocketnet_xdp_mac_hex_digit( text[3 * i + 1] );
         parsed[i] = (uint8_t) ( ( high << 4 ) | low );
     }
-    memcpy( mac, parsed, sizeof(parsed) );
+    memcpy( mac, parsed, sizeof( parsed ) );
     return true;
 }
 
@@ -87,8 +87,8 @@ static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t m
 static inline int rocketnet_xdp_frame_header_bytes( int address_type )
 {
     return ( address_type == ROCKETNET_ADDRESS_IPV4 )
-        ? ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES
-        : ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+               ? ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES
+               : ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
 }
 
 // ones'-complement checksum over big-endian 16-bit words (RFC 1071).
@@ -161,7 +161,7 @@ static inline int rocketnet_xdp_frame_build(
     const rocketnet_address_t * source, const rocketnet_address_t * destination,
     int payload_bytes )
 {
-    uint8_t * f = (uint8_t*) frame;
+    uint8_t * f = (uint8_t *) frame;
     int payload_index;
     int total;
 
@@ -175,8 +175,8 @@ static inline int rocketnet_xdp_frame_build(
     const int ipv6 = ( source->type == ROCKETNET_ADDRESS_IPV6 );
     const int header_bytes = rocketnet_xdp_frame_header_bytes( source->type );
     const int max_payload = ipv6
-        ? ROCKETNET_MAX_PACKET_BYTES
-        : ROCKETNET_RECEIVE_PACKET_BYTES;
+                                ? ROCKETNET_MAX_PACKET_BYTES
+                                : ROCKETNET_RECEIVE_PACKET_BYTES;
     if ( payload_bytes > max_payload )
         return 0;
     if ( (size_t) ( header_bytes + payload_bytes ) > frame_bytes )
@@ -270,7 +270,7 @@ static inline bool rocketnet_xdp_frame_parse(
     rocketnet_address_t * out_from,
     const uint8_t ** out_payload, int * out_payload_length )
 {
-    const uint8_t * f = (const uint8_t*) frame;
+    const uint8_t * f = (const uint8_t *) frame;
     int header_bytes;
     int payload_bytes;
     uint16_t udp_len;
@@ -379,7 +379,7 @@ struct rocketnet_xdp_receive_drops_t
 
 static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
 {
-    return next_header == 0  ||     // hop-by-hop options
+    return next_header == 0 ||     // hop-by-hop options
            next_header == 43 ||     // routing
            next_header == 44 ||     // fragment
            next_header == 60 ||     // destination options
@@ -393,7 +393,7 @@ static inline bool rocketnet_xdp_frame_receive(
     const uint8_t ** out_payload, int * out_payload_length,
     struct rocketnet_xdp_receive_drops_t * drops )
 {
-    const uint8_t * f = (const uint8_t*) frame;
+    const uint8_t * f = (const uint8_t *) frame;
 
     if ( !frame || !out_from || !out_payload || !out_payload_length || !drops )
         return false;
@@ -496,7 +496,7 @@ static inline const uint8_t * rocketnet_xdp_receive_descriptor(
             drops->descriptor++;
         return NULL;
     }
-    return (const uint8_t*) umem + addr;
+    return (const uint8_t *) umem + addr;
 }
 
 // FILL RETURN: whether a receive descriptor's frame goes back to the fill
@@ -765,7 +765,7 @@ static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t 
     // FNV-1a over the family, the port and the address bytes the family uses
     uint32_t hash = 2166136261u;
     const int bytes = ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? 16 : 4;
-    const uint8_t * data = (const uint8_t*) &address->data;
+    const uint8_t * data = (const uint8_t *) &address->data;
     hash = ( hash ^ address->type ) * 16777619u;
     hash = ( hash ^ (uint8_t) ( address->port & 0xFF ) ) * 16777619u;
     hash = ( hash ^ (uint8_t) ( address->port >> 8 ) ) * 16777619u;

@@ -215,8 +215,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
 }
 
 // Re-pin m9 because the trace now waits for the adaptive resend delay.
-static const rn_standard_vector_t standard_resend_and_budget_table[] =
-{
+static const rn_standard_vector_t standard_resend_and_budget_table[] = {
     RN_STANDARD_VECTOR( "m9.resend-trace", "0000000100010400000001" ),
     RN_STANDARD_VECTOR( "m9.budget-trace", "0000000000000000020102000100010100010101" ),
 };

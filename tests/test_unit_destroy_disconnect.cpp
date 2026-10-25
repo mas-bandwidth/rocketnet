@@ -140,8 +140,8 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
-        DESTROY_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
-        1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     DESTROY_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
+                                                     1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
 static double destroy_disconnect_fixed_clock( void * ) { return 1000.0; }
@@ -382,7 +382,10 @@ static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_cl
     rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
     const uint16_t port = rocketnet_server_port( server );
 
-    enum { NUM_CLIENTS = 3 };
+    enum
+    {
+        NUM_CLIENTS = 3
+    };
     rocketnet_client_t * clients[NUM_CLIENTS] = {};
     int slots[NUM_CLIENTS] = {};
 
@@ -606,7 +609,10 @@ static void test_shutdown_without_live_connection_sends_nothing()
         rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
         const uint16_t port = rocketnet_server_port( server );
 
-        enum { NUM_CLIENTS = 2 };
+        enum
+        {
+            NUM_CLIENTS = 2
+        };
         rocketnet_client_t * clients[NUM_CLIENTS] = {};
         void * endpoints[NUM_CLIENTS] = {};
         uint64_t dropped[NUM_CLIENTS] = {};

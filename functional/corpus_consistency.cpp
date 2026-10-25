@@ -93,7 +93,7 @@ static void * pcapng_malloc( void * context, size_t bytes )
     uint8_t * block = (uint8_t *) malloc( bytes + 16 );
     if ( !block )
         return NULL;
-    memcpy( block, &bytes, sizeof(bytes) );
+    memcpy( block, &bytes, sizeof( bytes ) );
     pcapng_live_bytes += bytes;
     if ( pcapng_live_bytes > pcapng_peak_bytes )
         pcapng_peak_bytes = pcapng_live_bytes;
@@ -107,7 +107,7 @@ static void pcapng_free( void * context, void * p )
         return;
     uint8_t * block = (uint8_t *) p - 16;
     size_t bytes;
-    memcpy( &bytes, block, sizeof(bytes) );
+    memcpy( &bytes, block, sizeof( bytes ) );
     pcapng_live_bytes -= bytes;
     free( block );
 }
@@ -182,8 +182,7 @@ struct pcapng_session_counters_t
     int client_wrong_size, client_bad_ack_block, client_wrong_opened_size;
 };
 
-static const pcapng_session_counters_t pcapng_session_counters[] =
-{
+static const pcapng_session_counters_t pcapng_session_counters[] = {
     { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES,
       ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK, ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE,
       ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE },
@@ -203,7 +202,7 @@ static const pcapng_session_counters_t pcapng_session_counters[] =
 
 static const pcapng_session_counters_t * pcapng_session( int packet_type )
 {
-    for ( size_t i = 0; i < sizeof(pcapng_session_counters) / sizeof(pcapng_session_counters[0]); i++ )
+    for ( size_t i = 0; i < sizeof( pcapng_session_counters ) / sizeof( pcapng_session_counters[0] ); i++ )
         if ( pcapng_session_counters[i].packet_type == packet_type )
             return &pcapng_session_counters[i];
     return NULL;
@@ -236,7 +235,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     // the signed part of a token travels in the request; the token's two
     // client keys never do, so they stand as zero in the split
     uint8_t token_bytes[ROCKETNET_CONNECT_TOKEN_BYTES];
-    memset( token_bytes, 0, sizeof(token_bytes) );
+    memset( token_bytes, 0, sizeof( token_bytes ) );
     memcpy( token_bytes, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES );
     memcpy( token_bytes + ROCKETNET_SIGNED_CONNECT_DATA_BYTES, signature, ROCKETNET_SIGNATURE_BYTES );
     struct rocketnet_connect_token_t token;
@@ -251,7 +250,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
                                                              rocketnet_test_server_public_key, rocketnet_test_server_secret_key );
     const int consistent = opened && rocketnet_connect_token_private_consistent( &private_fields, token.signed_connect_data );
     volatile uint8_t * wipe = (volatile uint8_t *) &private_fields;
-    for ( size_t i = 0; i < sizeof(private_fields); i++ )
+    for ( size_t i = 0; i < sizeof( private_fields ); i++ )
         wipe[i] = 0;
     if ( !opened )
         return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK );
@@ -322,13 +321,15 @@ static const struct rocketnet_reassembly_counters_t pcapng_server_fragment_count
     ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID, ROCKETNET_COUNTER_FRAGMENT_STALE, ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
     ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE, ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH, ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE, ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX, ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 static const struct rocketnet_reassembly_counters_t pcapng_client_fragment_counters = {
     ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID, ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID,
     ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH, ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH,
     ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_DUPLICATE_INDEX, ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 // interface 1: one kind byte, then the bytes that reader is handed. The
 // comment names the receiving end ("server" or "client") and, for an ack
@@ -408,7 +409,8 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
         const int violation = rocketnet_message_reader_begin( &reader, data, bytes, &replay->limits );
         if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
             return pcapng_refused_by( ( std::string( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) ) + " " +
-                                        rocketnet_message_violation_name( violation ) ).c_str() );
+                                        rocketnet_message_violation_name( violation ) )
+                                          .c_str() );
         struct rocketnet_message_record_t message;
         int records = 0;
         while ( rocketnet_message_reader_next( &reader, &message ) )
@@ -446,7 +448,7 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
         return result;
 
     pcapng_replay_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
     replay.reassembly = rocketnet_reassembly_set_create( NULL, PCAPNG_REASSEMBLY_CONNECTIONS, PCAPNG_REASSEMBLY_SLOTS, PCAPNG_REASSEMBLY_MAX_PAYLOAD, PCAPNG_REASSEMBLY_DELIVERED );
     check( replay.reassembly != NULL );
     struct rocketnet_message_config_t config;
@@ -500,7 +502,7 @@ static std::string pcapng_tally_text( const std::map<std::string, int> & tally )
     for ( std::map<std::string, int>::const_iterator it = tally.begin(); it != tally.end(); ++it )
     {
         char line[160];
-        snprintf( line, sizeof(line), "%s=%d;", it->first.c_str(), it->second );
+        snprintf( line, sizeof( line ), "%s=%d;", it->first.c_str(), it->second );
         text += line;
     }
     return text;
@@ -515,8 +517,7 @@ struct pcapng_pin_t
     const char * tally;
 };
 
-static const pcapng_pin_t pcapng_pins[] =
-{
+static const pcapng_pin_t pcapng_pins[] = {
     { "fragment_seeds.pcapng", "FRAGMENT_COUNT_INVALID=1;FRAGMENT_INDEX_OUT_OF_RANGE=1;FRAGMENT_PAYLOAD_TOO_LARGE=1;FRAGMENT_WRONG_OPENED_SIZE=2;FRAGMENT_ZERO_PAYLOAD_ID=1;read server fragment=8;read server fragment completing=4;" },
     { "test_harness_one_message_each_way_lossy.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=10;read client PAYLOAD=2;read client ack block KEEP_ALIVE=8;read client ack block PAYLOAD=2;read client message payload=2;read server KEEP_ALIVE=8;read server PAYLOAD=4;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=8;read server ack block PAYLOAD=2;read server message payload=2;" },
     { "hostile_prefilter.pcapng", "CONNECTION_REQUEST_WRONG_VERSION=1;PREFILTER_TOO_SHORT=2;PREFILTER_WRONG_EPOCH=1;PREFILTER_WRONG_VALUE=1;RESERVED_TYPE=1;read server KEEP_ALIVE=1;read server PAYLOAD=2;" },
@@ -586,7 +587,7 @@ static int pcapng_replay_corpus( int pin_tallies )
             continue;
         const std::string tally = pcapng_tally_text( result.tally );
         const pcapng_pin_t * pin = NULL;
-        for ( size_t k = 0; k < sizeof(pcapng_pins) / sizeof(pcapng_pins[0]); k++ )
+        for ( size_t k = 0; k < sizeof( pcapng_pins ) / sizeof( pcapng_pins[0] ); k++ )
             if ( name == pcapng_pins[k].file )
                 pin = &pcapng_pins[k];
         if ( !pin || tally != pin->tally )
@@ -596,7 +597,7 @@ static int pcapng_replay_corpus( int pin_tallies )
         pinned_seen++;
     }
     if ( pin_tallies )
-        check( pinned_seen == (int) ( sizeof(pcapng_pins) / sizeof(pcapng_pins[0]) ) );
+        check( pinned_seen == (int) ( sizeof( pcapng_pins ) / sizeof( pcapng_pins[0] ) ) );
     check( corpus_bytes <= ROCKETNET_PCAPNG_MAX_CORPUS_BYTES );
     check( pcapng_live_bytes == 0 );
     pcapng_allocator_restore();
@@ -610,13 +611,13 @@ static void pcapng_reader_refusals()
     std::vector<uint8_t> image;
     rocketnet_pcapng_write_header( image );
     const uint8_t datagram[8] = { 5, 0, 0xb7, 0x59, 0x01, 0x00, 1, 2 };
-    rocketnet_pcapng_write_packet( image, 0, PCAPNG_CLOCK_START_US, datagram, sizeof(datagram), "server 5" );
+    rocketnet_pcapng_write_packet( image, 0, PCAPNG_CLOCK_START_US, datagram, sizeof( datagram ), "server 5" );
     std::vector<rocketnet_pcapng_packet_t> packets;
 
     {
         std::vector<uint8_t> exact( image );
         check( rocketnet_pcapng_read_buffer( exact.data(), exact.size(), packets ) == ROCKETNET_PCAPNG_OK );
-        check( packets.size() == 1 && packets[0].comment == "server 5" && packets[0].data.size() == sizeof(datagram) );
+        check( packets.size() == 1 && packets[0].comment == "server 5" && packets[0].data.size() == sizeof( datagram ) );
         check( packets[0].timestamp_us == PCAPNG_CLOCK_START_US );
     }
     for ( size_t cut = 1; cut < image.size(); cut++ )
@@ -696,7 +697,8 @@ void test_pcapng_corpus_covers_control_packet_types()
         ROCKETNET_CONNECTION_DENIED_PACKET,
         ROCKETNET_CONNECTION_DISCONNECT_PACKET,
         ROCKETNET_CONNECTION_ACK_PACKET,
-        ROCKETNET_CONNECTION_FRAGMENT_PACKET };
+        ROCKETNET_CONNECTION_FRAGMENT_PACKET
+    };
 
     const std::string root = pcapng_directory();
     std::vector<std::string> names;
@@ -752,17 +754,16 @@ struct prefilter_seed_t
     int expected_bytes; // the size of the datagram, or -1 when the name does not say
 };
 
-static const prefilter_seed_t prefilter_seeds[] =
-{
-    { "prefilter_empty",          ROCKETNET_PREFILTER_TOO_SHORT,            0 },
-    { "prefilter_too_short",      ROCKETNET_PREFILTER_TOO_SHORT,           -1 },
+static const prefilter_seed_t prefilter_seeds[] = {
+    { "prefilter_empty", ROCKETNET_PREFILTER_TOO_SHORT, 0 },
+    { "prefilter_too_short", ROCKETNET_PREFILTER_TOO_SHORT, -1 },
     { "prefilter_payload_near_ceiling", ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1433 },
-    { "prefilter_wrong_epoch",    ROCKETNET_PREFILTER_WRONG_EPOCH,         -1 },
-    { "prefilter_wrong_value",    ROCKETNET_PREFILTER_WRONG_VALUE,         -1 },
-    { "prefilter_reserved_type",  SEED_ACCEPTED_ANY_TYPE,                  -1 },
-    { "prefilter_keep_alive_min", ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,  -1 },
-    { "prefilter_payload_full",   ROCKETNET_CONNECTION_PAYLOAD_PACKET,     -1 },
-    { "prefilter_request",        ROCKETNET_CONNECTION_REQUEST_PACKET,     -1 },
+    { "prefilter_wrong_epoch", ROCKETNET_PREFILTER_WRONG_EPOCH, -1 },
+    { "prefilter_wrong_value", ROCKETNET_PREFILTER_WRONG_VALUE, -1 },
+    { "prefilter_reserved_type", SEED_ACCEPTED_ANY_TYPE, -1 },
+    { "prefilter_keep_alive_min", ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, -1 },
+    { "prefilter_payload_full", ROCKETNET_CONNECTION_PAYLOAD_PACKET, -1 },
+    { "prefilter_request", ROCKETNET_CONNECTION_REQUEST_PACKET, -1 },
 };
 
 static std::string prefilter_seed_path( const char * name )
@@ -776,7 +777,7 @@ static std::string prefilter_seed_path( const char * name )
 void test_fuzz_prefilter_seed_names_match_outcomes()
 {
     const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    for ( size_t i = 0; i < sizeof(prefilter_seeds) / sizeof(prefilter_seeds[0]); i++ )
+    for ( size_t i = 0; i < sizeof( prefilter_seeds ) / sizeof( prefilter_seeds[0] ); i++ )
     {
         const prefilter_seed_t & seed = prefilter_seeds[i];
         FILE * file = rocketnet_test_fopen( prefilter_seed_path( seed.name ), "rb" );
@@ -786,7 +787,7 @@ void test_fuzz_prefilter_seed_names_match_outcomes()
         std::vector<uint8_t> bytes;
         uint8_t chunk[512];
         size_t got;
-        while ( ( got = fread( chunk, 1, sizeof(chunk), file ) ) > 0 )
+        while ( ( got = fread( chunk, 1, sizeof( chunk ), file ) ) > 0 )
             bytes.insert( bytes.end(), chunk, chunk + got );
         fclose( file );
 
@@ -797,8 +798,8 @@ void test_fuzz_prefilter_seed_names_match_outcomes()
         const int result = rocketnet_prefilter_check( datagram.data(), datagram_bytes, packet_filter );
 
         const bool matches = seed.expected == SEED_ACCEPTED_ANY_TYPE
-            ? result > ROCKETNET_CONNECTION_FRAGMENT_PACKET
-            : result == seed.expected;
+                                 ? result > ROCKETNET_CONNECTION_FRAGMENT_PACKET
+                                 : result == seed.expected;
         if ( !matches || ( seed.expected_bytes >= 0 && datagram_bytes != seed.expected_bytes ) )
             printf( "fuzz prefilter seed %s: %d bytes, prefilter result %d, the name says %d\n",
                     seed.name, datagram_bytes, result, seed.expected );

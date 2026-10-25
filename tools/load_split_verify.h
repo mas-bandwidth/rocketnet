@@ -89,8 +89,7 @@ static inline uint32_t split_verify_small_mode( uint32_t client, uint32_t offer 
 
 static inline uint32_t split_verify_fragmented_mode( uint32_t client, uint32_t offer )
 {
-    static const uint32_t modes[SPLIT_VERIFY_FRAGMENTED_MODES] =
-    {
+    static const uint32_t modes[SPLIT_VERIFY_FRAGMENTED_MODES] = {
         ROCKETNET_RELIABILITY_RELIABLE,
         ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
         ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
@@ -165,8 +164,7 @@ static inline int split_verify_payload_fields_valid( const struct split_verify_p
          payload->length < SPLIT_VERIFY_HEADER_BYTES )
         return 0;
     if ( payload->size_class == SPLIT_VERIFY_SMALL )
-        return payload->length <= ( split_verify_mode_is_reliable( payload->mode ) ?
-                                    (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES : SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES );
+        return payload->length <= ( split_verify_mode_is_reliable( payload->mode ) ? (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES : SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES );
     return split_verify_mode_is_reliable( payload->mode ) &&
            payload->length > (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
            payload->length <= (uint32_t) ROCKETNET_MAX_MESSAGE_BYTES;
@@ -191,7 +189,8 @@ static inline uint32_t split_verify_checksum( const uint8_t * data, uint32_t len
     uint32_t hash = 2166136261u;
     for ( uint32_t i = 0; i < length; ++i )
     {
-        if ( i >= 20 && i < 24 ) continue;
+        if ( i >= 20 && i < 24 )
+            continue;
         hash ^= data[i];
         hash *= 16777619u;
     }
@@ -240,20 +239,26 @@ enum split_verify_read_t
 static inline enum split_verify_read_t split_verify_read_payload( const uint8_t * data, uint32_t bytes, uint64_t run_id,
                                                                   struct split_verify_payload_t * payload )
 {
-    if ( data == NULL || bytes < SPLIT_VERIFY_HEADER_BYTES ) return SPLIT_VERIFY_READ_SHORT;
-    if ( split_verify_read_u32( data ) != SPLIT_VERIFY_MAGIC ) return SPLIT_VERIFY_READ_MAGIC;
+    if ( data == NULL || bytes < SPLIT_VERIFY_HEADER_BYTES )
+        return SPLIT_VERIFY_READ_SHORT;
+    if ( split_verify_read_u32( data ) != SPLIT_VERIFY_MAGIC )
+        return SPLIT_VERIFY_READ_MAGIC;
     struct split_verify_payload_t fields;
     fields.run_id = (uint64_t) split_verify_read_u32( data + 24 ) | ( (uint64_t) split_verify_read_u32( data + 28 ) << 32 );
-    if ( fields.run_id != run_id ) return SPLIT_VERIFY_READ_RUN_ID;
+    if ( fields.run_id != run_id )
+        return SPLIT_VERIFY_READ_RUN_ID;
     fields.length = split_verify_read_u32( data + 16 );
-    if ( fields.length != bytes ) return SPLIT_VERIFY_READ_LENGTH;
+    if ( fields.length != bytes )
+        return SPLIT_VERIFY_READ_LENGTH;
     fields.client = split_verify_read_u32( data + 4 );
     fields.direction = data[8];
     fields.mode = data[9];
     fields.size_class = data[10];
     fields.sequence = split_verify_read_u32( data + 12 );
-    if ( data[11] != 0 || !split_verify_payload_fields_valid( &fields ) ) return SPLIT_VERIFY_READ_FIELDS;
-    if ( split_verify_read_u32( data + 20 ) != split_verify_checksum( data, bytes ) ) return SPLIT_VERIFY_READ_CHECKSUM;
+    if ( data[11] != 0 || !split_verify_payload_fields_valid( &fields ) )
+        return SPLIT_VERIFY_READ_FIELDS;
+    if ( split_verify_read_u32( data + 20 ) != split_verify_checksum( data, bytes ) )
+        return SPLIT_VERIFY_READ_CHECKSUM;
     *payload = fields;
     return SPLIT_VERIFY_READ_OK;
 }
@@ -286,7 +291,8 @@ static inline void split_verify_stream_init( struct split_verify_stream_t * stre
 
 static inline int split_verify_stream_has( const struct split_verify_stream_t * stream, uint32_t sequence )
 {
-    if ( sequence == 0 || sequence > SPLIT_VERIFY_MAX_SEQUENCE ) return 0;
+    if ( sequence == 0 || sequence > SPLIT_VERIFY_MAX_SEQUENCE )
+        return 0;
     return ( stream->seen[sequence >> 3] >> ( sequence & 7u ) ) & 1;
 }
 
@@ -322,7 +328,8 @@ static inline int split_verify_stream_deliver( struct split_verify_stream_t * st
         stream->stale_deliveries++;
         broke = 1;
     }
-    if ( sequence > stream->newest_sequence ) stream->newest_sequence = sequence;
+    if ( sequence > stream->newest_sequence )
+        stream->newest_sequence = sequence;
     return broke;
 }
 
@@ -430,8 +437,10 @@ static inline int split_verify_ledger_outcome( struct split_verify_ledger_t * le
     while ( low < high )
     {
         const uint32_t middle = low + ( high - low ) / 2;
-        if ( ledger->serial[middle] < serial ) low = middle + 1;
-        else high = middle;
+        if ( ledger->serial[middle] < serial )
+            low = middle + 1;
+        else
+            high = middle;
     }
     if ( low == ledger->sends || ledger->serial[low] != serial )
     {
@@ -497,10 +506,13 @@ static inline void split_verify_ledger_stream( const struct split_verify_ledger_
     const uint32_t mode_size = mode * SPLIT_VERIFY_NUM_SIZE_CLASSES + size_class;
     for ( uint32_t i = 0; i < ledger->sends; ++i )
     {
-        if ( ledger->mode_size[i] != mode_size ) continue;
+        if ( ledger->mode_size[i] != mode_size )
+            continue;
         out->sends++;
-        if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_NONE ) out->without_outcome++;
-        else if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_LOSS ) out->lost++;
+        if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_NONE )
+            out->without_outcome++;
+        else if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_LOSS )
+            out->lost++;
         else
         {
             const uint32_t sequence = ledger->sequence[i];
@@ -539,11 +551,13 @@ static inline int split_verify_ledger_final( const struct split_verify_ledger_t 
             result->without_outcome++;
             continue;
         }
-        if ( ledger->outcome[i] != SPLIT_VERIFY_OUTCOME_ACKED || receiver_streams == NULL ) continue;
+        if ( ledger->outcome[i] != SPLIT_VERIFY_OUTCOME_ACKED || receiver_streams == NULL )
+            continue;
         const uint32_t mode = ledger->mode_size[i] / SPLIT_VERIFY_NUM_SIZE_CLASSES;
         const uint32_t size_class = ledger->mode_size[i] % SPLIT_VERIFY_NUM_SIZE_CLASSES;
         const struct split_verify_stream_t * stream = &receiver_streams[split_verify_stream_index( ledger->direction, mode, size_class )];
-        if ( !split_verify_stream_has( stream, ledger->sequence[i] ) ) result->acked_unrecorded++;
+        if ( !split_verify_stream_has( stream, ledger->sequence[i] ) )
+            result->acked_unrecorded++;
     }
     result->clean = receipts_dropped == 0 && result->without_outcome == 0 && result->acked_unrecorded == 0 &&
                     split_verify_ledger_errors( ledger ) == 0;

@@ -29,7 +29,7 @@ docs-undocumented:
 	@if [ ! -f build/docs/mrdocs.log ]; then sh tools/docs/mrdocs.sh >/dev/null; fi
 	@sh tools/docs/undocumented.sh build/docs/mrdocs.log
 
-# clang-format check over tracked sources; CI does not run it yet.
+# clang-format check over tracked sources; CI runs it in the format-check job.
 .PHONY: format-check
 format-check:
 	@sh tools/format/check_format.sh

@@ -161,10 +161,10 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // -------- the server, on the development keys, at the vector address --------
 
     struct rocketnet_counters_t server_counters;
-    memset( &server_counters, 0, sizeof(server_counters) );
+    memset( &server_counters, 0, sizeof( server_counters ) );
 
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -194,7 +194,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     rocketnet_network_simulator_config( simulator, 0.05, 0.02, loss_percent, duplicate_percent );
 
     struct rocketnet_counters_t client_counters;
-    memset( &client_counters, 0, sizeof(client_counters) );
+    memset( &client_counters, 0, sizeof( client_counters ) );
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &client_counters );
     memcpy( client.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
@@ -204,8 +204,8 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     {
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
-        memset( &signed_fields, 0, sizeof(signed_fields) );
-        memset( &private_fields, 0, sizeof(private_fields) );
+        memset( &signed_fields, 0, sizeof( signed_fields ) );
+        memset( &private_fields, 0, sizeof( private_fields ) );
         signed_fields.version = ROCKETNET_WIRE_VERSION;
         signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
         signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -387,7 +387,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             {
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
-                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes );
+                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof( delivered ), &delivered_bytes );
                 if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
                     abort();
             }
@@ -471,8 +471,7 @@ struct rocketnet_fuzz_receive_seed_spec_t
     int kind;
 };
 
-static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_seed_specs[] =
-{
+static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_seed_specs[] = {
     { "seed_type_server_connection_request", ROCKETNET_FUZZ_RECEIVE_SERVER_REQUEST, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_server_connection_response", ROCKETNET_FUZZ_RECEIVE_SERVER_RESPONSE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_server_keep_alive", ROCKETNET_FUZZ_RECEIVE_SERVER_KEEP_ALIVE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
@@ -517,7 +516,7 @@ static void rocketnet_fuzz_receive_append_injection( uint8_t * output, size_t * 
     rocketnet_fuzz_receive_append_u8( output, size, action );
     rocketnet_fuzz_receive_append_u16( output, size, (uint16_t) ( packet_bytes - 1 ) );
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    memset( packet, 0, sizeof(packet) );
+    memset( packet, 0, sizeof( packet ) );
     packet[0] = packet_type;
     packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
     const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;

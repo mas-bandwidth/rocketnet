@@ -16,8 +16,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_read_write.h"
 
-static const rn_standard_vector_t standard_wire_primitives_table[] =
-{
+static const rn_standard_vector_t standard_wire_primitives_table[] = {
     RN_STANDARD_VECTOR( "t4.sequence-start", "0100000000000000" ),
     RN_STANDARD_VECTOR( "t4.sequence-steady", "e803000000000000" ),
     RN_STANDARD_VECTOR( "t4.sequence-tie", "0000000002000000" ),
