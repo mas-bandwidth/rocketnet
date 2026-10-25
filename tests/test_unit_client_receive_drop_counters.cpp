@@ -25,8 +25,15 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
 #include "rocketnet_client_io.h"
+#if ROCKETNET_DEV
+#include "rocketnet_client_protocol.h"
+#endif
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#if ROCKETNET_DEV
+#include "rocketnet_protocol.h"
+#include "rocketnet_test_vectors.h"
+#endif
 
 #include <stdint.h>
 #include <string.h>
@@ -44,6 +51,8 @@ struct drop_counters_driver_t
     rocketnet_fake_client_transport_io_t fake;
     rocketnet_address_t from[DROP_COUNTERS_MAX_SCRIPT];
     int reported[DROP_COUNTERS_MAX_SCRIPT];
+    int actual[DROP_COUNTERS_MAX_SCRIPT];
+    uint8_t data[DROP_COUNTERS_MAX_SCRIPT][ROCKETNET_RECEIVE_CEILING];
     int head, count;
 };
 
@@ -55,6 +64,18 @@ static void drop_counters_push( drop_counters_driver_t * driver, const char * fr
     driver->count++;
 }
 
+#if ROCKETNET_DEV
+static void drop_counters_push_packet( drop_counters_driver_t * driver, const char * from,
+                                       const uint8_t * data, int bytes )
+{
+    check( bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING );
+    const int index = driver->count;
+    drop_counters_push( driver, from, bytes );
+    memcpy( driver->data[index], data, (size_t) bytes );
+    driver->actual[index] = bytes;
+}
+#endif
+
 // a socket reports a datagram's true size, past the buffer for an oversize
 // one; only what fits is written
 static int drop_counters_pop( drop_counters_driver_t * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
@@ -63,7 +84,9 @@ static int drop_counters_pop( drop_counters_driver_t * driver, rocketnet_address
     *from = driver->from[driver->head];
     driver->head++;
     const int written = reported < capacity ? reported : capacity;
-    if ( written > 0 )
+    if ( written > 0 && driver->actual[driver->head - 1] > 0 )
+        memcpy( data, driver->data[driver->head - 1], (size_t) written );
+    else if ( written > 0 )
         memset( data, 0x5a, (size_t) written );
     return reported;
 }
@@ -140,6 +163,151 @@ static uint64_t drop_counters_value( rocketnet_client_transport_t * transport, i
     return rocketnet_counter_value( rocketnet_client_transport_counters( transport ), counter );
 }
 
+#if ROCKETNET_DEV
+extern void rocketnet_client_transport_seed_refusal_state_for_test(
+    rocketnet_client_transport_t *, uint64_t, const uint8_t *, const uint8_t *, const uint8_t * );
+extern void rocketnet_client_transport_refusal_state_for_test(
+    const rocketnet_client_transport_t *, int *, int *, int *, uint64_t *, uint64_t *,
+    uint64_t *, uint64_t *, double *, int *, int * );
+extern void rocketnet_client_transport_mutate_refusal_state_for_test(
+    rocketnet_client_transport_t *, int, int );
+
+struct drop_counters_refusal_state_t
+{
+    int state;
+    int client_index;
+    int max_clients;
+    uint64_t replay_highest;
+    uint64_t accepted_highest;
+    uint64_t largest_acked;
+    uint64_t highest_received;
+    double last_receive_time;
+    int payloads;
+    int acked_packets;
+};
+
+static drop_counters_refusal_state_t drop_counters_refusal_state( rocketnet_client_transport_t * transport )
+{
+    drop_counters_refusal_state_t result = {};
+    rocketnet_client_transport_refusal_state_for_test(
+        transport, &result.state, &result.client_index, &result.max_clients,
+        &result.replay_highest, &result.accepted_highest,
+        &result.largest_acked, &result.highest_received,
+        &result.last_receive_time, &result.payloads, &result.acked_packets );
+    return result;
+}
+
+static bool drop_counters_refusal_state_holds( const drop_counters_refusal_state_t * before,
+                                               const drop_counters_refusal_state_t * after )
+{
+    return after->state == before->state &&
+           after->client_index == before->client_index &&
+           after->max_clients == before->max_clients &&
+           after->replay_highest == before->replay_highest &&
+           after->accepted_highest == before->accepted_highest &&
+           after->largest_acked == before->largest_acked &&
+           after->highest_received == before->highest_received &&
+           after->last_receive_time == before->last_receive_time &&
+           after->payloads == 0 && after->acked_packets == 0;
+}
+
+static void drop_counters_require_refusal_state( const drop_counters_refusal_state_t * before,
+                                                 const drop_counters_refusal_state_t * after )
+{
+    if ( !drop_counters_refusal_state_holds( before, after ) )
+    {
+        printf( "refusal state before/after: state=%d/%d owner=%d/%d max=%d/%d "
+                "replay=%llu/%llu accepted=%llu/%llu largest_acked=%llu/%llu "
+                "highest_received=%llu/%llu time=%.17g/%.17g "
+                "payloads=%d/%d acked=%d/%d\n",
+                before->state, after->state,
+                before->client_index, after->client_index,
+                before->max_clients, after->max_clients,
+                (unsigned long long) before->replay_highest,
+                (unsigned long long) after->replay_highest,
+                (unsigned long long) before->accepted_highest,
+                (unsigned long long) after->accepted_highest,
+                (unsigned long long) before->largest_acked,
+                (unsigned long long) after->largest_acked,
+                (unsigned long long) before->highest_received,
+                (unsigned long long) after->highest_received,
+                before->last_receive_time, after->last_receive_time,
+                before->payloads, after->payloads,
+                before->acked_packets, after->acked_packets );
+        fflush( stdout );
+    }
+    check( drop_counters_refusal_state_holds( before, after ) );
+}
+
+static int drop_counters_valid_payload( uint8_t * packet )
+{
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 1] = {};
+    plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES] = 0xab;
+    return rocketnet_write_sealed_packet(
+        packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, rocketnet_test_filter_value, 100,
+        NULL, plaintext, (int) sizeof( plaintext ), ROCKETNET_TEST_PROTOCOL_ID,
+        rocketnet_test_salt, NULL, rocketnet_test_session_s2c_key );
+}
+#endif
+
+static bool drop_counters_refusal_oracle( const struct rocketnet_counters_t * before,
+                                          const struct rocketnet_counters_t * after,
+                                          int too_short, int too_large, int foreign,
+                                          char * report, int report_bytes )
+{
+    return rocketnet_counters_expect_core( before, after,
+    {
+        { ROCKETNET_COUNTER_PACKETS_RECEIVED, too_short + too_large },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, too_short },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, too_large },
+        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, foreign }
+    }, report, report_bytes );
+}
+
+static void drop_counters_require_refusal_oracle( const struct rocketnet_counters_t * before,
+                                                  const struct rocketnet_counters_t * after,
+                                                  int too_short, int too_large, int foreign )
+{
+    char report[16384];
+    const bool holds = drop_counters_refusal_oracle( before, after, too_short, too_large, foreign,
+                                                     report, (int) sizeof( report ) );
+    if ( !holds )
+    {
+        printf( "%s", report );
+        fflush( stdout );
+    }
+    check( holds );
+}
+
+#if ROCKETNET_DEV
+// The clean observation above is useful only if each forbidden result makes
+// it red. These controls mutate one production outcome field at a time:
+// payload delivery (rocketnet_client_process_payload), stale ACK acceptance
+// (rocketnet_client_process_ack), and an accepted keep-alive, whose session
+// entry advances the receive window before the accepted outcome is counted.
+// None belongs to a source or prefilter refusal's allow-list.
+static void drop_counters_require_oracle_controls( rocketnet_client_transport_t * transport,
+                                                   const drop_counters_refusal_state_t * before )
+{
+    for ( int outcome = 0; outcome < 3; ++outcome )
+    {
+        rocketnet_client_transport_mutate_refusal_state_for_test( transport, outcome, 1 );
+        const drop_counters_refusal_state_t red = drop_counters_refusal_state( transport );
+        check( !drop_counters_refusal_state_holds( before, &red ) );
+        rocketnet_client_transport_mutate_refusal_state_for_test( transport, outcome, -1 );
+        const drop_counters_refusal_state_t restored = drop_counters_refusal_state( transport );
+        check( drop_counters_refusal_state_holds( before, &restored ) );
+    }
+}
+
+static void drop_counters_seed_connected( rocketnet_client_transport_t * transport )
+{
+    rocketnet_client_transport_seed_refusal_state_for_test(
+        transport, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_filter_value,
+        rocketnet_test_salt, rocketnet_test_session_s2c_key );
+}
+#endif
+
 static void drop_counters_run( bool batch )
 {
     rocketnet_client_transport_io_operations_t operations = batch ? rocketnet_fake_client_operations_batch : rocketnet_fake_client_operations_io;
@@ -152,18 +320,27 @@ static void drop_counters_run( bool batch )
     rocketnet_client_transport_t * transport = drop_counters_create( driver, &operations, &clock );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
 
-    // Seed a live attempt before any refusal: connect already holds genuine
-    // nonzero protocol state -- the client sits in requesting cookie, the
-    // dialed server address is held, and the connection salt and ephemeral
-    // keypair are armed. An empty step and update run the handshake send
-    // scheduler with nothing inbound, so no receive state moves while the
-    // prestate is established.
+    // Run the transport once, then seed a connected session with nonzero
+    // replay, accepted-window, ACK, ownership and receive-time state through
+    // the private test seam. The wire packet below is sealed under those live
+    // session fields, so changing only its source is a source-stage refusal.
     rocketnet_client_io_step( io, false );
     rocketnet_client_transport_update( transport, clock.now );
+#if ROCKETNET_DEV
+    drop_counters_seed_connected( transport );
+    check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+#else
     check( rocketnet_client_transport_state( transport ) ==
            ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+#endif
 
     const struct rocketnet_counters_t before = *rocketnet_client_transport_counters( transport );
+#if ROCKETNET_DEV
+    const drop_counters_refusal_state_t state_before = drop_counters_refusal_state( transport );
+    check( state_before.replay_highest > 0 && state_before.accepted_highest > 0 );
+    check( state_before.largest_acked > 0 && state_before.highest_received > 0 );
+    check( state_before.client_index >= 0 && state_before.max_clients > state_before.client_index );
+#endif
 
     // from the dialed server, each outside the size bounds: passed by the
     // I/O step, refused by the prefilter on update, each counted once
@@ -188,9 +365,17 @@ static void drop_counters_run( bool batch )
         too_large++;
     }
 
-    // from other sources: dropped on update before any protocol check, each
-    // counted once, a runt among them: the source check comes first
+    // From other sources: dropped before any protocol check, each counted
+    // once. The first is a complete authenticated session payload that the
+    // positive control below delivers unchanged from the dialed server.
+#if ROCKETNET_DEV
+    uint8_t valid_payload[ROCKETNET_RECEIVE_CEILING];
+    const int valid_payload_bytes = drop_counters_valid_payload( valid_payload );
+    check( valid_payload_bytes > 0 );
+    drop_counters_push_packet( driver, "127.0.0.1:40001", valid_payload, valid_payload_bytes );
+#else
     drop_counters_push( driver, "127.0.0.1:40001", ROCKETNET_PREFILTER_BYTES );
+#endif
     drop_counters_push( driver, "127.0.0.2:40000", 100 );
     drop_counters_push( driver, "10.0.0.1:40000", ROCKETNET_RECEIVE_CEILING );
     drop_counters_push( driver, "127.0.0.1:40001", 2 );
@@ -205,23 +390,36 @@ static void drop_counters_run( bool batch )
     // Every rejected datagram is a dead end. The only counters that may move
     // are the diagnostics that name the stage: the source check before any
     // protocol work for the foreign group (sdk/rocketnet_client_transport.cpp:
-    // 2208-2212), and the prefilter for the server's short and large group
-    // (sdk/rocketnet_client_protocol.cpp:1366-1372). Everything else must sit
+    // 2276-2280), and the prefilter for the server's short and large group
+    // (sdk/rocketnet_client_protocol.cpp:1367-1372). Everything else must sit
     // still: protocol state, the ack endpoint, the replay/window marks, any
     // payload/message queue, delivery, and connection or ownership. The
-    // exact-delta oracle over the whole counter block proves it; nothing a
-    // refused packet could inappropriately feed has a counter that moved.
+    // explicit state oracle proves those outcomes, while the exact-delta
+    // oracle confines diagnostics to the stage that refused each packet.
     const struct rocketnet_counters_t after = *rocketnet_client_transport_counters( transport );
-    check( rocketnet_client_transport_state( transport ) ==
-           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+#if ROCKETNET_DEV
+    const drop_counters_refusal_state_t state_after = drop_counters_refusal_state( transport );
+    drop_counters_require_refusal_state( &state_before, &state_after );
+#endif
 
-    rocketnet_counters_expect( &before, &after,
-    {
-        { ROCKETNET_COUNTER_PACKETS_RECEIVED, too_short + too_large },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, too_short },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, too_large },
-        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, foreign }
-    } );
+    drop_counters_require_refusal_oracle( &before, &after, too_short, too_large, foreign );
+#if ROCKETNET_DEV
+    drop_counters_require_oracle_controls( transport, &state_before );
+
+    // The same authenticated bytes from the dialed server are accepted and
+    // delivered. This is the control proving the foreign-source row differs
+    // only at the source gate, not because its bytes were otherwise invalid.
+    drop_counters_push_packet( driver, server, valid_payload, valid_payload_bytes );
+    rocketnet_client_io_step( io, false );
+    clock.now = 1000.1;
+    rocketnet_client_transport_update( transport, clock.now );
+    check( rocketnet_client_transport_num_payloads( transport ) == 1 );
+    int delivered_bytes = 0;
+    const uint8_t * delivered = rocketnet_client_transport_payload( transport, 0, &delivered_bytes );
+    check( delivered && delivered_bytes == 1 && delivered[0] == 0xab );
+    const drop_counters_refusal_state_t accepted = drop_counters_refusal_state( transport );
+    check( accepted.replay_highest == 100 && accepted.accepted_highest == 100 );
+#endif
 
     // a refusal
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
@@ -257,16 +455,22 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config, clock.now, &operations, driver );
     check( transport != NULL );
 
-    // seed the live attempt as in drop_counters_run: the create already
-    // holds the dialed server address and requesting-cookie protocol state;
-    // an empty step and update run the handshake send scheduler with nothing
-    // inbound
+    // Establish the same connected, nonzero production state as the I/O-core
+    // rows before the direct receive path processes any refusal.
     rocketnet_client_io_step( rocketnet_client_transport_client_io( transport ), false );
     rocketnet_client_transport_update( transport, clock.now );
+#if ROCKETNET_DEV
+    drop_counters_seed_connected( transport );
+    check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+#else
     check( rocketnet_client_transport_state( transport ) ==
            ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+#endif
 
     const struct rocketnet_counters_t before = *rocketnet_client_transport_counters( transport );
+#if ROCKETNET_DEV
+    const drop_counters_refusal_state_t state_before = drop_counters_refusal_state( transport );
+#endif
 
     const char * server = "127.0.0.1:40000";
     const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
@@ -275,23 +479,37 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
     const int large_sizes[] = { ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
     for ( size_t i = 0; i < sizeof(large_sizes) / sizeof(large_sizes[0]); i++ )
         drop_counters_push( driver, server, large_sizes[i] );
+#if ROCKETNET_DEV
+    uint8_t valid_payload[ROCKETNET_RECEIVE_CEILING];
+    const int valid_payload_bytes = drop_counters_valid_payload( valid_payload );
+    check( valid_payload_bytes > 0 );
+    drop_counters_push_packet( driver, "127.0.0.1:40001", valid_payload, valid_payload_bytes );
+#else
     drop_counters_push( driver, "127.0.0.1:40001", 2 );
+#endif
 
     clock.now = 1000.05;
     rocketnet_client_transport_update( transport, clock.now );
     check( driver->head == driver->count );
 
     const struct rocketnet_counters_t after = *rocketnet_client_transport_counters( transport );
-    check( rocketnet_client_transport_state( transport ) ==
-           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+#if ROCKETNET_DEV
+    const drop_counters_refusal_state_t state_after = drop_counters_refusal_state( transport );
+    drop_counters_require_refusal_state( &state_before, &state_after );
+#endif
 
-    rocketnet_counters_expect( &before, &after,
-    {
-        { ROCKETNET_COUNTER_PACKETS_RECEIVED, 6 },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, 2 },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, 4 },
-        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, 1 }
-    } );
+    drop_counters_require_refusal_oracle( &before, &after, 2, 4, 1 );
+#if ROCKETNET_DEV
+    drop_counters_require_oracle_controls( transport, &state_before );
+
+    drop_counters_push_packet( driver, server, valid_payload, valid_payload_bytes );
+    clock.now = 1000.1;
+    rocketnet_client_transport_update( transport, clock.now );
+    check( rocketnet_client_transport_num_payloads( transport ) == 1 );
+    int delivered_bytes = 0;
+    const uint8_t * delivered = rocketnet_client_transport_payload( transport, 0, &delivered_bytes );
+    check( delivered && delivered_bytes == 1 && delivered[0] == 0xab );
+#endif
 
     rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
