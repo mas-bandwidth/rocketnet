@@ -133,10 +133,9 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_config.game_clock_epoch = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
-#if defined(_WIN32)
-    // Windows reports the actual SO_RCVBUF grant but does not naturally clamp
-    // this request. Inject only the warning decision while creating the real
-    // production server socket below.
+#if defined(_WIN32) && ROCKETNET_DEV
+    // Windows may grant this request in full. Inject only the warning decision
+    // when that happens, while creating the real production server socket below.
     const int warning_grant_override = request / 2;
     server_receive_low_tick_require( warning_grant_override > 0 );
     rocketnet_server_receive_buffer_warning_grant_override_for_testing( warning_grant_override );
@@ -144,6 +143,11 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+#if defined(_WIN32) && ROCKETNET_DEV
+    // A failed create can exit the test before the production helper consumes
+    // the override; clear it before the fatal assertion either way.
+    rocketnet_server_receive_buffer_warning_grant_override_for_testing( 0 );
+#endif
     server_receive_low_tick_require( server != NULL );
     server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
 
@@ -154,7 +158,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, "socket receive buffer" ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
 
-#if defined(_WIN32)
+#if defined(_WIN32) && ROCKETNET_DEV
     char actual_grant_line[96];
     snprintf( actual_grant_line, sizeof( actual_grant_line ), "actual grant %%d of %d requested bytes", request );
     int actual_grant = 0;
@@ -201,10 +205,13 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, granted_text ) != NULL );
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) && ROCKETNET_DEV
     printf( "server_receive_buffer_sized clients=%d request_bytes=%d actual_grant_bytes=%d warning_grant_override_bytes=%d warning_grant_override_used=%s limit=%s\n",
             server_receive_low_tick_server_clients, request, actual_grant, warning_grant_override,
             warning_grant_override_used ? "yes" : "no", server_receive_low_tick_limit_name() );
+#elif defined(_WIN32)
+    printf( "server_receive_buffer_sized clients=%d request_bytes=%d production_grant_report=observed\n",
+            server_receive_low_tick_server_clients, request );
 #else
     printf( "server_receive_buffer_sized clients=%d request_bytes=%d short_grant_bytes=%d limit=%s\n",
             server_receive_low_tick_server_clients, request, warned_grant, server_receive_low_tick_limit_name() );

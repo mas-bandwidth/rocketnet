@@ -785,7 +785,7 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
         rocketnet_info( "server %s: socket receive buffer actual grant %d of %d requested bytes; DEV test warning grant override %d bytes %s",
                         name ? name : "socket", granted_bytes, requested_bytes,
                         rocketnet_server_receive_buffer_warning_grant_override,
-                        granted_bytes >= requested_bytes ? "not needed" : "applied" );
+                        granted_bytes >= requested_bytes ? "applied" : "not needed" );
         if ( granted_bytes >= requested_bytes )
         {
             warning_granted_bytes = rocketnet_server_receive_buffer_warning_grant_override;
