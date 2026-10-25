@@ -576,6 +576,60 @@ static bool windows_ledger_result( const char * case_name, const windows_cell_t 
     return same;
 }
 
+// The restart case's live set between cycles. rocketnet_server_stop keeps the
+// stopped transport (server->retiring, sdk/rocketnet_api.cpp) until the next
+// start or destroy frees it (tla/ServerSession.tla Start, Destroy), so after
+// any cycle the identities the last stop left are live: the same kinds and
+// counts as after the warm cycle, each either one that was live then or one
+// opened since. A held identity older than the warm cycle's, or any count that
+// moved, is one more left behind and fails; destroy then must close every one
+// (the "after server destroy" ledger, compared identity by identity).
+static bool windows_ledger_held_result( const char * case_name, const windows_cell_t * cell,
+                                        const rocketnet_lifecycle_resources_t * expected,
+                                        const rocketnet_lifecycle_resources_t * actual, const char * phase )
+{
+    bool same = actual->errors == 0 && expected->live_count == actual->live_count;
+    unsigned expected_kind_count[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = {};
+    unsigned actual_kind_count[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = {};
+    for ( unsigned i = 0; i < expected->live_count; ++i )
+        if ( expected->live[i].kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS )
+            expected_kind_count[expected->live[i].kind]++;
+    for ( unsigned j = 0; j < actual->live_count; ++j )
+    {
+        const rocketnet_lifecycle_resource_t * held = &actual->live[j];
+        if ( held->kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS )
+            actual_kind_count[held->kind]++;
+        bool accounted = held->generation > expected->latest_generation;
+        for ( unsigned i = 0; i < expected->live_count && !accounted; ++i )
+            if ( expected->live[i].generation == held->generation && expected->live[i].kind == held->kind && expected->live[i].raw == held->raw )
+                accounted = true;
+        if ( !accounted )
+            same = false;
+    }
+    for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+        if ( expected_kind_count[kind] != actual_kind_count[kind] )
+            same = false;
+    static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] =
+    { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
+    printf( "%s [%s] SDK identities %s, the last stop's transport held: %u -> %u live%s", case_name, cell->name, phase,
+            expected->live_count, actual->live_count, same ? "" : " FAIL" );
+    for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+        printf( ", %s live %u -> %u created +%llu closed +%llu", kinds[kind], expected_kind_count[kind], actual_kind_count[kind],
+                (unsigned long long) ( actual->created[kind] - expected->created[kind] ),
+                (unsigned long long) ( actual->closed[kind] - expected->closed[kind] ) );
+    printf( "\n" );
+    if ( !same )
+    {
+        for ( unsigned i = 0; i < actual->live_count; ++i )
+            printf( "  SDK live kind=%s raw=0x%llx generation=%llu site=%s\n",
+                    actual->live[i].kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS ? kinds[actual->live[i].kind] : "unknown",
+                    (unsigned long long) actual->live[i].raw, (unsigned long long) actual->live[i].generation,
+                    actual->live[i].site ? actual->live[i].site : "unknown" );
+    }
+    fflush( stdout );
+    return same;
+}
+
 // The same functional executable exercises the ledger's fail-closed paths in
 // bounded child runs. Synthetic raw values are never passed to Windows APIs.
 void rocketnet_test_windows_lifecycle_ledger()
@@ -928,7 +982,7 @@ static void windows_server_restart_1000( const char * server_transport )
     rocketnet_lifecycle_resources_t final_resources;
     windows_ledger_read( &final_resources );
     const bool counts_ok = windows_case_result( "server_restart_1000", cell, &before, &after, seconds );
-    const bool loop_ok = windows_ledger_result( "server_restart_1000", cell, &before_resources, &after_resources, "after loop" );
+    const bool loop_ok = windows_ledger_held_result( "server_restart_1000", cell, &before_resources, &after_resources, "after loop" );
     const bool destroy_ok = windows_ledger_result( "server_restart_1000", cell, &initial_resources, &final_resources, "after server destroy" );
     windows_lifecycle_check( counts_ok && loop_ok && destroy_ok );
     windows_library_heap_end();
