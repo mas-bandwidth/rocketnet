@@ -104,8 +104,13 @@
     sample" (or "soak resources: touch not available" where the kernel has
     no MADV_POPULATE_*). Every between-clients sample and every 10 s sample
     also prints "soak memory: <phase> t=<s> resident_bytes=<n>
-    library_bytes=<n>", library_bytes being what the library holds through
-    the allocator soak gives rocketnet_init; on Linux it adds
+    library_bytes=<n> direct_bytes=<n>", library_bytes being what the
+    library holds: the bytes it holds through the allocator soak gives
+    rocketnet_init plus direct_bytes, the blocks it takes from the OS itself
+    (the regions and rings a transport registers with or maps from the
+    kernel: the RIO region, the AF_XDP UMEM and rings, the io_uring rings and
+    provided buffer rings, read from rocketnet_direct_allocation_bytes); on
+    Linux it adds
     "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup, and on
     Windows "threads=<n> os_threads=<n>"; phase is
     between (no client alive) or live (a client alive), and only between
@@ -136,20 +141,14 @@
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
-    and library_bytes, the library's own allocator bytes, grows by at most
-    one page per ten minutes of run since the post-warmup sample (at least
-    one page). The process's memory count (resident_bytes, or private_bytes
-    on Windows) is held to the same rule only where the library allocates
-    outside the allocator soak gives rocketnet_init: when the server or the
-    client transport is io_uring (an anonymous mmap and the liburing rings),
-    xdp (the umem) or rio (a VirtualAlloc region). On every other transport
-    (portable, msgx, gso, iocp, loopback: every library allocation goes
-    through that allocator, and thread stacks are held by the thread count)
-    it is printed and not asserted, since it counts what the OS and the C
-    runtime hold (socket buffers, first touch of preallocated pages, the
-    runtime's own heaps) beside the library. The guard a run used prints as
-    "soak resources: memory guard library_bytes" or "soak resources: memory
-    guard library_bytes and <memory count> (server <name>, client <name>)";
+    and library_bytes, the library's own bytes (allocator and direct),
+    grows by at most one page per ten minutes of run since the post-warmup
+    sample (at least one page), on every transport. Thread stacks are held
+    by the thread count. The process's memory count (resident_bytes, or
+    private_bytes on Windows) is printed and never asserted, since it counts
+    what the OS and the C runtime hold (socket buffers, first touch of
+    preallocated pages, the runtime's own heaps) beside the library. The
+    guard prints as "soak resources: memory guard library_bytes";
     on Windows os_threads
     may fall and never rise, so the full thread count never grows. A resource
     read that fails (a thread walk that ends on an error among them) fails
@@ -519,13 +518,27 @@ static void soak_library_bytes_add( int64_t bytes )
 #endif
 }
 
+// the bytes the library holds in blocks it takes from the OS itself, outside
+// the allocator (sdk/rocketnet_memory.h): the regions and rings its
+// transports register with or map from the kernel, added at create and
+// removed at destroy
+uint64_t rocketnet_direct_allocation_bytes( void );
+
+static int64_t soak_direct_bytes_read( void )
+{
+    return (int64_t) rocketnet_direct_allocation_bytes();
+}
+
+// library_bytes: the allocator's count plus the direct blocks, so the flat
+// rule holds every byte the library holds on every transport
 static int64_t soak_library_bytes_read( void )
 {
 #if defined(_WIN32)
-    return (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &soak_library_bytes, 0, 0 );
+    const int64_t allocator_bytes = (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &soak_library_bytes, 0, 0 );
 #else
-    return __atomic_load_n( &soak_library_bytes, __ATOMIC_RELAXED );
+    const int64_t allocator_bytes = __atomic_load_n( &soak_library_bytes, __ATOMIC_RELAXED );
 #endif
+    return allocator_bytes + soak_direct_bytes_read();
 }
 
 static void * soak_library_malloc( void * context, size_t bytes )
@@ -575,8 +588,8 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
 {
     int64_t rss = -1;
     int64_t private_dirty = -1;
-    printf( "soak memory: %s t=%.0f %s=%lld library_bytes=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
-            (long long) sample->values[PROCESS_RESOURCES_MEMORY], (long long) soak_library_bytes_read() );
+    printf( "soak memory: %s t=%.0f %s=%lld library_bytes=%lld direct_bytes=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
+            (long long) sample->values[PROCESS_RESOURCES_MEMORY], (long long) soak_library_bytes_read(), (long long) soak_direct_bytes_read() );
     if ( process_resources_smaps( &rss, &private_dirty ) )
         printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
 #if defined(_WIN32)
@@ -584,19 +597,6 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
 #endif
     printf( "\n" );
     fflush( stdout );
-}
-
-// Whether every library allocation a transport makes goes through the
-// allocator soak gives rocketnet_init. io_uring maps its buffers and liburing
-// maps its rings (sdk/rocketnet_server_uring_linux.cpp), xdp allocates its
-// umem directly (sdk/rocketnet_server_socket_linux.cpp) and rio commits its
-// region with VirtualAlloc (sdk/rocketnet_server_rio_windows.cpp); every
-// other transport allocates only through the allocator, and its threads'
-// stacks are held by the thread count.
-
-static int soak_transport_memory_counted( const char * transport_name )
-{
-    return strcmp( transport_name, "io_uring" ) != 0 && strcmp( transport_name, "xdp" ) != 0 && strcmp( transport_name, "rio" ) != 0;
 }
 
 // The client send path, per report interval, from what the library already
@@ -1339,16 +1339,9 @@ int main( int argc, char ** argv )
         soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
-    // the memory guard: the process's memory count joins library_bytes
-    // wherever either end's transport allocates outside the counting
-    // allocator
-    const int memory_guard_process = !soak_transport_memory_counted( server_transport_name ) ||
-                                     ( client_transport_name[0] != '\0' && !soak_transport_memory_counted( client_transport_name ) );
-    if ( memory_guard_process )
-        printf( "soak resources: memory guard library_bytes and %s (server %s, client %s)\n", process_resources_name( PROCESS_RESOURCES_MEMORY ),
-                server_transport_name, client_transport_name[0] ? client_transport_name : "none" );
-    else
-        printf( "soak resources: memory guard library_bytes\n" );
+    // the memory guard: library_bytes, the allocator's count and the direct
+    // blocks, on every transport
+    printf( "soak resources: memory guard library_bytes\n" );
 
     if ( resources_started && resources_ended )
     {
@@ -1358,10 +1351,9 @@ int main( int argc, char ** argv )
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
             // the process's memory count is the OS's and the C runtime's as
-            // much as the library's: asserted only where the library
-            // allocates outside the counting allocator (memory_guard_process),
-            // otherwise printed; the memory flat rule holds the library's
-            // own bytes below on every transport. The owner's
+            // much as the library's: printed, never asserted; the memory
+            // flat rule holds the library's own bytes below on every
+            // transport, its direct blocks included. The owner's
             // rule: the library is not responsible for the OS. Measured: a
             // 300 s impaired portable soak on macOS held library_bytes at
             // 105680858 at every between sample while resident_bytes grew
@@ -1369,7 +1361,7 @@ int main( int argc, char ** argv )
             // zones' residency (Malloc Small 1024K to 1152K, Malloc Large
             // 14.1M to 14.2M); a 60 s iocp soak on Windows grew
             // private_bytes 8192 with handles and threads flat.
-            if ( i == PROCESS_RESOURCES_MEMORY && !memory_guard_process )
+            if ( i == PROCESS_RESOURCES_MEMORY )
                 continue;
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {

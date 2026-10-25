@@ -557,7 +557,11 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     if ( rio->send_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->send_cq );
     if ( rio->receive_cq != RIO_INVALID_CQ ) rio->rio.RIOCloseCompletionQueue( rio->receive_cq );
     if ( rio->buffer_id != RIO_INVALID_BUFFERID ) rio->rio.RIODeregisterBuffer( rio->buffer_id );
-    if ( rio->region ) VirtualFree( rio->region, 0, MEM_RELEASE );
+    if ( rio->region )
+    {
+        VirtualFree( rio->region, 0, MEM_RELEASE );
+        rocketnet_direct_allocation_remove( rio->layout.total_bytes );
+    }
     if ( rio->notify ) CloseHandle( rio->notify );
     if ( rio->wake ) CloseHandle( rio->wake );
     if ( rio->mutex.ok ) rocketnet_platform_mutex_destroy( &rio->mutex );
@@ -684,6 +688,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         rocketnet_allocation_refused();
         goto failed;
     }
+    rocketnet_direct_allocation_add( rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
     if ( rio->buffer_id == RIO_INVALID_BUFFERID || fail_stage == 3 ) goto failed;
 
@@ -1165,25 +1170,34 @@ static BOOL WINAPI rocketnet_rio_overflow_test_receive( RIO_RQ, PRIO_BUF, ULONG,
 
 // A unit fixture: a transport with its region, banks and mutex but no
 // socket, no queues and no worker. The seams drive the real worker pass and
-// the real main calls on one thread, in the interleavings they choose.
+// the real main calls on one thread, in the interleavings they choose. Every
+// block comes from the counted allocator and is zeroed, so a fixture that
+// does not free what it took shows in the allocator's count.
+static void * rocketnet_rio_test_zeroed( size_t bytes )
+{
+    void * block = rocketnet_malloc( NULL, bytes );
+    if ( block ) memset( block, 0, bytes );
+    return block;
+}
+
 static rocketnet_server_rio_t * rocketnet_rio_test_fixture()
 {
-    void * storage = calloc( 1, sizeof(rocketnet_server_rio_t) );
+    void * storage = rocketnet_rio_test_zeroed( sizeof(rocketnet_server_rio_t) );
     if ( !storage ) return NULL;
     rocketnet_server_rio_t * rio = new (storage) rocketnet_server_rio_t();
     bool ok = rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES,
         ROCKETNET_FRAME_STRIDE, ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &rio->layout );
-    rio->region = ok ? (uint8_t*) calloc( 1, (size_t) rio->layout.total_bytes ) : NULL;
-    rio->banks = (rocketnet_rio_bank_t*) calloc( ROCKETNET_RIO_RECEIVE_BANKS, sizeof(rocketnet_rio_bank_t) );
-    rio->slot_bytes = (int*) calloc( ROCKETNET_RIO_SEND_FRAMES, sizeof(int) );
+    rio->region = ok ? (uint8_t*) rocketnet_rio_test_zeroed( (size_t) rio->layout.total_bytes ) : NULL;
+    rio->banks = (rocketnet_rio_bank_t*) rocketnet_rio_test_zeroed( ROCKETNET_RIO_RECEIVE_BANKS * sizeof(rocketnet_rio_bank_t) );
+    rio->slot_bytes = (int*) rocketnet_rio_test_zeroed( ROCKETNET_RIO_SEND_FRAMES * sizeof(int) );
     ok = ok && rio->region && rio->banks && rio->slot_bytes && rocketnet_platform_mutex_create( &rio->mutex );
     rio->wake = ok ? CreateEventW( NULL, FALSE, FALSE, NULL ) : NULL;
     if ( !ok || !rio->wake )
     {
         if ( rio->mutex.ok ) rocketnet_platform_mutex_destroy( &rio->mutex );
-        free( rio->slot_bytes ); free( rio->banks ); free( rio->region );
+        rocketnet_free( NULL, rio->slot_bytes ); rocketnet_free( NULL, rio->banks ); rocketnet_free( NULL, rio->region );
         rio->~rocketnet_server_rio_t();
-        free( storage );
+        rocketnet_free( NULL, storage );
         return NULL;
     }
     for ( int i = 1; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
@@ -1206,9 +1220,9 @@ static void rocketnet_rio_test_fixture_free( rocketnet_server_rio_t * rio )
     rocketnet_rio_test_functions = NULL;
     CloseHandle( rio->wake );
     rocketnet_platform_mutex_destroy( &rio->mutex );
-    free( rio->slot_bytes ); free( rio->banks ); free( rio->region );
+    rocketnet_free( NULL, rio->slot_bytes ); rocketnet_free( NULL, rio->banks ); rocketnet_free( NULL, rio->region );
     rio->~rocketnet_server_rio_t();
-    free( rio );
+    rocketnet_free( NULL, rio );
 }
 
 // A test-only fixture drives the production worker pass and receive_packets
