@@ -116,12 +116,26 @@ by shard: 284.06 / 273.03, 285.26 / 267.28, 283.76 / 274.21, 284.18 / 269.30.
 
 Server receipt: delivery_verdict=PASS, load_verdict=PASS, bandwidth_verdict=PASS.
 
-In this cell the unreliable streams lost 110680 messages and the sequenced
-streams skipped 2232. The owner's checks count loss on unreliable streams
-without failing it, and a sequenced skip means an older message was not
-delivered. Every reliable stream was delivered exactly once and in order, and
-the receipts matched. The gso cell, on the same hosts and the same head, lost
-nothing. This difference is recorded here and was not investigated.
+In this cell every exactly-once reliable stream (RELIABLE, RELIABLE_ORDERED,
+RELIABLE_WITH_ACK_RECEIPT and RELIABLE_ORDERED_WITH_ACK_RECEIPT) delivered the
+sender's count exactly once, the ordered ones in order with no gap, and the
+receipts matched. Two shortfalls are counted and allowed, not failed:
+
+- 2232 RELIABLE_SEQUENCED skips (`sequenced_skipped=2232`). The rule in
+  [LOAD_SPLIT.md](../LOAD_SPLIT.md) ("Proof load") for RELIABLE_SEQUENCED is
+  "never older than the newest delivered, never a duplicate; a stale message
+  the receiver drops is a skip, counted and never failed". The SDK defines the
+  mode the same way (`sdk/rocketnet.h`: the receiver "delivers only the newest
+  message on the channel and can drop a stale one"), and the merger applies
+  the exactly-once check only to the four modes above and counts a
+  RELIABLE_SEQUENCED shortfall as a skip. No sequenced stream delivered an
+  older message or a duplicate.
+- 110680 unreliable losses (`unreliable_lost=110680`) on UNRELIABLE,
+  UNRELIABLE_SEQUENCED and UNRELIABLE_WITH_ACK_RECEIPT. The rule for these
+  modes is "loss is counted, never failed"; none delivered a duplicate.
+
+The gso cell, on the same hosts and the same head, lost and skipped nothing.
+This difference is recorded here and was not investigated.
 
 ## Server call timings (not part of the proof verdict)
 
