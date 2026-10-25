@@ -34,6 +34,16 @@
 (* lands a zero mark and its nonzero mark comes a commit later.            *)
 (* MCRNXdpReplayReconnect.cfg is the reconnect control: two addresses,     *)
 (* three sessions, one pending-forget entry.                               *)
+(* MCRNXdpReplayRefusedMark.cfg is the refused-mark control: the kernel    *)
+(* may refuse up to two marks (MarkFailureBudget <- MarkFailureBudgetTwo). *)
+(* Its reversed witnesses: MCRNXdpReplayBrokenRefusedMarkDropped.cfg sets  *)
+(* KeepRefusedMarks <- KeepRefusedMarksBroken (a refused mark is dropped)  *)
+(* and must fail MarkOwedUntilApplied;                                     *)
+(* MCRNXdpReplayBrokenKeptMarkAfterForget.cfg sets                         *)
+(* ForgetDropsKeptMark <- ForgetDropsKeptMarkBroken (a kept mark survives  *)
+(* the forget the walk queues for its address, and the commit rewrites the *)
+(* released address's entry after the forget) and must fail               *)
+(* ForgetOwedUntilApplied.                                                 *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -48,4 +58,8 @@ SupersedeStaleForgetsBroken == FALSE
 ForgetFailureBudgetTwo == 2
 ForgetFailureBudgetThree == 3
 MarkNewSessionsBroken == FALSE
+KeepRefusedMarksBroken == FALSE
+ForgetDropsKeptMarkBroken == FALSE
+MarkFailureBudgetOne == 1
+MarkFailureBudgetTwo == 2
 =============================================================================
