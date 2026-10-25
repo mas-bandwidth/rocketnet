@@ -2214,7 +2214,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // the packet opens, and the open learns the MAC before this commit.
     // Taking the learned MAC here sends it the way the same update's
     // payloads go; through the gateway it arrived after them (the router's
-    // hairpin, ~200 us on hulk), and the client was handed payloads before
+    // hairpin, ~200 us on the Linux x64 XDP bench), and the client was handed payloads before
     // the keep-alive that connects it. The table is written only by update,
     // never during a fill.
 
@@ -2597,7 +2597,7 @@ bool rocketnet_server_socket_test_inactive_flow()
 // MAC is learned yet and the rule picks the gateway; the open then learns
 // the client's MAC, and finish takes it. Without that, on a LAN with a
 // gateway the keep-alive took the router's hairpin and arrived ~200 us after
-// the payloads sent to the learned MAC in the same update (hulk, 10-22).
+// the payloads sent to the learned MAC in the same update (Linux x64 XDP bench, 10-22).
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish()
 {
     void * server_storage = rocketnet_malloc( NULL, sizeof(rocketnet_server_socket_t) );

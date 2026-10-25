@@ -15,7 +15,7 @@
 //
 // The ring of twice the frames (ROCKETNET_XDP_FILL_RING_SIZE) is the design;
 // the ring of exactly the frames is the reversed witness, the shape the
-// server had when hulk counted "rx fill ring empty" drops on one queue.
+// server had when the Linux x64 XDP bench counted "rx fill ring empty" drops on one queue.
 
 #include <stdint.h>
 #include <string.h>

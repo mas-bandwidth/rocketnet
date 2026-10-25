@@ -142,7 +142,7 @@ AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of 
 
 — is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
 
-Portable remains a fallback rather than a performance target. Glenn enabled it in production on 2026-10-22; his earlier performance guidance remains (2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
+Portable remains a fallback rather than a performance target. The owner enabled it in production on 2026-10-22; the earlier performance guidance remains (2026-10-21: "now on both client and server we can ignore the portable transport because it is not a production transport. Don't make it slow for no reason, but don't over optimize or worry too much about it."). The production performance targets are for the native transports; the portable column still records what portable does.
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -202,7 +202,7 @@ One server per transport on a LAN, measured: a row per server platform, a cell p
 
 ## Native client transports (later)
 
-The simplest native transport on the client on every OS: one connected UDP socket per client, batched calls, existing code. Glenn, 2026-10-21: "There is no reason for us to be portable on the client, portable is meant as a fallback there too." and "I don't want anything hardcore like AF_XDP for example, but the simplest stuff... i'd like that." The native client ranks above portable, and portable ranks last, as the fallback, on every OS. Stella's deliverable has landed (PR #437).
+The simplest native transport on the client on every OS: one connected UDP socket per client, batched calls, existing code. Owner, 2026-10-21: "There is no reason for us to be portable on the client, portable is meant as a fallback there too." and "I don't want anything hardcore like AF_XDP for example, but the simplest stuff... i'd like that." The native client ranks above portable, and portable ranks last, as the fallback, on every OS. The client transport deliverable has landed (PR #437).
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|

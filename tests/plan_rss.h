@@ -56,8 +56,8 @@
 
 // The slack, measured 2026-10-23 over every case that reported its plan,
 // Release: the largest peak resident set over the plan's peak was 7 MiB on
-// macOS arm64 (mini-m5-1, ./bin/functional and its nightly tier,
-// test_posix_send_burst) and 5 MiB on Linux x86_64 (amd-1, ./bin/functional,
+// macOS arm64 (Apple clang, ./bin/functional and its nightly tier,
+// test_posix_send_burst) and 5 MiB on Linux x86_64 (gcc, ./bin/functional,
 // test_gso_transport_server_probe). Most cases peak far under their plan,
 // whose pages are not all touched. 64 MiB leaves room for a Debug build's
 // larger image, which was not measured (docs/MACOS.md).

@@ -324,7 +324,7 @@ static void rocketnet_client_transport_reset_buffer_counts( rocketnet_client_tra
 // initialization (members with initializers get them, nothing else is
 // written), then the buffers' counts: the buffers' bytes are never written
 // here, so their pages are touched only when a packet uses them. Zero only
-// what is state (Glenn 2026-10-22): pointers, handles, state that must start
+// what is state (owner, 2026-10-22): pointers, handles, state that must start
 // valid, and keys; never whole structures.
 static void rocketnet_client_transport_construct( rocketnet_client_transport_t * client )
 {

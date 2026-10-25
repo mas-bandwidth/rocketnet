@@ -2,7 +2,7 @@
 #
 # ci.yml's sanitizers and tsan jobs, msan.yml and nightly-leaks.yml all run on
 # the Linux fleet with gcc. This workflow runs the same suites on the fleet's
-# darwin member (mini-m5-1, label rocketnet-macos) with Apple clang, the
+# darwin member (macOS arm64, label rocketnet-macos) with Apple clang, the
 # system toolchain (/usr/bin/clang, not ~/sdk/llvm), in three legs, each in
 # its own build directory and its own job:
 #

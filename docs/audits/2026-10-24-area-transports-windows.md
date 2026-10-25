@@ -89,6 +89,6 @@ one-sentence defect, a one-sentence concrete failure or cost, and the smallest f
 
 ## Already filed
 
-None of the findings above repeats a finding of `docs/audits/2026-10-24-code-quality-aurora.md`
-or `docs/audits/2026-10-24-code-quality-johnny.md`, the two audits present at 9775266a, and
+None of the findings above repeats a finding of `docs/audits/2026-10-24-code-quality-a.md`
+or `docs/audits/2026-10-24-code-quality-b.md`, the two audits present at 9775266a, and
 neither audit files a finding inside this area's files.

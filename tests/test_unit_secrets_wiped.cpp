@@ -992,7 +992,7 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
 }
 REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );
 
-// audit finding 3 (docs/audits/2026-10-24-code-quality-johnny.md): releasing a
+// audit finding 3 (docs/audits/2026-10-24-code-quality-b.md): releasing a
 // free slot is refused in every build, so no index is handed out twice and
 // num_connected never goes negative. the hook keeps assert-on builds quiet.
 static void secrets_wiped_quiet_assert( const char * condition, const char * function, const char * file, int line )

@@ -826,7 +826,7 @@ static void test_loopback_transport_io_refuses_past_max_endpoints()
 // Junk from many sources takes no per-source state: the portable path reads
 // 300 one-byte datagrams, each from its own address, then a real client still
 // connects, and its slot's wire totals start at the slot's assignment. The
-// table that once held each unknown source's totals is gone (Glenn,
+// table that once held each unknown source's totals is gone (owner,
 // 2026-10-21: request bytes are not tracked), so nothing here can fill.
 
 struct junk_sources_fixture_t

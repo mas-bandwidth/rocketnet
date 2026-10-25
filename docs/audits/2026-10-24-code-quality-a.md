@@ -1,4 +1,4 @@
-# Code-quality audit — Aurora Muse, 2026-10-24
+# Code-quality audit A, 2026-10-24
 
 Independent cold audit of `mas-bandwidth/rocketnet` at `3550a6f33f03126b38f42211cd768f6a42b16e90`
 (`main` as named in the card). Scope read: the whole of `sdk/` plus `tests/`; the card's

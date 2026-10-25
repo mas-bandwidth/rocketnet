@@ -462,17 +462,17 @@ reason, so that every hit of every pattern above is accounted for.
 
 | Instance | Filed as |
 |---|---|
-| `sdk/rocketnet_stats_window.h:13`, and the client copy at `sdk/rocketnet_client_transport.cpp:2281` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 1 |
-| `sdk/rocketnet_packet_loss_tracker.h:91` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 2 |
-| `sdk/rocketnet_window_send.cpp:19` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 3 |
-| `sdk/rocketnet_fragment.cpp:312` (and 265) | `docs/audits/2026-10-24-code-quality-aurora.md` finding 4 |
-| `sdk/rocketnet_packet_lease.h:40` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 6 |
-| `sdk/rocketnet_window_send.cpp:193` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 12 |
-| `sdk/rocketnet_out_of_order_tracker.h:49` | `docs/audits/2026-10-24-code-quality-aurora.md` finding 13 |
-| `sdk/rocketnet_window_send.cpp:32` | `docs/audits/2026-10-24-code-quality-johnny.md` finding 2 |
-| `sdk/rocketnet_client_slots.cpp:294` | `docs/audits/2026-10-24-code-quality-johnny.md` finding 3 |
-| `sdk/rocketnet_slots.cpp:19` | `docs/audits/2026-10-24-code-quality-johnny.md` finding 9 |
-| `tests/test_unit_registry.h:194` (the run result dropped by an uncalled runner) | `docs/audits/2026-10-24-code-quality-johnny.md` finding 10 |
+| `sdk/rocketnet_stats_window.h:13`, and the client copy at `sdk/rocketnet_client_transport.cpp:2281` | `docs/audits/2026-10-24-code-quality-a.md` finding 1 |
+| `sdk/rocketnet_packet_loss_tracker.h:91` | `docs/audits/2026-10-24-code-quality-a.md` finding 2 |
+| `sdk/rocketnet_window_send.cpp:19` | `docs/audits/2026-10-24-code-quality-a.md` finding 3 |
+| `sdk/rocketnet_fragment.cpp:312` (and 265) | `docs/audits/2026-10-24-code-quality-a.md` finding 4 |
+| `sdk/rocketnet_packet_lease.h:40` | `docs/audits/2026-10-24-code-quality-a.md` finding 6 |
+| `sdk/rocketnet_window_send.cpp:193` | `docs/audits/2026-10-24-code-quality-a.md` finding 12 |
+| `sdk/rocketnet_out_of_order_tracker.h:49` | `docs/audits/2026-10-24-code-quality-a.md` finding 13 |
+| `sdk/rocketnet_window_send.cpp:32` | `docs/audits/2026-10-24-code-quality-b.md` finding 2 |
+| `sdk/rocketnet_client_slots.cpp:294` | `docs/audits/2026-10-24-code-quality-b.md` finding 3 |
+| `sdk/rocketnet_slots.cpp:19` | `docs/audits/2026-10-24-code-quality-b.md` finding 9 |
+| `tests/test_unit_registry.h:194` (the run result dropped by an uncalled runner) | `docs/audits/2026-10-24-code-quality-b.md` finding 10 |
 | `sdk/rocketnet_channel_sequenced.cpp:434` (a held sequenced message released uncounted when `rn_channels_deliver_sequenced` refuses it) | `docs/audits/2026-10-24-area-protocol-channels-messages.md` finding 1 |
 | `sdk/rocketnet_server_protocol.cpp:2262` (payload accept passes an unchecked mapping index, −1 included, so the deferred ack is lost uncounted) | `docs/audits/2026-10-24-sweep-assert-only-guards.md` finding 1 |
 | `sdk/rocketnet_server_iocp_windows.cpp:800` (the `packet_id` half of finding 8) | `docs/audits/2026-10-24-sweep-assert-only-guards.md` finding 3 |

@@ -144,12 +144,12 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.os }} / ${{ matrix.build_type }}${{ matrix.leg != 'ab' && format(' ({0})', matrix.leg) || '' }}
-    # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: space-org and
-    # hetzner-org today), provisioned by rowan-tools fleet/packages.yml (group_vars ci_apt_packages), which is why the
+    # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
+    # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
     # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
-    # hulk carried: hulk went down and every Linux job sat QUEUED for hours.
+    # one Linux x64 host carried: that host went down and every Linux job sat QUEUED for hours.
     # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
-    # ever registered, so those rows never started. The self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
+    # ever registered, so those rows never started. The self-hosted target is the fleet's macOS arm64 clang host once its org runner is registered, and
     # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
     # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ fromJSON(matrix.runner) }}
@@ -166,7 +166,7 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macOS Apple silicon on the fleet's darwin runner (mini-m5-1-rocketnet-1, label rocketnet-macos; rowan-tools fleet/runners.tsv)
+          # macOS Apple silicon on the fleet's darwin runner (macOS arm64 clang, label rocketnet-macos)
           - { os: macos-15, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
           - { os: macos-15, build_type: Release, leg: ab, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
@@ -760,8 +760,8 @@ jobs:
 
   build-and-test-windows:
     name: windows / Release (${{ matrix.leg }})
-    # the fleet's native Windows runner (captain-rocketnet-1: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
-    # label rocketnet-windows; rowan-tools fleet/runners-windows.tsv), never a hosted image
+    # the fleet's native Windows runner (Windows x64 MSVC: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
+    # label rocketnet-windows), never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     timeout-minutes: 3
     strategy:
@@ -1156,7 +1156,7 @@ jobs:
 
   sanitizers:
     name: asan + ubsan (${{ matrix.leg }})
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
     strategy:
       fail-fast: false
@@ -1271,7 +1271,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
     steps:
 
@@ -1685,7 +1685,7 @@ jobs:
 
   conformance:
     name: standard conformance
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
     steps:
 
@@ -1756,7 +1756,7 @@ jobs:
 
   tsan:
     name: tsan (${{ matrix.leg }})
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
     strategy:
       fail-fast: false
@@ -1786,9 +1786,9 @@ jobs:
           exit "$missing"
 
       # setarch -R runs each tsan binary with address-space randomisation off FOR THAT PROCESS ONLY (no sysctl,
-      # no root). gcc 13's tsan runtime (Ubuntu 24.04: the hetzner org runners) cannot map its shadow under the
+      # no root). gcc 13's tsan runtime (Ubuntu 24.04: the Linux x64 gcc 13 org runners) cannot map its shadow under the
       # kernel's default vm.mmap_rnd_bits=32 and dies "FATAL: ThreadSanitizer: unexpected memory mapping" before
-      # main (measured on hetzner1 and hetzner2, 2026-10-13; the same binary passes under setarch -R). Hosted
+      # main (measured on two Linux x64 gcc 13 hosts, 2026-10-13; the same binary passes under setarch -R). Hosted
       # images lower the sysctl instead; this works on both and changes nothing tsan observes.
 
       - name: Configure
@@ -1823,7 +1823,7 @@ jobs:
   # this older backend checks interoperability across supported deployments.
   sodium-pinned:
     name: pinned libsodium (built from source)
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: 3
     env:
       SODIUM_VERSION: "1.0.20"
@@ -2090,7 +2090,7 @@ jobs:
         run: python3 tools/check_instructions.py --bin ./build/instruction_count
 
   runs-on-lint:
-    # Glenn 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
+    # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
     name: runs-on-lint
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 5
