@@ -203,7 +203,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
-| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |
 | `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp) | `./bin/functional` on macOS |
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp) | CI `Functional: lifecycle binary` |
@@ -1001,7 +1001,11 @@ isolated range for queues plus one there.
 
 Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
-transport matrix. No CI leg attaches XDP to a real NIC, so that tier's claims
+transport matrix, and `.github/workflows/nightly-soak.yml` runs
+`bash tools/run_xdp_filter_guest.sh` inside a four-CPU virtme-ng guest on the
+built `server_xdp.o` and `test_xdp_filter`, requiring all 18 `BPF_PROG_TEST_RUN`
+and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 18 cases passed`;
+see `ROOTGATE.md`). No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
 supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.
 On 22.04 the build selects `bpf/xsk.h`, loads the embedded BPF object directly,
