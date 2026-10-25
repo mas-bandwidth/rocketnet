@@ -477,6 +477,19 @@ MiB; other cases use the suite-wide 698 MiB bound or a case-specific
 bounds, and `ROCKETNET_TEST_REPORT=1` to print each case's peak and bound.
 These variables configure the test executable, not the library.
 
+A page is 16 KiB on Apple silicon and 4 KiB on x86_64 Linux, and a case whose
+library tables are touched sparsely holds one page resident per touch.
+`test_server_stats_current_every_update` builds a server of 1000 slots and
+1000 connected clients: the SDK allocates the same on both systems (about
+36 GiB, almost all never touched), yet the case peaks at 1149 MiB on macOS and
+567 MiB on Linux (1228 and 641 MiB in a 10000-client build), over the
+suite-wide 698 (1217) on macOS only. The case therefore declares its own
+`SUITE_CASE_RSS_BOUND` from what it builds, a byte allowance per connected
+pair plus a page count scaled by the measured page size
+(`no_worker_rss_bound_mb` in `tests/test_unit_server_stats_no_worker.cpp`):
+669 MiB on Linux and 1325 MiB on macOS at 1000 build slots. Every other case
+keeps the suite-wide bound.
+
 ## Verify a Mac
 
 Run these in order from the checkout, one at a time; each exits 0. Builds and
