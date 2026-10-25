@@ -397,10 +397,10 @@ jobs:
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
     # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
-    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The iocp and rio server
-    # cells add 1800 s each, about 79 minutes in all, inside the 120-minute bound.
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The portable, iocp and
+    # rio server cells add 1800 s each, about 109 minutes in all, inside the 150-minute bound.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 120
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -431,6 +431,49 @@ jobs:
       - name: UDP loopback soak (Windows)
         shell: bash
         run: ./bin/Release/soak.exe 200000
+
+      - name: Portable transport soak under loss, jitter and duplication (Windows)
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -uo pipefail
+          # the portable server with the portable client, impaired at both
+          # ends of the link simulator under the names soak writes into the
+          # transport configs it creates (ROCKETNET_DEV_SERVER_* and
+          # ROCKETNET_DEV_CLIENT_*); --assert-flat fails a run whose handles,
+          # threads or library bytes grow, or whose impairment left no trace
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-windows
+          log=build/soak-windows/portable.log
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          if env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+              ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+              ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+              ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+              ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+              ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+            status=0
+          else
+            status=$?
+          fi
+          cat "$log"
+          # soak.exe writes CRLF; the checks read a copy with LF endings
+          lines=build/soak-windows/portable.lf
+          tr -d '\r' < "$log" > "$lines"
+          server=$(summary "$lines" server_transport_io)
+          client=$(summary "$lines" client_transport_io)
+          link_ok=1
+          for end in server client; do
+            grep -qx "soak link simulator: $end $want_link" "$lines" || link_ok=0
+          done
+          if [ "$status" -eq 0 ] && [ "$server" = portable ] && [ "$client" = portable ] && [ "$link_ok" = 1 ]; then
+            echo "SOAK cell=portable PASS server=$server client=$client seconds=$seconds handles=$(resources "$lines" handles) threads=$(resources "$lines" threads) private_bytes=$(resources "$lines" private_bytes) library_bytes=$(resources "$lines" library_bytes) link=impaired missing=$(summary "$lines" client_to_server_missing)/$(summary "$lines" server_to_client_missing) duplicates_refused=$(summary "$lines" duplicates_refused_at_server)/$(summary "$lines" duplicates_refused_at_client) log=$log"
+          else
+            echo "SOAK cell=portable FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
+            exit 1
+          fi
 
       # The iocp and rio server cells: 1800 s of bin/soak each under loss,
       # latency, jitter and duplication at both ends of the link simulator

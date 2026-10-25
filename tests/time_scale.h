@@ -13,6 +13,8 @@
 #ifndef ROCKETNET_TEST_TIME_SCALE_H
 #define ROCKETNET_TEST_TIME_SCALE_H
 
+#include "portable_crt.h"
+
 #define ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS 60.0
 #define ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS 120.0
 
@@ -43,5 +45,25 @@
 #else
 #define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_TIME_SCALE
 #endif
+
+// The environment's scale on case completion bounds. The nightly macOS TSAN
+// functional runs set ROCKETNET_TEST_CASE_TIME_SCALE (30, a one-hour case
+// limit); every other run leaves it unset. Unset or empty, the scale is 1.
+// Set, it is a number over 0 and at most 1000; anything else returns 0 with
+// the scale at 1, and the caller refuses to run. The suite runner's case
+// limit and a case's own completion bound both read it here, and nowhere else.
+static inline int rocketnet_test_case_env_time_scale( double * scale )
+{
+    *scale = 1.0;
+    char value[64];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", value, sizeof( value ) ) || value[0] == '\0' )
+        return 1;
+    char * end = NULL;
+    const double parsed = strtod( value, &end );
+    if ( end == value || *end != '\0' || !( parsed > 0.0 && parsed <= 1000.0 ) )
+        return 0;
+    *scale = parsed;
+    return 1;
+}
 
 #endif // ROCKETNET_TEST_TIME_SCALE_H

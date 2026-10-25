@@ -55,6 +55,76 @@ EOF
 "$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 >"$tmp/xdp" 2>&1 && say "xdp accepted an uplink"
 grep -q 'refuses an uplink' "$tmp/xdp" || say "xdp refusal did not name the uplink"
 
+# --xdp-uplink names the uplink: the dry run arms the self-detach before the
+# attach and detaches after; it names only the server interface, and only
+# for the xdp cell
+PATH="$tmp/bin:$PATH" "$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 --xdp-uplink eth0 >"$tmp/xdp-uplink" 2>&1 ||
+    say "xdp --xdp-uplink dry-run exited $?: $(cat "$tmp/xdp-uplink")"
+grep -q 'SSH-CALLED' "$tmp/xdp-uplink" && say "xdp --xdp-uplink dry-run called ssh"
+grep -q 'dry-run: no host contacted' "$tmp/xdp-uplink" || say "xdp --xdp-uplink dry-run contacted a host"
+arm_line=$( grep -n 'arm self-detach timer through systemd-run: at 420 s kill the server and set eth0 xdp off' "$tmp/xdp-uplink" | cut -d: -f1 | head -n 1 )
+attach_line=$( grep -n 'attach: start server bare metal transport xdp on eth0' "$tmp/xdp-uplink" | cut -d: -f1 | head -n 1 )
+detach_line=$( grep -n 'detach xdp from eth0, cancel the timer, check ip link shows no xdp' "$tmp/xdp-uplink" | cut -d: -f1 | head -n 1 )
+[ -n "$arm_line" ] || say "xdp --xdp-uplink dry-run printed no timer step"
+[ -n "$attach_line" ] || say "xdp --xdp-uplink dry-run printed no attach step"
+[ -n "$detach_line" ] || say "xdp --xdp-uplink dry-run printed no detach step"
+[ -n "$arm_line" ] && [ -n "$attach_line" ] && [ "$arm_line" -lt "$attach_line" ] ||
+    say "xdp --xdp-uplink dry-run did not print the timer step before the attach step"
+[ -n "$attach_line" ] && [ -n "$detach_line" ] && [ "$attach_line" -lt "$detach_line" ] ||
+    say "xdp --xdp-uplink dry-run did not print the detach step after the attach step"
+grep -q 'runs in a guest' "$tmp/xdp-uplink" && say "xdp --xdp-uplink dry-run still named the guest"
+"$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 --xdp-uplink eth1 >"$tmp/xdp-other" 2>&1 &&
+    say "xdp --xdp-uplink accepted an interface that is not the server's"
+grep -q 'names eth1 but the server interface is eth0' "$tmp/xdp-other" || say "xdp --xdp-uplink mismatch refusal was unclear"
+"$proof" --dry-run --inventory "$tmp/uplink" --cell gso --duration 120 --xdp-uplink eth0 >"$tmp/xdp-gso" 2>&1 &&
+    say "--xdp-uplink was accepted for a cell other than xdp"
+grep -q 'for the xdp cell only' "$tmp/xdp-gso" || say "--xdp-uplink non-xdp refusal was unclear"
+
+# the remote uplink steps through a fake sudo, systemd-run, systemctl, ip
+# and pkill: the attach is refused while no timer is armed, the timer is
+# armed with the detach command, and the detach cancels the timer and checks
+# ip link
+mkdir -p "$tmp/uplinkbin" "$tmp/uplinklog"
+printf '%s\n' '#!/bin/sh' '[ "$1" = "-n" ] && shift' 'echo "$*" >> "$FAKE_UPLINK_LOG/sudo.args"' 'exec "$@"' > "$tmp/uplinkbin/sudo"
+printf '%s\n' '#!/bin/sh' 'echo "$*" > "$FAKE_UPLINK_LOG/systemd-run.args"' ': > "$FAKE_UPLINK_LOG/timer.armed"' > "$tmp/uplinkbin/systemd-run"
+printf '%s\n' '#!/bin/sh' 'case "$1" in' \
+    '    is-active) [ -f "$FAKE_UPLINK_LOG/timer.armed" ] ;;' \
+    '    stop) echo "stop $2" >> "$FAKE_UPLINK_LOG/systemctl.args"; rm -f "$FAKE_UPLINK_LOG/timer.armed" ;;' \
+    'esac' > "$tmp/uplinkbin/systemctl"
+printf '%s\n' '#!/bin/sh' 'case "$*" in' \
+    '    *" off") echo "$*" >> "$FAKE_UPLINK_LOG/ip.args"; rm -f "$FAKE_UPLINK_LOG/xdp.attached" ;;' \
+    '    "link show dev eth0")' \
+    '        if [ -f "$FAKE_UPLINK_LOG/xdp.attached" ]; then echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 xdp qdisc mq state UP";' \
+    '        else echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP"; fi ;;' \
+    '    *) echo "2: eth0    inet 192.0.2.10/24 brd 192.0.2.255 scope global eth0" ;;' \
+    'esac' > "$tmp/uplinkbin/ip"
+printf '%s\n' '#!/bin/sh' 'echo "$*" >> "$FAKE_UPLINK_LOG/pkill.args"' > "$tmp/uplinkbin/pkill"
+chmod +x "$tmp/uplinkbin"/*
+uplink_fakes()
+{
+    PATH="$tmp/uplinkbin:$PATH" FAKE_UPLINK_LOG="$tmp/uplinklog" LAN_PROOF_BASE="$tmp/uplinkbase" LAN_PROOF_OS=linux "$@"
+}
+uplink_fakes "$here/lan-proof-remote" start-xdp-uplink-server 0123456789abcdef "$tmp/uplinkrun" eth0 30 30 0123456789abcdef 192.0.2.10 40000 600000 >"$tmp/uplink-unarmed" 2>&1 &&
+    say "the uplink server started with no self-detach armed"
+grep -q 'is not armed; refusing the attach' "$tmp/uplink-unarmed" || say "the unarmed refusal was unclear: $(cat "$tmp/uplink-unarmed")"
+[ -e "$tmp/uplinkrun/server.pid" ] && say "the unarmed uplink server recorded a process"
+armed=$( uplink_fakes "$here/lan-proof-remote" arm-xdp-detach eth0 0123456789abcdef 420 ) || say "arm-xdp-detach exited $?"
+[ "$armed" = "xdp-detach-armed: unit=lan-proof-xdp-detach-0123456789abcdef.timer iface=eth0 fires_in_s=420" ] ||
+    say "arm-xdp-detach printed '$armed'"
+grep -q -- '--unit lan-proof-xdp-detach-0123456789abcdef --on-active=420s' "$tmp/uplinklog/systemd-run.args" ||
+    say "the timer was not armed for 420 s: $(cat "$tmp/uplinklog/systemd-run.args")"
+grep -qF "pkill -KILL -f 'load_split serve[r] [0-9]+ [0-9]+ 0123456789abcdef'; ip link set dev eth0 xdpgeneric off; ip link set dev eth0 xdpdrv off; ip link set dev eth0 xdp off" "$tmp/uplinklog/systemd-run.args" ||
+    say "the timer does not kill the server and detach xdp: $(cat "$tmp/uplinklog/systemd-run.args")"
+uplink_fakes "$here/lan-proof-remote" arm-xdp-detach 'eth0;x' 0123456789abcdef 420 >/dev/null 2>&1 &&
+    say "arm-xdp-detach accepted an unsafe interface name"
+: > "$tmp/uplinklog/xdp.attached"
+detached=$( uplink_fakes "$here/lan-proof-remote" detach-xdp-uplink eth0 0123456789abcdef ) || say "detach-xdp-uplink exited $?"
+printf '%s\n' "$detached" | grep -qx 'xdp-detached: iface=eth0 xdp=none timer=lan-proof-xdp-detach-0123456789abcdef.timer not armed' ||
+    say "detach-xdp-uplink printed '$detached'"
+grep -q 'stop lan-proof-xdp-detach-0123456789abcdef.timer' "$tmp/uplinklog/systemctl.args" || say "the detach did not cancel the timer"
+grep -q 'link set dev eth0 xdp off' "$tmp/uplinklog/ip.args" || say "the detach did not set xdp off"
+[ -f "$tmp/uplinklog/timer.armed" ] && say "the detach left the timer armed"
+
 sed 's/server linux/server macos/' "$tmp/inventory" > "$tmp/nonlinux"
 "$proof" --dry-run --inventory "$tmp/nonlinux" --cell xdp --duration 120 >"$tmp/xdp-nonlinux" 2>&1 &&
     say "xdp accepted a non-Linux server"
