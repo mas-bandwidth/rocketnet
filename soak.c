@@ -1319,7 +1319,14 @@ int main( int argc, char ** argv )
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
             // the process's memory count is the OS's and the C runtime's as
             // much as the library's: printed, never asserted; the memory
-            // flat rule holds the library's own bytes below
+            // flat rule holds the library's own bytes below. The owner's
+            // rule: the library is not responsible for the OS. Measured: a
+            // 300 s impaired portable soak on macOS held library_bytes at
+            // 105680858 at every between sample while resident_bytes grew
+            // 212992, and vmmap --summary put the growth in the malloc
+            // zones' residency (Malloc Small 1024K to 1152K, Malloc Large
+            // 14.1M to 14.2M); a 60 s iocp soak on Windows grew
+            // private_bytes 8192 with handles and threads flat.
             if ( i == PROCESS_RESOURCES_MEMORY )
                 continue;
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
