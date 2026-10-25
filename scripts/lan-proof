@@ -215,6 +215,11 @@ esac
 mkdir -p "$run_dir" || refuse "cannot create run directory $run_dir"
 port=40000
 cap_kbps=600000
+ready_wait=60
+# a Windows server may queue for its exclusive lock before it starts
+lock_wait=900
+hold_bound=$(( lock_wait + duration + 600 ))
+server_hold_pid=""
 remote_path="~/lan-proof-live/lan-proof-remote"
 remote_run="~/lan-proof-live/runs/$run_id"
 
@@ -243,6 +248,12 @@ teardown()
             [ "$n" -ge 8 ] && break
         done
     done
+    # the Windows lock holder returns once its server is stopped; end it if not
+    if [ -n "$server_hold_pid" ]; then
+        kill "$server_hold_pid" 2>/dev/null || true
+        wait "$server_hold_pid" 2>/dev/null || true
+        server_hold_pid=""
+    fi
 }
 trap 'teardown' EXIT INT TERM HUP
 
@@ -343,8 +354,14 @@ server_speed=$( sed -n 's/.* speed_mbps=\([0-9]*\).*/\1/p' "$run_dir/server.host
 started=1
 case "$server_os" in
     windows)
-        ssh_run "$server_ssh" winlock --exclusive "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
-            fail "cannot start the server"
+        # The exclusive lock is held for the server's whole life: winlock
+        # runs hold-server, which returns only when the server has exited,
+        # so this ssh stays open (bounded) for the cell and teardown ends it.
+        timeout "$hold_bound" ssh -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" \
+            winlock --exclusive --card "lan-proof-$run_id" -- \
+            "$remote_path" hold-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 &
+        server_hold_pid=$!
+        ready_wait=$lock_wait
         ;;
     linux)
         if [ "$cell" = "xdp" ]; then
@@ -362,7 +379,10 @@ case "$server_os" in
 esac
 
 ready=""
-for _ in $( seq 1 60 ); do
+for _ in $( seq 1 "$ready_wait" ); do
+    if [ -n "$server_hold_pid" ] && ! kill -0 "$server_hold_pid" 2>/dev/null; then
+        fail "the locked Windows server ended before it was ready; see $run_dir/server.start"
+    fi
     if ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null; then
         ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
         [ -n "$ready" ] && break

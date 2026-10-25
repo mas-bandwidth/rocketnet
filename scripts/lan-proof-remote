@@ -7,10 +7,12 @@
 # string. Subcommands:
 #
 #   build <commit>
+#   build-inner <commit>      (the bounded body of build)
 #   hostinfo <iface>
 #   load
 #   check-xdp-bridge <bridge>
 #   start-server <commit> <dir> <transport> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   hold-server  <same as start-server>   (starts the server and waits for it)
 #   start-xdp-server <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
 #   guest-server <commit> <total> <duration> <run-id> <port> <cap-kbps>
 #   xdp-command <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
@@ -35,72 +37,289 @@ fail()
 
 usage()
 {
-    echo "usage: lan-proof-remote build|hostinfo|load|check-xdp-bridge|start-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
+    echo "usage: lan-proof-remote build|build-inner|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|start-shard|alive|stop|collect ..." >&2
     exit 2
+}
+
+# The remote OS decides every host-specific command. A Windows host is driven
+# from its Linux subsystem shell: the build, the facts and the processes are
+# native Windows ones. LAN_PROOF_OS stands in for detection in the self test.
+host_os()
+{
+    if [ -n "${LAN_PROOF_OS:-}" ]; then
+        echo "$LAN_PROOF_OS"
+        return 0
+    fi
+    case "$( uname -s )" in
+        Linux)
+            if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+                echo windows
+            else
+                echo linux
+            fi
+            ;;
+        Darwin) echo macos ;;
+        MINGW*|MSYS*|CYGWIN*) echo windows ;;
+        *) echo unknown ;;
+    esac
+}
+
+# A native Windows build needs its checkout on a Windows drive.
+WIN_BASE="${LAN_PROOF_WIN_BASE:-/mnt/c/lan-proof-live}"
+VCVARS="${LAN_PROOF_VCVARS:-C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat}"
+VS_GENERATOR="${LAN_PROOF_VS_GENERATOR:-Visual Studio 18 2026}"
+
+checkout_dir()
+{
+    if [ "$( host_os )" = "windows" ]; then
+        echo "$WIN_BASE/$1"
+    else
+        echo "$BASE/$1"
+    fi
+}
+
+# The built load_split for a commit; the multi-config Windows build puts it
+# under its configuration directory.
+load_split_bin()
+{
+    local dir candidate
+    dir=$( checkout_dir "$1" )
+    if [ "$( host_os )" = "windows" ]; then
+        for candidate in "$dir/bin/Release/load_split.exe" "$dir/build/Release/load_split.exe"; do
+            [ -f "$candidate" ] && { echo "$candidate"; return 0; }
+        done
+        return 1
+    fi
+    [ -x "$dir/bin/load_split" ] || return 1
+    echo "$dir/bin/load_split"
+}
+
+windows_tool()
+{
+    local name=$1 fallback=$2
+    command -v "$name" 2>/dev/null || { [ -x "$fallback" ] && echo "$fallback"; } || return 1
 }
 
 cmd_build()
 {
-    local commit=$1 dir="$BASE/$1" head timeout_cmd
+    local commit=$1 dir head timeout_cmd
     case "$commit" in
         ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
     esac
     timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true )
     [ -n "$timeout_cmd" ] && "$timeout_cmd" --help 2>/dev/null | grep -q -- '--kill-after' ||
         fail "build: timeout or gtimeout with --kill-after is required for the owned build bound"
-    "$timeout_cmd" --kill-after=15 870 bash -c '
-        set -e
-        base=$1 commit=$2 repo_url=$3 dir="$1/$2"
-        mkdir -p "$base"
-        [ -d "$dir/.git" ] || git clone --quiet "$repo_url" "$dir"
-        git -C "$dir" fetch --quiet origin
-        git -C "$dir" checkout --quiet "$commit"
-        [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ]
-        build="cd \"$dir\" && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && nice make -j4 --no-print-directory load_split"
-        case "$( uname -s )" in
-            Linux|Darwin) "$HOME/bin/benchslot" -- bash -c "$build" ;;
-            MINGW*|MSYS*|CYGWIN*) winlock --slots 3 bash -c "$build" ;;
-            *) exit 2 ;;
-        esac
-    ' bash "$BASE" "$commit" "$REPO_URL" || fail "build: checkout, build, or 870-second bound failed"
+    "$timeout_cmd" --kill-after=15 870 "$0" build-inner "$commit" ||
+        fail "build: checkout, build, or 870-second bound failed"
+    dir=$( checkout_dir "$commit" )
     head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
     [ "$head" = "$commit" ] || fail "build: HEAD is $head, not $commit"
     echo "$head"
 }
 
+cmd_build_inner()
+{
+    local commit=$1 os dir bin bat cmd_exe windir
+    os=$( host_os )
+    dir=$( checkout_dir "$commit" )
+    mkdir -p "${dir%/*}" || fail "build: cannot create ${dir%/*}"
+    [ -d "$dir/.git" ] || git clone --quiet "$REPO_URL" "$dir" || fail "build: clone failed"
+    git -C "$dir" fetch --quiet origin || fail "build: fetch failed"
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$commit" || fail "build: checkout failed"
+    [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ] || fail "build: checkout is not $commit"
+    case "$os" in
+        linux|macos)
+            "$HOME/bin/benchslot" -- bash -c 'cd "$1" && mkdir -p build && cd build &&
+                cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null &&
+                nice make -j4 --no-print-directory load_split' bash "$dir" ||
+                fail "build: Release build failed"
+            ;;
+        windows)
+            cmd_exe=$( windows_tool cmd.exe /mnt/c/Windows/System32/cmd.exe ) || fail "build: no cmd.exe"
+            windir=$( wslpath -w "$dir" ) || fail "build: cannot name the checkout as a Windows path"
+            bat="${dir%/*}/lan-proof-build-$commit.bat"
+            printf '%s\r\n' '@echo off' \
+                "call \"$VCVARS\" >nul || exit /b 1" \
+                "cd /d \"$windir\" || exit /b 1" \
+                "cmake -B build -G \"$VS_GENERATOR\" -A x64 > lan-proof-configure.log 2>&1 || exit /b 1" \
+                "cmake --build build --config Release --parallel 4 --target load_split > lan-proof-build.log 2>&1 || exit /b 1" \
+                > "$bat" || fail "build: cannot write the build batch file"
+            winlock --slots 3 --card "${LAN_PROOF_CARD:-lan-proof}" -- \
+                "$cmd_exe" /c "$( wslpath -w "$bat" )" ||
+                fail "build: Release build failed; see lan-proof-build.log in the checkout"
+            ;;
+        *) fail "build: unsupported OS $( uname -s )" ;;
+    esac
+    bin=$( load_split_bin "$commit" ) || fail "build: no load_split after the Release build"
+    echo "bin=$bin"
+}
+
+is_decimal()
+{
+    printf '%s\n' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)?$'
+}
+
+is_count()
+{
+    printf '%s\n' "$1" | grep -Eq '^[1-9][0-9]*$'
+}
+
+is_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. 'NF != 4 { exit 1 }
+        { for (i = 1; i <= 4; ++i) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
+
+# One PowerShell call on a Windows host. The interface is an adapter name
+# with _ standing for a space, an interface index, or "default"; an empty
+# interface reads only the processor facts.
+windows_facts()
+{
+    local iface=$1 ps script
+    ps=$( windows_tool powershell.exe /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ) ||
+        fail "facts: no powershell.exe"
+    case "$iface" in
+        *[!A-Za-z0-9_.-]*) fail "facts: interface '$iface' has characters outside A-Z a-z 0-9 _ . -" ;;
+    esac
+    script="\$ErrorActionPreference = 'Stop'
+\$i = '$iface'
+if (\$i -ne '') {
+  if (\$i -eq 'default') { \$a = Get-NetAdapter -InterfaceIndex ((Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | Select-Object -First 1).ifIndex) }
+  elseif (\$i -match '^[0-9]+\$') { \$a = Get-NetAdapter -InterfaceIndex ([int]\$i) }
+  else { \$a = Get-NetAdapter -Name (\$i -replace '_', ' ') }
+  'name=' + (\$a.Name -replace ' ', '_')
+  'model=' + \$a.InterfaceDescription
+  'driver=' + \$a.DriverFileName
+  'speed_bps=' + \$a.Speed
+  'full_duplex=' + \$a.FullDuplex
+  'address=' + ((Get-NetIPAddress -InterfaceIndex \$a.ifIndex -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress)
+  'kernel=' + (Get-CimInstance Win32_OperatingSystem).Version
+}
+\$p = Get-CimInstance Win32_Processor
+'nproc=' + (\$p | Measure-Object NumberOfLogicalProcessors -Sum).Sum
+'cpu_percent=' + (\$p | Measure-Object LoadPercentage -Average).Average
+'queue=' + (Get-CimInstance Win32_PerfFormattedData_PerfOS_System).ProcessorQueueLength"
+    "$ps" -NoProfile -NonInteractive -Command "$script" 2>/dev/null | tr -d '\r' ||
+        fail "facts: powershell failed"
+}
+
+field()
+{
+    printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -n 1
+}
+
+# Windows has no load average: load1 is the running work now, the busy
+# share of the logical processors plus the processor queue.
+windows_load()
+{
+    local facts=$1 nproc percent queue
+    nproc=$( field nproc "$facts" )
+    percent=$( field cpu_percent "$facts" )
+    queue=$( field queue "$facts" )
+    is_count "$nproc" || fail "facts: logical processor count '$nproc' is not a number"
+    is_decimal "$percent" || fail "facts: processor load '$percent' is not a number"
+    is_decimal "$queue" || fail "facts: processor queue '$queue' is not a number"
+    awk -v n="$nproc" -v p="$percent" -v q="$queue" 'BEGIN { printf "%.2f %d\n", n * p / 100 + q, n }'
+}
+
+read_load()
+{
+    local facts
+    case "$( host_os )" in
+        linux) echo "$( awk '{ print $1 }' /proc/loadavg ) $( nproc )" ;;
+        macos) echo "$( sysctl -n vm.loadavg | awk '{ print $2 }' ) $( sysctl -n hw.ncpu )" ;;
+        windows)
+            facts=$( windows_facts "" ) || exit 1
+            windows_load "$facts"
+            ;;
+        *) fail "load: unsupported OS $( uname -s )" ;;
+    esac
+}
+
 cmd_hostinfo()
 {
-    local iface=$1 os kernel speed duplex driver bus model address load1 nproc
-    os=$( uname -s )
-    kernel=$( uname -r )
-    speed=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ { print $2 }' )
-    duplex=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ { print $2 }' )
-    driver=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^driver:/ { print $2 }' )
-    bus=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2; exit }' )
-    model=""
-    if [ -n "$bus" ] && command -v lspci >/dev/null 2>&1; then
-        model=$( lspci -s "$bus" 2>/dev/null | sed -n '1s/^[^ ]* [^:]*: //p' )
-    fi
-    address=$( ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }' )
-    load1=$( awk '{ print $1 }' /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }' )
-    nproc=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
-    case "$speed" in
-        *Mb/s) speed=${speed%Mb/s} ;;
-        *Gb/s) speed=$( awk -v g="${speed%Gb/s}" 'BEGIN { printf "%d", g * 1000 }' ) ;;
-        *) speed=unknown ;;
+    local iface=$1 os kname kernel speed duplex driver bus model address load1 nproc facts media port loads
+    os=$( host_os )
+    speed="" duplex="" driver="" model="" address=""
+    case "$os" in
+        linux)
+            kname=Linux
+            kernel=$( uname -r )
+            speed=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ { print $2 }' )
+            duplex=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ { print $2 }' )
+            driver=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^driver:/ { print $2 }' )
+            bus=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2; exit }' )
+            if [ -n "$bus" ] && command -v lspci >/dev/null 2>&1; then
+                model=$( lspci -s "$bus" 2>/dev/null | sed -n '1s/^[^ ]* [^:]*: //p' )
+            fi
+            address=$( ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }' )
+            case "$speed" in
+                *Mb/s) speed=${speed%Mb/s} ;;
+                *Gb/s) speed=$( awk -v g="${speed%Gb/s}" 'BEGIN { printf "%d", g * 1000 }' ) ;;
+            esac
+            ;;
+        macos)
+            kname=Darwin
+            kernel=$( uname -r )
+            [ "$iface" = "default" ] &&
+                iface=$( route -n get default 2>/dev/null | awk '/interface:/ { print $2; exit }' )
+            facts=$( ifconfig "$iface" 2>/dev/null ) || fail "hostinfo: no interface $iface"
+            address=$( printf '%s\n' "$facts" | awk '$1 == "inet" { print $2; exit }' )
+            media=$( printf '%s\n' "$facts" | sed -n 's/^[[:space:]]*media: [^(]*(\([^)]*\)).*/\1/p' | head -n 1 )
+            case "$media" in
+                [0-9]*[Gg][Bb]ase*) speed=$( printf '%s\n' "$media" | sed 's/[Gg][Bb]ase.*//' | awk '{ printf "%d", $1 * 1000 }' ) ;;
+                [0-9]*[Bb]ase*) speed=$( printf '%s\n' "$media" | sed 's/[Bb]ase.*//' ) ;;
+            esac
+            case "$media" in
+                *full-duplex*) duplex=Full ;;
+                *half-duplex*) duplex=Half ;;
+            esac
+            port=$( networksetup -listallhardwareports 2>/dev/null |
+                awk -v d="Device: $iface" '/^Hardware Port: / { p = substr($0, 16) } $0 == d { print p; exit }' )
+            model=$port
+            ;;
+        windows)
+            kname=Windows
+            facts=$( windows_facts "$iface" ) || exit 1
+            kernel=$( field kernel "$facts" )
+            model=$( field model "$facts" )
+            driver=$( field driver "$facts" )
+            address=$( field address "$facts" )
+            speed=$( field speed_bps "$facts" )
+            is_count "$speed" && speed=$(( speed / 1000000 ))
+            case "$( field full_duplex "$facts" )" in
+                True) duplex=Full ;;
+                False) duplex=Half ;;
+            esac
+            ;;
+        *) fail "hostinfo: unsupported OS $( uname -s )" ;;
     esac
+    if [ "$os" = "windows" ]; then
+        loads=$( windows_load "$facts" ) || exit 1
+    else
+        loads=$( read_load ) || exit 1
+    fi
+    load1=${loads% *}
+    nproc=${loads#* }
+    is_decimal "$load1" || fail "hostinfo: load '$load1' is not a number"
+    is_count "$nproc" || fail "hostinfo: core count '$nproc' is not a number"
+    is_ipv4 "$address" || fail "hostinfo: interface $iface has no IPv4 address"
+    is_count "$speed" || speed=unknown
+    [ -n "$kernel" ] || kernel=unknown
     [ -n "$duplex" ] || duplex=unknown
     [ -n "$driver" ] || driver=unknown
     [ -n "$model" ] || model=unknown
-    [ -n "$address" ] || address=unknown
-    echo "os=$os kernel=$kernel iface=$iface model=$model driver=$driver speed_mbps=$speed duplex=$duplex address=$address load1=${load1:-unknown} nproc=$nproc"
+    echo "os=$kname kernel=$kernel iface=$iface model=$model driver=$driver speed_mbps=$speed duplex=$duplex address=$address load1=$load1 nproc=$nproc"
 }
 
 cmd_load()
 {
-    local load1 nproc
-    load1=$( awk '{ print $1 }' /proc/loadavg 2>/dev/null || echo unknown )
-    nproc=$( nproc 2>/dev/null || echo 1 )
+    local loads load1 nproc
+    loads=$( read_load ) || exit 1
+    load1=${loads% *}
+    nproc=${loads#* }
+    is_decimal "$load1" || fail "load: load '$load1' is not a number"
+    is_count "$nproc" || fail "load: core count '$nproc' is not a number"
     echo "load1=$load1 nproc=$nproc"
 }
 
@@ -143,10 +362,21 @@ start_recorded()
 cmd_start_server()
 {
     local commit=$1 dir=$2 transport=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
-    local bin="$BASE/$commit/bin/load_split"
-    [ -x "$bin" ] || fail "start-server: no built load_split for $commit"
+    local bin
+    bin=$( load_split_bin "$commit" ) || fail "start-server: no built load_split for $commit"
     start_recorded "$dir" server env ROCKETNET_SERVER_TRANSPORT="$transport" \
         "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+# The Windows server runs under an exclusive lock held for its whole life:
+# this command is the one winlock runs, and it returns only when the server
+# it started has exited.
+cmd_hold_server()
+{
+    local dir=$2 pid
+    cmd_start_server "$@"
+    pid=$( cat "$dir/server.pid" ) || fail "hold-server: no server pidfile"
+    wait "$pid"
 }
 
 cmd_guest_server()
@@ -195,8 +425,8 @@ cmd_xdp_command()
 cmd_start_shard()
 {
     local commit=$1 dir=$2 name=$3 total=$4 duration=$5 run_id=$6 first=$7 count=$8 endpoint=$9 key=${10} cap=${11}
-    local bin="$BASE/$commit/bin/load_split"
-    [ -x "$bin" ] || fail "start-shard: no built load_split for $commit"
+    local bin
+    bin=$( load_split_bin "$commit" ) || fail "start-shard: no built load_split for $commit"
     start_recorded "$dir" "$name" \
         "$bin" client-shard "$total" "$duration" "$run_id" "$first" "$count" "$endpoint" "$key" "$cap" proof
 }
@@ -232,10 +462,12 @@ cmd_collect()
 
 case "${1:-}" in
     build)        [ $# -eq 2 ] || usage; cmd_build "$2" ;;
+    build-inner)  [ $# -eq 2 ] || usage; cmd_build_inner "$2" ;;
     hostinfo)     [ $# -eq 2 ] || usage; cmd_hostinfo "$2" ;;
     load)         cmd_load ;;
     check-xdp-bridge) [ $# -eq 2 ] || usage; cmd_check_xdp_bridge "$2" ;;
     start-server) [ $# -eq 10 ] || usage; cmd_start_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    hold-server)  [ $# -eq 10 ] || usage; cmd_hold_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
     start-xdp-server) [ $# -eq 9 ] || usage; cmd_start_xdp_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
     guest-server) [ $# -eq 7 ] || usage; cmd_guest_server "$2" "$3" "$4" "$5" "$6" "$7" ;;
     xdp-command) [ $# -eq 9 ] || usage; cmd_xdp_command "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;

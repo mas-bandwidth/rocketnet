@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Checks the dry run and the row parser. Opens no socket.
+# Checks the dry run, the row parser, and the per-OS host facts, load and
+# build through fake tools. Opens no socket and contacts no host.
 
 set -u
 
@@ -78,6 +79,134 @@ split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_s
 EOF
 row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server.log" "$tmp/merge.log") || say "cell-row exited $?"
 [ "$row" = 'gso|server-a|1000|1000|120|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|277|pass' ] || say "cell-row printed '$row'"
+
+# Per-OS host facts, load and build through fakes: no host, no socket.
+remote="$here/lan-proof-remote"
+fake="$tmp/fake"
+mkdir -p "$fake" "$tmp/home/bin"
+fake_commit=0123456789abcdef0123456789abcdef01234567
+
+cat > "$fake/ifconfig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500' \
+    '	inet 192.0.2.33 netmask 0xffffff00 broadcast 192.0.2.255' \
+    '	media: autoselect (1000baseT <full-duplex,flow-control>)' \
+    '	status: active'
+EOF
+cat > "$fake/route" <<'EOF'
+#!/bin/sh
+printf '%s\n' '   route to: default' '  interface: en0'
+EOF
+cat > "$fake/sysctl" <<'EOF'
+#!/bin/sh
+case "$2" in
+    vm.loadavg) echo '{ 6.20 3.99 3.76 }' ;;
+    hw.ncpu) echo "${FAKE_NCPU:-18}" ;;
+esac
+EOF
+cat > "$fake/networksetup" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'Hardware Port: Thunderbolt Bridge' 'Device: bridge0' '' 'Hardware Port: Ethernet' 'Device: en0'
+EOF
+cat > "$fake/powershell.exe" <<'EOF'
+#!/bin/sh
+case "$*" in
+    *"\$i = ''"*) ;;
+    *) printf 'name=Ethernet_4\r\nmodel=Example 10G Adapter\r\ndriver=example.sys\r\nspeed_bps=10000000000\r\nfull_duplex=True\r\naddress=192.0.2.46\r\nkernel=10.0.26200\r\n' ;;
+esac
+printf 'nproc=%s\r\ncpu_percent=3\r\nqueue=0\r\n' "${FAKE_NPROC:-64}"
+EOF
+cat > "$fake/wslpath" <<'EOF'
+#!/bin/sh
+echo "W:$2"
+EOF
+cat > "$fake/cmd.exe" <<'EOF'
+#!/bin/sh
+bat=${2#W:}
+cp "$bat" "$FAKE_LOG/build.bat"
+dir=$( sed -n 's/^cd \/d "W:\(.*\)" .*/\1/p' "$bat" | tr -d '\r' )
+mkdir -p "$dir/bin/Release" && : > "$dir/bin/Release/load_split.exe"
+EOF
+cat > "$fake/winlock" <<'EOF'
+#!/bin/sh
+echo "$*" > "$FAKE_LOG/winlock.args"
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+EOF
+cat > "$fake/git" <<'EOF'
+#!/bin/sh
+case "$1" in
+    clone) mkdir -p "$4/.git" ;;
+    -C)
+        case "$3" in
+            rev-parse) echo "$FAKE_COMMIT" ;;
+        esac
+        ;;
+esac
+EOF
+cat > "$tmp/home/bin/benchslot" <<'EOF'
+#!/bin/sh
+echo "$*" > "$FAKE_LOG/benchslot.args"
+for last in "$@"; do :; done
+mkdir -p "$last/bin" && : > "$last/bin/load_split" && chmod +x "$last/bin/load_split"
+EOF
+chmod +x "$fake"/* "$tmp/home/bin/benchslot"
+mkdir -p "$tmp/log"
+fakes()
+{
+    PATH="$fake:$PATH" HOME="$tmp/home" FAKE_LOG="$tmp/log" FAKE_COMMIT=$fake_commit \
+        LAN_PROOF_BASE="$tmp/base" LAN_PROOF_WIN_BASE="$tmp/winbase" "$@"
+}
+
+mac=$( fakes env LAN_PROOF_OS=macos "$remote" hostinfo default ) || say "macos hostinfo exited $?"
+[ "$mac" = "os=Darwin kernel=$( uname -r ) iface=en0 model=Ethernet driver=unknown speed_mbps=1000 duplex=Full address=192.0.2.33 load1=6.20 nproc=18" ] ||
+    say "macos hostinfo printed '$mac'"
+mac=$( fakes env LAN_PROOF_OS=macos "$remote" load ) || say "macos load exited $?"
+[ "$mac" = "load1=6.20 nproc=18" ] || say "macos load printed '$mac'"
+fakes env LAN_PROOF_OS=macos FAKE_NCPU=many "$remote" load >/dev/null 2>&1 && say "macos load accepted a non-numeric core count"
+
+win=$( fakes env LAN_PROOF_OS=windows "$remote" hostinfo Ethernet_4 ) || say "windows hostinfo exited $?"
+[ "$win" = "os=Windows kernel=10.0.26200 iface=Ethernet_4 model=Example 10G Adapter driver=example.sys speed_mbps=10000 duplex=Full address=192.0.2.46 load1=1.92 nproc=64" ] ||
+    say "windows hostinfo printed '$win'"
+win=$( fakes env LAN_PROOF_OS=windows "$remote" load ) || say "windows load exited $?"
+[ "$win" = "load1=1.92 nproc=64" ] || say "windows load printed '$win'"
+fakes env LAN_PROOF_OS=windows FAKE_NPROC=x "$remote" hostinfo Ethernet_4 >/dev/null 2>&1 &&
+    say "windows hostinfo accepted a non-numeric core count"
+fakes env LAN_PROOF_OS=windows "$remote" hostinfo "Ethernet 4;x" >/dev/null 2>&1 &&
+    say "windows hostinfo accepted an unsafe interface name"
+
+out=$( fakes env LAN_PROOF_OS=macos "$remote" build $fake_commit ) || say "macos build exited $?"
+[ "$( printf '%s\n' "$out" | tail -n 1 )" = "$fake_commit" ] || say "macos build did not end with the head"
+printf '%s\n' "$out" | grep -qx "bin=$tmp/base/$fake_commit/bin/load_split" || say "macos build named no load_split"
+grep -q 'cmake -DCMAKE_BUILD_TYPE=Release' "$tmp/log/benchslot.args" && grep -q 'make -j4' "$tmp/log/benchslot.args" ||
+    say "macos build did not run the Release make build under the bench slot"
+
+out=$( fakes env LAN_PROOF_OS=windows "$remote" build $fake_commit ) || say "windows build exited $?"
+[ "$( printf '%s\n' "$out" | tail -n 1 )" = "$fake_commit" ] || say "windows build did not end with the head"
+printf '%s\n' "$out" | grep -qx "bin=$tmp/winbase/$fake_commit/bin/Release/load_split.exe" ||
+    say "windows build did not resolve the Release load_split.exe"
+grep -q 'cmake -B build -G "Visual Studio 18 2026" -A x64' "$tmp/log/build.bat" ||
+    say "windows build did not configure the multi-config generator"
+grep -q 'cmake --build build --config Release --parallel 4' "$tmp/log/build.bat" ||
+    say "windows build did not build Release with 4 jobs"
+grep -q -- '--slots 3' "$tmp/log/winlock.args" || say "windows build did not take a shared slot"
+grep -q -- '--exclusive' "$tmp/log/winlock.args" && say "windows build took the exclusive lock"
+
+# hold-server returns only after the server it started has exited
+mkdir -p "$tmp/winbase/$fake_commit/bin/Release"
+cat > "$tmp/winbase/$fake_commit/bin/Release/load_split.exe" <<'EOF'
+#!/bin/sh
+sleep 1
+: > "$FAKE_LOG/server-exited"
+EOF
+chmod +x "$tmp/winbase/$fake_commit/bin/Release/load_split.exe"
+fakes env LAN_PROOF_OS=windows "$remote" hold-server $fake_commit "$tmp/run" iocp 4 1 0123456789abcdef 192.0.2.46 40000 600000 >/dev/null ||
+    say "hold-server exited $?"
+[ -f "$tmp/log/server-exited" ] || say "hold-server returned while its server was running"
+grep -q 'winlock --exclusive --card "lan-proof-$run_id" --' "$proof" &&
+    grep -q '"$remote_path" hold-server' "$proof" ||
+    say "the Windows server is not started by hold-server under the exclusive lock"
 
 if [ "$fail" -ne 0 ]; then
     echo "lan-proof-selftest: failed" >&2
