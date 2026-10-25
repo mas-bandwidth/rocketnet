@@ -445,7 +445,7 @@ jobs:
           mkdir -p build/soak-windows
           log=build/soak-windows/portable.log
           summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
-          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)\r?$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
           if env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
               ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
               ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
@@ -457,14 +457,17 @@ jobs:
             status=$?
           fi
           cat "$log"
-          server=$(summary "$log" server_transport_io | tr -d '\r')
-          client=$(summary "$log" client_transport_io | tr -d '\r')
+          # soak.exe writes CRLF; the checks read a copy with LF endings
+          lines=build/soak-windows/portable.lf
+          tr -d '\r' < "$log" > "$lines"
+          server=$(summary "$lines" server_transport_io)
+          client=$(summary "$lines" client_transport_io)
           link_ok=1
           for end in server client; do
-            tr -d '\r' < "$log" | grep -qx "soak link simulator: $end $want_link" || link_ok=0
+            grep -qx "soak link simulator: $end $want_link" "$lines" || link_ok=0
           done
           if [ "$status" -eq 0 ] && [ "$server" = portable ] && [ "$client" = portable ] && [ "$link_ok" = 1 ]; then
-            echo "SOAK cell=portable PASS server=$server client=$client seconds=$seconds handles=$(resources "$log" handles) threads=$(resources "$log" threads) private_bytes=$(resources "$log" private_bytes) library_bytes=$(resources "$log" library_bytes) link=impaired missing=$(summary "$log" client_to_server_missing | tr -d '\r')/$(summary "$log" server_to_client_missing | tr -d '\r') duplicates_refused=$(summary "$log" duplicates_refused_at_server | tr -d '\r')/$(summary "$log" duplicates_refused_at_client | tr -d '\r') log=$log"
+            echo "SOAK cell=portable PASS server=$server client=$client seconds=$seconds handles=$(resources "$lines" handles) threads=$(resources "$lines" threads) private_bytes=$(resources "$lines" private_bytes) library_bytes=$(resources "$lines" library_bytes) link=impaired missing=$(summary "$lines" client_to_server_missing)/$(summary "$lines" server_to_client_missing) duplicates_refused=$(summary "$lines" duplicates_refused_at_server)/$(summary "$lines" duplicates_refused_at_client) log=$log"
           else
             echo "SOAK cell=portable FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
             exit 1
