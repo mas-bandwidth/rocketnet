@@ -502,6 +502,13 @@ jobs:
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
 
+      # The static source-audit binary reads the repository's own source,
+      # header and doc files (no socket, no thread, no network), so one Linux
+      # leg runs it beside the client/server-words check.
+      - name: Run the source audit
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: ./bin/source_audit
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py

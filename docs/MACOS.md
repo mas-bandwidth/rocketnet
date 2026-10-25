@@ -6,27 +6,17 @@ App Nap, what socket errors and ICMP do, the file-descriptor limit, the
 application firewall prompt, debugging, and the commands that verify a Mac, in
 order.
 
-Each claim names the file that backs it. A section whose hardening work has not
-landed says **pending** and makes no claim. Every command on this page is run
+Each claim names the file that backs it. A section that says **pending** makes no claim. Every command on this page is run
 on an Apple-silicon Mac with the Command Line Tools and no Xcode; a command
 that needs more than that says what it needs. The support tiers themselves are
 in [PLATFORMS.md](PLATFORMS.md); this page does not widen them.
 
 ## What is supported
 
-The supported row is macOS 27 on arm64 with Apple Clang, transports `portable`
-and `msgx` (`docs/PLATFORMS.md`, the table). CI runs it on a self-hosted
-Apple-silicon runner labelled `rocketnet-macos`, as a Debug row and a Release
-row (`.github/workflows/ci.yml`, the `macos-15` entries of the
-`build-and-test` matrix, whose `runner` is
-`self-hosted, macOS, ARM64, rocketnet-macos`). The same runner carries the
-macOS nightly rows: soak, frame budget and examples
-(`docs/PLATFORMS.md`; `.github/workflows/nightly-soak.yml`,
-`nightly-frame-budget.yml`, `nightly-examples.yml`). macOS on x86_64 is a
-nightly row: the examples nightly builds the library and the suites universal
-(arm64 and x86_64) and runs the x86_64 slice under Rosetta 2
-(`docs/PLATFORMS.md`; `nightly-examples.yml`, the step "Build universal and
-run the x86_64 slice under Rosetta 2"; the recipe is in `BUILDING.md`).
+The supported row is macOS 27 on arm64 with Apple Clang and the `portable` and
+`msgx` transports. Continuous integration builds and tests that configuration;
+nightly coverage also includes x86_64 under Rosetta 2. The support tiers are
+listed in [PLATFORMS.md](PLATFORMS.md).
 
 ## Build
 
@@ -34,7 +24,7 @@ The tools are Apple clang from the Command Line Tools, `cmake` 3.20 or later,
 `make`, `xxd` and Python 3; libsodium is vendored (`BUILDING.md`;
 `CMakeLists.txt`, `cmake_minimum_required`). CI's macOS dependency step checks
 for `cmake clang c++ xxd python3` (`.github/workflows/ci.yml`, "Check the
-fleet's build dependencies are present").
+build dependencies are present").
 
 Release, through the Makefile:
 
@@ -54,7 +44,10 @@ cmake --build build-debug --parallel 4
 
 Both configurations write their executables and dylibs into the same `bin/`
 (`CMakeLists.txt`, `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
-`CMAKE_LIBRARY_OUTPUT_DIRECTORY`), so `bin/` holds whichever build ran last.
+`CMAKE_LIBRARY_OUTPUT_DIRECTORY`). Before switching configurations in one
+checkout, run `make clean` to remove those shared outputs; otherwise a newer
+binary from another configuration can be mistaken for an up-to-date target.
+Then build the selected configuration and run its tests before switching again.
 
 The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
@@ -84,14 +77,11 @@ and the deployment target.
 ## The macOS transports
 
 The transport registry has two rows that build on macOS: `portable` (every
-platform; server rank 30 only in development builds and unavailable in
-production, client rank 30 in either; the `PORTABLE` registry entry in
-`sdk/rocketnet_drivers.inc`)
+platform; server rank 30 in development builds and 50 in production, client
+rank 30; the `PORTABLE` registry entry in `sdk/rocketnet_drivers.inc`)
 and `msgx` (macOS, server and client rank 10; the `MSGX` registry entry);
-lower ranks win. Server `auto` asks for `msgx` first and falls to `portable`
-only in a development build. In production, `msgx` is the macOS server
-transport; portable remains
-available to clients if `msgx` refuses. The `loopback` row is pin-only, an
+lower ranks win. Server and client `auto` ask for `msgx` first and fall to `portable`
+if `msgx` refuses. The `loopback` row is pin-only, an
 in-memory transport for tests (the `LOOPBACK` registry entry). The backends
 share `portable_client_operations`; their server operation tables use the same
 bounded RX/TX bank implementation and select the socket pump by transport name
@@ -277,7 +267,7 @@ the library does about it: **pending.**
 ## Socket errors and ICMP
 
 A client's socket is connected to its server
-(`rocketnet_platform_socket_connect`, TRANSPORT.md t11: the client trusts only
+(`rocketnet_platform_socket_connect`, `STANDARD.md` t11: the client trusts only
 the server), so the kernel drops datagrams from any other source, its sends
 name no destination, and an ICMP error for the server reaches its receive,
 which skips it as weather. A server socket is never connected, and every send
@@ -402,7 +392,7 @@ whole-suite run is not hit. Inside `lldb`, `settings set target.env-vars ROCKETN
 ## Sanitizers and leaks
 
 `.github/workflows/nightly-macos-sanitizers.yml` runs nightly and on dispatch
-on the `rocketnet-macos` runner with Apple clang (`/usr/bin/clang`, the system
+with Apple clang (`/usr/bin/clang`, the system
 toolchain), in three legs, each in its own job and its own build directory:
 
 - **asan+ubsan**: Debug with `-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer`, the flags of ci.yml's
@@ -421,7 +411,7 @@ toolchain), in three legs, each in its own job and its own build directory:
 Each leg runs `./bin/test` and `./bin/functional` with
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` both `msgx`, then
 both `portable`: twelve runs a night. No suppression file, no skipped case and
-no changed bound; a finding is a defect with its own card.
+no changed bound; a finding is a defect.
 
 One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 `leaks` none):
@@ -442,60 +432,11 @@ MallocStackLogging=1 leaks --atExit -- ./bin/test test_endian
 MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/functional --run test_loopback_transport_udp
 ```
 
-The twelve runs by hand on mini-m5-1 at 010c816, Apple clang 21.0.0, macOS
-27.2, two runs at a time (a unit run beside a functional run) next to the
-member's CI runner. The step timeouts are about twice these times.
-
-| leg | suite | pin | exit | wall |
-|---|---|---|---|---|
-| asan+ubsan | unit | msgx | 1 (finding 1) | 6 s |
-| asan+ubsan | unit | portable | 1 (finding 1) | 5 s |
-| asan+ubsan | functional | msgx | 0 | 661 s |
-| asan+ubsan | functional | portable | 0 | 657 s |
-| tsan | unit | msgx | 0 | 109 s |
-| tsan | unit | portable | 0 | 114 s |
-| tsan | functional | msgx | 1 (finding 2) | 33 s |
-| tsan | functional | portable | 0 | 793 s |
-| leaks | unit | msgx | 1 (finding 3), 954 of 955 cases 0 leaks | 1972 s (the hung case held one of four slots about ten minutes) |
-| leaks | unit | portable | 1 (finding 3), 954 of 955 cases 0 leaks | 1472 s |
-| leaks | functional | msgx | 0, 163 cases and the three exec binaries 0 leaks | 2103 s |
-| leaks | functional | portable | 1 (findings 4 and 2, in the plain suite run, before the per-case pass) | 556 s; rerun alone 25 s |
-
-Findings at 010c816:
-
-1. **asan+ubsan, unit suite, both pins** (the unit suite clears the pins, so
-   the transport does not matter). UndefinedBehaviorSanitizer, `load of value -2147483648, which is not a valid value for type 'enum rocketnet_status_t'`;
-   stack top `rocketnet_status_name` at `sdk/rocketnet.cpp:210`, called from
-   `test_status_name_out_of_range_is_unknown` at `tests/test_unit_status.cpp:94`
-   (the `INT_MIN` probe). Apple clang's `-fsanitize=undefined` includes
-   `enum`; gcc's, which the Linux jobs use, does not. The suite stops at its
-   first red case, so every unit case was also run alone under this leg: the
-   other 954 are clean.
-2. **tsan, functional suite, msgx**. No ThreadSanitizer report:
-   `check failed: ( rocketnet_counters_refusals_moved == 0 )` with
-   `SEND_RING_FULL = 1556`, in
-   `rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch` at
-   `functional/rocketnet_functional_tests.cpp:6503`. The case paces its sends
-   with a 0.5 ms sleep and expects the msgx send ring never to fill; under
-   TSan's slowdown it fills. The suite stops there, so the msgx cases after it
-   have not run under TSan yet. The same leg on portable is green, but the
-   leaks leg's plain run (unsanitized Debug, `MallocStackLogging=1`) on
-   portable, rerun alone on the member, fails the same check in the same case:
-   the case is load-sensitive on macOS, not a data race.
-3. **leaks, unit suite, both pins**. `test_channels_allocator_trap_witness`
-   (`tests/test_channels.cpp:1613`) hangs under `leaks --atExit`: its forked
-   child's allocator trap ends in `_Exit` (`tests/test_channels.cpp:807`),
-   which `libLeaksAtExit.dylib` interposes (`my__exit` then `__kill`), stopping
-   a child that `leaks` is not watching, so the parent's `waitpid` never
-   returns. This lies in the system tool, outside the product; the case keeps
-   running and the leg's 180 s case limit names it red. Every other unit case
-   reports 0 leaks.
-4. **leaks, functional suite, portable**, the plain run, once:
-   `check failed: ( unplanned disconnect )` in `live_matrix_window` at
-   `functional/live_matrix.cpp:971` (`client_reason=-3`, the server still
-   connected), in the case after `test_loopback_transport_live_message_matrix`.
-   Two Release builds and a unit run were going on the member beside it; the
-   rerun alone stopped earlier, at finding 2, so it is not yet reproduced.
+A case that runs past 180 s under the leaks leg is killed and named red.
+`test_channels_allocator_trap_witness` (`tests/test_channels.cpp`) forks a
+child whose allocator trap ends in `_Exit`; `leaks --atExit` interposes that
+exit in the child it is not watching, so under `leaks` that one case can hang
+and is named red by the case limit. Every other case is checked for leaks.
 
 ## Fuzzing
 
@@ -510,68 +451,19 @@ libFuzzer"); `make` builds the four replay binaries:
 ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
 ```
 
-Each prints `replayed <n> inputs` and exits 0. Running libFuzzer on macOS:
-**pending.**
+Each prints `replayed <n> inputs` and exits 0.
 
-## The functional suite: per-commit and nightly tiers, the memory bound
+## The functional suite
 
-`./bin/functional` (Release) is the per-commit gate on the macOS rows of
+`./bin/functional` is the per-commit functional gate on the macOS rows of
 `.github/workflows/ci.yml`. `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` adds
-the nightly tier, which `.github/workflows/nightly.yml` runs on the same
-darwin runner (job "macos / Release functional nightly tier"). The tier is
-chosen in `functional/main.cpp` (`rocketnet_functional_test_group`, the
-`SUITE_GROUP_NIGHTLY` flag of `tests/suite_runner.h`); no case checks less in
-either tier:
-
-- `test_posix_hard_killed_client_portable_*` (four cells): each waits out
-  the real 10 s token timeout. The four `msgx` server cells stay per commit.
-- `test_posix_connect_disconnect_1000_{portable_portable,portable_msgx,msgx_portable}`:
-  `msgx_msgx` stays per commit.
-- `test_posix_destroy_under_traffic_100` runs its `msgx`/`msgx` pair per
-  commit and all four pairs in the nightly tier.
-
-Two causes made the suite slow, and both are fixed rather than moved: the
-bundled sodium wiped memory with its volatile byte loop on Darwin until
-`CMakeLists.txt` defined `HAVE_MEMSET_S` (server create/destroy x1000 went
-from 73.7 s to 23.7 s), and the 8-slot server of
-`test_posix_connect_disconnect_1000` kept 64 used tokens, so every 64th
-connect waited about 4.5 s for one to expire; its server has 128 slots.
-
-Measured on mini-m5-1 (Apple M5 Pro, Darwin 27.2, Release, host load 3 to 7
-as found, the rocketnet-macos runner sharing the host), one run each:
-
-| run | main 830c5437 | this tree |
-|---|---|---|
-| `./bin/functional` | 202.7 s, 204 s | 49 s |
-| `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | (no tier) | 71 s |
-| `test_posix_connect_disconnect_1000_msgx_msgx` alone | 76.5 s, 15 connects of about 4.5 s | 5.6 s to 10.2 s, none over 1 s |
-| `test_posix_server_create_destroy_1000` | 73.7 s | 23.7 s |
-| `test_posix_destroy_under_traffic_100` | 35.7 s | 6.3 s (msgx/msgx), 24.7 s (nightly, four pairs) |
-
-At d7095705 (this tree merged with main 7a025861, which since #538 runs every
-functional case serially), five `./bin/functional` runs on mini-m5-1, one
-after another, each started once the host's 1-minute load was under 4 (the
-rocketnet-macos runner and other bench jobs still share the host, so load
-rose during runs):
-
-| run | exit | wall time | load before (1, 5, 15 min) |
-|---|---|---|---|
-| 1 | 0 | 167.6 s | 2.30 5.89 8.07 |
-| 2 | 0 | 170.0 s | 3.80 5.98 7.40 |
-| 3 | 0 | 169.0 s | 3.69 5.87 6.82 |
-| 4 | 0 | 172.0 s | 3.61 5.95 6.82 |
-| 5 | 0 | 171.3 s | 3.92 5.78 6.59 |
-
-5 of 5 pass; the slowest is 172.0 s, not under 60 s: the 49 s above was the
-parallel suite, before main made it serial. An earlier run started at load 9
-(not counted) failed `test_posix_connect_disconnect_1000_msgx_msgx` at
-`functional/posix_lifecycle_stress.cpp:1108`, the 5 s
-`posix_wait_server_empty` after a disconnect.
-
-Linux at d7095705 on amd-1 (x86_64, gcc, Release, load 3.8 as found):
-`./bin/test` exit 0 (16 s), `./bin/functional` exit 0 (193 s). gcc and
-clang, `ROCKETNET_DEV=ON` and `OFF`, build with 0 warnings on Linux; Apple
-clang `ON` and `OFF` with 0 warnings on mini-m5-1.
+the nightly tier, selected by `rocketnet_functional_test_group` in
+`functional/main.cpp` and the `SUITE_GROUP_NIGHTLY` flag in
+`tests/suite_runner.h`. The nightly tier adds the portable hard-killed-client
+cases, three portable/msgx 1000-client connection combinations, and the
+remaining transport combinations for `test_posix_destroy_under_traffic_100`.
+The ordinary suite keeps the msgx hard-killed-client cases and the msgx/msgx
+1000-client connection case.
 
 The unit suite measures peak resident set and reports over-bound cases without
 making the OS measurement part of its verdict. The functional suite enforces
@@ -579,17 +471,11 @@ the same bounds. Its `test_unit_case_memory` row runs the unit binary in
 enforcement mode, reusing every `SUITE_CASE_RSS_BOUND` declaration and the
 suite-wide fallback without copying their values.
 
-Each functional case process that keeps the counting allocator is held to its
-own memory plan (`tests/plan_rss.h`): the functional worker gives
-`rocketnet_init` that allocator, and a case
-that passes with it still installed reports its plan's peak plus a 64 MiB
-slack, which the runner holds its peak resident set to. A case that installs
-its own allocator (the channel harness cases, `test_lifecycle_transport`)
-and the sibling executables keep the suite-wide 698 MiB bound or the bound
-they declare with `SUITE_CASE_RSS_BOUND`; `ROCKETNET_TEST_MAX_CASE_RSS_MB`
-still lifts every bound. `ROCKETNET_TEST_REPORT=1` prints each reported peak
-and bound. The largest peak over a plan's peak was 7 MiB on macOS and 5 MiB
-on Linux x86_64.
+Cases using the counting allocator are limited to their planned peak plus 64
+MiB; other cases use the suite-wide 698 MiB bound or a case-specific
+`SUITE_CASE_RSS_BOUND`. Set `ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the
+bounds, and `ROCKETNET_TEST_REPORT=1` to print each case's peak and bound.
+These variables configure the test executable, not the library.
 
 ## Verify a Mac
 
@@ -621,8 +507,9 @@ for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loo
   done
 done
 
+make clean
 cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-debug --parallel 4
+cmake --build build-debug --clean-first --parallel 4
 ./bin/test
 ```
 
@@ -645,58 +532,16 @@ How to read them:
   rerun that one case with `./bin/functional --run <case>` before reading it
   as a defect, and report it either way.
 
-## Nightly jobs on the macOS member
+## Nightly coverage
 
-Every macOS nightly runs on the fleet's one darwin runner, `mini-m5-1`
-(runner `mini-m5-1-rocketnet-1`, labels `self-hosted, macOS, ARM64, rocketnet-macos`), one job at a time. Run a job by hand from a checkout on that
-machine, one command at a time, and record the wall time of each step.
+The macOS nightly checks add soak behavior, frame-budget measurement, fuzz
+corpus replay, and example builds to the regular build and test coverage.
 
-| Job | Workflow and line | By hand | Last green, or the card that owns its red |
-|---|---|---|---|
-| `soak-macos` | `.github/workflows/nightly-soak.yml:216` | `make && ./bin/test && ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000 && ./bin/soak_sim 10000000 && ./bin/soak 200000` | run 39928961016 (main at 19eaa61d, 2026-10-23). Red in run 40080339910 (221e3bee) at `./bin/test`: `check failed: test_server_stats_current_every_update peak_rss_mb=1164 bound_mb=698`; no card owns it yet (below) |
-| `macos-frame-budget` | `.github/workflows/nightly-frame-budget.yml:56` | `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target client_main_thread_cost --parallel 4 && python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport msgx --report-only` | run 40066869774 (84c3c50b, 2026-10-24) |
-| `fuzz-macos` | `.github/workflows/fuzz-nightly.yml:185` | the job's steps: LLVM clang with libFuzzer, `cmake -B build-fuzz` instrumented, one target per leg | run 40074127124 (221e3bee, 2026-10-24), every target |
-| `coverage-macos` | `.github/workflows/fuzz-nightly.yml:544` | `CC=clang CXX=clang++ tools/fuzz_coverage.sh` | run 40074127124 (221e3bee, 2026-10-24) |
-| `examples-macos` | `.github/workflows/nightly-examples.yml:71` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel 4 && python3 tools/check_examples.py && python3 tools/run_examples.py --build build`, then the universal build under Rosetta 2 | no green run recorded; red in run 40070921798 at "Check the examples against the house rules", owned by rn-examples-macos-windows |
-| `macos-transport-cells-repeat` | `.github/workflows/nightly.yml:237` | `make -j4 && scripts/transport-cells-repeat --runs 50` | run 40079431071 (221e3bee, 2026-10-24) |
-| `macos-functional-nightly` | `.github/workflows/nightly.yml`, added by rn-macos-functional-reliable (not on main yet) | `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` | not landed; owned by rn-macos-functional-reliable |
-| `sanitizers-macos` | `.github/workflows/nightly-macos-sanitizers.yml`, added by rn-macos-sanitizers-nightly (not on main yet) | that workflow's ASan+UBSan, TSan and leaks legs | not landed; owned by rn-macos-sanitizers-nightly |
+### The resolver
 
-By hand on `mini-m5-1` at 5c2aa60f (main 1a2f2c43 plus this section), Release, 2026-10-24:
-
-- frame budget: configure 1 s, build 2 s, report 4 s:
-  `frame_budget transport=msgx P=32 total_us_p99_median=8.79 runs=8.67,9.58,8.79 gate=100 verdict=PASS`.
-  The first two tries printed `VOID load=6.68 cores=18` and `VOID load=4.56 cores=18`: the
-  script voids any run whose 1-minute load is above cores / 4, and other jobs shared the machine.
-- soak: `make -j4` 26 s; `./bin/test` 8 s, exit 1 on
-  `check failed: test_server_stats_current_every_update peak_rss_mb=1164 bound_mb=698`
-  (the same case alone, `./bin/test --run test_server_stats_current_every_update`, exits 0);
-  wire audit 100000 14 s, 0 failures, 0 hangs; simulator soak 10000000 554 s, 0 failures,
-  0 hangs; UDP soak 200000 312 s, exit 0. The `SEND_RING_FULL` refusal seen at d6dbd0a8
-  did not recur.
-
-The `./bin/test` red is macOS only: the same head passes `./bin/test` on Linux. The bound is
-the suite-wide one, and the case passes when run alone, so the measured peak is the suite's
-(how `wait4` reports `ru_maxrss` for a case run inside the full suite on macOS), not the case's
-plan. It needs its own card; the bound is not loosened here.
-
-### The runner's resolver
-
-The frame budget red of run 39906750528 (2026-10-23 05:37 UTC, `Could not resolve host: github.com` on every checkout try) was the LAN resolver, not the
-workflow. The Ethernet service had its DNS servers set by hand to
-`192.168.1.1` (the router) then `1.1.1.1`. From 03:33 UTC the router answered
-`github.com IN A` with REFUSED (rcode 5). mDNSResponder takes REFUSED as an
-answer and does not try the second server, and it held the negative answer
-in its cache: between 05:03:09 and 06:15:24 UTC it sent no query upstream and
-answered 2825 lookups of `github.com` with no address and none with one. The
-first good answer came at 06:15:24 UTC. The machine did not sleep: `pmset -g`
-shows `sleep 0` and `standby 0`, and `pmset -g log` has no Sleep or Wake entry since
-the boot at 2026-10-22 05:24 UTC (01:24 EDT); around 01:37 EDT on 2026-10-23 it has only
-assertion entries.
-
-The fix, made on 2026-10-24 at 12:35 UTC: the router is out of the Ethernet
-service's server list, `networksetup -setdnsservers Ethernet 1.1.1.1 1.0.0.1`.
-`scutil --dns` resolver #1 now lists `1.1.1.1` then `1.0.0.1` (before:
-`192.168.1.1` then `1.1.1.1`), and `dscacheutil -q host -a name github.com`
-answers an address. Check a Mac's resolver the same way, with `scutil --dns`
-and `networksetup -getdnsservers Ethernet`.
+A Mac that cannot resolve `github.com` fails every checkout of a job. Check
+the resolver with `scutil --dns` and `networksetup -getdnsservers Ethernet`
+(the service name is the network service in use), and test it with
+`dscacheutil -q host -a name github.com`. mDNSResponder takes a REFUSED answer
+from the first server as an answer and does not try the second, so a router
+that refuses lookups should not be in the server list.

@@ -9608,6 +9608,9 @@ extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void test_api_polish_dev_token_string();
+extern void test_dev_connect_token_timeout_is_the_named_constant();
+extern void test_dev_token_minting_absent_in_release();
 
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
@@ -9635,12 +9638,18 @@ static bool rocketnet_test_server_pin_allows_io_uring()
 static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "msgx" ); }
 #endif
 
+extern void rocketnet_test_server_stats_creates_no_thread();
+extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
+    { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
+    { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
@@ -9929,6 +9938,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
+    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

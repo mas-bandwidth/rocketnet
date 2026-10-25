@@ -3177,14 +3177,16 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // died hard) to the next receive on a CONNECTED socket, and a full mbuf
 // pool reports ENOBUFS; neither says anything about the datagrams still
 // queued behind it. every receive arm skips these and keeps draining:
-// never fatal, never the end of a drain, never an msgx pause. a client
+// never fatal, never an msgx pause, the end of a drain only at the bound
+// below. a client
 // socket is connected to its server (rocketnet_platform_socket_connect), so
 // the kernel does route ICMP errors to it, and this is the contract that
 // keeps each one harmless; server sockets stay unconnected and see none.
 // EAGAIN/EWOULDBLOCK stays the drain's
-// end: it means the queue is empty. each weather return is a one-shot
-// report (a pending socket error is cleared as it is returned), so a drain
-// always reaches a datagram or EAGAIN.
+// end: it means the queue is empty. a weather errno can repeat (a lasting
+// mbuf shortage keeps returning ENOBUFS), so the skips are bounded per call:
+// the bound, not the kernel, is what guarantees every drain returns. a call
+// that hits the bound returns what it has; the next drain reads on.
 
 static bool rocketnet_platform_receive_weather( int error )
 {
@@ -3192,22 +3194,44 @@ static bool rocketnet_platform_receive_weather( int error )
            error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
 }
 
+// weather reports one per-packet receive skips before it returns 0 (drained)
+#define ROCKETNET_PLATFORM_RECEIVE_WEATHER_SKIPS 64
+
 #if ROCKETNET_DEV
 
 // the test seam (development builds only, never the production library):
-// the next recvmsg or recvmsg_x on any socket returns -1 with this errno
-// instead of calling the kernel, leaving every queued datagram in place.
+// the next count recvmsg or recvmsg_x calls on any socket return -1 with
+// this errno instead of calling the kernel, leaving every queued datagram
+// in place. the one-shot form is a count of 1; an error of 0 clears it.
 
 static std::atomic<int> rocketnet_platform_receive_errno_for_testing( 0 );
+static std::atomic<int> rocketnet_platform_receive_errno_count_for_testing( 0 );
+
+void rocketnet_platform_inject_receive_errno_repeat_for_testing( int error, int count )
+{
+    rocketnet_platform_receive_errno_for_testing.store( error );
+    rocketnet_platform_receive_errno_count_for_testing.store( error != 0 && count > 0 ? count : 0 );
+}
 
 void rocketnet_platform_inject_receive_errno_for_testing( int error )
 {
-    rocketnet_platform_receive_errno_for_testing.store( error );
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( error, 1 );
+}
+
+int rocketnet_platform_receive_errno_remaining_for_testing()
+{
+    return rocketnet_platform_receive_errno_count_for_testing.load();
 }
 
 static int rocketnet_platform_take_receive_errno_for_testing()
 {
-    return rocketnet_platform_receive_errno_for_testing.exchange( 0 );
+    int remaining = rocketnet_platform_receive_errno_count_for_testing.load();
+    while ( remaining > 0 )
+    {
+        if ( rocketnet_platform_receive_errno_count_for_testing.compare_exchange_weak( remaining, remaining - 1 ) )
+            return rocketnet_platform_receive_errno_for_testing.load();
+    }
+    return 0;
 }
 
 #endif // #if ROCKETNET_DEV
@@ -3225,25 +3249,32 @@ static ssize_t rocketnet_platform_recvmsg( int handle, struct msghdr * msg )
     return recvmsg( handle, msg, 0 );
 }
 
-int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+// the per-packet receive behind the public call and the batch pump's
+// per-packet path: the caller owns the overflow buffer, so a batch receive
+// keeps one 64 KiB discard area on its stack instead of two.
+
+static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size, uint8_t * overflow, size_t overflow_bytes, int * weather_remaining )
 {
     rocketnet_assert( socket );
     rocketnet_assert( from );
     rocketnet_assert( packet_data );
     rocketnet_assert( max_packet_size > 0 );
+    rocketnet_assert( overflow );
 
     sockaddr_storage sockaddr_from;
     // Darwin reports bytes copied, not the original size on truncation.
-    // Scatter the prefix into caller storage and discard the rest locally.
-    // This covers a complete ordinary UDP datagram without shared state.
-    uint8_t overflow[65535];
+    // Scatter the prefix into caller storage and discard the rest in the
+    // caller's overflow buffer. This covers a complete ordinary UDP datagram.
     struct iovec iov[2];
     iov[0].iov_base = packet_data;
     iov[0].iov_len = (size_t) max_packet_size;
     iov[1].iov_base = overflow;
-    iov[1].iov_len = sizeof(overflow);
+    iov[1].iov_len = overflow_bytes;
 
     const bool dual_stack = socket->ipv6;
+
+    // The caller shares this budget across every packet and pump fallback.
+    rocketnet_assert( weather_remaining && *weather_remaining > 0 );
 
     int result;
 receive_again:
@@ -3274,12 +3305,18 @@ receive_again:
             const int error = errno;
 
             // ICMP-class and buffer weather: skip it and read on, the
-            // datagrams behind it are still queued (TRANSPORTS.md, ICMP errors)
+            // datagrams behind it are still queued (TRANSPORTS.md, ICMP errors);
+            // past the bound the call reports drained and the next one reads on
 
             if ( rocketnet_platform_receive_weather( error ) )
-                continue;
+            {
+                if ( --*weather_remaining > 0 )
+                    continue;
+                return 0;
+            }
 
-            if ( error != EAGAIN && error != EWOULDBLOCK && error != EINTR )
+            // EINTR is weather and never reaches here
+            if ( error != EAGAIN && error != EWOULDBLOCK )
             {
                 rocketnet_debug( "recvfrom failed with error %d", error );
             }
@@ -3328,6 +3365,14 @@ receive_again:
     rocketnet_assert( result >= 0 );
 
     return result;
+}
+
+int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
+{
+    // the public call owns its discard area; the batch pump passes its own
+    uint8_t overflow[65535];
+    int weather_remaining = ROCKETNET_PLATFORM_RECEIVE_WEATHER_SKIPS;
+    return rocketnet_platform_socket_receive_packet_into( socket, from, packet_data, max_packet_size, overflow, sizeof(overflow), &weather_remaining );
 }
 
 // ---------------------------------------------------
@@ -3678,6 +3723,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     uint8_t overflow[65535];
     int total = 0;
 
+    // One weather budget covers both pumps and every delivered packet.
+    int weather_remaining = max_packets;
+
     if ( !rocketnet_msgx_active( socket ) )
         goto per_packet;
 
@@ -3724,11 +3772,16 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
                 return total;
 
             // ICMP-class and buffer weather (and EINTR): skip it and keep
-            // draining on the batch pump until EAGAIN -- never a pause and
-            // never the end of a drain (TRANSPORTS.md, ICMP errors).
+            // draining on the batch pump until EAGAIN -- never a pause, and
+            // the end of a drain upon max_packets weather reports, so a repeating
+            // errno cannot spin this call (TRANSPORTS.md, ICMP errors).
 
             if ( rocketnet_platform_receive_weather( error ) )
-                continue;
+            {
+                if ( --weather_remaining > 0 )
+                    continue;
+                return total;
+            }
 
             // outside ordinary weather: pause the pump and finish this
             // call per-packet -- what earlier chunks drained is already
@@ -3779,7 +3832,8 @@ per_packet:
 
     while ( total < max_packets )
     {
-        int bytes = rocketnet_platform_socket_receive_packet( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride );
+        // the same overflow buffer as the batch arm: one discard area per call
+        int bytes = rocketnet_platform_socket_receive_packet_into( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride, overflow, sizeof(overflow), &weather_remaining );
         if ( bytes == 0 )
             break;
         packet_bytes[total] = bytes;
