@@ -222,7 +222,7 @@ A comment follows code with no blank line between only 5 times in SDK code.
   body. `/* */` is used for the licence header at the top of each file, and
   `/** */` for the doc blocks of the serialization classes
   (`include/next_bitpacker.h`, `next_stream.h`, `next_serialize.h`, 71
-  blocks). Every one of the 135 `*/` closers is followed by a blank line.
+  blocks). Every one of the 136 `*/` closers is followed by a blank line.
 - **Lower case, no full stop.** 263 of 298 comments start lower case; of the
   35 that start upper case, 33 are `IMPORTANT:`. 275 of 305 do not end with
   a full stop. Comments are phrases ("bind to port", "no port number"), not
@@ -239,14 +239,36 @@ A comment follows code with no blank line between only 5 times in SDK code.
   definitions have a blank line on the line above. A comment about a group
   of functions goes above a section separator (rule 6), with a blank line
   after it, the same comment-then-blank-line form as rule 3.
-- **`#endif` names its `#if`**: `#endif // #if NEXT_SPIKE_TRACKING`, 302 of
-  346 (`source/next_client.cpp:376`, `source/next_client.cpp:631`); 40 are
-  bare.
+- **`#endif` names its condition, repeating the directive that opened it**:
+  302 of 346 `#endif` lines. Of those, 249 read `#endif // #if NAME`, 44 read
+  `#endif // #ifndef NAME_H` (header guards), and 9 read
+  `#endif // #ifdef NAME`. 4 name the condition another way
+  (`#endif // __cplusplus`, `include/next_platform.h:147`) and 40 are bare.
+  Copy the opening directive as written; do not turn `#ifndef` or `#ifdef`
+  into `#if`.
+
+Examples of the rule:
+
+```
+source/next_platform_linux.cpp:231
+source/next_platform_linux.cpp:232      // bind to port
+source/next_platform_linux.cpp:233
+```
+
+```
+source/next_base64.cpp:26          return -1; // integer overflow
+```
 
 ```
 source/next_client.cpp:374  #if !NEXT_DEVELOPMENT
 source/next_client.cpp:375      next_printf( NEXT_LOG_LEVEL_INFO, "client sdk version is %s", NEXT_VERSION_FULL );
 source/next_client.cpp:376  #endif // #if !NEXT_DEVELOPMENT
+```
+
+```
+include/next_platform_gdk.h:52  #endif // #ifdef _GAMING_XBOX
+include/next_platform_gdk.h:53
+include/next_platform_gdk.h:54  #endif // #ifndef NEXT_PLATFORM_GDK_H
 ```
 
 *By hand* (`ReflowComments: false` keeps comment lines exactly as written;
@@ -312,11 +334,26 @@ placement itself is clang-format, `BreakBeforeBraces: Allman`).
   characters (28 lines), 105 (23), 54 (19), 66 (18), others.
 
 ```
+source/next_client.cpp:2515      return client;
+source/next_client.cpp:2516  }
+source/next_client.cpp:2517
+source/next_client.cpp:2518  uint16_t next_client_port( next_client_t * client )
+```
+
+```
 source/next_client.cpp:25  #include <stdlib.h>
 source/next_client.cpp:26
 source/next_client.cpp:27  // ---------------------------------------------------------------
 source/next_client.cpp:28
 source/next_client.cpp:29  #define NEXT_CLIENT_COMMAND_OPEN_SESSION            0
+```
+
+```
+source/next.cpp:95  }
+source/next.cpp:96
+source/next.cpp:97  // -------------------------------------------------------------
+source/next.cpp:98
+source/next.cpp:99  static int log_quiet = 0;
 ```
 
 *By hand* (`SeparateDefinitionBlocks: Leave`; `Always` would insert the blank
@@ -328,7 +365,7 @@ line between definitions but is not set in this repository).
 |---|---|---|---|
 | functions | `next_` + snake_case, `next_client_internal_send_packet_to_server` | 580; plus 93 `test_*` and 17 static helpers, all snake_case | `rocketnet_*` |
 | struct types | snake_case ending `_t`, `next_address_t` | 87, plus 16 typedefs | `rocketnet_*_t` |
-| packet structs | `Next` + PascalCase + `Packet`, `NextUpgradeRequestPacket` | 21 | the same form with `RocketNet`, if such a type is declared |
+| packet structs | `Next` + PascalCase + `Packet`, `NextUpgradeRequestPacket` | 20 | the same form with `RocketNet`, if such a type is declared |
 | classes (serialization only) | PascalCase, `BitWriter`, methods `WriteBits`, members `m_numBits` | 8 classes, 31 methods, 15 members | the same, inside the serialization classes only |
 | constants | `#define NEXT_` + UPPER_SNAKE, `NEXT_MAX_PACKET_BYTES` | 351 macros | `ROCKETNET_*` |
 | macros used like calls | lower snake_case, `next_assert`, `next_check`, `serialize_int` | 23 (incl. 3 libc aliases) | `rocketnet_*` |
@@ -338,6 +375,28 @@ line between definitions but is not set in this repository).
 Names spell out their unit: `packet_bytes`, `packet_data`, `num_entries`,
 `packet_receive_time`, `delta_time`; a count is `num_*`, a size in bytes is
 `*_bytes` (observed throughout, not counted).
+
+Examples of the rule:
+
+```
+source/next_address.cpp:15  int next_address_parse( next_address_t * address, const char * address_string_in )
+```
+
+```
+include/next_address.h:15  struct next_address_t
+```
+
+```
+include/next.h:17  #define NEXT_ADVANCED_PACKET_FILTER                               0
+```
+
+```
+include/next_packets.h:61  struct NextUpgradeRequestPacket
+```
+
+```
+source/next_client.cpp:624      const int packet_id = packet_data[0];
+```
 
 *By hand* (clang-format does not touch names).
 
@@ -378,7 +437,8 @@ Read the function top to bottom and check each line:
    comments, a label on a scoped `{ }` block.
 10. Comments are `//`, lower case, no full stop, one line however long; no
     `/* */` inside code; no comment touching the function signature.
-11. Every `#endif` reads `#endif // #if NAME`.
+11. Every `#endif` names its condition with the directive that opened it:
+    `#endif // #if NAME`, `#endif // #ifdef NAME` or `#endif // #ifndef NAME_H`.
 12. One blank line after the closing `}` before the next function; a section
     separator is an untitled `// ----` line with a blank line on each side.
 13. Names: `rocketnet_` snake_case functions, `rocketnet_*_t` types,
