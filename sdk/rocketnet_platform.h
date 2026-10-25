@@ -117,6 +117,9 @@ void rocketnet_platform_sleep( double time );
 
 struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
 
+// Whole milliseconds rounded up and clamped to 1 .. 0xFFFFFFFE.
+uint32_t rocketnet_platform_timeout_milliseconds( float seconds );
+
 struct rocketnet_platform_sleep_split_t
 {
     uint32_t seconds;

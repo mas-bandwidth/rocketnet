@@ -55,6 +55,17 @@ struct timeval rocketnet_platform_timeval_from_seconds( float seconds )
     return tv;
 }
 
+uint32_t rocketnet_platform_timeout_milliseconds( float seconds )
+{
+    // Round positive timeouts up and cap before conversion, never requesting an infinite wait.
+    const double milliseconds = ceil( (double) seconds * 1000.0 );
+    if ( !( milliseconds > 1.0 ) )
+        return 1;
+    if ( milliseconds >= 4294967294.0 )
+        return UINT32_C(0xFFFFFFFE);
+    return (uint32_t) milliseconds;
+}
+
 struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time )
 {
     struct rocketnet_platform_sleep_split_t split;
@@ -2035,42 +2046,6 @@ template <typename T> struct rocketnet_vector_t
             return false;
         length = size;
         return true;
-    }
-
-    void remove( int i )
-    {
-        rocketnet_assert( data );
-        rocketnet_assert( i >= 0 && i < length );
-        if ( i != length - 1 )
-        {
-            data[i] = data[length - 1];
-        }
-        length--;
-    }
-
-    void remove_ordered( int i )
-    {
-        rocketnet_assert( data );
-        rocketnet_assert( i >= 0 && i < length );
-        memmove( &data[i], &data[i + 1], sizeof( T ) * ( length - ( i + 1 ) ) );
-        length--;
-    }
-
-    T * insert( int i )
-    {
-        rocketnet_assert( i >= 0 && i <= length );
-        if ( length == INT_MAX || !resize( length + 1 ) )
-            return NULL;
-        memmove( &data[i + 1], &data[i], sizeof( T ) * ( length - 1 - i ) );
-        return &data[i];
-    }
-
-    T * insert( int i, const T & t )
-    {
-        T * p = insert( i );
-        if ( p )
-            *p = t;
-        return p;
     }
 
     T * add()
@@ -4915,7 +4890,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     else if ( timeout_seconds > 0.0f )
     {
         // set receive timeout
-        DWORD tv = DWORD( timeout_seconds * 1000.0f );
+        DWORD tv = (DWORD) rocketnet_platform_timeout_milliseconds( timeout_seconds );
         if ( setsockopt( s->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *)( &tv ), sizeof( tv ) ) < 0 )
         {
             rocketnet_error( "failed to set socket receive timeout" );
@@ -5117,8 +5092,9 @@ receive_again:
 #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
         if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
+            // Preserve the drained sentinel so batch receive cannot manufacture empty packets.
             if ( result < 0 )
-                return 0;
+                return -1;
             if ( result == 0 )
                 continue;
             break;
@@ -5230,13 +5206,8 @@ static int get_connection_type()
     if ( !addresses )
         return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
-    int result = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-    
-    // if there are any adapters at all, default to wired
-    if ( addresses )
-    {
-        result = ROCKETNET_CONNECTION_TYPE_WIRED;
-    }
+    // A nonempty adapter list defaults to wired.
+    int result = ROCKETNET_CONNECTION_TYPE_WIRED;
 
     // if any wifi adapter exists and is connected to a network, assume we're on wifi.
     IP_ADAPTER_ADDRESSES * address = addresses;
@@ -5250,10 +5221,7 @@ static int get_connection_type()
         address = address->Next;
     }
 
-    if ( addresses )
-    {
-        rocketnet_free( rocketnet_global_context, addresses );
-    }
+    rocketnet_free( rocketnet_global_context, addresses );
 
     return result;
 }
