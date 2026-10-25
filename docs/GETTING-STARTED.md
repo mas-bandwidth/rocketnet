@@ -360,7 +360,7 @@ In a `ROCKETNET_DEV=0` build:
 ### Step 2: Provision the backend signing keypair and keep key boundaries
 
 Generate a fresh Ed25519 backend signing keypair with the Go backend, the C#
-backend, or `./build-production/bin/keygen`:
+backend, or `./bin/keygen`:
 
 ```sh
 umask 077
@@ -368,7 +368,7 @@ umask 077
 # Or with C#:
 # (cd examples/backend/csharp && dotnet build Backend && dotnet run --no-build --project Backend -- --keygen) > backend-keys.env
 # Or with the C SDK keygen tool:
-# ./build-production/bin/keygen > backend-keys.env
+# ./bin/keygen > backend-keys.env
 ```
 
 Each command prints two base64 environment assignments:
@@ -425,7 +425,7 @@ and start the Go or C# backend in Terminal 2 with the private signing key:
 ```sh
 # Terminal 1: production server
 export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
-./build-production/bin/example_backend_server
+./bin/example_backend_server
 ```
 
 ```sh
@@ -508,7 +508,7 @@ Request a fresh token and connect the production C client (or run the automated
 end-to-end verification across both Go and C# backends):
 
 ```sh
-./build-production/bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
+./bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
 python3 tools/run_backend_examples.py --build build-production --production
 ```
 

@@ -158,7 +158,7 @@ closed immediately with `MISSING_KEYS`:
 
 ```sh
 unset ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
-./build-production/bin/example_backend_server
+./bin/example_backend_server
 # FAIL: server start: MISSING_KEYS
 ```
 
@@ -184,7 +184,7 @@ or the C SDK `keygen` executable:
 
 ```sh
 umask 077
-./build-production/bin/keygen > backend-keys.env
+./bin/keygen > backend-keys.env
 ```
 
 All three commands print the same two base64 environment variable assignments
@@ -217,7 +217,7 @@ In **Terminal 1 (game server)**, load only the public verification key and start
 
 ```sh
 export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
-./build-production/bin/example_backend_server
+./bin/example_backend_server
 ```
 
 Verify that the server reports `mode=production` and prints its bound UDP
@@ -291,7 +291,7 @@ inner/outer field consistency, and runs `rocketnet_client_protocol_connect`):
 . ./backend.env
 export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
 TOKEN="$(curl -sSf http://localhost:8080/match/42)"
-./build-production/bin/backend_check_token "${TOKEN}" "${ROCKETNET_BACKEND_SERVER_PUBLIC_KEY}" 42
+./bin/backend_check_token "${TOKEN}" "${ROCKETNET_BACKEND_SERVER_PUBLIC_KEY}" 42
 ```
 
 Now request a fresh token (tokens expire after 30 seconds by default, so fetch
@@ -299,7 +299,7 @@ immediately before connecting) and pass the opaque base64 string to the
 production C client:
 
 ```sh
-./build-production/bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
+./bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
 ```
 
 Expected output across the client and server terminals:
