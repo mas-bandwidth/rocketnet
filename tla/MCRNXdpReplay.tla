@@ -43,7 +43,15 @@
 (* ForgetDropsKeptMark <- ForgetDropsKeptMarkBroken (a kept mark survives  *)
 (* the forget the walk queues for its address, and the commit rewrites the *)
 (* released address's entry after the forget) and must fail               *)
-(* ForgetOwedUntilApplied.                                                 *)
+(* ForgetOwedUntilApplied;                                                 *)
+(* MCRNXdpReplayBrokenGreetBeforeMark.cfg sets                             *)
+(* HoldGreetingUntilMarked <- HoldGreetingUntilMarkedBroken (the commit    *)
+(* greets a new session whose zero mark the kernel refused) and must fail  *)
+(* NewSessionNeverDroppedByOldMark;                                        *)
+(* MCRNXdpReplayBrokenQueueRefusedAdvances.cfg sets                        *)
+(* AdvanceOnQueueRefusal <- AdvanceOnQueueRefusalBroken (the walk's cache  *)
+(* advances on a mark the buffer refused) and must fail                    *)
+(* MarkOwedUntilApplied.                                                   *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -62,4 +70,6 @@ KeepRefusedMarksBroken == FALSE
 ForgetDropsKeptMarkBroken == FALSE
 MarkFailureBudgetOne == 1
 MarkFailureBudgetTwo == 2
+HoldGreetingUntilMarkedBroken == FALSE
+AdvanceOnQueueRefusalBroken == TRUE
 =============================================================================
