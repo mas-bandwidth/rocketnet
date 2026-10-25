@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
 #if defined(__linux__)
 #include <dirent.h>
@@ -34,6 +35,45 @@ do                                                                              
 } while( 0 )
 
 #define check rocketnet_check
+
+// These cases require the in-memory transport even when the suite pins sockets.
+struct process_thread_transport_guard_t
+{
+    bool server_was_set;
+    bool client_was_set;
+    std::string server_value;
+    std::string client_value;
+
+    process_thread_transport_guard_t()
+    {
+        const char * server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
+        const char * client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
+        server_was_set = server != NULL;
+        client_was_set = client != NULL;
+        if ( server_was_set )
+            server_value = server;
+        if ( client_was_set )
+            client_value = client;
+#if defined( _WIN32 )
+        check( _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "loopback" ) == 0 );
+        check( _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "loopback" ) == 0 );
+#else
+        check( setenv( "ROCKETNET_SERVER_TRANSPORT", "loopback", 1 ) == 0 );
+        check( setenv( "ROCKETNET_CLIENT_TRANSPORT", "loopback", 1 ) == 0 );
+#endif
+    }
+
+    ~process_thread_transport_guard_t()
+    {
+#if defined( _WIN32 )
+        check( _putenv_s( "ROCKETNET_SERVER_TRANSPORT", server_was_set ? server_value.c_str() : "" ) == 0 );
+        check( _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", client_was_set ? client_value.c_str() : "" ) == 0 );
+#else
+        check( ( server_was_set ? setenv( "ROCKETNET_SERVER_TRANSPORT", server_value.c_str(), 1 ) : unsetenv( "ROCKETNET_SERVER_TRANSPORT" ) ) == 0 );
+        check( ( client_was_set ? setenv( "ROCKETNET_CLIENT_TRANSPORT", client_value.c_str(), 1 ) : unsetenv( "ROCKETNET_CLIENT_TRANSPORT" ) ) == 0 );
+#endif
+    }
+};
 
 #include "../tests/no_worker_world.h"
 #include "../tests/public_step_pair.h"
@@ -83,6 +123,7 @@ static int public_step_thread_count()
 // manual mode unit builds once defaulted to), publishes nothing.
 void rocketnet_test_server_stats_creates_no_thread()
 {
+    process_thread_transport_guard_t transport_guard;
     no_worker_world_t * world = &g_no_worker_world;
     const int before = no_worker_thread_count();
 
@@ -101,22 +142,38 @@ void rocketnet_test_server_stats_creates_no_thread()
         check( after_create == before );
         check( after_updates == before );
     }
-
+    else
+    {
+        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
+    }
     struct rocketnet_server_client_stats_t stats;
     rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
     check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
 
+    no_worker_server_stop_and_wait( world );
+    const int after_stop = no_worker_thread_count();
+    if ( before >= 0 )
+        check( after_stop == before );
     no_worker_world_destroy( world );
+    const int after_destroy = no_worker_thread_count();
+    if ( before >= 0 )
+        check( after_destroy == before );
 }
 
 void rocketnet_test_public_step_driven_client_connects_without_a_thread()
 {
+    process_thread_transport_guard_t transport_guard;
     public_step_identity_t identity;
     public_step_identity( &identity );
     public_step_pair_t pair;
     public_step_pair_create( &pair, &identity, 0, public_step_thread_count );
     if ( pair.threads_before_client >= 0 && pair.threads_after_client >= 0 )
         check( pair.threads_after_client == pair.threads_before_client );
+    else
+        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
     public_step_connect( &pair );
+    public_step_pair_stop_server_and_wait( &pair );
     public_step_pair_destroy( &pair );
+    if ( pair.threads_before_pair >= 0 )
+        check( public_step_thread_count() == pair.threads_before_pair );
 }
