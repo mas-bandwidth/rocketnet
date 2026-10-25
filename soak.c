@@ -25,13 +25,16 @@
     --rate N sends N packets per second each way (N a positive integer, at
     most 1000000), paced against the wall clock from each connect; the
     transport layer has no send budget, so the rate is the only limit. Without
-    it soak sends one packet each way per iteration. The pacing never makes a
+    it soak sends one packet each way per iteration, except that the client
+    sends none in an iteration whose update deferred the hand-off of its fill
+    ring (below): that packet is not dropped, it is the next one sent. The
+    pacing never makes a
     refusal itself: each direction sends at most ROCKETNET_SOAK_RATE_BURST
     packets per iteration and holds its unacknowledged span (its highest sent
     session sequence less the largest the other side has acknowledged, read
     through the delivery capture) under ROCKETNET_SOAK_RATE_WINDOW, so a stall
     on either side never overruns the 4096-packet send history
-    (SEND_HISTORY_OVERFLOW); and the client sends
+    (SEND_HISTORY_OVERFLOW); and, with or without --rate, the client sends
     nothing more in an iteration once a hand-off of its fill ring is deferred
     (CLIENT_SEND_DEFERRED: the I/O thread still holds the other rings), so a
     stalled I/O thread never fills the ring (SEND_RING_FULL). What a stall
@@ -1045,7 +1048,7 @@ int main( int argc, char ** argv )
             // the wall clock owes since the connect, inside the burst and the
             // window (soak_rate_send_count)
 
-            uint64_t client_send_count = 1;
+            uint64_t client_send_count = client_ring_held ? 0 : 1;
             uint64_t server_send_count = 1;
             if ( rate )
             {
