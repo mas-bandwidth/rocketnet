@@ -700,6 +700,8 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 // gateway MAC always wins over it, it never displaces a learned entry, a
 // learn of its address takes its slot, and a newer answer replaces it. A
 // reply to an address no frame ever came from is still refused and counted.
+// tla/RNXdpReplay.tla models the rule: NeverSeenNeverSentTo and
+// HeldReplyFindsItsMac.
 //
 // The table is fixed-size and lives inside its owner's create-time
 // allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
@@ -799,8 +801,9 @@ static inline bool rocketnet_xdp_reply_mac_usable( const uint8_t * mac )
     return mac && !( mac[0] & 1 ) && memcmp( mac, zero_mac, 6 ) != 0;
 }
 
-// a unicast, nonzero MAC is learned; anything else is ignored. The address's
-// answered entry, if any, becomes its learned entry.
+// tla/RNXdpReplay.tla Connect: a unicast, nonzero MAC is learned; anything
+// else is ignored. The address's answered entry, if any, becomes its
+// learned entry.
 
 static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
@@ -877,7 +880,8 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
     entry->learned = table->learn_count;
 }
 
-// the released client's learned MAC is forgotten: no reply is addressed by
+// tla/RNXdpReplay.tla Commit (ForgetLeavesAnswered): the released client's
+// learned MAC is forgotten: no reply is addressed by
 // it as a learned client's again. It stays as the address's answered entry,
 // for a reply still held for the released client.
 
@@ -894,6 +898,7 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
     entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
 }
 
+// tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
 // the reply MAC for a destination: the learned MAC, else the gateway MAC,
 // else answered_mac (the source MAC of the received frame this reply
 // answers, NULL for none), kept as the address's answered entry; a zero or

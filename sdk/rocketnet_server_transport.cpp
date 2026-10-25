@@ -800,10 +800,11 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
             break;
         if ( rocketnet_server_transport_staged( transport ) )
         {
-            // the receive view a held reply answered is gone by now, so the
-            // xdp transport addresses it by the MAC its direct response took
-            // (the answered entry, rocketnet_xdp_frame.h), and a duplicate
-            // the same way; an address no frame came from is still refused
+            // tla/RNXdpReplay.tla Drain: the receive view a held reply
+            // answered is gone by now, so the xdp transport addresses it by
+            // the MAC its direct response took (the answered entry,
+            // rocketnet_xdp_frame.h), and a duplicate the same way; an
+            // address no frame came from is still refused
             uint64_t id = 0;
             uint8_t * frame = rocketnet_server_transport_io_start_packet( transport, &to, &id );
             if ( frame )
