@@ -77,7 +77,7 @@ other session state.
 | | component pointers | allocation owners | KEEP | their named per-slot records reset |
 | | update output tags | receipt attribution | KEEP | produced rows retain attribution for the update |
 | server replay marks | marks for this client index | staged replay ownership | RESET | transport cleanup removes this slot's marks |
-| `rocketnet_server_transport_t` | `client_wire_totals[client_index]` | the slot's wire packet and byte totals | KEEP through the reset | not touched by `rocketnet_server_connection_reset`; cleared when the slot is next assigned (`rocketnet_server_wire_totals_assign`, which zeroes them when the connecting response assigns the slot). `rocketnet_server_transport_client_stats` reads zeros for an empty slot, so the ended connection's totals are never observable |
+| `rocketnet_server_transport_t` | `client_wire_totals[client_index]` | the slot's wire packet and byte totals | KEEP through the reset | not touched by `rocketnet_server_connection_reset`; cleared when the slot is next assigned (`rocketnet_server_wire_totals_assign`, which zeroes them when the connecting response assigns the slot), and deferred disconnect frames sealed after reset carry `client_index = -1` so they never charge a reused slot. `rocketnet_server_transport_client_stats` reads zeros for an empty slot, so the ended connection's totals are never observable |
 | | other slots, server totals, transport/config and counters | server-wide state | KEEP | lifetime state or another connection |
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |
@@ -110,6 +110,59 @@ The client and encryption mapping reset `accepted_session` independently of
 keeps `defer_payload_acks`, because message-layer ACK admission is a transport
 binding policy, not state learned from the previous remote endpoint.
 
+## Secret erasure versus generation invalidation
+
+An epoch or generation increment invalidates stale control, packet, ACK, and
+message records, but it is never treated as secret erasure. Actual secret
+material is overwritten in place with `sodium_memzero`:
+
+- Client protocol reset (`rocketnet_client_protocol_wipe_secrets`):
+  `keys` (`session_client_to_server`, `session_server_to_client`, `cookie_key`),
+  `token`, `client_ephemeral_secret_key` (also erased immediately after
+  challenge processing), and `session_nonce`.
+- Client I/O open-key copy (`rocketnet_client_io_drop_keys`):
+  `session_server_to_client`, `connection_salt`, and `packet_filter`. When a
+  background I/O thread owns `client_io.open`, `retire_keys` publishes
+  `ROCKETNET_CLIENT_IO_EPOCH_RETIRED` and the worker calls
+  `rocketnet_client_io_take_keys` / `rocketnet_client_io_drop_keys` on its next
+  wakeup. When no worker thread exists (`!client_transport->thread`, including
+  `step_driven` and `step_in_update` modes), `rocketnet_client_transport_retire_keys`
+  calls `rocketnet_client_io_take_keys` immediately on the caller thread so
+  `client_io.open.session_server_to_client` is wiped with `sodium_memzero` at
+  the terminal transition without waiting for a later `update` or `stop`.
+- Server encryption mapping and slot release:
+  `rocketnet_encryption_mapping_wipe_secrets` zeroes `keys`, `session_nonce`,
+  and `user_data` before unlinking the mapping; `rocketnet_client_slots_release`
+  zeroes the slot's `user_data` copy; and deferred server disconnect bursts copy
+  only `session_server_to_client`, `connection_salt`, and `sequence` into the
+  bounded burst entry and erase that entry with `sodium_memzero` as soon as the
+  burst drains or is replaced.
+
+## Statistics lifecycle and public counter contract
+
+- **Session-scoped quality and rate metrics (RESET)**: RTT (`rtt_ms`), jitter
+  (`jitter_ms`), packet loss (`packet_loss_percent`), bandwidth estimates
+  (`send_kbps`, `receive_kbps`, `ack_kbps`), and the underlying ACK history
+  rings, bitmaps, and loss/jitter trackers reset on every client connection reset
+  and every server slot reset (`rocketnet_ack_endpoint_reset`,
+  `rocketnet_packet_loss_tracker_reset`, `rocketnet_jitter_tracker_reset`).
+- **Server per-client totals (`rocketnet_server_client_stats`)**: Scoped strictly
+  to the currently connected occupant of `client_index`. Queries on an empty
+  slot return all zeros; `rocketnet_server_wire_totals_assign` zeroes the slot's
+  wire totals when a new connection claims the slot; and deferred disconnect
+  bursts drained after slot release carry `client_index = -1` so they charge
+  server-lifetime wire totals without charging a reused slot.
+- **Public client whole-life counters (`rocketnet_client_stats`)**: Under the
+  current public contract (`sdk/rocketnet.h` and `tla/ClientSession.tla` `End`
+  `UNCHANGED <<counters>>`), `packets_sent`, `packets_received`, `bytes_sent`,
+  `bytes_received`, `messages_sent`, and `messages_received` on a
+  `rocketnet_client_t` are monotonic over the lifetime of the client handle,
+  while rate and quality gauges (`rtt_ms`, `jitter_ms`, `packet_loss_percent`,
+  `send_kbps`, `receive_kbps`, `ack_kbps`) are session-scoped and reset across
+  reconnects. Whether to split per-session packet/byte/message counters from
+  handle-lifetime counters in `rocketnet_client_stats_t` is preserved as an
+  explicit owner contract decision rather than altered silently.
+
 ## Reset state without clearing bulk storage
 
 RESET means a fresh logical state, not zeroing every byte of an allocation.
@@ -133,5 +186,8 @@ receipts or aggregate survive, and verifies exact single delivery in both
 directions for all eight delivery modes. The existing reset inventory and
 slot-reuse tests cover field decisions, ACK/replay state, partial fragments,
 timeout exits and isolation from other connected slots. The secret-wipe tests
-use a nonzero allocator and inspect memory before freeing it; they verify both
-secret erasure and the absence of whole-arena writes.
+(`test_unit_secrets_wiped.cpp`, including
+`test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing`) use a
+nonzero allocator and inspect memory across disconnect, reconnect, and destroy;
+they verify both immediate `sodium_memzero` secret erasure and the absence of
+whole-arena writes.

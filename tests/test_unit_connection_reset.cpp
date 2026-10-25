@@ -365,9 +365,6 @@ extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
 
-void rocketnet_server_transport_defer_and_hold_disconnects_for_test( rocketnet_server_transport_t * server_transport );
-void rocketnet_server_transport_release_disconnects_for_test( rocketnet_server_transport_t * server_transport );
-
 struct reset_loopback_t
 {
     rocketnet_message_server_t * server;
@@ -641,39 +638,173 @@ static void reset_loopback_slot_reuse_scenario()
     reset_loopback_destroy( &f );
 }
 
+uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
+
 static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slot()
 {
-    reset_loopback_t f;
-    memset( &f, 0, sizeof(f) );
-    f.now = 1000.0;
-    f.server = reset_loopback_server_create( f.now );
-    check( f.server );
-    const int old_slot = reset_loopback_connect( &f, 0, 0xA003 );
-    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
-    rocketnet_server_transport_defer_and_hold_disconnects_for_test( transport );
+    enum
+    {
+        DEFERRED_MAX_CLIENTS = 8,
+        DEFERRED_INITIAL_CLIENTS = 7
+    };
 
-    rn_message_object_kick( &f.server->object, old_slot, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
-    reset_loopback_step( &f );
-    check( !rocketnet_message_server_client_connected( f.server, old_slot ) );
-    rn_test_message_client_stop_and_destroy( f.clients[0] );
-    f.clients[0] = NULL;
+    const reset_loopback_keys_t * keys = reset_loopback_keys();
+    double now = 1000.0;
 
-    const int new_slot = reset_loopback_connect( &f, 1, 0xB003 );
-    check( new_slot == old_slot );
-    rocketnet_server_transport_client_stats_t slot_before, slot_after;
-    rocketnet_server_transport_stats_t server_before, server_after;
-    rocketnet_server_transport_client_stats( transport, new_slot, &slot_before );
-    rocketnet_server_transport_stats( transport, &server_before );
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config( &server_config );
+    server_config.protocol_id = RESET_LOOPBACK_PROTOCOL_ID;
+    server_config.max_clients = DEFERRED_MAX_CLIENTS;
+    memcpy( server_config.backend_public_key, keys->backend_public, sizeof(server_config.backend_public_key) );
+    memcpy( server_config.server_public_key, keys->server_public, sizeof(server_config.server_public_key) );
+    memcpy( server_config.server_secret_key, keys->server_secret, sizeof(server_config.server_secret_key) );
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", "loopback" );
+    int status = -1;
+    reset_env_pin_t pin;
+    reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+    reset_env_pin_put_back( &pin );
+    check( transport && status == ROCKETNET_STATUS_OK );
+    rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
-    rocketnet_server_transport_release_disconnects_for_test( transport );
+    rn_message_link_t server_link;
+    rn_message_server_link( &server_link, transport );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create(
+        NULL, &server_link, 1, DEFERRED_MAX_CLIENTS, NULL, NULL, 0,
+        ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
+    check( server );
 
-    rocketnet_server_transport_client_stats( transport, new_slot, &slot_after );
-    rocketnet_server_transport_stats( transport, &server_after );
-    check( server_after.packets_sent - server_before.packets_sent == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
-    check( server_after.bytes_sent > server_before.bytes_sent );
-    check( slot_after.packets_sent == slot_before.packets_sent );
-    check( slot_after.bytes_sent == slot_before.bytes_sent );
-    reset_loopback_destroy( &f );
+    rocketnet_message_client_t * initial[DEFERRED_INITIAL_CLIENTS];
+    for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
+    {
+        initial[i] = reset_loopback_client_create( server, (uint64_t) 0xA100u + (uint64_t) (unsigned) i );
+        check( initial[i] );
+        int ticks = 0;
+        while ( rocketnet_message_client_state( initial[i] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+                rocketnet_server_transport_num_connected_clients( transport ) < i + 1 )
+        {
+            now += 0.01;
+            for ( int j = 0; j <= i; j++ )
+                rocketnet_message_client_update( initial[j], now );
+            rocketnet_message_server_update( server, now );
+            for ( int j = 0; j <= i; j++ )
+                rocketnet_message_client_send_packets( initial[j] );
+            rocketnet_message_server_send_packets( server );
+            ticks++;
+            check( ticks < 200 );
+        }
+        check( rocketnet_message_server_client_connected( server, i ) );
+    }
+
+    // Prepare replacement client B so its CONNECTION_RESPONSE datagram is
+    // already waiting in the server's loopback receive ring before the
+    // single update that will both assign B to the reused slot and drain
+    // the deferred disconnect burst.
+    rocketnet_message_client_t * replacement = reset_loopback_client_create( server, 0xB003 );
+    check( replacement );
+    rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
+    int handshake_ticks = 0;
+    while ( rocketnet_client_transport_state( replacement_transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+    {
+        now += 0.01;
+        rocketnet_message_client_update( replacement, now );
+        rocketnet_message_client_send_packets( replacement );
+        if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+            break;
+        rocketnet_message_server_update( server, now );
+        rocketnet_message_server_send_packets( server );
+        handshake_ticks++;
+        check( handshake_ticks < 200 );
+    }
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    now += 0.11;
+    rocketnet_message_client_update( replacement, now );
+    rocketnet_message_client_send_packets( replacement );
+
+    const int immediate_slot = 0;
+    const int deferred_slot = DEFERRED_INITIAL_CLIENTS - 1;
+    rocketnet_server_transport_client_stats_t immediate_before = {};
+    rocketnet_server_transport_client_stats_t deferred_before = {};
+    rocketnet_server_transport_stats_t server_before_disconnects = {};
+    rocketnet_server_transport_client_stats( transport, immediate_slot, &immediate_before );
+    rocketnet_server_transport_client_stats( transport, deferred_slot, &deferred_before );
+    rocketnet_server_transport_stats( transport, &server_before_disconnects );
+    check( immediate_before.packets_sent >= 1 && immediate_before.bytes_sent > 0 );
+    check( deferred_before.packets_sent >= 1 && deferred_before.bytes_sent > 0 );
+    const uint64_t seals_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+
+    // Disconnect slots 0..5 within one update's 64-seal allowance (6 * 10 = 60
+    // immediate seals), then disconnect slot 6 with only 4 seals remaining so
+    // slot 6's 10-packet disconnect burst is deferred while slot 6 is pushed to
+    // the top of the LIFO free stack.
+    for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
+    {
+        rocketnet_server_transport_disconnect_client( transport, i );
+        check( !rocketnet_server_transport_is_client_connected( transport, i ) );
+    }
+
+    const uint64_t seals_after_disconnects = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    check( seals_after_disconnects - seals_before ==
+           (uint64_t) ( ( DEFERRED_INITIAL_CLIENTS - 1 ) * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) );
+
+    rocketnet_server_transport_stats_t server_after_immediate = {};
+    rocketnet_server_transport_stats( transport, &server_after_immediate );
+    check( server_after_immediate.packets_sent - server_before_disconnects.packets_sent ==
+           (uint64_t) ( ( DEFERRED_INITIAL_CLIENTS - 1 ) * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) );
+    check( server_after_immediate.bytes_sent > server_before_disconnects.bytes_sent );
+
+    // Empty-slot stats queries return zero for both immediately disconnected
+    // and deferred-disconnect slots.
+    rocketnet_server_transport_client_stats_t empty_immediate = {};
+    rocketnet_server_transport_client_stats_t empty_deferred = {};
+    rocketnet_server_transport_client_stats( transport, immediate_slot, &empty_immediate );
+    rocketnet_server_transport_client_stats( transport, deferred_slot, &empty_deferred );
+    check( empty_immediate.packets_sent == 0 && empty_immediate.bytes_sent == 0 );
+    check( empty_immediate.packets_received == 0 && empty_immediate.bytes_received == 0 );
+    check( empty_deferred.packets_sent == 0 && empty_deferred.bytes_sent == 0 );
+    check( empty_deferred.packets_received == 0 && empty_deferred.bytes_received == 0 );
+
+    for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
+        rn_test_message_client_stop_and_destroy( initial[i] );
+
+    // One server update first processes replacement client B's queued
+    // CONNECTION_RESPONSE (assigning B to LIFO top slot 6, clearing slot 6's
+    // per-client wire totals on assignment, and committing B's 1 establishing
+    // keep-alive) and then drains ended client 6's 10 deferred disconnect
+    // frames in the same update.
+    now += 0.01;
+    rocketnet_message_server_update( server, now );
+
+    check( rocketnet_server_transport_is_client_connected( transport, deferred_slot ) );
+    check( rocketnet_server_transport_client_id( transport, deferred_slot ) == 0xB003 );
+
+    const uint64_t seals_after_drain = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    check( seals_after_drain - seals_after_disconnects == (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+
+    rocketnet_server_transport_stats_t server_after_drain = {};
+    rocketnet_server_transport_client_stats_t slot_after = {};
+    rocketnet_server_transport_stats( transport, &server_after_drain );
+    rocketnet_server_transport_client_stats( transport, deferred_slot, &slot_after );
+
+    // Whole-server sent totals include B's 1 establishing keep-alive plus the
+    // 10 deferred disconnect packets of ended client 6, and whole-server
+    // received totals include B's 1 CONNECTION_RESPONSE (arriving while B's
+    // mapping still had client_index == -1 before slot assignment). Reused
+    // slot 6's per-client totals were cleared on assignment and include only
+    // B's 1 establishing keep-alive.
+    check( server_after_drain.packets_received - server_after_immediate.packets_received == (uint64_t) 1u );
+    check( server_after_drain.bytes_received > server_after_immediate.bytes_received );
+    check( server_after_drain.packets_sent - server_after_immediate.packets_sent ==
+           (uint64_t) 1u + (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( server_after_drain.bytes_sent > server_after_immediate.bytes_sent );
+    check( slot_after.packets_received == 0 );
+    check( slot_after.bytes_received == 0 );
+    check( slot_after.packets_sent == 1 );
+    check( slot_after.bytes_sent > 0 );
+    check( server_after_drain.bytes_sent - server_after_immediate.bytes_sent > slot_after.bytes_sent );
+
+    rn_test_message_client_stop_and_destroy( replacement );
+    rn_test_message_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_connection_reset_deferred_disconnect_does_not_charge_reused_slot );
 

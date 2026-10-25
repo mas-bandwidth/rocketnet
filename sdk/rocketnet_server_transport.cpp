@@ -306,8 +306,6 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_TEST_SEAMS
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
-    int force_deferred_disconnect_for_test;
-    int hold_disconnect_drain_for_test;
 #endif // #if ROCKETNET_TEST_SEAMS
 
     // The disconnect bursts waiting to leave (tla/ServerSession.tla
@@ -335,28 +333,6 @@ struct rocketnet_server_transport_t
 };
 
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown );
-
-static bool rocketnet_server_transport_hold_disconnect_drain_for_test( const struct rocketnet_server_transport_t * server_transport )
-{
-#if ROCKETNET_TEST_SEAMS
-    return server_transport->hold_disconnect_drain_for_test != 0;
-#else
-    (void) server_transport;
-    return false;
-#endif
-}
-
-static bool rocketnet_server_transport_take_forced_deferred_disconnect_for_test( struct rocketnet_server_transport_t * server_transport )
-{
-#if ROCKETNET_TEST_SEAMS
-    const bool forced = server_transport->force_deferred_disconnect_for_test != 0;
-    server_transport->force_deferred_disconnect_for_test = 0;
-    return forced;
-#else
-    (void) server_transport;
-    return false;
-#endif
-}
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE >= ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS,
                          "one update's disconnect allowance holds at least one whole burst" );
@@ -2538,8 +2514,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // ended since the last update leave within this update's allowance; what
     // the allowance leaves after the drain seals the next disconnects whole
     server_transport->disconnect_seals_left = ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE;
-    if ( server_transport->disconnect_burst_count > 0 &&
-         !rocketnet_server_transport_hold_disconnect_drain_for_test( server_transport ) )
+    if ( server_transport->disconnect_burst_count > 0 )
     {
         const uint64_t before = server_transport->disconnect_seals;
         rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE, false );
@@ -3441,20 +3416,6 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
 }
-
-void rocketnet_server_transport_defer_and_hold_disconnects_for_test( struct rocketnet_server_transport_t * server_transport )
-{
-    rocketnet_assert( server_transport );
-    server_transport->force_deferred_disconnect_for_test = 1;
-    server_transport->hold_disconnect_drain_for_test = 1;
-}
-
-void rocketnet_server_transport_release_disconnects_for_test( struct rocketnet_server_transport_t * server_transport )
-{
-    rocketnet_assert( server_transport );
-    server_transport->hold_disconnect_drain_for_test = 0;
-    rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE, false );
-}
 #endif // #if ROCKETNET_TEST_SEAMS
 
 // tla/RNDriverSendStaging.tla DisconnectClient
@@ -3491,9 +3452,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // ends now; its burst is sealed now only while this update's allowance
     // holds the whole burst and no earlier burst waits, else it waits in the
     // ring for the following updates. The stop path seals at once.
-    const bool force_deferred = rocketnet_server_transport_take_forced_deferred_disconnect_for_test( server_transport );
-    if ( !shutdown && ( force_deferred ||
-                        server_transport->disconnect_burst_count > 0 ||
+    if ( !shutdown && ( server_transport->disconnect_burst_count > 0 ||
                         server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) &&
          server_transport->disconnect_burst_count < ROCKETNET_MAX_CLIENTS )
     {

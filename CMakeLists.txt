@@ -922,6 +922,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/corpus_consistency.cpp
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
+        functional/session_reconnect_isolation.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
