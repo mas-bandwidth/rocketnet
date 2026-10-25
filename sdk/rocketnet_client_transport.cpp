@@ -17,6 +17,12 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include "rocketnet_client_gso.h"
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include "rocketnet_client_iocp.h"
+#endif
 #include "rocketnet_memory_checks.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_jitter_tracker.h"
@@ -981,6 +987,44 @@ struct rocketnet_platform_wake_layout_t
 #endif
 #endif
 
+// Mirrors of the native client I/O records, member for member, so the plan
+// counts the bytes their creates allocate: the gso client's one record
+// (sdk/rocketnet_client_gso_linux.cpp rocketnet_client_gso_io_t), beside its
+// platform socket and wake, and the iocp client's one record
+// (sdk/rocketnet_client_iocp_windows.cpp rocketnet_client_iocp_io_t), beside
+// its platform socket. The lifecycle cases measure them against the plan.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+struct rocketnet_client_gso_io_layout_t
+{
+    void * context;
+    rocketnet_platform_socket_t * socket;
+    rocketnet_platform_wake_t * wake;
+    rocketnet_client_gso_t gso;
+};
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+struct rocketnet_client_iocp_receive_layout_t
+{
+    OVERLAPPED overlapped;
+    WSABUF buffer;
+    DWORD flags;
+    INT from_bytes;
+    sockaddr_storage from;
+    int index;
+};
+struct rocketnet_client_iocp_io_layout_t
+{
+    void * context;
+    rocketnet_platform_socket_t * socket;
+    bool ipv6;
+    HANDLE port;
+    rocketnet_client_iocp_t core;
+    rocketnet_client_iocp_receive_layout_t receives[ROCKETNET_CLIENT_IOCP_RECEIVES];
+    OVERLAPPED_ENTRY entries[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
+    uint8_t buffers[ROCKETNET_CLIENT_IOCP_RECEIVES * ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES];
+};
+#endif
+
 // The memory plan seam allocates this mirror of the platform thread_record_t
 // (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
 // rocketnet_platform_thread_create allocates, so the seam allocates the bytes
@@ -1050,8 +1094,31 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC // msgx exists on macOS only, as in the registry and the server plan
          || strcmp( transport, "msgx" ) == 0
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX // the native clients the default ladder ranks first
+         || strcmp( transport, "gso" ) == 0
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+         || strcmp( transport, "iocp" ) == 0
+#endif
        )
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        if ( strcmp( transport, "gso" ) == 0 )
+            plan.transport_io_bytes = rocketnet_memory_allocations( {
+                sizeof(rocketnet_platform_socket_t),
+                sizeof(rocketnet_client_gso_io_layout_t),
+                sizeof(rocketnet_platform_wake_layout_t)
+            } );
+        else
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( strcmp( transport, "iocp" ) == 0 )
+            plan.transport_io_bytes = rocketnet_memory_allocations( {
+                sizeof(rocketnet_platform_socket_t),
+                sizeof(rocketnet_client_iocp_io_layout_t)
+            } );
+        else
+#endif
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
         plan.transport_io_bytes = rocketnet_memory_allocations( {
             sizeof(rocketnet_platform_socket_t),
