@@ -344,6 +344,20 @@ misuse, requests shutdown and updates a bounded number of times without
 sleeping, then joins and frees once complete, or logs and keeps the object if
 the worker has not exited.
 
+### Server cost is flat by design
+
+A server takes its full CPU and memory cost at its maximum from the moment it
+starts, whatever the number of connected clients. The memory is allocated up
+front (see Server memory footprint below), and each update does the work for
+every slot up to `max_clients`, so an empty server costs the same as a full
+one. This is by design: capacity is predictable, and there are no surprises as
+players connect.
+
+This is a requirement. A change that makes server cost scale with the number of
+connected clients is a regression, and an idle server costing as much as a full
+one is not a defect to fix. Size the machine for `max_clients` and measure at
+`max_clients`, with every slot connected and active.
+
 ### Server memory footprint
 
 A default 1,000-client server requires approximately 20.9 GB (20,908,851,146 bytes)

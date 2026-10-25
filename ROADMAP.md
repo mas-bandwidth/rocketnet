@@ -259,6 +259,7 @@ Many channels and many connections, measured.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
+| Decided design rule, 2026-10-25: server CPU and memory cost is flat at its maximum from start, whatever the number of connected clients, so capacity is predictable and nothing surprises as players connect; a change that makes server cost scale with client count is a regression | ✅ | — | — |
 | 1000-client in-process swarm with churn and garbage traffic | ✅ | ✅ | ✅ |
 | Channel count a build bound from 1 to 65536 | ✅ | ✅ | ✅ |
 | Nightly bounded soak | ✅ | ❌ | ❌ |
@@ -275,7 +276,7 @@ Many channels and many connections, measured.
 | LAN bench runner: the orchestration (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, measurement: soak across the matrix, the raw numbers committed (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, report: where the time goes, and what to cut first (later) | ❌ | ❌ | ❌ |
-| complete | 20% | 14% | 13% |
+| complete | 25% | 14% | 13% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -477,12 +478,10 @@ Historical preview-1 planning retained for context. Some fixes listed here lande
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
 | Zero warnings at -Wconversion and the remaining strict flags, SDK and vendored libsodium (public header already clean at -Weverything) | ❌ | ❌ | ❌ |
-| An idle server's update walks every client slot: about 0.5 ms per update at 1000 slots with no client connected. The final deliverable splits per-slot state into hot and cold parts and walks only the hot part each frame. | ❌ | ❌ | ❌ |
 | Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
 | Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |
 | Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ❌ | ❌ | ❌ |
 | The default configuration needs about 13.4 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 955,710,336 bytes (955,710 bytes per slot) for 1000 players at 10 Hz and a client at 3,063,168 bytes. | ❌ | ❌ | ❌ |
-| The server's send loop walks every slot on each round, so its cost grows with rounds times max clients. The final deliverable walks only the connections that have packets due. | ❌ | ❌ | ❌ |
 | The server decrypts and seals packets on the game thread; the client already decrypts on its I/O thread. The final deliverable moves server decrypt and seal off the game thread. | ❌ | ❌ | ❌ |
 | Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ❌ | — | — |
 | The portable server send and receive paths use bounded TX and RX workers instead of doing one game-thread system call per packet. Exact-head p99 qualification remains pending. | ❌ | ❌ | ❌ |
