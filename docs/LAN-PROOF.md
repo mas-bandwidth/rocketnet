@@ -38,6 +38,24 @@ log, writes the allocation manifest, runs
 remote step is bounded by a timeout and teardown stops only the processes
 the run started.
 
+Host facts and load are read with each machine's own tools. Linux reads
+`ethtool`, `lspci`, `ip` and `/proc/loadavg`. macOS reads `ifconfig` (address
+and media, which gives speed and duplex), `networksetup` (the hardware port),
+`route get default`, `sysctl -n vm.loadavg` and `sysctl -n hw.ncpu`. A Windows
+machine is driven from its Linux subsystem shell, and its facts are native:
+`Get-NetAdapter`, `Get-NetIPAddress` and `Get-CimInstance`. Windows has no
+load average, so its load is the busy share of its logical processors plus
+the processor queue length at the moment of the sample. Every load, core
+count and address is checked as a number or an IPv4 address before a run
+is admitted, and a host whose facts do not parse refuses the run.
+
+The Windows build uses the multi-config Visual Studio generator,
+`cmake -B build -G "Visual Studio 18 2026" -A x64` then
+`cmake --build build --config Release --parallel 4`, in a shared build slot,
+and runs `bin/Release/load_split.exe`. A Windows server runs under an
+exclusive lock that is held until the server has exited, so no other timed
+work shares the machine during the cell.
+
 A result row is eleven fields separated by `|`: cell, server label, server
 NIC speed in megabits, clients, duration, connected throughout, timeouts
 (the server's disconnect count), delivery verdict for each reliability mode,
