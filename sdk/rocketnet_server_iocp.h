@@ -10,11 +10,14 @@
 
 // Windows server transport. The public transport API is unchanged. Fill threads
 // acquire and seal directly into transport-owned cold frames. Flush try-publishes
-// one of three compact index banks to a dedicated TX worker. That worker alone
-// coalesces and posts UDP sends; only completions return frames to the free pool.
+// one of three compact generation-tagged index banks to a dedicated TX worker.
+// That worker alone coalesces and posts UDP sends; only completions return
+// frames to the bounded free-reference queue.
 // Receive workers dequeue completions in batches and publish private four-bank
 // buffers. Completion work never runs under the publication mutex; the main
-// receive call swaps bank ownership without waiting for that mutex.
+// receive call swaps bank ownership without waiting for that mutex. Refused
+// receive posts enter a bounded generation-tagged retry queue; a worker drains
+// only positions below the enqueue ticket captured at the start of its pass.
 
 // One completion worker by default, plus one dedicated TX worker. Completion
 // workers race on the one completion port and each
@@ -119,6 +122,21 @@ int rocketnet_server_iocp_test_ready_banks( rocketnet_server_iocp_t * iocp, int 
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
 int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id );
+#if ROCKETNET_DEV
+struct rocketnet_server_iocp_test_queue_stats_t
+{
+    uint64_t free_pushes;
+    uint64_t free_pops;
+    uint64_t retry_pushes;
+    uint64_t retry_pops;
+    uint64_t queue_probes;
+    int free_count;
+    int retry_count;
+    int live_run_refs;
+};
+void rocketnet_server_iocp_test_queue_stats( rocketnet_server_iocp_t * iocp,
+    rocketnet_server_iocp_test_queue_stats_t * stats );
+#endif
 
 // The fault seam. The next count events at a fault point fail with status, as
 // the host fails them: a send or receive completion reports status as its
