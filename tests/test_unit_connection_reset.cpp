@@ -365,6 +365,9 @@ extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
 
+void rocketnet_server_transport_defer_and_hold_disconnects_for_test( rocketnet_server_transport_t * server_transport );
+void rocketnet_server_transport_release_disconnects_for_test( rocketnet_server_transport_t * server_transport );
+
 struct reset_loopback_t
 {
     rocketnet_message_server_t * server;
@@ -637,6 +640,42 @@ static void reset_loopback_slot_reuse_scenario()
     check( got_c2s && got_s2c && got_receipt );
     reset_loopback_destroy( &f );
 }
+
+static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slot()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof(f) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    const int old_slot = reset_loopback_connect( &f, 0, 0xA003 );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
+    rocketnet_server_transport_defer_and_hold_disconnects_for_test( transport );
+
+    rn_message_object_kick( &f.server->object, old_slot, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+    reset_loopback_step( &f );
+    check( !rocketnet_message_server_client_connected( f.server, old_slot ) );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
+    f.clients[0] = NULL;
+
+    const int new_slot = reset_loopback_connect( &f, 1, 0xB003 );
+    check( new_slot == old_slot );
+    rocketnet_server_transport_client_stats_t slot_before, slot_after;
+    rocketnet_server_transport_stats_t server_before, server_after;
+    rocketnet_server_transport_client_stats( transport, new_slot, &slot_before );
+    rocketnet_server_transport_stats( transport, &server_before );
+
+    rocketnet_server_transport_release_disconnects_for_test( transport );
+
+    rocketnet_server_transport_client_stats( transport, new_slot, &slot_after );
+    rocketnet_server_transport_stats( transport, &server_after );
+    check( server_after.packets_sent - server_before.packets_sent == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( server_after.bytes_sent > server_before.bytes_sent );
+    check( slot_after.packets_sent == slot_before.packets_sent );
+    check( slot_after.bytes_sent == slot_before.bytes_sent );
+    reset_loopback_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_deferred_disconnect_does_not_charge_reused_slot );
 
 static void reset_loopback_other_slot_scenario()
 {

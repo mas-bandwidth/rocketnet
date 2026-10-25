@@ -88,6 +88,13 @@ the slot's pending ack rows, resets its ack endpoint, and finally resets only
 that slot's fragment slice. Message storage resets when the message object
 observes the transport connection-id change.
 
+A deferred server disconnect burst has no per-client wire-total owner after
+the reset. Its datagrams increment the server-lifetime totals exactly once,
+but never the totals of a later connection that reuses the ended connection's
+slot. An immediate disconnect burst is committed before reset and therefore
+still increments the ending connection's totals. Assignment continues to
+clear the slot totals, and an empty-slot stats query continues to return zero.
+
 ## Server-wide state
 
 | Struct | Field | Decision | Reason |

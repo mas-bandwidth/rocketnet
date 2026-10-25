@@ -212,7 +212,6 @@ struct rocketnet_server_disconnect_burst_t
 {
     rocketnet_address_t to;
     uint64_t first_sequence;
-    int client_index;
     int plaintext_bytes;
     int sealed;
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
@@ -307,6 +306,8 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_TEST_SEAMS
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    int force_deferred_disconnect_for_test;
+    int hold_disconnect_drain_for_test;
 #endif // #if ROCKETNET_TEST_SEAMS
 
     // The disconnect bursts waiting to leave (tla/ServerSession.tla
@@ -334,6 +335,28 @@ struct rocketnet_server_transport_t
 };
 
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown );
+
+static bool rocketnet_server_transport_hold_disconnect_drain_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+#if ROCKETNET_TEST_SEAMS
+    return server_transport->hold_disconnect_drain_for_test != 0;
+#else
+    (void) server_transport;
+    return false;
+#endif
+}
+
+static bool rocketnet_server_transport_take_forced_deferred_disconnect_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+#if ROCKETNET_TEST_SEAMS
+    const bool forced = server_transport->force_deferred_disconnect_for_test != 0;
+    server_transport->force_deferred_disconnect_for_test = 0;
+    return forced;
+#else
+    (void) server_transport;
+    return false;
+#endif
+}
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE >= ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS,
                          "one update's disconnect allowance holds at least one whole burst" );
@@ -2515,7 +2538,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // ended since the last update leave within this update's allowance; what
     // the allowance leaves after the drain seals the next disconnects whole
     server_transport->disconnect_seals_left = ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE;
-    if ( server_transport->disconnect_burst_count > 0 )
+    if ( server_transport->disconnect_burst_count > 0 &&
+         !rocketnet_server_transport_hold_disconnect_drain_for_test( server_transport ) )
     {
         const uint64_t before = server_transport->disconnect_seals;
         rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE, false );
@@ -3341,7 +3365,6 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     burst->plaintext_bytes = rocketnet_ack_block_build( burst->plaintext, block_capacity, &mapping->accepted_session );
     burst->to = *client_address;
     burst->first_sequence = mapping->send_sequence_session;
-    burst->client_index = client_index;
     burst->sealed = 0;
     memcpy( burst->connection_salt, mapping->connection_salt, sizeof( burst->connection_salt ) );
     memcpy( server_transport->disconnect_burst_keys[index], mapping->keys.session_server_to_client, ROCKETNET_KEY_BYTES );
@@ -3374,7 +3397,11 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
         if ( !frame_data )
             break;
-        frame.client_index = burst->client_index;
+        // The connection ended before this deferred frame was sealed. Its
+        // slot may already name another connection, so the datagram belongs
+        // only to the server-lifetime wire totals. The immediate path still
+        // charges its slot because it commits before releasing that slot.
+        frame.client_index = -1;
         const int bytes = rocketnet_write_sealed_packet( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                          protocol->packet_filter, burst->first_sequence + (uint64_t) burst->sealed,
                                                          NULL, burst->plaintext, burst->plaintext_bytes,
@@ -3414,6 +3441,20 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
 }
+
+void rocketnet_server_transport_defer_and_hold_disconnects_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    server_transport->force_deferred_disconnect_for_test = 1;
+    server_transport->hold_disconnect_drain_for_test = 1;
+}
+
+void rocketnet_server_transport_release_disconnects_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    server_transport->hold_disconnect_drain_for_test = 0;
+    rocketnet_server_transport_drain_disconnect_bursts( server_transport, ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE, false );
+}
 #endif // #if ROCKETNET_TEST_SEAMS
 
 // tla/RNDriverSendStaging.tla DisconnectClient
@@ -3450,7 +3491,9 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // ends now; its burst is sealed now only while this update's allowance
     // holds the whole burst and no earlier burst waits, else it waits in the
     // ring for the following updates. The stop path seals at once.
-    if ( !shutdown && ( server_transport->disconnect_burst_count > 0 ||
+    const bool force_deferred = rocketnet_server_transport_take_forced_deferred_disconnect_for_test( server_transport );
+    if ( !shutdown && ( force_deferred ||
+                        server_transport->disconnect_burst_count > 0 ||
                         server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) &&
          server_transport->disconnect_burst_count < ROCKETNET_MAX_CLIENTS )
     {
@@ -3812,4 +3855,3 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     return result;
 }
 #endif
-
