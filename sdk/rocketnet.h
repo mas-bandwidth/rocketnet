@@ -1309,11 +1309,11 @@ struct rocketnet_server_config_t
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
-    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp and gso. Zero, the
-    /// default, selects the transport's own. Range is 1 .. 1024. The Windows
-    /// iocp transport ignores it and always runs one completion worker plus
-    /// one send worker; the Windows rio transport ignores it and runs one I/O
-    /// worker.
+    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso and io_uring.
+    /// Zero, the default, selects the transport's own. Range is 1 .. 1024.
+    /// The Windows iocp transport ignores it and always runs one completion
+    /// worker plus one send worker; the Windows rio transport ignores it and
+    /// runs one I/O worker.
 
     int num_xdp_queues;
 
