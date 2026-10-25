@@ -5,7 +5,8 @@ The impaired Linux soak (`scripts/soak-per-transport --seconds 1800`, loss
 simulator) passed its xdp cell while losing about twice the configured share
 of server-to-client payloads. This record names where the excess went, with
 the counters, and states what the required rerun at main could and could not
-establish this attempt.
+establish this attempt. The rerun was not made: the named host is reachable,
+but the worker's sandbox cannot read the SSH identity (see "Attempt 6").
 
 ## Verdict
 
@@ -26,9 +27,11 @@ establish this attempt.
   empty:0,tx invalid:0)`, both veth ends' zero `rx_queue_0_drops`,
   `xdp_drops`, `xdp_tx_errors` and `xdp_xmit_errors`, the zero RX/TX errors
   and drops in `ip -s -s link`, and softnet's zero dropped column all hold on
-  the XDP machine and on the rerun.
-- The excess is the client's UDP socket receive buffer overflowing
-  (`RcvbufErrors`). On the XDP machine the client namespace's `Udp:` line
+  the XDP machine and on the rerun. Those counters do not see a drop inside
+  the library's own link simulator: a full simulator wire drops before the
+  veth and is not counted (below).
+- The identified excess is the client's UDP socket receive buffer
+  overflowing (`RcvbufErrors`). On the XDP machine the client namespace's `Udp:` line
   moved from all zero to `InDatagrams 2283570 NoPorts 2698 InErrors 76521
   RcvbufErrors 76521`. The library asks for a 1,000,000-byte buffer
   (`ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE`, `sdk/rocketnet_constants.h:267`,
@@ -43,9 +46,11 @@ establish this attempt.
   loss is exactly the configured 5.00%, no receive-buffer drop, and every
   counter-conservation and flat-resource check passes. On the XDP machine
   the excess is the clamped buffer combined with how often the client's read
-  stalls there; that stall frequency is the one link this record could not
-  re-measure this attempt (below), so the XDP machine's 9.7% trigger is
-  inferred from its prior counters and remains unverified.
+  stalls there, or the simulator's uncounted queue-full drop; the kept
+  counters cannot separate those two. That stall frequency and the
+  queue-full share are the links this record could not re-measure this
+  attempt (below), so the XDP machine's 9.7% trigger is inferred from its
+  prior counters and remains unverified.
 
 ## The record at adca4345 (the prior run, on the XDP machine)
 
@@ -74,8 +79,8 @@ impairment's 5% applies to datagrams, some of which carry no payload, so a
 per-payload split needs per-type datagram counts the run did not capture.
 The client-to-server control (76,711, 4.89%) remains the check that the
 impairment is applied once. The superseded run at `77178a49` (165,137
-missing of the same order) has no counter capture; its excess is not split
-here.
+missing) has no counter capture; what its own numbers do establish, and what
+remains unverified, is in "The 165,137 run" below.
 
 ## Can the client's buffer hold the soak's traffic?
 
@@ -116,6 +121,82 @@ supported 10 Hz is 125 KB, plus 62.5 KB for a 50 ms latency-and-jitter
 burst, times the server sizing's margin of 2, comes to 375 KB of payload.
 That is under the 1,000,000 requested.
 
+## The 165,137 run (the superseded cell)
+
+The count this record was asked to explain, 165,137 missing
+server-to-client, is the superseded xdp run at `77178a49`. It passed the
+same 1800 s impaired cell at a different source head from the socket cells
+and was replaced so that every cell would share one head. From its row in
+`docs/runs/linux-soak-30min-per-transport.md`:
+
+| Counter | Value |
+| --- | --- |
+| Source head | `77178a49` |
+| Payloads sent, each direction | 1,568,477 |
+| Missing client-to-server | 77,109 (4.92%) |
+| Missing server-to-client | 165,137 (10.53%) |
+| Duplicates refused at server / client | 43,434 / 44,302 |
+| Payloads verified | 2,896,529 |
+| AF_XDP, veth, softnet and receive-buffer counters | not captured |
+
+The rates against the expected one-stage 5% (78,424 of 1,568,477): the
+observed server-to-client count is 86,713 payloads (5.53% of sent) above one
+stage, and 12,210 (0.78%) above the 152,927 that two independent 5% stages
+would give. The client-to-server direction is 77,109 (4.92%), the one-stage
+rate. Two independent stages in both directions would read about 9.75% in
+that direction too, so the impairment is not applied twice to every payload.
+A second stage on server-to-client alone would have to be a drop outside the
+link simulator; this run did not capture the counters that would name it.
+
+The impairment code path has one roll per packet, at the sending end:
+`ROCKETNET_DEV_SERVER_*` and `ROCKETNET_DEV_CLIENT_*` configure
+`simulated_loss_percent` in `sdk/rocketnet_api.cpp:194`, the server's
+simulator is configured with it at `sdk/rocketnet_server_transport.cpp:1799`,
+the client's at `sdk/rocketnet_client_transport.cpp:1869`, and the only
+roll is `sdk/rocketnet_network_simulator.cpp:969` inside that sending
+end's `send`. `simulated_loss_percent` is read nowhere else. Each payload
+crosses one sending end's simulator, so there is no sender-plus-link double
+stage in the library.
+
+The only run that kept counters is the one at `adca4345` (above), and its
+server-to-client count, 152,838 (9.74%), happens to sit almost exactly on
+the two-stage value while its client namespace recorded 76,521
+`RcvbufErrors`. Its split is therefore the identified second source there:
+78,424 impairment + 76,521 receive-buffer drops = 154,945, 2,107 over the
+observed 152,838. For the 165,137 run the same source would need 86,713
+drops, 10,192 more than at `adca4345`; that is plausible and remains
+unverified, because that run's counters are not kept.
+
+One more drop source is inside the library and uncounted: when the
+simulator's wire has no free slot, `rocketnet_simulator_insert` drops the
+packet and only logs (`sdk/rocketnet_network_simulator.cpp:897`). That drop
+happens before the veth, so no veth, softnet or AF_XDP counter sees it, and
+soak keeps no count of it (the "the library counts none of its simulator's
+drops" note in `soak.c`). The controlled full-grant run read exactly 5.00%,
+which bounds this source at about zero there; the XDP machine's server send
+burst was not measured, so on the clamped-grant run it remains a candidate
+for part of the excess, including the 165,137 run's extra 12,299. The kept
+counters cannot separate it from the client's `RcvbufErrors`, because they
+count different points on the path and the simulator count does not exist.
+
+## Attempt 6: the host is reachable, authentication is not
+
+The named AF_XDP server host was checked before any executable step was
+claimed. Its name resolves on the private network, a TCP connection to port
+22 succeeds, and the SSH banner and key exchange complete; the server offers
+`publickey,password`. Authentication fails before a session opens. The
+worker's sandbox grants read access only to the job directory, its data
+directory, the build cache and the toolchain paths, not to the SSH identity
+directory: the identity file cannot be opened (`Permission denied`), no
+agent is named in the environment, and no credential was found under the
+readable paths. No host key or credential material was read or copied.
+
+The host's load could not be sampled, its XDP state could not be checked, and
+the self-detach timer could not be armed. No run was made, and no substitute
+host was used. This is the access finding to route: the sandbox must be
+given read access to the SSH identity (or the identity must be staged under
+the job's data directory) before the required cell can run.
+
 ## Rerun at current main
 
 The prior attempt's rerun is not kept as evidence. It ran the cell on a
@@ -132,43 +213,54 @@ Only one of its numbers is used here: run B's server-to-client missing of
 
 This attempt attempted the required rerun on the named AF_XDP server host:
 a serial, 1800 s xdp cell at current main with counter captures and the host
-load sampled throughout. The host was not reachable from this worker's
-sandbox: the SSH handshake reaches it, then refuses `publickey,password`; no
-key agent, key file or credential is present in this sandbox, and the fleet
-inventory lives outside the repository on the coordinator's machine (the
-provisioning script's comment: the coordinator's machine runs the ssh, and
-the worker never sends ssh from here). The host's load and its prior xdp
-state could not be checked from here, so the host was not used and no
-compliant rerun was made.
+load sampled throughout. The host is reachable, but the worker's sandbox
+cannot authenticate to it (above), so its load and its prior xdp state could
+not be checked, the self-detach timer could not be armed, and no compliant
+rerun was made. The fleet inventory lives outside the repository on the
+coordinator's machine (the provisioning script's comment: the coordinator's
+machine runs the ssh, and the worker never sends ssh from here), so the
+identity is not on a path this worker can read.
 
-The DONE-WHEN's split is therefore answered as far as the prior numbers
-allow: impairment applied once per direction (code path plus the ~5%
-client-to-server control and the 5.00% server-to-client controlled run);
-AF_XDP copy-mode receive drops zero (ring and kernel counters before and
-after); the excess is the client's receive-buffer overflow (76,521
-`RcvbufErrors` matching the ~4.9% excess on the XDP machine); the library's
-own loss is zero where the grant is honored. The one item not verified is
-why the XDP machine's client read stalled so often (76,521 drops against 193
-in the bench rerun); that requires the rerun on the named host, which could
-not be made, so it is reported as inferred from the prior counters and
-unverified. No bound or assertion is loosened.
+The DONE-WHEN's split is therefore answered only in part. For the run that
+kept counters (`adca4345`): the impairment is applied once per direction
+(the code path, the 4.89% client-to-server control, and the 5.00%
+server-to-client controlled run); AF_XDP copy-mode receive drops are zero
+(the ring and kernel counters before and after are zero); the excess is the
+client's receive-buffer overflow (76,521 `RcvbufErrors`, 4.9% of sent); and
+the library's own loss is zero where the grant is honored. For the 165,137
+run: its 4.92% client-to-server control shows the impairment
+applied once there too, and its server-to-client excess is consistent with
+the same receive-buffer source, but that run captured no counters, so its
+split is inferred, not measured. The item still not verified is why the XDP
+machine's client read stalled so often, and the 165,137 run's own split;
+that requires the rerun on the named host, which could not be made, so both
+are reported as inferred from the prior counters and unverified. No bound or
+assertion is loosened.
 
 ## Not measured
 
 - Why the client's reads stalled so often on the XDP machine at adca4345
-  (76,521 drops against 193 in the bench rerun). The named host was
-  unreachable from this worker's sandbox (no SSH credential), so the 1800 s
-  rerun there with the client's read timing sampled was not made. The
+  (76,521 drops against 193 in the bench rerun). The named host is reachable
+  but the worker's sandbox cannot read the SSH identity (above), so the
+  1800 s rerun there with the client's read timing sampled was not made. The
   9.7% trigger on that host is inferred from its prior counters and remains
   unverified.
+- The split of the 165,137 run, which captured no counters. Its 4.92%
+  client-to-server control shows the impairment applied once; the excess
+  over 5% is consistent with the client's receive buffer, as on the
+  counter-bearing run, but it is not measured on that run.
 - The per-datagram accounting on the 6.8 guest kernel. The 2,304 bytes above
   were measured on the rerun's 7.0 kernel; the average row is derived from
   the uniform-cycle assumption, not measured.
 - The per-type datagram counts (payloads against acks, keep-alives and
   duplicates) behind the receive-buffer drops, which would make the split a
   per-payload count instead of an estimate.
+- The simulator's queue-full drops. The library counts none of them, so
+  neither the counter-bearing run nor the 165,137 run can say whether any
+  server-to-client payload was dropped because the sending end's simulator
+  wire had no free slot.
 
-## Fixes, each for its own card
+## Fixes, each for its own change
 
 1. Library: the client logs its socket's receive buffer grant against its
    request, as the server sockets do, and warns naming
@@ -182,3 +274,15 @@ unverified. No bound or assertion is loosened.
    67,108,864) and lets the library's 1,000,000-byte request be granted.
    This changes the test machine's limit and loosens no bound or
    assertion.
+3. Runner (no repository change): give the worker's sandbox read access to
+   the SSH identity for the named host, or stage the identity under the
+   job's data directory, and log the load sample, the pre-run XDP state and
+   the self-detach timer arm before the cell. Then the required 1800 s
+   rerun and the 165,137 run's counter capture are executable from an
+   unattended worker.
+4. Library: the link simulator counts its drops by reason (loss roll,
+   queue full, pattern) and the transport exposes those counts, so a soak
+   log separates the simulator's share from the receiver's. Files:
+   `sdk/rocketnet_network_simulator.cpp`, `sdk/rocketnet_network_simulator.h`,
+   `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`.
+   A diagnostic counter, not a bound change.
