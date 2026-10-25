@@ -367,9 +367,11 @@ MCRNRioWorkerBrokenNoWake.cfg	MCRNRioWorker.tla	temporal	EveryDatagramConsumed	c
 MCRNServerStats.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
 MCRNServerStatsReordered.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
 MCRNServerStatsReceived.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
+MCRNServerStatsAlias.cfg	MCRNServerStats.tla	pass	-	check	rnserverstats	required	-
 MCRNServerStatsBrokenEntering.cfg	MCRNServerStats.tla	invariant	CountedIsWindow	check	rnserverstats	required	-
 MCRNServerStatsBrokenCrossing.cfg	MCRNServerStats.tla	invariant	EligibleExact	check	rnserverstats	required	-
 MCRNServerStatsBrokenSeqTimes.cfg	MCRNServerStats.tla	invariant	PublishedSpanExact	check	rnserverstats	required	-
+MCRNServerStatsBrokenAlias.cfg	MCRNServerStats.tla	invariant	RetainedIsNewest	check	rnserverstats	required	-
 MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
@@ -382,6 +384,7 @@ MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	
 MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
+MCRNBufferHandoffBrokenDiscardOnStop.cfg	MCRNBufferHandoff.tla	invariant	ExitSentAll	check	rnbufferhandoff	required	-
 MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
 MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-
 MCRNUpdateClock.cfg	MCRNUpdateClock.tla	pass	-	check	rnupdateclock	required	-
