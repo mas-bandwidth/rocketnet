@@ -28,8 +28,9 @@ struct public_step_pair_t
     rocketnet_server_t * server;
     rocketnet_client_t * client;
     double time;
-    int threads_before;
-    int threads_after_stop;
+    int threads_before_pair;
+    int threads_before_client;
+    int threads_after_client;
 };
 
 struct public_step_identity_t
@@ -94,7 +95,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
-    pair->threads_before = thread_count ? thread_count() : -1;
+    pair->threads_before_pair = thread_count ? thread_count() : -1;
     rocketnet_quiet( 1 );
 
     rocketnet_server_config_t server_config;
@@ -109,17 +110,18 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     public_step_token_string( pair->server, identity, token );
     rocketnet_client_test_config_t client_config;
     public_step_client_config( &client_config );
+    pair->threads_before_client = thread_count ? thread_count() : -1;
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );
     check( pair->client != NULL );
     check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
-    pair->threads_after_stop = -1;
+    pair->threads_after_client = thread_count ? thread_count() : -1;
 }
 
 static void public_step_pair_stop_server_and_wait( public_step_pair_t * pair )
 {
     rocketnet_server_stop( pair->server );
-    // Bound the completion poll without sleeping; loopback stops immediately.
-    for ( int step = 0; step < 10000000 && !rocketnet_server_stopped( pair->server ); step++ )
+    // Poll the completion query within a fixed budget; do not sleep.
+    for ( int step = 0; step < 32 && !rocketnet_server_stopped( pair->server ); step++ )
     {
     }
     check( rocketnet_server_stopped( pair->server ) );

@@ -128,6 +128,7 @@ void rocketnet_test_server_stats_creates_no_thread()
     const int before = no_worker_thread_count();
 
     no_worker_server_create( world, NO_WORKER_CLIENTS );
+    const int after_create = no_worker_thread_count();
     no_worker_clients_create( world, 1 );
     no_worker_connect_all( world );
     for ( int step = 0; step < 400 && no_worker_connected_slots( world ) < 1; step++ )
@@ -135,14 +136,28 @@ void rocketnet_test_server_stats_creates_no_thread()
     check( no_worker_connected_slots( world ) == 1 );
     for ( int step = 0; step < 20; step++ )
         no_worker_step( world, true, 0.1 );
+    const int after_updates = no_worker_thread_count();
+    if ( before >= 0 )
+    {
+        check( after_create == before );
+        check( after_updates == before );
+    }
+    else
+    {
+        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
+    }
     struct rocketnet_server_client_stats_t stats;
     rocketnet_server_client_stats( world->server, rocketnet_client_index( world->clients[0] ), &stats );
     check( stats.rtt_ms > 0.0 && stats.bandwidth_sent_kbps > 0.0 && stats.bandwidth_received_kbps > 0.0 );
 
-    no_worker_world_destroy( world );
+    no_worker_server_stop_and_wait( world );
     const int after_stop = no_worker_thread_count();
     if ( before >= 0 )
         check( after_stop == before );
+    no_worker_world_destroy( world );
+    const int after_destroy = no_worker_thread_count();
+    if ( before >= 0 )
+        check( after_destroy == before );
 }
 
 void rocketnet_test_public_step_driven_client_connects_without_a_thread()
@@ -152,10 +167,13 @@ void rocketnet_test_public_step_driven_client_connects_without_a_thread()
     public_step_identity( &identity );
     public_step_pair_t pair;
     public_step_pair_create( &pair, &identity, 0, public_step_thread_count );
+    if ( pair.threads_before_client >= 0 && pair.threads_after_client >= 0 )
+        check( pair.threads_after_client == pair.threads_before_client );
+    else
+        printf( "SKIP process thread-count assertions: /proc/self/task is unavailable; loopback and stop completion remain checked.\n" );
     public_step_connect( &pair );
     public_step_pair_stop_server_and_wait( &pair );
-    pair.threads_after_stop = public_step_thread_count();
-    if ( pair.threads_before >= 0 && pair.threads_after_stop >= 0 )
-        check( pair.threads_after_stop == pair.threads_before );
     public_step_pair_destroy( &pair );
+    if ( pair.threads_before_pair >= 0 )
+        check( public_step_thread_count() == pair.threads_before_pair );
 }

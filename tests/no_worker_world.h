@@ -113,16 +113,21 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
     }
 }
 
+static void no_worker_server_stop_and_wait( no_worker_world_t * world )
+{
+    rocketnet_server_stop( world->server );
+    // Poll the completion query within a fixed budget; do not sleep.
+    for ( int step = 0; step < 32 && !rocketnet_server_stopped( world->server ); step++ )
+    {
+    }
+    check( rocketnet_server_stopped( world->server ) );
+}
+
 static void no_worker_world_destroy( no_worker_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
         rn_test_client_stop_and_destroy( world->clients[i] );
-    rocketnet_server_stop( world->server );
-    // Bound the completion poll without sleeping; loopback stops immediately.
-    for ( int step = 0; step < 10000000 && !rocketnet_server_stopped( world->server ); step++ )
-    {
-    }
-    check( rocketnet_server_stopped( world->server ) );
+    no_worker_server_stop_and_wait( world );
     rocketnet_server_destroy( world->server );
     world->num_clients = 0;
     world->server = NULL;
