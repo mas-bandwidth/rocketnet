@@ -68,6 +68,11 @@ struct portable_server_t
     std::atomic<bool> exited{false};
     std::atomic<bool> rx_exited{false};
     std::atomic<uint64_t> dropped{0};
+    // measure (temporary): worker drain per bank, main per-interval occupancy
+    std::atomic<uint64_t> m_drain_ns_sum{0}, m_drain_ns_max{0}, m_drain_banks{0}, m_drain_packets{0};
+    double m_interval_start = 0.0;
+    uint64_t m_updates = 0, m_update_packets = 0, m_max_update_packets = 0, m_packets = 0, m_publishes = 0, m_no_free_bank = 0, m_total_no_free_bank = 0, m_inflight[4] = {};
+    int m_last_failure = 0;
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
@@ -138,10 +143,13 @@ static bool portable_tx_publish( portable_server_t * server )
         server->stop_publish_saw_quit = true;
     if ( server->force_publish_busy ) return false;
 #endif
-    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) ) return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) ) { server->m_last_failure = 1; return false; }
+    server->m_publishes++;
+    server->m_inflight[PORTABLE_TX_BANKS - 1 - server->free_count]++;
     if ( server->free_count == 0 )
     {
         rocketnet_platform_mutex_release( &server->mutex );
+        server->m_last_failure = 2;
         return false;
     }
     const int old = server->producer;
@@ -194,7 +202,14 @@ static void portable_tx_worker( void * arg )
         {
             for ( int i = 0; i < bank->count; ++i )
                 bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
+            const double m_t0 = rocketnet_platform_time();
             rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
+            const uint64_t m_ns = (uint64_t) ( ( rocketnet_platform_time() - m_t0 ) * 1e9 );
+            server->m_drain_ns_sum.fetch_add( m_ns, std::memory_order_relaxed );
+            uint64_t m_max = server->m_drain_ns_max.load( std::memory_order_relaxed );
+            while ( m_ns > m_max && !server->m_drain_ns_max.compare_exchange_weak( m_max, m_ns ) ) {}
+            server->m_drain_banks.fetch_add( 1, std::memory_order_relaxed );
+            server->m_drain_packets.fetch_add( (uint64_t) bank->count, std::memory_order_relaxed );
         }
         bank->count = 0;
         rocketnet_platform_mutex_acquire( &server->mutex );
@@ -334,6 +349,7 @@ static void portable_rx_worker( void * arg )
 static void portable_server_cleanup( portable_server_t * server )
 {
     // Also handles RX creation failure after TX has already started.
+    rocketnet_info( "measure tx total: no_free_bank=%llu", (unsigned long long) server->m_total_no_free_bank );
     server->quit.store( true, std::memory_order_release );
     if ( server->wake ) rocketnet_platform_wake_set( server->wake );
     if ( server->rx_wake ) rocketnet_platform_wake_set( server->rx_wake );
@@ -460,6 +476,7 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
         if ( bank->count == PORTABLE_TX_CAPACITY && !portable_tx_publish( server ) )
         {
             server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
+            if ( server->m_last_failure == 2 ) { server->m_no_free_bank += (uint64_t)( count - i ); server->m_total_no_free_bank += (uint64_t)( count - i ); }
             return;
         }
         bank = &server->bank[server->producer];
@@ -474,6 +491,8 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
         memcpy( bank->data[slot], packet->packet_data, (size_t) packet->packet_bytes );
         bank->bytes[slot] = packet->packet_bytes;
         bank->count++;
+        server->m_update_packets++;
+        server->m_packets++;
     }
     portable_tx_publish( server );
 }
@@ -484,6 +503,25 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
 {
     portable_server_t * server = (portable_server_t*) transport;
     portable_tx_publish( server ); // retry a deferred batch even on an idle update
+    {
+        server->m_updates++;
+        if ( server->m_update_packets > server->m_max_update_packets ) server->m_max_update_packets = server->m_update_packets;
+        server->m_update_packets = 0;
+        const double m_now = rocketnet_platform_time();
+        if ( server->m_interval_start == 0.0 ) server->m_interval_start = m_now;
+        if ( m_now - server->m_interval_start >= 1.0 )
+        {
+            const uint64_t banks = server->m_drain_banks.exchange( 0 ), packets = server->m_drain_packets.exchange( 0 );
+            const uint64_t ns = server->m_drain_ns_sum.exchange( 0 ), ns_max = server->m_drain_ns_max.exchange( 0 );
+            rocketnet_info( "measure tx interval: receive_calls=%llu packets=%llu max_call_packets=%llu publishes=%llu in_flight_at_publish=%llu/%llu/%llu no_free_bank=%llu banks_drained=%llu packets_drained=%llu drain_us_mean=%.1f drain_us_max=%.1f drain_ns_per_packet=%.0f",
+                (unsigned long long) server->m_updates, (unsigned long long) server->m_packets, (unsigned long long) server->m_max_update_packets, (unsigned long long) server->m_publishes,
+                (unsigned long long) server->m_inflight[0], (unsigned long long) server->m_inflight[1], (unsigned long long) server->m_inflight[2], (unsigned long long) server->m_no_free_bank,
+                (unsigned long long) banks, (unsigned long long) packets, banks ? (double) ns / 1000.0 / (double) banks : 0.0, (double) ns_max / 1000.0, packets ? (double) ns / (double) packets : 0.0 );
+            server->m_interval_start = m_now;
+            server->m_updates = server->m_max_update_packets = server->m_packets = server->m_publishes = server->m_no_free_bank = 0;
+            server->m_inflight[0] = server->m_inflight[1] = server->m_inflight[2] = 0;
+        }
+    }
     if ( count <= 0 || stride <= 0 || server->stopping.load( std::memory_order_acquire ) ) return 0;
     int received = 0;
     while ( received < count && portable_rx_acquire( server ) )
