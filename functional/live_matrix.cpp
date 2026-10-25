@@ -1195,15 +1195,40 @@ static void live_message_matrix_loopback( int mode_first, int mode_past )
 
 void live_message_matrix_loopback_unreliable()
 {
-    live_message_matrix_loopback( 0, 2 );
+    live_message_matrix_loopback( 0, 1 );
+}
+
+void live_message_matrix_loopback_unreliable_sequenced()
+{
+    live_message_matrix_loopback( 1, 2 );
 }
 
 void live_message_matrix_loopback_reliable()
 {
-    live_message_matrix_loopback( 2, 5 );
+    live_message_matrix_loopback( 2, 3 );
 }
 
-void live_message_matrix_loopback_receipts()
+void live_message_matrix_loopback_reliable_ordered()
 {
-    live_message_matrix_loopback( 5, 8 );
+    live_message_matrix_loopback( 3, 4 );
+}
+
+void live_message_matrix_loopback_reliable_sequenced()
+{
+    live_message_matrix_loopback( 4, 5 );
+}
+
+void live_message_matrix_loopback_unreliable_with_ack_receipt()
+{
+    live_message_matrix_loopback( 5, 6 );
+}
+
+void live_message_matrix_loopback_reliable_with_ack_receipt()
+{
+    live_message_matrix_loopback( 6, 7 );
+}
+
+void live_message_matrix_loopback_reliable_ordered_with_ack_receipt()
+{
+    live_message_matrix_loopback( 7, 8 );
 }

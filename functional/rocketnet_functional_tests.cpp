@@ -8960,8 +8960,13 @@ extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback_unreliable();
+extern void live_message_matrix_loopback_unreliable_sequenced();
 extern void live_message_matrix_loopback_reliable();
-extern void live_message_matrix_loopback_receipts();
+extern void live_message_matrix_loopback_reliable_ordered();
+extern void live_message_matrix_loopback_reliable_sequenced();
+extern void live_message_matrix_loopback_unreliable_with_ack_receipt();
+extern void live_message_matrix_loopback_reliable_with_ack_receipt();
+extern void live_message_matrix_loopback_reliable_ordered_with_ack_receipt();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
 // the receive buffer sizing cases (functional/server_receive_low_tick.cpp):
@@ -9904,8 +9909,13 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server, NULL },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
     { "test_loopback_transport_live_message_matrix_unreliable", live_message_matrix_loopback_unreliable, NULL },
+    { "test_loopback_transport_live_message_matrix_unreliable_sequenced", live_message_matrix_loopback_unreliable_sequenced, NULL },
     { "test_loopback_transport_live_message_matrix_reliable", live_message_matrix_loopback_reliable, NULL },
-    { "test_loopback_transport_live_message_matrix_receipts", live_message_matrix_loopback_receipts, NULL },
+    { "test_loopback_transport_live_message_matrix_reliable_ordered", live_message_matrix_loopback_reliable_ordered, NULL },
+    { "test_loopback_transport_live_message_matrix_reliable_sequenced", live_message_matrix_loopback_reliable_sequenced, NULL },
+    { "test_loopback_transport_live_message_matrix_unreliable_with_ack_receipt", live_message_matrix_loopback_unreliable_with_ack_receipt, NULL },
+    { "test_loopback_transport_live_message_matrix_reliable_with_ack_receipt", live_message_matrix_loopback_reliable_with_ack_receipt, NULL },
+    { "test_loopback_transport_live_message_matrix_reliable_ordered_with_ack_receipt", live_message_matrix_loopback_reliable_ordered_with_ack_receipt, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv4", windows_server_drops_oversize_datagram_portable_ipv4, NULL },
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv6", windows_server_drops_oversize_datagram_portable_ipv6, NULL },
