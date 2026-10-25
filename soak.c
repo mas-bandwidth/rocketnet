@@ -110,13 +110,19 @@
     Windows "threads=<n> os_threads=<n>"; phase is
     between (no client alive) or live (a client alive), and only between
     samples are compared.
-    Every 10 s report also prints one "soak send: t=<s> staged_max=<n>
-    deferred_run_max=<n> deferred_iterations=<n> unacked_span_max=<n>
-    acked_packets=<n> refused_sends=<n> iteration_gap_max_ms=<ms>
-    client_send_deferred=<n> client_send_ring_full=<n> library_bytes=<n>"
-    line, the client send path over the interval read from what the library
-    already keeps (soak_print_send): what tells a stalled I/O thread
-    (deferred_run_max and staged_max climb toward the 256-packet fill ring)
+    Every 10 s report also prints one "soak send: t=<s>
+    staged_proxy_max=<n> deferred_run_max=<n> deferred_iterations=<n>
+    unacked_span_max=<n> acked_packets=<n> refused_sends=<n>
+    iteration_gap_max_ms=<ms> client_lifetime_send_deferred=<n>
+    client_lifetime_send_ring_full=<n> library_bytes=<n>" line, the client
+    send path over the interval read from what the library already keeps
+    (soak_print_send). staged_proxy_max is a proxy, not the fill ring's
+    occupancy, which the library does not expose: it counts only the
+    payloads soak staged since the last hand-off that did not defer, not the
+    packets update stages or the rings the I/O thread holds. The
+    client_lifetime_ counters are the current client's totals since its
+    create (they restart at each reconnect), not interval values. What tells
+    a stalled I/O thread (deferred_run_max and staged_proxy_max climb)
     from a retire leak (unacked_span_max and library_bytes climb) and from
     memory the OS holds (library_bytes flat while resident_bytes moves).
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
@@ -133,10 +139,18 @@
     and library_bytes, the library's own allocator bytes, grows by at most
     one page per ten minutes of run since the post-warmup sample (at least
     one page). The process's memory count (resident_bytes, or private_bytes
-    on Windows) is printed and never asserted: it counts what the OS and the
-    C runtime hold (socket buffers, first touch of preallocated pages, the
-    runtime's own heaps) beside the library, and the library answers only for
-    its own; on Windows os_threads
+    on Windows) is held to the same rule only where the library allocates
+    outside the allocator soak gives rocketnet_init: when the server or the
+    client transport is io_uring (an anonymous mmap and the liburing rings),
+    xdp (the umem) or rio (a VirtualAlloc region). On every other transport
+    (portable, msgx, gso, iocp, loopback: every library allocation goes
+    through that allocator, and thread stacks are held by the thread count)
+    it is printed and not asserted, since it counts what the OS and the C
+    runtime hold (socket buffers, first touch of preallocated pages, the
+    runtime's own heaps) beside the library. The guard a run used prints as
+    "soak resources: memory guard library_bytes" or "soak resources: memory
+    guard library_bytes and <memory count> (server <name>, client <name>)";
+    on Windows os_threads
     may fall and never rise, so the full thread count never grows. A resource
     read that fails (a thread walk that ends on an error among them) fails
     the run. A count that is not
@@ -572,9 +586,24 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
     fflush( stdout );
 }
 
+// Whether every library allocation a transport makes goes through the
+// allocator soak gives rocketnet_init. io_uring maps its buffers and liburing
+// maps its rings (sdk/rocketnet_server_uring_linux.cpp), xdp allocates its
+// umem directly (sdk/rocketnet_server_socket_linux.cpp) and rio commits its
+// region with VirtualAlloc (sdk/rocketnet_server_rio_windows.cpp); every
+// other transport allocates only through the allocator, and its threads'
+// stacks are held by the thread count.
+
+static int soak_transport_memory_counted( const char * transport_name )
+{
+    return strcmp( transport_name, "io_uring" ) != 0 && strcmp( transport_name, "xdp" ) != 0 && strcmp( transport_name, "rio" ) != 0;
+}
+
 // The client send path, per report interval, from what the library already
-// keeps: the payloads soak staged into the client's fill ring since the last
-// hand-off that was not deferred (staged; the fill ring holds 256 packets),
+// keeps: a proxy for the fill ring's occupancy, which the library does not
+// expose (staged: the payloads soak staged since the last hand-off that was
+// not deferred, never update's packets or the rings the I/O thread holds;
+// the fill ring holds 256 packets),
 // the longest run of consecutive iterations whose update hand-off was
 // deferred (CLIENT_SEND_DEFERRED moved: the I/O thread still held the other
 // rings), the client's unacknowledged span (its highest sent session sequence
@@ -582,13 +611,13 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
 // packet ids the client's updates reported acknowledged, the sends the
 // transport refused (start_packet or finish_packet; soak retries the same
 // payload on a later iteration, never drops it), the longest gap between two
-// iteration starts, and the client's CLIENT_SEND_DEFERRED and SEND_RING_FULL
-// counters. Printed and reset every report interval as one "soak send:" line.
+// iteration starts, and the current client's lifetime CLIENT_SEND_DEFERRED
+// and SEND_RING_FULL counters (they restart at each reconnect). Printed and reset every report interval as one "soak send:" line.
 
 struct soak_send_interval_t
 {
     uint64_t staged;                    // now, carried across intervals
-    uint64_t staged_max;
+    uint64_t staged_proxy_max;
     uint64_t deferred_run;              // now, carried across intervals
     uint64_t deferred_run_max;
     uint64_t deferred_iterations;
@@ -600,7 +629,7 @@ struct soak_send_interval_t
 
 static void soak_send_interval_reset( struct soak_send_interval_t * send )
 {
-    send->staged_max = send->staged;
+    send->staged_proxy_max = send->staged;
     send->deferred_run_max = send->deferred_run;
     send->deferred_iterations = 0;
     send->unacked_span_max = 0;
@@ -612,9 +641,9 @@ static void soak_send_interval_reset( struct soak_send_interval_t * send )
 static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
 {
     const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
-    printf( "soak send: t=%.0f staged_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
-            "refused_sends=%llu iteration_gap_max_ms=%.1f client_send_deferred=%llu client_send_ring_full=%llu library_bytes=%lld\n",
-            seconds, (unsigned long long) send->staged_max, (unsigned long long) send->deferred_run_max,
+    printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
+            seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
             (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
             (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
             (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
@@ -1078,8 +1107,8 @@ int main( int argc, char ** argv )
                 client_sent++;
                 connection_client_sent++;
                 send_interval.staged++;
-                if ( send_interval.staged > send_interval.staged_max )
-                    send_interval.staged_max = send_interval.staged;
+                if ( send_interval.staged > send_interval.staged_proxy_max )
+                    send_interval.staged_proxy_max = send_interval.staged;
                 client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
             }
             if ( client_send_count )
@@ -1310,6 +1339,17 @@ int main( int argc, char ** argv )
         soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
+    // the memory guard: the process's memory count joins library_bytes
+    // wherever either end's transport allocates outside the counting
+    // allocator
+    const int memory_guard_process = !soak_transport_memory_counted( server_transport_name ) ||
+                                     ( client_transport_name[0] != '\0' && !soak_transport_memory_counted( client_transport_name ) );
+    if ( memory_guard_process )
+        printf( "soak resources: memory guard library_bytes and %s (server %s, client %s)\n", process_resources_name( PROCESS_RESOURCES_MEMORY ),
+                server_transport_name, client_transport_name[0] ? client_transport_name : "none" );
+    else
+        printf( "soak resources: memory guard library_bytes\n" );
+
     if ( resources_started && resources_ended )
     {
         const double seconds_since_start = rocketnet_time() - resources_start_time;
@@ -1318,8 +1358,10 @@ int main( int argc, char ** argv )
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
             // the process's memory count is the OS's and the C runtime's as
-            // much as the library's: printed, never asserted; the memory
-            // flat rule holds the library's own bytes below. The owner's
+            // much as the library's: asserted only where the library
+            // allocates outside the counting allocator (memory_guard_process),
+            // otherwise printed; the memory flat rule holds the library's
+            // own bytes below on every transport. The owner's
             // rule: the library is not responsible for the OS. Measured: a
             // 300 s impaired portable soak on macOS held library_bytes at
             // 105680858 at every between sample while resident_bytes grew
@@ -1327,12 +1369,15 @@ int main( int argc, char ** argv )
             // zones' residency (Malloc Small 1024K to 1152K, Malloc Large
             // 14.1M to 14.2M); a 60 s iocp soak on Windows grew
             // private_bytes 8192 with handles and threads flat.
-            if ( i == PROCESS_RESOURCES_MEMORY )
+            if ( i == PROCESS_RESOURCES_MEMORY && !memory_guard_process )
                 continue;
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
-                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld\n", process_resources_name( i ),
+                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
+                if ( i == PROCESS_RESOURCES_MEMORY )
+                    printf( " (allowed growth %lld bytes over %.0f s)", (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+                printf( "\n" );
                 failures++;
             }
         }
