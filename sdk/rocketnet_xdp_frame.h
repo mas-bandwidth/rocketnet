@@ -690,6 +690,19 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 // preferred over the gateway, so a spoofed frame steers no reply further
 // than it can through the gateway.
 //
+// A reply can leave after the receive view it answers has gone: the
+// development link simulator holds each reply for its latency, may send it
+// twice, and so looks its MAC up only when it sends. So, with no gateway, an
+// address keeps the MAC its replies last went to as an answered entry: the
+// source MAC of the frame a direct response answered, and the learned MAC
+// of a client its forget released. A reply to that address with no frame in
+// hand goes there. An answered entry is never a learned one: a learned or
+// gateway MAC always wins over it, it never displaces a learned entry, a
+// learn of its address takes its slot, and a newer answer replaces it. A
+// reply to an address no frame ever came from is still refused and counted.
+// tla/RNXdpReplay.tla models the rule: NeverSeenNeverSentTo and
+// HeldReplyFindsItsMac.
+//
 // The table is fixed-size and lives inside its owner's create-time
 // allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
 // a lookup stopping at the first never-used slot and probing at most
@@ -712,6 +725,7 @@ ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REP
 #define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
 #define ROCKETNET_XDP_REPLY_MAC_LIVE        1
 #define ROCKETNET_XDP_REPLY_MAC_TOMBSTONE   2
+#define ROCKETNET_XDP_REPLY_MAC_ANSWERED    3
 
 struct rocketnet_xdp_reply_mac_entry_t
 {
@@ -760,7 +774,7 @@ static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t 
     return hash & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 );
 }
 
-static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
+static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find_state( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, uint8_t state )
 {
     const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
@@ -768,25 +782,39 @@ static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_
         struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
         if ( entry->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             return NULL;
-        if ( entry->state == ROCKETNET_XDP_REPLY_MAC_LIVE && rocketnet_address_equal( &entry->address, address ) )
+        if ( entry->state == state && rocketnet_address_equal( &entry->address, address ) )
             return entry;
     }
     return NULL;
 }
 
-// a unicast, nonzero MAC is learned; anything else is ignored.
+// the learned entry for an address, NULL for none (an answered entry is not learned)
+
+static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
+{
+    return rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_LIVE );
+}
+
+static inline bool rocketnet_xdp_reply_mac_usable( const uint8_t * mac )
+{
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    return mac && !( mac[0] & 1 ) && memcmp( mac, zero_mac, 6 ) != 0;
+}
+
+// tla/RNXdpReplay.tla Connect: a unicast, nonzero MAC is learned; anything
+// else is ignored. The address's answered entry, if any, becomes its
+// learned entry.
 
 static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
-    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
-    if ( !table || !address || !mac )
-        return;
-    if ( ( mac[0] & 1 ) || memcmp( mac, zero_mac, 6 ) == 0 )
+    if ( !table || !address || !rocketnet_xdp_reply_mac_usable( mac ) )
         return;
 
     table->learn_count++;
 
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
+    if ( !entry )
+        entry = rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
     if ( !entry )
     {
         const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
@@ -805,28 +833,81 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
         if ( !entry )
             entry = oldest;
         entry->address = *address;
-        entry->state = ROCKETNET_XDP_REPLY_MAC_LIVE;
+    }
+
+    entry->state = ROCKETNET_XDP_REPLY_MAC_LIVE;
+    memcpy( entry->mac, mac, 6 );
+    entry->learned = table->learn_count;
+}
+
+// keeps mac as the address's answered entry: in its own answered entry, else
+// a never-used or forgotten slot, else the oldest answered entry of its
+// probe window. A learned entry is never displaced; with no room the answer
+// is not kept.
+
+static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
+{
+    if ( rocketnet_xdp_reply_macs_find( table, address ) )
+        return;
+
+    table->learn_count++;
+
+    struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
+    if ( !entry )
+    {
+        const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
+        struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
+        for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
+        {
+            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY || candidate->state == ROCKETNET_XDP_REPLY_MAC_TOMBSTONE )
+            {
+                entry = candidate;
+                break;
+            }
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_ANSWERED && ( !oldest || candidate->learned < oldest->learned ) )
+                oldest = candidate;
+        }
+        if ( !entry )
+            entry = oldest;
+        if ( !entry )
+            return;
+        entry->address = *address;
+        entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
     }
 
     memcpy( entry->mac, mac, 6 );
     entry->learned = table->learn_count;
 }
 
+// tla/RNXdpReplay.tla Commit (ForgetLeavesAnswered): the released client's
+// learned MAC is forgotten: no reply is addressed by
+// it as a learned client's again. It stays as the address's answered entry,
+// for a reply still held for the released client.
+
 static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
 {
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
-    if ( entry )
+    if ( !entry )
+        return;
+    if ( rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED ) )
+    {
         entry->state = ROCKETNET_XDP_REPLY_MAC_TOMBSTONE;
+        return;
+    }
+    entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
 }
 
+// tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
 // the reply MAC for a destination: the learned MAC, else the gateway MAC,
 // else answered_mac (the source MAC of the received frame this reply
-// answers, NULL for none; a zero or multicast one is ignored), else NULL
-// with *refused incremented -- the reply is not sent.
+// answers, NULL for none), kept as the address's answered entry; a zero or
+// multicast answered_mac is refused. With no frame in hand (answered_mac
+// NULL), the address's answered entry. Else NULL with *refused incremented
+// -- the reply is not sent.
 
 static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * destination, const uint8_t * answered_mac, uint64_t * refused )
 {
-    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
     const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
     if ( entry )
         return entry->mac;
@@ -836,8 +917,21 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
         return table->gateway_ipv6;
     if ( table->gateway_known )
         return table->gateway_mac;
-    if ( answered_mac && !( answered_mac[0] & 1 ) && memcmp( answered_mac, zero_mac, 6 ) != 0 )
-        return answered_mac;
+    if ( answered_mac )
+    {
+        if ( rocketnet_xdp_reply_mac_usable( answered_mac ) )
+        {
+            if ( destination )
+                rocketnet_xdp_reply_macs_answer( table, destination, answered_mac );
+            return answered_mac;
+        }
+    }
+    else if ( destination )
+    {
+        entry = rocketnet_xdp_reply_macs_find_state( table, destination, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
+        if ( entry )
+            return entry->mac;
+    }
     if ( refused )
         ( *refused )++;
     return NULL;

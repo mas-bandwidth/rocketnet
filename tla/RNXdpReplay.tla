@@ -47,6 +47,18 @@
 (* Session ids are ghosts: the kernel reads only high_water.  kmap[a].sess *)
 (* names the session whose highest_opened the entry was taken from, so a   *)
 (* drop can be charged to the mark that caused it.                         *)
+(*                                                                         *)
+(* The reply MAC with no gateway (sdk/rocketnet_xdp_frame.h).  A reply is  *)
+(* addressed by a learned MAC (replyMac[a], learned at Connect), or by the  *)
+(* source MAC of the frame it answers, kept as the address's answered      *)
+(* entry (answered[a]); a reply sent with no frame in hand takes the       *)
+(* learned MAC, else the answered one, else it is refused.  The link       *)
+(* simulator holds a reply and sends it later (held, Drain), so a held     *)
+(* reply has no frame in hand.  A forget drops the learned MAC and leaves  *)
+(* it as the answered entry, for a reply still held for the released       *)
+(* client.  heard[a]: a frame ever came from a.  A MAC here is the client's *)
+(* own one, so the model names whether a MAC is known, not which; the      *)
+(* gateway, the probe window and the table's capacity are left out.        *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -97,6 +109,14 @@ ASSUME /\ Addresses # {}
 (*   AdvanceOnQueueRefusal: the walk's cache advances even when the       *)
 (*     pending buffer refuses to queue the mark (the design: FALSE: the   *)
 (*     slot owes the mark and the next walk takes it again).               *)
+(*   KeepAnswered: a direct response keeps the answered frame's MAC as its *)
+(*     address's answered entry (the design: TRUE; FALSE is the table      *)
+(*     before it, where a held reply found no MAC).                        *)
+(*   ForgetLeavesAnswered: a forget leaves the learned MAC as the address's *)
+(*     answered entry (the design: TRUE).                                  *)
+(*   AnswerKeyedByAddress: a reply with no frame in hand takes the answered *)
+(*     entry of its own address only (the design: TRUE; FALSE takes any    *)
+(*     answered MAC).                                                      *)
 (*   SupersedeStaleForgets: a refused forget whose address a mark applied  *)
 (*     in the same commit is dropped, not kept: the mark was taken after   *)
 (*     the forget was queued, so the entry is a newer session's and the   *)
@@ -108,6 +128,9 @@ ASSUME /\ Addresses # {}
 (* MarkFailureBudget bounds the refused marks the same way, the kernel's   *)
 (* refusals and the pending buffer's together: 0 in the design's first two *)
 (* controls, raised by MCRNXdpReplayRefusedMark.cfg.                       *)
+(* HeldReplyBudget bounds the replies the link holds over a run: 0 leaves  *)
+(* the reply MAC actions out (every control but the held-reply one),       *)
+(* raised by MCRNXdpReplayHeldReply.cfg.                                   *)
 (***************************************************************************)
 KernelAdvances    == FALSE
 WalkForgets       == TRUE
@@ -120,9 +143,13 @@ KeepRefusedMarks  == TRUE
 ForgetDropsKeptMark == TRUE
 HoldGreetingUntilMarked == TRUE
 AdvanceOnQueueRefusal == FALSE
+KeepAnswered == TRUE
+ForgetLeavesAnswered == TRUE
+AnswerKeyedByAddress == TRUE
 
 ForgetFailureBudget == 1
 MarkFailureBudget == 0
+HeldReplyBudget == 0
 
 NoSession == 0
 SessionIds == 1..Sessions
@@ -156,12 +183,21 @@ VARIABLES
     forgetFailures, \* the forgets the kernel refused so far, at most the budget
     greeted,        \* greeted[a]: the live session's first keep-alive has left
     markFailures,   \* the marks refused so far (kernel or buffer), at most the budget
-    markOwed        \* markOwed[a]: the buffer refused the walk's mark; the walk owes it
+    markOwed,       \* markOwed[a]: the buffer refused the walk's mark; the walk owes it
+    answered,       \* answered[a]: the address has an answered entry
+    heard,          \* ghost: heard[a], a frame ever came from a
+    held,           \* the addresses the link holds a reply for
+    heldReplies,    \* the replies held so far, at most the budget
+    sentTo,         \* ghost: each reply with no frame in hand sent: its address, and whether a frame had come from it
+    refusedHeld     \* ghost: each one refused for want of a MAC, the same way
+
+replyVars == <<answered, heard, held, heldReplies, sentTo, refusedHeld>>
 
 vars == <<session, nextSession, sent, opened, reached, marked, seen,
           seenBeforeRelease, replyMac, kmap, net, pendingForget,
           pendingMark, pendingMacForget, phase, dropped, forgetFailures,
-          greeted, markFailures, markOwed>>
+          greeted, markFailures, markOwed, answered, heard, held,
+          heldReplies, sentTo, refusedHeld>>
 
 Drops == [addr : Addresses, seq : Seqs, session : 0..Sessions,
           against : 0..Sessions]
@@ -188,6 +224,12 @@ TypeOK ==
     /\ greeted \in [Addresses -> BOOLEAN]
     /\ markFailures \in 0..MarkFailureBudget
     /\ markOwed \in [Addresses -> BOOLEAN]
+    /\ answered \in [Addresses -> BOOLEAN]
+    /\ heard \in [Addresses -> BOOLEAN]
+    /\ held \subseteq Addresses
+    /\ heldReplies \in 0..HeldReplyBudget
+    /\ sentTo \subseteq [addr : Addresses, heard : BOOLEAN]
+    /\ refusedHeld \subseteq [addr : Addresses, heard : BOOLEAN]
 
 Init ==
     /\ session = [a \in Addresses |-> NoSession]
@@ -210,6 +252,12 @@ Init ==
     /\ greeted = [a \in Addresses |-> FALSE]
     /\ markFailures = 0
     /\ markOwed = [a \in Addresses |-> FALSE]
+    /\ answered = [a \in Addresses |-> FALSE]
+    /\ heard = [a \in Addresses |-> FALSE]
+    /\ held = {}
+    /\ heldReplies = 0
+    /\ sentTo = {}
+    /\ refusedHeld = {}
 
 Max(x, y) == IF x >= y THEN x ELSE y
 
@@ -231,9 +279,12 @@ Connect(a) ==
     /\ opened' = [opened EXCEPT ![a] = 0]
     /\ replyMac' = [replyMac EXCEPT ![a] = nextSession]
     /\ greeted' = [greeted EXCEPT ![a] = FALSE]
+    /\ answered' = [answered EXCEPT ![a] = FALSE]
+    /\ heard' = [heard EXCEPT ![a] = TRUE]
     /\ UNCHANGED <<reached, marked, seen, seenBeforeRelease, kmap, net,
                    pendingForget, pendingMark, pendingMacForget, phase,
-                   dropped, forgetFailures, markFailures, markOwed>>
+                   dropped, forgetFailures, markFailures, markOwed,
+                   held, heldReplies, sentTo, refusedHeld>>
 
 (* ClientSend(a): the live session sends its next genuine sequence, once   *)
 (* its first keep-alive has reached it (the client's connected state).     *)
@@ -250,6 +301,7 @@ ClientSend(a) ==
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures, greeted, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (* Forge(a, s): an attacker spoofing a sends any sequence; it never opens. *)
 Forge(a, s) ==
@@ -260,6 +312,7 @@ Forge(a, s) ==
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures, greeted, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (* Duplicate(p): the network delivers a second copy of a packet.           *)
 Duplicate(p) ==
@@ -271,6 +324,7 @@ Duplicate(p) ==
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures, greeted, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (***************************************************************************)
 (* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
@@ -303,6 +357,7 @@ KernelFilter(p) ==
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, replyMac, pendingForget, pendingMark,
                    pendingMacForget, phase, forgetFailures, greeted, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (***************************************************************************)
 (* UserOpen(p): userspace receives a packet the kernel passed.  A genuine  *)
@@ -322,6 +377,7 @@ UserOpen(p) ==
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures, greeted, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (* Release(a): the session ends (timeout, disconnect).  Userspace.         *)
 Release(a) ==
@@ -335,6 +391,7 @@ Release(a) ==
     /\ UNCHANGED <<nextSession, reached, marked, seen, replyMac, kmap, net,
                    pendingForget, pendingMark, pendingMacForget, phase,
                    dropped, forgetFailures, markFailures, markOwed>>
+    /\ UNCHANGED replyVars
 
 (***************************************************************************)
 (* Walk: once per update, after packet processing and before the flush.   *)
@@ -401,6 +458,7 @@ Walk ==
         /\ UNCHANGED <<session, nextSession, sent, opened, reached,
                        seenBeforeRelease, replyMac, kmap, net, dropped,
                        forgetFailures, greeted>>
+        /\ UNCHANGED replyVars
 
 (* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.  The kernel may refuse  *)
@@ -453,10 +511,93 @@ Commit ==
         /\ replyMac' = [a \in Addresses |->
                           IF a \in pendingMacForget
                             THEN NoSession ELSE replyMac[a]]
+        /\ answered' = [a \in Addresses |->
+                          IF a \in pendingMacForget /\ replyMac[a] # NoSession
+                            THEN ForgetLeavesAnswered
+                            ELSE answered[a]]
     /\ pendingMacForget' = {}
     /\ phase' = "run"
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, net, dropped, markOwed>>
+    /\ UNCHANGED <<heard, held, heldReplies, sentTo, refusedHeld>>
+
+(***************************************************************************)
+(* The reply MAC under a held reply.  The link holds at most one reply per *)
+(* address here (a second is the same lookup), HeldReplyBudget over a run. *)
+(*   Answer(a): a handshake frame from a, with no session there, is        *)
+(*     answered by a direct response: its frame's MAC addresses it and,    *)
+(*     with KeepAnswered, is kept as a's answered entry; the link holds    *)
+(*     the response.  A learned MAC always wins, so a learned address      *)
+(*     keeps no answer (a handshake frame needs no session to arrive, but  *)
+(*     its address then has none learned unless a forget is pending).      *)
+(*   HoldSessionReply(a): the live session's reply (an ack, a keep-alive)  *)
+(*     is held by the link.                                                *)
+(*   HoldStray(a): a reply to any address, one no frame need ever have     *)
+(*     come from, is held: the case the refusal is for.                    *)
+(*   Drain(a): the held reply leaves with no frame in hand: the learned    *)
+(*     MAC, else the answered entry (of its own address, or with           *)
+(*     AnswerKeyedByAddress = FALSE of any), else refused.  A reply held   *)
+(*     before a forget may leave after it.                                 *)
+(***************************************************************************)
+HoldReply(a) ==
+    /\ heldReplies < HeldReplyBudget
+    /\ a \notin held
+    /\ held' = held \cup {a}
+    /\ heldReplies' = heldReplies + 1
+
+Answer(a) ==
+    /\ phase = "run"
+    /\ session[a] = NoSession
+    /\ HoldReply(a)
+    /\ heard' = [heard EXCEPT ![a] = TRUE]
+    /\ answered' = IF KeepAnswered /\ replyMac[a] = NoSession
+                      THEN [answered EXCEPT ![a] = TRUE]
+                      ELSE answered
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, net, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
+                   forgetFailures, greeted, markFailures, markOwed,
+                   sentTo, refusedHeld>>
+
+HoldSessionReply(a) ==
+    /\ phase = "run"
+    /\ session[a] # NoSession
+    /\ HoldReply(a)
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, net, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
+                   forgetFailures, greeted, markFailures, markOwed,
+                   answered, heard, sentTo, refusedHeld>>
+
+HoldStray(a) ==
+    /\ phase = "run"
+    /\ HoldReply(a)
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, net, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
+                   forgetFailures, greeted, markFailures, markOwed,
+                   answered, heard, sentTo, refusedHeld>>
+
+(* the MAC a reply to a with no frame in hand finds *)
+NoFrameMacKnown(a) ==
+    \/ replyMac[a] # NoSession
+    \/ IF AnswerKeyedByAddress THEN answered[a]
+                              ELSE \E b \in Addresses : answered[b]
+
+Drain(a) ==
+    /\ phase = "run"
+    /\ a \in held
+    /\ held' = held \ {a}
+    /\ IF NoFrameMacKnown(a)
+         THEN /\ sentTo' = sentTo \cup {[addr |-> a, heard |-> heard[a]]}
+              /\ UNCHANGED refusedHeld
+         ELSE /\ refusedHeld' = refusedHeld \cup {[addr |-> a, heard |-> heard[a]]}
+              /\ UNCHANGED sentTo
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, net, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
+                   forgetFailures, greeted, markFailures, markOwed,
+                   answered, heard, heldReplies>>
 
 Next ==
     \/ \E a \in Addresses : Connect(a) \/ ClientSend(a) \/ Release(a)
@@ -464,6 +605,7 @@ Next ==
     \/ \E p \in net : Duplicate(p) \/ KernelFilter(p) \/ UserOpen(p)
     \/ Walk
     \/ Commit
+    \/ \E a \in Addresses : Answer(a) \/ HoldSessionReply(a) \/ HoldStray(a) \/ Drain(a)
 
 Spec == Init /\ [][Next]_vars
 
@@ -562,4 +704,20 @@ ReleasedSlotForgetsItsReplyMac ==
         /\ (seenBeforeRelease[a] /\ session[a] = NoSession /\ phase = "run"
             /\ ~seen[a])
             => replyMac[a] = NoSession
+(* NeverSeenNeverSentTo: a reply with no frame in hand goes only to an    *)
+(* address a frame came from; to any other it is refused.                  *)
+NeverSeenNeverSentTo ==
+    \A r \in sentTo : r.heard
+
+(* HeldReplyFindsItsMac: a held reply, or a duplicate, to an address a     *)
+(* frame came from is never refused for want of a MAC, before the learn    *)
+(* (a handshake reply) or after the forget (a reply held for a released    *)
+(* client).                                                                *)
+HeldReplyFindsItsMac ==
+    \A r \in refusedHeld : ~r.heard
+
+(* AnsweredOnlyHeard: an answered entry exists only for an address a frame *)
+(* came from.                                                              *)
+AnsweredOnlyHeard ==
+    \A a \in Addresses : answered[a] => heard[a]
 =============================================================================

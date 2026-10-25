@@ -8,7 +8,10 @@
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
     fails. The functional runner keeps 120s in every build; the unit runner
-    scales it for Debug, sanitizer or emulated builds (tests/time_scale.h). A
+    scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
+    ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
+    a suite passes in; the nightly macOS TSAN functional runs set 30, a
+    one-hour case limit, and every other run leaves it unset. A
     functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -100,6 +103,26 @@ inline bool suite_env_is_set( const char * name )
 {
     char value[4096];
     return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
+
+// The case limit after the environment's scale. ROCKETNET_TEST_CASE_TIME_SCALE
+// unset or empty leaves the limit as the suite passed it; set, it is a number over 0
+// and at most 1000 that multiplies the limit, or the suite refuses to run.
+inline bool suite_case_limit( double case_limit_s, double * limit_s )
+{
+    *limit_s = case_limit_s;
+    char env[64];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", env, sizeof( env ) ) || env[0] == '\0' )
+        return true;
+    char * end = NULL;
+    const double scale = std::strtod( env, &end );
+    if ( end == env || *end != '\0' || !( scale > 0.0 && scale <= 1000.0 ) )
+    {
+        printf( "check failed: ROCKETNET_TEST_CASE_TIME_SCALE=%s is not a number over 0 and at most 1000\n", env );
+        return false;
+    }
+    *limit_s = case_limit_s * scale;
+    return true;
 }
 
 struct suite_exec
@@ -802,7 +825,9 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
-    const double limit_s = case_limit_s;
+    double limit_s = case_limit_s;
+    if ( !suite_case_limit( case_limit_s, &limit_s ) )
+        return 1;
     int uring_slots = jobs;
     if ( bound_io_uring )
     {
@@ -1079,7 +1104,9 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
-    const double limit_s = case_limit_s;
+    double limit_s = case_limit_s;
+    if ( !suite_case_limit( case_limit_s, &limit_s ) )
+        return 1;
     (void) bound_io_uring; // no io_uring on Windows
     struct running_t
     {
