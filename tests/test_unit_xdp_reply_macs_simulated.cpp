@@ -169,21 +169,33 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
     time += 0.040;
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, client_mac, &refused ) == 1 );
 
-    // the released client's MAC is forgotten, learned and answered alike: a
-    // reply still held for it is refused
+    // the client is released: its learned MAC is forgotten, so it is no
+    // longer a learned client, and an ack still held for it leaves to the
+    // MAC its replies went to, as it would have on the wire
+    fake_link_hold( &link, &client, time + 0.030 );
     rocketnet_xdp_reply_macs_forget( table, &client );
-    fake_link_hold( &link, &client, time );
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_find( table, &client ) == NULL );
+    time += 0.040;
+    rocketnet_unit_check( fake_link_drain( &link, table, &view, time, client_mac, &refused ) == 1 );
+    rocketnet_unit_check( refused == 3 );
+
+    // a new client at the released address: the newest answered frame wins
+    static const uint8_t next_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0e };
+    fake_receive( &view, &client, next_mac );
+    mac = fake_start_packet( table, &view, &view.from[0], &refused );
+    rocketnet_unit_check( mac && memcmp( mac, next_mac, 6 ) == 0 );
+    fake_link_hold( &link, &view.from[0], time + 0.030 );
+    view.num_packets = 0;
+    time += 0.040;
+    rocketnet_unit_check( fake_link_drain( &link, table, &view, time, next_mac, &refused ) == 1 );
+
+    // a forget leaves nothing for an address no frame came from
+    rocketnet_address_t never;
+    rocketnet_unit_check( rocketnet_address_parse( &never, "10.77.4.9:50000" ) );
+    rocketnet_xdp_reply_macs_forget( table, &never );
+    fake_link_hold( &link, &never, time );
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, NULL, &refused ) == 0 );
     rocketnet_unit_check( refused == 4 );
-
-    // a forget before any learn drops the answered entry too
-    fake_receive( &view, &stranger, client_mac );
-    rocketnet_unit_check( fake_start_packet( table, &view, &view.from[0], &refused ) != NULL );
-    view.num_packets = 0;
-    rocketnet_xdp_reply_macs_forget( table, &stranger );
-    fake_link_hold( &link, &stranger, time );
-    rocketnet_unit_check( fake_link_drain( &link, table, &view, time, NULL, &refused ) == 0 );
-    rocketnet_unit_check( refused == 5 );
 
     // with a gateway, a held reply to an unlearned address goes to the
     // gateway, as a direct one does
@@ -196,7 +208,7 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
     view.num_packets = 0;
     time += 0.040;
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, gateway_mac, &refused ) == 1 );
-    rocketnet_unit_check( refused == 5 );
+    rocketnet_unit_check( refused == 4 );
 }
 
 // the answered table is bounded like the learned one: far more answered
