@@ -77,8 +77,7 @@ consistent across calls.
 
 The executable invariants live in `tla/RNBufferHandoff.tla`,
 `tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
-functional transport matrix. Performance profiling and longer saturation campaigns are planned
-hardening work.
+functional transport matrix.
 
 A step-driven test advances shutdown explicitly with update (or its I/O-step
 seam), then checks completion. Checking alone never drives the backend. A game
@@ -92,5 +91,5 @@ the worker drains surviving packets, including delayed disconnect copies,
 before publishing stopped. Stop itself does not send. Explicit step-driven
 transports perform this drain in their shutdown step. Simulator reconfiguration
 is refused after stop. `test_client_simulator_stop_defers_backend_send` and
-`test_client_legacy_receive_defers_contended_handoffs` exercise these boundaries
+`test_client_legacy_receive_handoff_and_backpressure` exercise these boundaries
 without threads, sleeps, or wall-clock deadlines.
