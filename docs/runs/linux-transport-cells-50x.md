@@ -12,7 +12,7 @@ socket cell, IPv4 (`test_loopback_transport_udp`), IPv6
 
 - Date (`date -u`): Sat Oct 24 05:45:58 PM UTC 2026
 - Head: ac4206a69acd83840c27d2ea024f6cc3712d734f (at `git log --oneline -1`, `ac4206a6 carry attempt 5's work (99c1a25a12f0) onto the tip of main (1dbdfcacd634)`); every run below is at this head
-- Machine: `hostname` hetzner1; `uname -r` 6.8.0-139-generic; 16 processors; `/proc/sys/kernel/io_uring_disabled` 0 (the io_uring cell ran, it was not skipped)
+- Machine: `hostname` <16-core Linux bench>; `uname -r` 6.8.0-139-generic; 16 processors; `/proc/sys/kernel/io_uring_disabled` 0 (the io_uring cell ran, it was not skipped)
 - NIC: none; every socket cell runs over the loopback interface, so no `ethtool` line applies
 - Load: the bench is shared and other cards' builds and runners were active.
   The 50-run cells ran at load 4 to 5 on 16 processors. The ASan suites ran

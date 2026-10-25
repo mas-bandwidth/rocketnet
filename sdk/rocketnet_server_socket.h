@@ -73,12 +73,24 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 
 // The replay high-water writer: the server socket is the only writer of the
 // pinned server_xdp_replay_map. These calls are main thread only. Forget and
-// mark append to the socket's pending buffer; a full buffer counts in the
-// buffer's refused count. Commit deletes every forget, then updates every
-// mark, then resets the buffer. A failed syscall adds to the commit failure
-// count and logs one debug line naming the call, never a key.
+// mark append to the socket's pending buffer; a full buffer refuses the entry
+// and the next commit adds the refusal to the commit failure count. Commit
+// deletes every forget, then updates every mark, then resets the buffer,
+// keeping every forget the kernel refused (anything but a missing key) to be
+// tried first in the next commit, unless a mark of the same key applied in
+// that commit superseded it: the entry is then the newer session's, and the
+// stale forget is dropped (tla/RNXdpReplay.tla, RetryNeverDeletesNewerMark).
+// A failed syscall adds to the commit failure
+// count and logs one debug line naming the call, never a key. A mark the
+// kernel refuses is kept too and applied again in the next commit, unless a
+// newer mark of its key replaces it or a queued forget of its key drops it
+// (MarkOwedUntilApplied). Until a new session's first mark (a zero) is
+// applied, send_packets holds that session's keep-alives, so it is not
+// greeted over an older session's entry (HoldGreetingUntilMarked). Forget and
+// mark return false when the pending buffer is full, so the walk keeps its
+// slot record and asks again.
 
-void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
+bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
 
 // The transport accepted receive-view packet view_index for a connection:
 // its source MAC becomes the reply MAC for its address (rocketnet_xdp_frame.h,
@@ -86,7 +98,7 @@ void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index );
 
-void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
+bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
 
 void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket );
 

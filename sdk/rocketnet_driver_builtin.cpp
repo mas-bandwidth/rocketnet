@@ -1081,13 +1081,13 @@ static void xdp_prefilter_counters( void * transport, uint64_t * values )
 {
     rocketnet_server_socket_xdp_counters( (rocketnet_server_socket_t*) transport, values );
 }
-static void xdp_replay_forget( void * transport, const rocketnet_address_t * address )
+static bool xdp_replay_forget( void * transport, const rocketnet_address_t * address )
 {
-    rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) transport, address );
+    return rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) transport, address );
 }
-static void xdp_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
+static bool xdp_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
 {
-    rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) transport, address, high_water );
+    return rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) transport, address, high_water );
 }
 static void xdp_replay_commit( void * transport )
 {
@@ -1136,6 +1136,7 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_client_iocp.h"
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
@@ -1173,7 +1174,9 @@ static const rocketnet_server_transport_io_operations_t iocp_operations =
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL
 };
-extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_operations, NULL };
+// the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
+// its own completion port, never this server's
+extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_operations, &rocketnet_client_iocp_operations };
 
 #include "rocketnet_server_rio.h"
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
