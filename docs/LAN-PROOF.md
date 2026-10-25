@@ -46,9 +46,10 @@ cell when the inventory marks the interface as the uplink.
 
 | cell | server | speed | clients | duration | connected | timeouts | delivery | min kbps | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gso | server-a | 2500 | 1000 | 120 | yes | 0 | pass | 277 | pass |
 
-The bounded Linux gso cell (1000 clients, 120 s) is run through the script
-before this table is filled; its row, the five logs, the allocation
-manifest and the start and end loads are kept with the run directory named
-in the session report, and the row is copied into
+The bounded Linux gso cell above (1000 clients in four shards of 250 on
+two client machines, 120 s) ran through the script; its five logs, the
+allocation manifest and the start and end loads are kept with the run
+directory named in the session report. This row is copied into
 `docs/runs/lan-1000-proof.md` with the remaining cells.
