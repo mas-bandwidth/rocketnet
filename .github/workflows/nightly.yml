@@ -384,14 +384,12 @@ jobs:
     # build-and-test-windows runs on, never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     # Debug only, by the owner's ruling of 2026-10-20: a Windows Debug run over the
-    # per-case peak-RSS bound runs with that bound lifted, and the bound in code
-    # stays. tests/suite_runner.h:58 sets the bound to 698 MiB, measured on a Linux
-    # Release build; tests/suite_runner.h:89 reads this variable in its place. In
+    # functional per-case peak-RSS bound runs with that bound lifted, and the
+    # bound in code stays. The unit step reports RSS; the functional step
+    # enforces it through test_unit_case_memory. In
     # Debug on the fleet Windows runner test_swarm peaks near 750 MiB,
     # transport_loopback_* near 1480 MiB and functional cases up to about 940 MiB,
     # so 2048 covers each. Release jobs keep the 698 bound.
-    env:
-      ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
     strategy:
       fail-fast: false
       matrix:
@@ -415,7 +413,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug --parallel
 
-      - name: Run tests
+      - name: Run tests (RSS telemetry, deterministic verdict)
         shell: bash
         run: |
           ./bin/Debug/test.exe
@@ -425,15 +423,18 @@ jobs:
         timeout-minutes: 5
         run: ./bin/Debug/test_iocp.exe
 
-      - name: Run functional suite
+      - name: Run functional suite (RSS enforced)
         timeout-minutes: 20
         shell: bash
+        env:
+          ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
         run: ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
         timeout-minutes: 20
         shell: bash
         env:
+          ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
           ROCKETNET_SERVER_TRANSPORT: iocp
         run: |
           set -o pipefail
