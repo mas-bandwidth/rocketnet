@@ -116,10 +116,10 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
 static void no_worker_server_stop_and_wait( no_worker_world_t * world )
 {
     rocketnet_server_stop( world->server );
-    // Poll the completion query within a fixed budget; do not sleep.
+    // Poll the completion query within a fixed budget; do not sleep. The
+    // update is a no-op once the server is stopped, so it is safe to call.
     for ( int step = 0; step < 32 && !rocketnet_server_stopped( world->server ); step++ )
-    {
-    }
+        rocketnet_server_update( world->server, world->time );
     check( rocketnet_server_stopped( world->server ) );
 }
 

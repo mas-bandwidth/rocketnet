@@ -120,10 +120,10 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 static void public_step_pair_stop_server_and_wait( public_step_pair_t * pair )
 {
     rocketnet_server_stop( pair->server );
-    // Poll the completion query within a fixed budget; do not sleep.
+    // Poll the completion query within a fixed budget; do not sleep. The
+    // update is a no-op once the server is stopped, so it is safe to call.
     for ( int step = 0; step < 32 && !rocketnet_server_stopped( pair->server ); step++ )
-    {
-    }
+        rocketnet_server_update( pair->server, pair->time );
     check( rocketnet_server_stopped( pair->server ) );
 }
 
