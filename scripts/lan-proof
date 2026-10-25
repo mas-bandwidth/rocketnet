@@ -3,7 +3,7 @@
 # lan-proof -- print or run one LAN proof cell.
 #
 #   scripts/lan-proof --dry-run --inventory FILE --cell CELL --duration SECONDS
-#   scripts/lan-proof --inventory FILE --cell CELL --duration SECONDS [--clients N] [--commit SHA] [--run-dir DIR] [--run-id HEX16]
+#   scripts/lan-proof --inventory FILE --cell CELL --duration SECONDS [--clients N] [--commit SHA] [--run-dir DIR] [--run-id HEX16] [--xdp-uplink IFACE]
 #   scripts/lan-proof --parse-row ROW
 #   scripts/lan-proof --cell-row CELL SERVER-LABEL NIC-SPEED CLIENTS DURATION SERVER-LOG MERGE-LOG
 #
@@ -19,8 +19,19 @@
 # Inventory rows, one machine per line, # comments skipped:
 #   label ssh-name role os iface uplink
 # role is server or client. os is linux, macos or windows.
-# uplink is "-" or "uplink". The xdp cell refuses an uplink interface.
+# uplink is "-" or "uplink". The xdp cell refuses an uplink interface,
+# unless --xdp-uplink names that interface.
 # Result lines name the label, never the ssh name.
+#
+# --xdp-uplink IFACE runs the xdp server bare metal on the server machine,
+# attached to IFACE, which may be the machine's uplink. Before the attach the
+# server machine arms a self-detach through its own service manager (a
+# systemd-run timer, not tied to ssh) that at the run duration plus 300
+# seconds kills the server and detaches XDP from IFACE. After the run the
+# script detaches XDP, cancels the timer and checks ip link shows no xdp on
+# IFACE. Every ssh check of the server machine during the run is logged, and
+# the first one that does not answer stops the run: the script then leaves
+# the server machine alone for its timer.
 
 set -u
 
@@ -93,6 +104,7 @@ clients_total=1000
 commit=""
 run_dir=""
 run_id=""
+xdp_uplink=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -104,6 +116,7 @@ while [ $# -gt 0 ]; do
         --commit) commit="${2:-}"; shift 2 ;;
         --run-dir) run_dir="${2:-}"; shift 2 ;;
         --run-id) run_id="${2:-}"; shift 2 ;;
+        --xdp-uplink) xdp_uplink="${2:-}"; shift 2 ;;
         *) refuse "unknown argument $1" ;;
     esac
 done
@@ -162,8 +175,17 @@ done < "$inventory"
 for ssh_name in $client_sshs; do
     [ "$ssh_name" != "$server_ssh" ] || refuse "a client is the server machine"
 done
-[ "$cell" = "xdp" ] && [ "$uplink" -eq 1 ] && refuse "xdp cell refuses an uplink interface"
+if [ -n "$xdp_uplink" ]; then
+    [ "$cell" = "xdp" ] || refuse "--xdp-uplink is for the xdp cell only"
+    case "$xdp_uplink" in
+        *[!A-Za-z0-9_.-]*) refuse "--xdp-uplink interface '$xdp_uplink' has characters outside A-Z a-z 0-9 _ . -" ;;
+    esac
+    [ "$xdp_uplink" = "$server_iface" ] ||
+        refuse "--xdp-uplink names $xdp_uplink but the server interface is $server_iface"
+fi
+[ "$cell" = "xdp" ] && [ "$uplink" -eq 1 ] && [ -z "$xdp_uplink" ] && refuse "xdp cell refuses an uplink interface"
 [ "$cell" = "xdp" ] && [ "$server_os" != "linux" ] && refuse "xdp cell needs a Linux server"
+detach_after=$(( ${duration:-0} + 300 ))
 
 echo "cell $cell duration $duration server $server_label"
 for label in $server_label $client_labels; do
@@ -176,11 +198,19 @@ case "$server_os" in
     macos) echo "step start server $server_label transport $cell by the copied remote script, open-file limit raised" ;;
     windows) echo "step start server $server_label transport $cell under an exclusive lock" ;;
 esac
-[ "$cell" = "xdp" ] && echo "step xdp server runs in a guest on a test interface that is not the uplink"
+if [ -n "$xdp_uplink" ]; then
+    echo "step $server_label check $xdp_uplink is provisioned for XDP, read only"
+    echo "step $server_label arm self-detach timer through systemd-run: at $detach_after s kill the server and set $xdp_uplink xdp off"
+    echo "step $server_label attach: start server bare metal transport xdp on $xdp_uplink"
+    echo "step $server_label ssh check every 5 s while the cell runs; the first unanswered check stops the run and leaves the host to its timer"
+elif [ "$cell" = "xdp" ]; then
+    echo "step xdp server runs in a guest on a test interface that is not the uplink"
+fi
 for label in $client_labels; do
     echo "step start shards on $label at most 250 clients, not on the server"
 done
 echo "step collect logs and write the allocation manifest"
+[ -n "$xdp_uplink" ] && echo "step $server_label detach xdp from $xdp_uplink, cancel the timer, check ip link shows no xdp"
 echo "step tools/check_split_load.py --load proof"
 echo "table cell server-label nic-speed clients duration connected timeouts mode-delivery size-delivery min-kbps verdict"
 
@@ -240,11 +270,24 @@ fail()
 }
 
 started=0
+# uplink mode: 1 once the self-detach timer is armed; server_lost is 1 once
+# an ssh check of the server machine went unanswered, after which nothing
+# more is sent to it and its timer does the detach
+detach_armed=0
+server_lost=0
+detach_server()
+{
+    [ "$detach_armed" -eq 1 ] || return 0
+    [ "$server_lost" -eq 0 ] || return 0
+    detach_armed=0
+    ssh_run "$server_ssh" "$remote_path" detach-xdp-uplink "$xdp_uplink" "$run_id" > "$run_dir/xdp.detach" 2>&1
+}
 teardown()
 {
     [ "$started" -eq 1 ] || return 0
     started=0
     for host in $server_ssh $client_sshs; do
+        [ "$host" = "$server_ssh" ] && [ "$server_lost" -eq 1 ] && continue
         ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1
         n=0
         for name in shard0 shard1 shard2 shard3 shard4 shard5 shard6 shard7; do
@@ -259,6 +302,7 @@ teardown()
         wait "$server_hold_pid" 2>/dev/null || true
         server_hold_pid=""
     fi
+    detach_server
 }
 trap 'teardown' EXIT INT TERM HUP
 
@@ -345,7 +389,10 @@ sample_loads()
 {
     local phase=$1 i=0 host line load1 nproc violation=""
     for host in $server_ssh $client_sshs; do
-        line=$( ssh_run "$host" "$remote_path" load ) || fail "cannot record $phase load"
+        line=$( ssh_run "$host" "$remote_path" load ) || {
+            [ -n "$xdp_uplink" ] && [ "$host" = "$server_ssh" ] && server_lost=1
+            fail "cannot record $phase load"
+        }
         printf '%s\n' "$line" > "$run_dir/load-$phase-$i"
         load1=$( printf '%s\n' "$line" | sed -n 's/.*load1=\([0-9.]*\).*/\1/p' )
         nproc=$( printf '%s\n' "$line" | sed -n 's/.*nproc=\([0-9]*\).*/\1/p' )
@@ -377,7 +424,10 @@ for host in $client_sshs; do
     i=$(( i + 1 ))
 done
 sample_loads start
-if [ "$cell" = "xdp" ]; then
+if [ -n "$xdp_uplink" ]; then
+    ssh_run "$server_ssh" "$remote_path" check-xdp-uplink "$commit" "$xdp_uplink" > "$run_dir/xdp.check" 2>&1 ||
+        fail "the XDP uplink interface is not provisioned or already has XDP; see $run_dir/xdp.check"
+elif [ "$cell" = "xdp" ]; then
     ssh_run "$server_ssh" "$remote_path" check-xdp-bridge "$server_iface" > "$run_dir/xdp.bridge" 2>&1 ||
         fail "the XDP server interface is not a dedicated non-uplink bridge; see $run_dir/xdp.bridge"
 fi
@@ -400,7 +450,14 @@ case "$server_os" in
         ready_wait=$lock_wait
         ;;
     linux)
-        if [ "$cell" = "xdp" ]; then
+        if [ -n "$xdp_uplink" ]; then
+            # the self-detach is armed, and checked armed, before the attach
+            detach_armed=1
+            ssh_run "$server_ssh" "$remote_path" arm-xdp-detach "$xdp_uplink" "$run_id" "$detach_after" > "$run_dir/xdp.arm" 2>&1 ||
+                fail "cannot arm the self-detach timer; see $run_dir/xdp.arm"
+            ssh_run "$server_ssh" "$remote_path" start-xdp-uplink-server "$commit" "$remote_run" "$xdp_uplink" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
+                fail "cannot start the bare metal XDP server"
+        elif [ "$cell" = "xdp" ]; then
             ssh_run "$server_ssh" "$remote_path" start-xdp-server "$commit" "$remote_run" "$server_iface" "$clients_total" "$duration" "$run_id" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
                 fail "cannot start the XDP guest server"
         else
@@ -424,9 +481,17 @@ for _ in $( seq 1 "$ready_wait" ); do
         # holder's own output; no read queues behind the held lock
         ready=$( grep '^split_ready: ' "$run_dir/server.start" 2>/dev/null | tail -n 1 )
         [ -n "$ready" ] && break
-    elif ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null; then
-        ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
-        [ -n "$ready" ] && break
+    else
+        ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null
+        collect_status=$?
+        if [ "$collect_status" -eq 0 ]; then
+            ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
+            [ -n "$ready" ] && break
+        elif [ -n "$xdp_uplink" ] && { [ "$collect_status" -eq 124 ] || [ "$collect_status" -eq 255 ]; }; then
+            # 255 is ssh's own failure and 124 the bound: the host did not answer
+            server_lost=1
+            fail "ssh to the server machine stopped answering before the ready line; its self-detach timer fires $detach_after s after the arm; not retrying"
+        fi
     fi
     sleep 1
 done
@@ -434,7 +499,7 @@ done
 echo "$ready" > "$run_dir/ready.txt"
 key=$( printf '%s\n' "$ready" | sed -n 's/.* key=\([0-9a-fA-F]*\).*/\1/p' )
 [ -n "$key" ] || fail "the ready line named no key"
-if [ "$cell" = "xdp" ]; then
+if [ "$cell" = "xdp" ] && [ -z "$xdp_uplink" ]; then
     server_endpoint=$( printf '%s\n' "$ready" | sed -n 's/.* address=\([^ ]*\).*/\1/p' )
     server_address=${server_endpoint%:*}
     [ -n "$server_address" ] && [ "$server_address" != "$server_endpoint" ] ||
@@ -475,8 +540,21 @@ while [ "$elapsed" -lt "$deadline" ]; do
     running=0
     if [ -n "$server_hold_pid" ]; then
         kill -0 "$server_hold_pid" 2>/dev/null && running=1
-    elif ssh_run "$server_ssh" "$remote_path" alive "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1; then
-        running=1
+    else
+        ssh_run "$server_ssh" "$remote_path" alive "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1
+        alive_status=$?
+        [ "$alive_status" -eq 0 ] && running=1
+        if [ -n "$xdp_uplink" ]; then
+            # 255 is ssh's own failure and 124 the bound: the host did not answer
+            case "$alive_status" in
+                124|255)
+                    echo "ssh-check $( date -u +%H:%M:%S ) elapsed=$elapsed status=$alive_status unanswered" >> "$run_dir/ssh-checks"
+                    server_lost=1
+                    fail "ssh to the server machine stopped answering at $elapsed s; its self-detach timer fires $detach_after s after the arm; not retrying"
+                    ;;
+                *) echo "ssh-check $( date -u +%H:%M:%S ) elapsed=$elapsed status=$alive_status answered" >> "$run_dir/ssh-checks" ;;
+            esac
+        fi
     fi
     s=0
     for host in $shard_hosts; do
@@ -507,6 +585,11 @@ sample_loads end
 
 teardown
 trap - EXIT INT TERM HUP
+if [ -n "$xdp_uplink" ]; then
+    cat "$run_dir/xdp.detach"
+    grep -q '^xdp-detached: ' "$run_dir/xdp.detach" ||
+        fail "the XDP detach check did not pass; see $run_dir/xdp.detach"
+fi
 
 # allocation manifest over the collected logs
 python3 - "$run_dir" "$run_id" "$clients_total" "$server_label" $client_labels <<'PYEOF'
