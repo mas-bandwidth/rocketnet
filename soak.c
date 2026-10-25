@@ -318,7 +318,10 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
 // soak creates its transports with an explicit config, and the transport
 // create reads none of these names, so soak reads them itself (digits only,
 // latency and jitter 0 .. 60000, loss and duplicate 0 .. 100, the library's
-// ranges) and writes them into the configs it creates from. Each end's
+// ranges) and writes them into the configs it creates from, through the
+// sized creates (rocketnet_*_transport_create_sized with the struct's size):
+// the unsized creates read only the config revision before the simulator
+// fields, so a setting passed through them is dropped. Each end's
 // simulator acts on what that end sends: the server's setting impairs the
 // server to client direction, the client's the client to server one.
 
@@ -959,7 +962,7 @@ int main( int argc, char ** argv )
     if ( !rocketnet_test_getenv( "SOAK_SERVER_ADDRESS", server_bind, sizeof( server_bind ) ) || server_bind[0] == '\0' )
         snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config);
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_config, sizeof( server_config ) );
     if ( !server )
     {
         printf( "soak: failed to create the server transport on %s\n", server_bind );
@@ -1170,7 +1173,7 @@ int main( int argc, char ** argv )
                 break;
             }
 #endif
-            client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_time() );
+            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
 #if defined(__linux__)
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
             {
