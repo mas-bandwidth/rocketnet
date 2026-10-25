@@ -107,9 +107,11 @@ cmd_build()
         ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
     esac
     timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true )
-    [ -n "$timeout_cmd" ] && "$timeout_cmd" --help 2>/dev/null | grep -q -- '--kill-after' ||
+    # GNU and BSD timeout both print --kill-after in their help (BSD on
+    # stderr) and both take -k.
+    [ -n "$timeout_cmd" ] && "$timeout_cmd" --help 2>&1 | grep -q -- '--kill-after' ||
         fail "build: timeout or gtimeout with --kill-after is required for the owned build bound"
-    "$timeout_cmd" --kill-after=15 870 "$0" build-inner "$commit" ||
+    "$timeout_cmd" -k 15 870 "$0" build-inner "$commit" ||
         fail "build: checkout, build, or 870-second bound failed"
     dir=$( checkout_dir "$commit" )
     head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
