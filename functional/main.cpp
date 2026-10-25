@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
+#include "channel_harness.h"
 #include "../tests/plan_rss.h"
 #include "../tests/suite_runner.h"
 #include "../tests/portable_crt.h"
@@ -166,6 +167,12 @@ int main( int argc, char ** argv )
     // ended by the case with SIGKILL
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
+
+    if ( !rocketnet_channel_delivery_ring_self_test() )
+    {
+        fprintf( stderr, "error: channel harness delivery sequence self-test failed\n" );
+        return 1;
+    }
 
 #if defined(_WIN32)
     const suite_exec execs[] = {

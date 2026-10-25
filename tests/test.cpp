@@ -32,6 +32,34 @@ int rocketnet_channels_run_named( const char * name );
 void rocketnet_channels_prepare( const char * name, void * (**malloc_function)( void * context, size_t bytes ), void (**free_function)( void * context, void * p ) );
 void rocketnet_channels_prepare_log( const char * name );
 
+static void rocketnet_registry_dummy_test()
+{
+}
+
+// The registry's fixed-capacity mechanics are exercised independently from
+// the real static constructors: insertion preserves the old reverse order,
+// duplicates and overflow refuse without mutation, and every admitted entry
+// is addressable exactly once.
+static void test_unit_registry_sequence_contract()
+{
+    struct rocketnet_unit_file_registry_t registry = {};
+    rocketnet_unit_check( rocketnet_unit_file_register( &registry, 2, "test_a", rocketnet_registry_dummy_test, NULL ) ==
+                          ROCKETNET_UNIT_FILE_REGISTERED );
+    rocketnet_unit_check( rocketnet_unit_file_register( &registry, 2, "test_b", rocketnet_registry_dummy_test, "card" ) ==
+                          ROCKETNET_UNIT_FILE_REGISTERED );
+    rocketnet_unit_check( registry.count == 2 );
+    rocketnet_unit_check( strcmp( registry.tests[0].name, "test_b" ) == 0 );
+    rocketnet_unit_check( strcmp( registry.tests[1].name, "test_a" ) == 0 );
+    rocketnet_unit_check( registry.tests[0].expected_fail_card != NULL );
+    rocketnet_unit_check( rocketnet_unit_file_register( &registry, 2, "test_a", rocketnet_registry_dummy_test, NULL ) ==
+                          ROCKETNET_UNIT_FILE_DUPLICATE );
+    rocketnet_unit_check( rocketnet_unit_file_register( &registry, 2, "test_c", rocketnet_registry_dummy_test, NULL ) ==
+                          ROCKETNET_UNIT_FILE_FULL );
+    rocketnet_unit_check( registry.count == 2 );
+}
+
+REGISTER_UNIT_TEST( test_unit_registry_sequence_contract );
+
 static int rocketnet_suite_test_count()
 {
     return rocketnet_unit_test_count() + rocketnet_channels_test_count() + rocketnet_unit_tests_count();

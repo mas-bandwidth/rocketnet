@@ -179,31 +179,50 @@ inline long suite_max_case_rss_mb()
 // itself with SUITE_CASE_RSS_BOUND( name, function ): function returns the
 // bound in MiB, computed from the memory plan for the configuration the case
 // uses plus a margin the case states (suite_rss_bound_mb). A static
-// registrar adds it to a list before main runs, so the parent reads it by
+// registrar adds it to a fixed registry before main runs, so the parent reads it by
 // case name. Every other case keeps ROCKETNET_TEST_MAX_CASE_RSS_MB.
 
 struct suite_case_rss_bound_t
 {
     const char * name;
     long ( *bound_mb )();
-    suite_case_rss_bound_t * next;
 };
 
-inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
+// Fifteen bounds existed when this registry replaced the pointer chain. The
+// next power of two with another full doubling of headroom is 64. It remains
+// allocation-free during static initialization and refuses overflow loudly.
+#define SUITE_CASE_RSS_BOUND_CAPACITY 64
+
+struct suite_case_rss_bound_registry_t
 {
-    static suite_case_rss_bound_t * head = NULL;
-    return &head;
+    suite_case_rss_bound_t entries[SUITE_CASE_RSS_BOUND_CAPACITY];
+    int count;
+};
+
+inline suite_case_rss_bound_registry_t * suite_case_rss_bound_registry()
+{
+    static suite_case_rss_bound_registry_t registry = {};
+    return &registry;
 }
 
 struct suite_case_rss_bound_registrar_t
 {
-    suite_case_rss_bound_t entry;
     suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
     {
-        entry.name = name;
-        entry.bound_mb = bound_mb;
-        entry.next = *suite_case_rss_bound_head();
-        *suite_case_rss_bound_head() = &entry;
+        suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+        if ( registry->count == SUITE_CASE_RSS_BOUND_CAPACITY )
+        {
+            fprintf( stderr, "error: suite RSS bound registry capacity %d exceeded while registering %s\n",
+                     SUITE_CASE_RSS_BOUND_CAPACITY, name );
+            fflush( stderr );
+            abort();
+        }
+        if ( registry->count > 0 )
+            memmove( &registry->entries[1], &registry->entries[0],
+                     (size_t) registry->count * sizeof( registry->entries[0] ) );
+        registry->entries[0].name = name;
+        registry->entries[0].bound_mb = bound_mb;
+        registry->count++;
     }
 };
 
@@ -252,8 +271,10 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
     if ( bound <= 0 )
         return bound;
     long planned = plan_mb > 0 ? plan_mb : 0;
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < registry->count; i++ )
     {
+        suite_case_rss_bound_t * entry = &registry->entries[i];
         if ( name == entry->name )
         {
             const long declared = entry->bound_mb();
@@ -651,8 +672,10 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
             return false;
         }
     }
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    suite_case_rss_bound_registry_t * rss_registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < rss_registry->count; i++ )
     {
+        suite_case_rss_bound_t * entry = &rss_registry->entries[i];
         if ( !suite_name_is_test_snake_case( entry->name ) )
         {
             printf( "check failed: SUITE_CASE_RSS_BOUND name %s is not test_ lowercase snake_case\n", entry->name );
@@ -1080,8 +1103,9 @@ inline std::string suite_spawn_failure_text( const char * call, DWORD error )
 // runs alone.
 inline bool suite_case_runs_alone( const std::string & name )
 {
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
-        if ( name == entry->name )
+    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < registry->count; i++ )
+        if ( name == registry->entries[i].name )
             return true;
     return false;
 }
