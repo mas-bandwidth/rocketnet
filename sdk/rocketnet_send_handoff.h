@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 #include "rocketnet_internal.h"
+#include <atomic>
 
 // Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
@@ -34,6 +35,10 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     bool publish()
     {
         rocketnet_assert(filling >= 0 && count < NumBuffers);
+        // tla/SendHandoff.tla Publish needs a filling generation: the model
+        // enables it only with one, so a publish without one is refused here
+        // instead of queueing -1.
+        if (filling < 0) return false;
         if (count == NumBuffers - 1) return false;
         queued[(head + count) % NumBuffers] = filling;
         ++count;
@@ -60,8 +65,27 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     void retire()
     {
         rocketnet_assert(count > 0);
+        // tla/SendHandoff.tla Retire needs a queued generation: the model
+        // enables it only with one, so a retire on an empty queue is refused
+        // here instead of freeing a stale generation.
+        if (count == 0) return;
         free[queued[head]] = true;
         head = (head + 1) % NumBuffers;
         --count;
     }
 };
+
+// Claim one staging slot for a packet: the producer counter names the index,
+// and a claim past the limit (or a counter that wrapped negative) is refused
+// and counted, so the flush names the queue and the count once per flush
+// instead of every refused start logging a line of its own.
+inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, std::atomic<uint64_t> & refused )
+{
+    const int index = num_packets.fetch_add( 1 );
+    if ( index < 0 || index >= limit )
+    {
+        refused.fetch_add( 1, std::memory_order_relaxed );
+        return -1;
+    }
+    return index;
+}

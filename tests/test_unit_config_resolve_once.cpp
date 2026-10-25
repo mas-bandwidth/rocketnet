@@ -329,3 +329,65 @@ static void test_production_env_only_test_packet_filter_refused()
 REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
 
 #endif // #if !ROCKETNET_DEV
+
+// Auto expands to the availability list, and the ladder holds only
+// ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more
+// auto-eligible transports than that must be refused loudly in a release
+// build, not written past candidates: the count is bounded by a real check,
+// not by an assert that NDEBUG removes. Capture the assert where it is
+// compiled in, and check the refusal in every build.
+static int config_ladder_max_assertions;
+
+static void config_ladder_max_assert_hook( const char *, const char *, const char *, int )
+{
+    config_ladder_max_assertions++;
+}
+
+static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
+{
+    rocketnet_quiet( 1 );
+    const int num_available = ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1;
+    int available[ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1];
+    for ( int i = 0; i < num_available; i++ )
+        available[i] = ROCKETNET_TRANSPORT_PORTABLE;
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, true ) );
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, false ) );
+
+    // a by-value sibling so a write past candidates is visible: parse clears
+    // only the ladder, and every canary byte must survive it.
+    struct
+    {
+        struct rocketnet_transport_ladder_t ladder;
+        uint8_t canary[32];
+    } guarded;
+    const char * const values[2] = { "auto", NULL };
+    config_ladder_max_assertions = 0;
+    rocketnet_assert_function( config_ladder_max_assert_hook );
+    for ( int v = 0; v < 2; v++ )
+    {
+        for ( int server = 0; server < 2; server++ )
+        {
+            memset( &guarded, 0xA5, sizeof(guarded) );
+#if ROCKETNET_ASSERTS
+            const int assertions_before_parse = config_ladder_max_assertions;
+#endif
+            check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+#if ROCKETNET_ASSERTS
+            check( config_ladder_max_assertions == assertions_before_parse + 1 );
+#endif
+            check( guarded.ladder.num_candidates >= 0 );
+            check( guarded.ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+            for ( int i = 0; i < guarded.ladder.num_candidates; i++ )
+                check( guarded.ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE );
+            for ( size_t i = 0; i < sizeof( guarded.canary ); i++ )
+                check( guarded.canary[i] == 0xA5 );
+        }
+    }
+    rocketnet_assert_function( NULL );
+#if ROCKETNET_ASSERTS
+    // Two values times two roles; each parse checks the same refusal once.
+    check( config_ladder_max_assertions == 4 );
+#endif
+    rocketnet_quiet( 0 );
+}
+REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );

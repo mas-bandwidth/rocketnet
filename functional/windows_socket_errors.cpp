@@ -306,13 +306,20 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
         rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) instance, counters );
-        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED];
+        // Size drops now also enter the server's public prefilter counters.
+        // Keep this aggregate one event per datagram while retaining the
+        // transport's legacy RECEIVE_DROPPED total for its direct readers.
+        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
+               counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
+               counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
     }
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {
         uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
         rocketnet_server_rio_counters( (rocketnet_server_rio_t*) instance, counters );
-        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] + counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
+        // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
+        // failed completions are still transport-only drops.
+        return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
     }
     return 0;
 }
@@ -423,6 +430,60 @@ static void windows_server_drops_runt_and_garbage( const windows_socket_errors_t
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_runt_and_garbage( datagrams );
     windows_server_drops( transport, "windows_server_drops_runt_and_garbage", datagrams );
+}
+
+static void windows_server_counts_prefilter_size( const windows_socket_errors_transport_t * transport, const char * name,
+    const std::vector<windows_socket_errors_datagram_t> & datagrams, int counter )
+{
+    windows_socket_errors_session_t session;
+    windows_socket_errors_session_start( &session, transport );
+    const uint64_t before = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter );
+    windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
+    const double drain = rocketnet_platform_time();
+    uint64_t counted = 0;
+    while ( rocketnet_platform_time() - drain < 0.5 )
+    {
+        windows_socket_errors_tick( &session );
+        counted = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter ) - before;
+        if ( counted == datagrams.size() )
+            break;
+    }
+    printf( "%s %s: sent %llu, prefilter size counter %llu\n", name, windows_socket_errors_label( transport ),
+        (unsigned long long) datagrams.size(), (unsigned long long) counted );
+    fflush( stdout );
+    windows_socket_errors_require( counted == datagrams.size() );
+    windows_socket_errors_session_finish( &session );
+}
+
+static void windows_server_counts_oversize_as_prefilter_too_large_iocp_case()
+{
+    windows_socket_errors_transport_t transport = { "iocp", false };
+    std::vector<windows_socket_errors_datagram_t> datagrams;
+    windows_socket_errors_oversize( datagrams );
+    windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_iocp", datagrams,
+        ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+}
+
+static void windows_server_counts_oversize_as_prefilter_too_large_rio_case()
+{
+    windows_socket_errors_transport_t transport = { "rio", false };
+    std::vector<windows_socket_errors_datagram_t> datagrams;
+    windows_socket_errors_oversize( datagrams );
+    windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_rio", datagrams,
+        ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+}
+
+static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
+{
+    windows_socket_errors_transport_t transport = { "rio", false };
+    std::vector<windows_socket_errors_datagram_t> datagrams;
+    windows_socket_errors_datagram_t empty;
+    windows_socket_errors_datagram_t one;
+    one.bytes.push_back( 1 );
+    datagrams.push_back( empty );
+    datagrams.push_back( one );
+    windows_server_counts_prefilter_size( &transport, "windows_server_counts_runt_as_prefilter_too_short_rio", datagrams,
+        ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
 }
 
 // the prefilter counters a client's refusal of a datagram from the server it
@@ -633,6 +694,10 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 
 WINDOWS_SOCKET_ERRORS_CASES( windows_server_drops_oversize_datagram )
 WINDOWS_SOCKET_ERRORS_CASES( windows_server_drops_runt_and_garbage )
+
+void windows_server_counts_oversize_as_prefilter_too_large_iocp() { windows_server_counts_oversize_as_prefilter_too_large_iocp_case(); }
+void windows_server_counts_oversize_as_prefilter_too_large_rio() { windows_server_counts_oversize_as_prefilter_too_large_rio_case(); }
+void windows_server_counts_runt_as_prefilter_too_short_rio() { windows_server_counts_runt_as_prefilter_too_short_rio_case(); }
 
 void windows_client_drops_oversize_and_garbage_ipv4() { windows_client_drops_oversize_and_garbage( false ); }
 void windows_client_drops_oversize_and_garbage_ipv6() { windows_client_drops_oversize_and_garbage( true ); }

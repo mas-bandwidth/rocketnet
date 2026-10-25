@@ -355,6 +355,28 @@ void rocketnet_default_free_function( void * context, void * p );
 /** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
+/**
+ * @brief Advances one owner's update clock by the caller's raw step, beside
+ * rocketnet_clamp_update_time. The owner keeps the caller's raw time and the
+ * clamped time it hands out; this helper keeps them in step: a forward raw
+ * step of d advances the clamped time by exactly d, a backwards raw step
+ * returns the last good time and records the new raw time, and a non-finite
+ * sample changes neither value. While no backwards step has happened the
+ * returned time is the caller's time, bit for bit, so every caller that reads
+ * an exact time still reads it.
+ * @param last_good The clamped time the owner keeps.
+ * @param raw_time The owner's last raw caller time, read and written.
+ * @param time_offset The owner's backwards offset, read and written: exactly
+ * 0.0 until the first backwards step, and the distance the caller's clock
+ * fell behind after one.
+ * @param time The caller's new raw time.
+ * @param clamped Optional output set true when the sample was rejected; NULL
+ * is allowed.
+ * @return The owner's new clamped time. A non-finite or backwards sample
+ * records one misuse and fires the configured assertion.
+ */
+double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
+
 #ifdef __cplusplus
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
@@ -624,6 +646,29 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+
+// Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
+// buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
+// ceil( max_clients x receive_kbps_per_client x 125 x
+// ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN / update_hz ) bytes, at least
+// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE and at most INT_MAX; arguments below 1
+// count as 1. rocketnet_server_receive_buffer_request is the request every
+// server socket makes: max_clients at the default client send budget
+// (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS) and the slowest supported update
+// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ).
+int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
+int rocketnet_server_receive_buffer_request( int max_clients );
+
+// Logs one line per server socket with what the kernel granted and what was
+// requested. A grant below the request is a warning naming the limit to
+// raise (net.core.rmem_max on Linux, kern.ipc.maxsockbuf on macOS and BSD);
+// a grant at or above the request is an information line.
+void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
+
+// The receive buffer the kernel granted a socket, in the bytes requested
+// (Linux reports double its grant; this halves it); 0 when unreadable.
+struct rocketnet_platform_socket_t;
+int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_socket_t * socket );
 
 // Internal final-burst operations for public server_stop. They preserve the
 // normal transport API while selecting a nonwaiting backend send on shutdown.

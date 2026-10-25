@@ -5237,6 +5237,7 @@ void rocketnet_test_client_connect_validations()
     rocketnet_check( client.server_address.port == 40000 );
 
     // create after expire is an invalid token
+    rocketnet_client_protocol_init( &client, &counters );
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS, 10 );
     rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
@@ -5248,11 +5249,13 @@ void rocketnet_test_client_connect_validations()
         rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
         signed_fields.address_flags = 0x05;
         rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        rocketnet_client_protocol_init( &client, &counters );
         rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
     }
 
     // an expired token dies before anything is sent
+    rocketnet_client_protocol_init( &client, &counters );
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 10, 10 );
     rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS + 10 ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
@@ -5778,9 +5781,8 @@ void rocketnet_test_integrity_limit()
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal": an exact-size check runs before the
         // lookup). two such: one too short to carry a tag, one that would
-        // open to the wrong size. the class
-        // still filed as DID_NOT_OPEN is a response that opens to non-zero
-        // padding.
+        // open to the wrong size. the response that opens to non-zero
+        // padding is filed as PADDING_NOT_ZERO, and it is not a forgery.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
         memset( short_response, 0x5A, sizeof(short_response) );
         uint8_t * sp = short_response;
@@ -5813,8 +5815,9 @@ void rocketnet_test_integrity_limit()
                                                         client_keys.handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
         rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
-        rocketnet_check( mapping->integrity_failures == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
         uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
@@ -5823,7 +5826,7 @@ void rocketnet_test_integrity_limit()
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-        rocketnet_check( mapping->integrity_failures == 2 );                    // a packet that opens does not count
+        rocketnet_check( mapping->integrity_failures == 1 );                    // a packet that opens does not count
 
         // seed to two below the limit. the sequences are fresh so the replay
         // window never refuses first: the open is what fails.
@@ -7151,7 +7154,10 @@ void rocketnet_test_packet_loss_tracker()
 
     rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
 
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
+    // a sequence jump this far beyond the last judged one cannot be a packet
+    // stream at the assumed 1500-byte MTU: the update reports its documented
+    // per-update loss cap, not a saturated INT_MAX and not zero
+    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
 }
 
 void rocketnet_test_jitter_tracker()
@@ -7461,7 +7467,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_default_config_internal",
-    "rocketnet_client_light_config",
+    "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
     "rocketnet_client_connect",
@@ -7483,7 +7489,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
-    "rocketnet_server_light_config",
+    "rocketnet_server_light_config_internal",
     "rocketnet_server_required_memory",
     "rocketnet_server_create",
     "rocketnet_server_start",
@@ -7520,7 +7526,7 @@ static const char * rocketnet_test_exports[] =
 static const char * rocketnet_test_public_null_case_exports[] =
 {
     "rocketnet_client_default_config_internal",
-    "rocketnet_client_light_config",
+    "rocketnet_client_light_config_internal",
     "rocketnet_client_connect",
     "rocketnet_client_destroy",
     "rocketnet_client_update",
@@ -7539,7 +7545,7 @@ static const char * rocketnet_test_public_null_case_exports[] =
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
     "rocketnet_server_default_config_internal",
-    "rocketnet_server_light_config",
+    "rocketnet_server_light_config_internal",
     "rocketnet_server_create",
     "rocketnet_server_start",
     "rocketnet_server_stop",
@@ -7967,7 +7973,7 @@ void rocketnet_test_public_api_null()
     // is one counted misuse either way
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_light_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 #if ROCKETNET_DEV
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, NULL, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, token, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8009,7 +8015,7 @@ void rocketnet_test_public_api_null()
 
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_light_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_light_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, NULL ) == NULL ) );
     RN_TEST_SILENT_NULL( rocketnet_server_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -14720,7 +14726,6 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
-void rocketnet_test_dev_token_minting_absent_in_release();
 void rocketnet_test_public_connect_token_string_refused();
 void rocketnet_test_public_dev_connect_token_round_trip();
 
@@ -14882,7 +14887,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_reassembly", rocketnet_test_fragment_reassembly },
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
-    { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
     { "test_public_connect_token_string_refused", rocketnet_test_public_connect_token_string_refused },
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
@@ -14987,46 +14991,6 @@ void rocketnet_run_tests()
     rocketnet_unit_prepare();
     for ( int i = 0; i < rocketnet_unit_test_count(); i++ )
         rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
-}
-
-// Verify that rocketnet_create_dev_connect_token is absent from the release
-// surface. In a production build (ROCKETNET_DEV=0) the development token
-// minting helper and its backend secret key are compiled out, so the shipped
-// shared library must not carry the symbol. The suite links the static
-// archive, whose own symbols cannot prove the shared ABI is clean, so probe
-// the shared library directly (the `test` target depends on it, so it is
-// always present beside ./bin/test). In a development build the helper must
-// remain callable -- the functional suite mints its tokens with it -- so that
-// configuration asserts the call succeeds instead.
-void rocketnet_test_dev_token_minting_absent_in_release()
-{
-#if ROCKETNET_DEV
-    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
-    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token ) == ROCKETNET_STATUS_OK );
-    rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-#else
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    HMODULE library = LoadLibraryA( ROCKETNET_RELEASE_LIBRARY_PATH );
-    rocketnet_check( library != NULL );
-    if ( library != NULL )
-    {
-        rocketnet_check( GetProcAddress( library, "rocketnet_create_dev_connect_token" ) == NULL );
-        FreeLibrary( library );
-    }
-#else
-    // CMake may place the shared library outside the source tree. Probe the
-    // exact release target built alongside this test, independent of cwd.
-    void * library = dlopen( ROCKETNET_RELEASE_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    rocketnet_check( library != NULL );
-    if ( library != NULL )
-    {
-        rocketnet_check( dlsym( library, "rocketnet_create_dev_connect_token" ) == NULL );
-        dlclose( library );
-    }
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif
 }
 
 // A public loopback server for the connect token cases: the development

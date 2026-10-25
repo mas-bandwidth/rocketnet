@@ -258,11 +258,12 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
-// XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED counters.
+// XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, MESSAGE_NOT_RECEIVED, CONNECTION_RESPONSE_PADDING_NOT_ZERO
+// and CONNECTION_REQUEST_CLAIM_TABLE_FULL counters.
 static const struct loopback_trace_t loopback_base_trace_simulator_off =
-    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x3a4ca14352981827 ), UINT64_C( 0xd20b6fbd00ad1785 ), 24 };
+    { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x0fba63931b14c9e7 ), UINT64_C( 0x2f0d46e7331070c5 ), 24 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on =
-    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xb0ecc9f17b293867 ), UINT64_C( 0xd20b6fbd00ad1785 ), 26 };
+    { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x8e0796e56833fa27 ), UINT64_C( 0x2f0d46e7331070c5 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {

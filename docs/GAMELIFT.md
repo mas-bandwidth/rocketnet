@@ -13,13 +13,10 @@ has full rights only to the directory where build files are installed
 declare admin access with `sudo`
 (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/gamelift-build-cli-uploading-install.html).
 
-Whether the launched game server process runs under this same run-as user is
-not stated in these sources: the process is launched by the fleet's runtime
-configuration, and the user id of that process is not documented. This is
-unknown; it would be settled on a real fleet by connecting via SSM remote
-access (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/fleets-remote-access.html) and running `ps -o user= -p <pid>` or `id`
-against the running game server process. Nothing in the sources lets a build
-change the user the process runs as.
+The install-script documentation does not specify which user runs the launched
+game server process. RocketNet's XDP transport requires an effective user ID of
+zero, so use XDP only when the deployed process has that permission. Otherwise,
+select a transport that does not require it, such as `gso` or `io_uring`.
 
 ## 2. Whether the build's install script runs as root and can setcap
 
@@ -27,18 +24,20 @@ The install script runs once during fleet creation to establish the AMI used
 on all future fleet instances (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/gamelift-build-cli-uploading-install.html). For Linux
 fleets it runs as the limited run-as user, not as root, and uses `sudo` when
 admin permissions are required (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/gamelift-build-cli-uploading-install.html). Because
-`sudo` is available, an install script can run `sudo setcap cap_net_admin,cap_bpf,cap_net_raw+ep <server>` on the server binary.
+`sudo` is available to an install script for administrator actions. However,
+the GameLift documentation does not specify whether file capabilities survive
+when the runtime starts the server. Do not rely on `setcap` alone to enable
+XDP; confirm the launched process has the required privileges before selecting
+that transport.
 
-Whether those file capabilities survive into the process GameLift launches is
-unknown and not documented in these sources: the kernel applies file
-capabilities on `execve` only when the mount allows suid execution, so a
-`nosuid` mount defeats them
+The kernel applies file capabilities on `execve` only when the mount allows
+suid execution, so a `nosuid` mount defeats them
 (https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/security/commoncap.c), and with `no_new_privs` set, `execve` does not add file
 capabilities to the permitted set (https://docs.kernel.org/userspace-api/no_new_privs.html);
-GameLift's launch mechanics are not specified here. This
-is the deciding unknown; it would be settled by a test on a real managed fleet
-that installs with `setcap`, launches, and checks `getcap <server>` and
-whether the XDP create succeeds in the launched process.
+GameLift's launch documentation does not describe the mount flags or
+`no_new_privs` state for the launched process. Treat file capabilities as
+insufficient unless the deployed process's effective privileges have been
+verified.
 
 ## 3. ENA and XDP
 
@@ -87,9 +86,9 @@ the CAP_NET_RAW capability
 GameLift managed EC2 fleets with server SDK 5+ run Amazon Linux 2023 (kernel
 6.1, x86_64 or arm64) or Amazon Linux 2 (kernel 5.10)
 (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/reference-ec2-ami-version-history.html).
-The ENA driver version bundled in those AMIs is not pinned by these sources
-(unknown); a build would find it at run time with `ethtool -i eth0` or by
-reading `/sys/module/ena/version`, and the kernel with `uname -r`.
+The ENA driver version can vary with the selected AMI. Inspect the active
+version with `ethtool -i eth0` or `/sys/module/ena/version`, and check the
+kernel with `uname -r`.
 
 ## 5. Other routes: GameLift Anywhere and container fleets
 
@@ -119,10 +118,11 @@ ENA supports native XDP and AF_XDP zero-copy
 and the managed fleet OS (Amazon Linux 2023, kernel 6.1) is new enough for both
 (https://docs.aws.amazon.com/gameliftservers/latest/developerguide/reference-ec2-ami-version-history.html).
 
-The xdp transport requires euid 0. File capabilities alone do not pass its
-pre-flight. It also requires the provisioned boot tier (isolcpus, nohz_full and
-irqaffinity on the kernel command line), IRQ pinning, SMT off and a matching
-NIC channel count. A managed fleet runs the server as a limited user, so it
-gets RocketNet's gso or io_uring transport. XDP is possible only on Anywhere or
-container fleets where the builder runs the server as root on a provisioned
-host.
+The XDP transport requires euid 0. File capabilities alone do not pass its
+pre-flight. It also requires the provisioned boot tier (`isolcpus`, `nohz_full`
+and `irqaffinity` on the kernel command line), IRQ pinning, SMT off and a
+matching NIC channel count. GameLift documents the install-script user's
+permissions but not the launched server process's effective user. Use `gso`
+or `io_uring` on managed fleets unless the runtime process is configured and
+verified to meet XDP's privilege and host requirements. Anywhere and container
+fleets let the operator control the compute and launch configuration.

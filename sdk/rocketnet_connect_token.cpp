@@ -258,6 +258,10 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
         struct rocketnet_address_t address;
         if ( !rocketnet_address_parse( &address, server_address_strings[i] ) )
             return ROCKETNET_STATUS_INVALID_ADDRESS;
+        // a token naming port 0 names no server: refuse the address before
+        // any field is written
+        if ( address.port == 0 )
+            return ROCKETNET_STATUS_INVALID_ADDRESS;
 
         uint8_t * p;
         if ( address.type == ROCKETNET_ADDRESS_IPV4 )
@@ -466,11 +470,6 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
     return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
-// the public development token: the production writer with the published
-// development backend key, handed out as the base64 string the client's
-// connect takes; nothing is written on a failure
-// an address string of one family, bounded: true when it parses as that
-// family within ROCKETNET_MAX_ADDRESS_STRING_BYTES
 static bool rn_dev_token_address( const char * address, int family )
 {
     if ( memchr( address, '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL )
@@ -484,9 +483,20 @@ static bool rn_dev_token_address( const char * address, int family )
         rocketnet_error( "dev connect token refused: %s is not an %s address", address, family == ROCKETNET_ADDRESS_IPV4 ? "IPv4" : "IPv6" );
         return false;
     }
+    // a token naming port 0 names no server: the client refuses it with
+    // ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO, so the maker refuses the
+    // address here instead of minting a token the client rejects
+    if ( parsed.port == 0 )
+    {
+        rocketnet_error( "dev connect token refused: %s has port 0", address );
+        return false;
+    }
     return true;
 }
 
+// the public development token: the production writer with the published
+// development backend key, handed out as the base64 string the client's
+// connect takes; nothing is written on a failure
 enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
                                                             const char * server_address_ipv6,
                                                             const uint8_t * server_public_key,
