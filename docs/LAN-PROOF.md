@@ -23,21 +23,30 @@ scripts/lan-proof --inventory INVENTORY --cell gso --duration 120 \
 checks every host is at the same head and builds it, records each host's
 OS, kernel and every test interface's model, driver, negotiated speed and
 duplex, and refuses to start when a host's foreign load is at or above
-half its core count. It starts the server pinned to the transport (Linux
+half its core count. Samples are retained every 60 seconds while the cell
+runs and at its end; server runtime load may not exceed its logical cores,
+and client end load may not exceed each client's logical cores. SSH and copy steps have a
+60-second overall bound, and each remote build has a 900-second overall
+bound. It starts the server pinned to the transport (Linux
 and macOS by ssh with the copied remote script, the open-file limit raised
 on macOS; Windows under an exclusive lock; the xdp server inside a guest
 on a dedicated test interface), starts shards of at most 250 clients on
-the client machines and never on the server's machine, collects every
+the client machines and never on the server's machine, with no client host
+running more shard processes than half its logical cores, collects every
 log, writes the allocation manifest, runs
 `tools/check_split_load.py --load proof`, and prints one table row. Every
 remote step is bounded by a timeout and teardown stops only the processes
 the run started.
 
-A result row is ten fields separated by `|`: cell, server label, server
+A result row is eleven fields separated by `|`: cell, server label, server
 NIC speed in megabits, clients, duration, connected throughout, timeouts
-(the server's disconnect count), delivery verdict, minimum per-client
-kbps, verdict. A speed that cannot be read is `unknown`. A slower switch
-link is recorded when it is known.
+(the server's disconnect count), delivery verdict for each reliability mode,
+delivery verdict for each size class, minimum per-client kbps, verdict. The
+merger validates every direction, mode and size-class stream before those
+verdicts can pass; when the aggregate delivery check fails, individual
+categories are `unknown` rather than all being labeled failed. A speed or NIC
+model that cannot be read is `unknown`. A
+slower switch link is recorded when it is known.
 
 For an xdp cell, the inventory's server interface is a dedicated Linux bridge
 backed by X540 port 0, cabled to the LAN switch. It must not be the host's
@@ -52,11 +61,12 @@ uplink.
 
 ## Recorded cells
 
-| cell | server | speed | clients | duration | connected | timeouts | delivery | min kbps | verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gso | server-a | 2500 | 1000 | 120 | yes | 0 | pass | 277 | pass |
+| cell | server | speed | clients | duration | connected | timeouts | modes | sizes | min kbps | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gso | server-a | 2500 | 1000 | 120 | yes | 0 | 0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass | small:pass,fragmented:pass | 277 | pass |
 
 The bounded Linux gso cell above (1000 clients in four shards of 250 on
-two client machines, 120 s) ran through the script; its five logs, the
-allocation manifest and the start and end loads are kept with the run
-directory named in the session report. Further completed cells are appended to this table.
+two client machines, 120 s) ran through the script. Its retained record must
+name `server.log`, `shard0.log` through `shard3.log`, `allocation.json`, the
+host facts and start, runtime and end load samples, `merge.log`, and `row.txt`.
+Further completed cells are appended to this table.

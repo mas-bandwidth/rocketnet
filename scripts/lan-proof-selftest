@@ -13,9 +13,10 @@ say()
     fail=1
 }
 
-parsed=$("$proof" --parse-row 'gso|server-a|1000|1000|120|yes|0|pass|800|pass') || say "parser exited $?"
+parsed=$("$proof" --parse-row 'gso|server-a|1000|1000|120|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|800|pass') || say "parser exited $?"
 echo "$parsed" | grep -q 'cell=gso' || say "parser missed the cell"
-echo "$parsed" | grep -q 'verdict=pass' || say "parser missed the verdict"
+echo "$parsed" | grep -q 'modes=0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass' || say "parser missed mode verdicts"
+echo "$parsed" | grep -q 'sizes=small:pass,fragmented:pass' || say "parser missed size verdicts"
 echo "$parsed" | grep -q 'min_kbps=800' || say "parser missed min kbps"
 "$proof" --parse-row 'short|row' >/dev/null 2>&1 && say "a short row was accepted"
 
@@ -76,7 +77,7 @@ cat > "$tmp/merge.log" <<'EOF'
 split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 timing_verdict=FAIL
 EOF
 row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server.log" "$tmp/merge.log") || say "cell-row exited $?"
-[ "$row" = 'gso|server-a|1000|1000|120|yes|0|pass|277|pass' ] || say "cell-row printed '$row'"
+[ "$row" = 'gso|server-a|1000|1000|120|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|277|pass' ] || say "cell-row printed '$row'"
 
 if [ "$fail" -ne 0 ]; then
     echo "lan-proof-selftest: failed" >&2

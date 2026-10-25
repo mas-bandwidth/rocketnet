@@ -35,16 +35,16 @@ refuse()
 lan_proof_parse_row()
 {
     local row="$1"
-    local cell server speed clients duration connected timeouts delivery kbps verdict
-    IFS='|' read -r cell server speed clients duration connected timeouts delivery kbps verdict <<EOF
+    local cell server speed clients duration connected timeouts modes sizes kbps verdict
+    IFS='|' read -r cell server speed clients duration connected timeouts modes sizes kbps verdict <<EOF
 $row
 EOF
     [ -n "$cell" ] && [ -n "$server" ] && [ -n "$speed" ] && [ -n "$clients" ] &&
         [ -n "$duration" ] && [ -n "$connected" ] && [ -n "$timeouts" ] &&
-        [ -n "$delivery" ] && [ -n "$kbps" ] && [ -n "$verdict" ] ||
-        refuse "row needs 10 |-separated fields"
-    printf 'cell=%s server=%s nic_speed=%s clients=%s duration=%s connected=%s timeouts=%s delivery=%s min_kbps=%s verdict=%s\n' \
-        "$cell" "$server" "$speed" "$clients" "$duration" "$connected" "$timeouts" "$delivery" "$kbps" "$verdict"
+        [ -n "$modes" ] && [ -n "$sizes" ] && [ -n "$kbps" ] && [ -n "$verdict" ] ||
+        refuse "row needs 11 |-separated fields"
+    printf 'cell=%s server=%s nic_speed=%s clients=%s duration=%s connected=%s timeouts=%s modes=%s sizes=%s min_kbps=%s verdict=%s\n' \
+        "$cell" "$server" "$speed" "$clients" "$duration" "$connected" "$timeouts" "$modes" "$sizes" "$kbps" "$verdict"
 }
 
 if [ "${1:-}" = "--parse-row" ]; then
@@ -65,8 +65,10 @@ if [ "${1:-}" = "--cell-row" ]; then
     up=$( printf '%s\n' "$proof_line" | sed -n 's/.* min_client_up_kbps=\([0-9.]*\).*/\1/p' )
     down=$( printf '%s\n' "$proof_line" | sed -n 's/.* min_client_down_kbps=\([0-9.]*\).*/\1/p' )
     delivery=$( printf '%s\n' "$cell_line" | sed -n 's/.* verdict=\([A-Z]*\).*/\1/p' )
-    [ -n "$disconnects" ] && [ -n "$up" ] && [ -n "$down" ] && [ -n "$delivery" ] ||
+    streams=$( printf '%s\n' "$cell_line" | sed -n 's/.* streams=\([0-9]*\).*/\1/p' )
+    [ -n "$disconnects" ] && [ -n "$up" ] && [ -n "$down" ] && [ -n "$delivery" ] && [ -n "$streams" ] ||
         refuse "cell-row: a proof field is missing"
+    [ "$streams" -eq $(( $5 * 26 )) ] || refuse "cell-row: merger did not validate every mode and size-class stream"
     min_kbps=$( awk -v a="$up" -v b="$down" 'BEGIN { m = (a < b) ? a : b; printf "%d", m }' )
     connected=no
     [ "$disconnects" -eq 0 ] && connected=yes
@@ -74,8 +76,12 @@ if [ "${1:-}" = "--cell-row" ]; then
     [ "$delivery" = "PASS" ] && delivery_row=pass
     verdict=fail
     [ "$delivery_row" = "pass" ] && [ "$connected" = "yes" ] && verdict=pass
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "$2" "$3" "$4" "$5" "$6" "$connected" "$disconnects" "$delivery_row" "$min_kbps" "$verdict"
+    category_row=unknown
+    [ "$delivery_row" = "pass" ] && category_row=pass
+    mode_row="0:$category_row,1:$category_row,2:$category_row,3:$category_row,4:$category_row,5:$category_row,6:$category_row,7:$category_row"
+    size_row="small:$category_row,fragmented:$category_row"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$2" "$3" "$4" "$5" "$6" "$connected" "$disconnects" "$mode_row" "$size_row" "$min_kbps" "$verdict"
     exit 0
 fi
 
@@ -174,7 +180,7 @@ for label in $client_labels; do
 done
 echo "step collect logs and write the allocation manifest"
 echo "step tools/check_split_load.py --load proof"
-echo "table cell server-label nic-speed clients duration connected timeouts delivery min-kbps verdict"
+echo "table cell server-label nic-speed clients duration connected timeouts mode-delivery size-delivery min-kbps verdict"
 
 if [ "$dry" -eq 1 ]; then
     echo "dry-run: no host contacted"
@@ -214,7 +220,7 @@ remote_run="~/lan-proof-live/runs/$run_id"
 
 ssh_run()
 {
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"
+    timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"
 }
 
 fail()
@@ -243,14 +249,14 @@ trap 'teardown' EXIT INT TERM HUP
 # copy the remote script to every host, then build the same head everywhere
 for host in $server_ssh $client_sshs; do
     ssh_run "$host" mkdir -p lan-proof-live || fail "cannot prepare $host"
-    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:lan-proof-live/lan-proof-remote" ||
+    timeout 60 scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:lan-proof-live/lan-proof-remote" ||
         fail "cannot copy the remote script to $host"
     ssh_run "$host" chmod +x lan-proof-live/lan-proof-remote || fail "cannot mark the remote script on $host"
 done
 
 build_one()
 {
-    ssh_run "$1" "$remote_path" build "$commit"
+    timeout 900 ssh -o BatchMode=yes -o ConnectTimeout=10 "$1" "$remote_path" build "$commit"
 }
 build_one "$server_ssh" > "$run_dir/server.build" 2>&1 &
 server_build_pid=$!
@@ -288,6 +294,32 @@ record_host()
     awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l * 2 >= n) ? 0 : 1 }' &&
         fail "a host is hot: load $load1 on $nproc cores is at or above half; discarding this run"
 }
+sample_loads()
+{
+    local phase=$1 i=0 host line load1 nproc
+    for host in $server_ssh $client_sshs; do
+        line=$( ssh_run "$host" "$remote_path" load ) || fail "cannot record $phase load"
+        printf '%s\n' "$line" > "$run_dir/load-$phase-$i"
+        load1=$( printf '%s\n' "$line" | sed -n 's/.*load1=\([0-9.]*\).*/\1/p' )
+        nproc=$( printf '%s\n' "$line" | sed -n 's/.*nproc=\([0-9]*\).*/\1/p' )
+        [ -n "$load1" ] && [ -n "$nproc" ] || fail "$phase load sample named no load or core count"
+        case "$phase:$i" in
+            start:*)
+                awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l * 2 >= n) ? 0 : 1 }' &&
+                    fail "$phase load $load1 is at or above half of $nproc cores; discarding this run"
+                ;;
+            runtime-*:0)
+                awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l > n) ? 0 : 1 }' &&
+                    fail "$phase server load $load1 is above $nproc cores; discarding this run"
+                ;;
+            end:[1-9]*)
+                awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l > n) ? 0 : 1 }' &&
+                    fail "$phase client load $load1 is above $nproc cores; discarding this run"
+                ;;
+        esac
+        i=$(( i + 1 ))
+    done
+}
 record_host "$server_ssh" "$server_iface" "$run_dir/server.host"
 i=0
 for host in $client_sshs; do
@@ -296,6 +328,7 @@ for host in $client_sshs; do
     record_host "$host" "$iface" "$run_dir/client$i.host"
     i=$(( i + 1 ))
 done
+sample_loads start
 if [ "$cell" = "xdp" ]; then
     ssh_run "$server_ssh" "$remote_path" check-xdp-bridge "$server_iface" > "$run_dir/xdp.bridge" 2>&1 ||
         fail "the XDP server interface is not a dedicated non-uplink bridge; see $run_dir/xdp.bridge"
@@ -358,6 +391,11 @@ while [ "$s" -lt "$shard_count" ]; do
     idx=$(( s % client_count ))
     set -- $client_sshs
     eval "host=\${$(( idx + 1 ))}"
+    host_shards=$( printf '%s\n' $shard_hosts | grep -Fxc "$host" || true )
+    nproc=$( sed -n 's/.* nproc=\([0-9]*\).*/\1/p' "$run_dir/client$idx.host" )
+    [ -n "$nproc" ] || fail "client$idx host facts named no core count"
+    [ $(( (host_shards + 1) * 2 )) -le "$nproc" ] ||
+        fail "client$idx would run more shard processes than half its $nproc cores"
     first=$(( s * shard_size ))
     count=$shard_size
     [ $(( first + count )) -gt "$clients_total" ] && count=$(( clients_total - first ))
@@ -386,6 +424,7 @@ while [ "$elapsed" -lt "$deadline" ]; do
     [ "$running" -eq 0 ] && break
     sleep 5
     elapsed=$(( elapsed + 5 ))
+    [ $(( elapsed % 60 )) -ne 0 ] || sample_loads "runtime-$elapsed"
 done
 [ "$elapsed" -lt "$deadline" ] || fail "a started process outlived its bound"
 
@@ -399,13 +438,8 @@ for host in $shard_hosts; do
     s=$(( s + 1 ))
 done
 
-# end loads, recorded beside the start loads
-ssh_run "$server_ssh" "$remote_path" load > "$run_dir/server.load-end" 2>/dev/null || true
-i=0
-for host in $client_sshs; do
-    ssh_run "$host" "$remote_path" load > "$run_dir/client$i.load-end" 2>/dev/null || true
-    i=$(( i + 1 ))
-done
+# Record end loads; client samples must not exceed their logical-core counts.
+sample_loads end
 
 teardown
 trap - EXIT INT TERM HUP

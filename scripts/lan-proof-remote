@@ -41,33 +41,46 @@ usage()
 
 cmd_build()
 {
-    local commit=$1 dir="$BASE/$1" head
+    local commit=$1 dir="$BASE/$1" head timeout_cmd
     case "$commit" in
         ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
     esac
-    mkdir -p "$BASE" || fail "build: cannot create $BASE"
-    if [ ! -d "$dir/.git" ]; then
-        git clone --quiet "$REPO_URL" "$dir" || fail "build: cannot clone"
-    fi
-    git -C "$dir" fetch --quiet origin || fail "build: cannot fetch"
-    git -C "$dir" checkout --quiet "$commit" || fail "build: commit not in the clone"
+    timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true )
+    [ -n "$timeout_cmd" ] && "$timeout_cmd" --version 2>/dev/null | grep -q 'GNU coreutils' ||
+        fail "build: GNU timeout or gtimeout is required for the owned build bound"
+    "$timeout_cmd" --kill-after=15 870 bash -c '
+        set -e
+        base=$1 commit=$2 repo_url=$3 dir="$1/$2"
+        mkdir -p "$base"
+        [ -d "$dir/.git" ] || git clone --quiet "$repo_url" "$dir"
+        git -C "$dir" fetch --quiet origin
+        git -C "$dir" checkout --quiet "$commit"
+        [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ]
+        build="cd \"$dir\" && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && nice make -j4 --no-print-directory load_split"
+        case "$( uname -s )" in
+            Linux|Darwin) "$HOME/bin/benchslot" -- bash -c "$build" ;;
+            MINGW*|MSYS*|CYGWIN*) winlock --slots 3 bash -c "$build" ;;
+            *) exit 2 ;;
+        esac
+    ' bash "$BASE" "$commit" "$REPO_URL" || fail "build: checkout, build, or 870-second bound failed"
     head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
     [ "$head" = "$commit" ] || fail "build: HEAD is $head, not $commit"
-    ( cd "$dir" && mkdir -p build && cd build && \
-      cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && \
-      nice make -j4 --no-print-directory load_split ) || fail "build: cmake or make failed"
     echo "$head"
 }
 
 cmd_hostinfo()
 {
-    local iface=$1 os kernel speed duplex driver model address load1 nproc
+    local iface=$1 os kernel speed duplex driver bus model address load1 nproc
     os=$( uname -s )
     kernel=$( uname -r )
     speed=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ { print $2 }' )
     duplex=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ { print $2 }' )
     driver=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^driver:/ { print $2 }' )
-    model=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2 }' )
+    bus=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2; exit }' )
+    model=""
+    if [ -n "$bus" ] && command -v lspci >/dev/null 2>&1; then
+        model=$( lspci -s "$bus" 2>/dev/null | sed -n '1s/^[^ ]* [^:]*: //p' )
+    fi
     address=$( ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }' )
     load1=$( awk '{ print $1 }' /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }' )
     nproc=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
