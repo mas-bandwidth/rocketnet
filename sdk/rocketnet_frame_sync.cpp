@@ -438,6 +438,10 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
         rocketnet_free( context, frame_sync );
         return NULL;
     }
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    frame_sync->lifecycle_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
+        (uintptr_t) frame_sync->waitable_timer, "frame sync waitable timer" );
+#endif
 #else
     if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
     {
@@ -468,7 +472,14 @@ void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) frame_sync->waitable_timer,
+                                                  frame_sync->lifecycle_timer_generation ) ) return;
+    const BOOL closed = CloseHandle( frame_sync->waitable_timer );
+    rocketnet_lifecycle_track_close_end( frame_sync->lifecycle_timer_generation, closed != 0 );
+#else
     CloseHandle( frame_sync->waitable_timer );
+#endif
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_free( frame_sync->context, frame_sync );

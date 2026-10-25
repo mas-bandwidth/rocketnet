@@ -12,6 +12,48 @@
 #include <winsock2.h>
 #endif
 
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(__cplusplus)
+// Private static-development-library fixture interface. Never compiled into a
+// production or shared library. RIO IDs are resources, not Windows HANDLEs.
+enum rocketnet_lifecycle_resource_kind_t
+{
+    ROCKETNET_LIFECYCLE_THREAD = 0,
+    ROCKETNET_LIFECYCLE_EVENT,
+    ROCKETNET_LIFECYCLE_SOCKET,
+    ROCKETNET_LIFECYCLE_IOCP,
+    ROCKETNET_LIFECYCLE_TIMER,
+    ROCKETNET_LIFECYCLE_RIO_BUFFER,
+    ROCKETNET_LIFECYCLE_RIO_CQ,
+    ROCKETNET_LIFECYCLE_RIO_RQ,
+    ROCKETNET_LIFECYCLE_RESOURCE_KINDS
+};
+
+#define ROCKETNET_LIFECYCLE_MAX_LIVE 512
+struct rocketnet_lifecycle_resource_t
+{
+    uint64_t generation;
+    uintptr_t raw;
+    const char * site;
+    unsigned kind;
+};
+struct rocketnet_lifecycle_resources_t
+{
+    uint64_t created[ROCKETNET_LIFECYCLE_RESOURCE_KINDS];
+    uint64_t closed[ROCKETNET_LIFECYCLE_RESOURCE_KINDS];
+    uint64_t latest_generation;
+    unsigned live_count;
+    unsigned errors;
+    rocketnet_lifecycle_resource_t live[ROCKETNET_LIFECYCLE_MAX_LIVE];
+};
+
+void rocketnet_lifecycle_track_begin();
+void rocketnet_lifecycle_track_end();
+uint64_t rocketnet_lifecycle_track_open( unsigned kind, uintptr_t raw, const char * site );
+bool rocketnet_lifecycle_track_close_begin( unsigned kind, uintptr_t raw, uint64_t generation );
+void rocketnet_lifecycle_track_close_end( uint64_t generation, bool success );
+bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result );
+#endif
+
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
@@ -1232,12 +1274,18 @@ bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, 
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
         uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        uint64_t lifecycle_generation;
+#endif
     };
 
     struct rocketnet_platform_thread_t
     {
         void * context;
         HANDLE handle;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        uint64_t lifecycle_generation;
+#endif
     };
 
     struct rocketnet_platform_mutex_t
