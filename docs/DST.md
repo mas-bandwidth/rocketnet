@@ -52,8 +52,8 @@ so a seed that fails on one OS replays on the others. The reference is
     ./bin/dst --seeds 1-50
     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
 
-measured equal, Release, at f80a15cb (main 1a2f2c43 plus the nightly) on all
-three OSes:
+measured equal, Release, at executable source 968673ea (current main c456b6fc
+merged into the nightly carry) on all three OSes:
 
     Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
     macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=510908e5051b7f68
@@ -76,10 +76,13 @@ then sweeps a longer range sized to about twenty minutes on that OS (Linux
 51-11000, macOS 51-14000, Windows 51-6000). A FAIL line or a trace
 mismatch fails the leg; the log holds the replay line.
 
-The ranges come from Release measurements on each OS, each run once at
-f80a15cb: Linux 51-11000 PASS in 1384 s; macOS 51-14000 PASS in 1218 s;
-Windows 51-6000 PASS in 1348 s. Each leg's `timeout-minutes: 50` is about
+The Linux and macOS ranges were refreshed in Release at executable source
+968673ea: Linux 51-11000 PASS in 1442.42 s and macOS 51-14000 PASS in
+1153.10 s. Windows 51-6000 remains unverified at this source because the
+exclusive host was concurrently busy; its configured range remains sized from
+the earlier f80a15cb PASS in 1348 s. Each leg's `timeout-minutes: 50` is about
 twice the sweep plus the build.
+
 ## Fault kinds
 
 `--faults` takes `all`, `none` or a comma list of `loss`, `dup` and
