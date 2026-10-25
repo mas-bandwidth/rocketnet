@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
+#include <chrono>
 
 static void rocketnet_platform_primitives_check_handler( const char * condition, const char * function, const char * file, int line )
 {
@@ -73,6 +74,94 @@ void rocketnet_test_frame_sync_wait()
     // The suite watchdog catches a hang; scheduler latency is not a failure.
     rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
     rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
+
+    rocketnet_frame_sync_destroy( frame_sync );
+}
+
+void rocketnet_test_frame_sync_dropped_stats()
+{
+    // The dropped-frame observability case: the real public path
+    // (create/wait/stats/destroy) must make missed server frame intervals
+    // visible in dropped_frames. A baseline normal cadence stays clean
+    // within its documented bound, a bounded expensive frame workload
+    // spanning several configured periods must raise the public count
+    // inside bounds derived from independently measured elapsed time, and
+    // recovery at normal cadence must leave the total cumulative. No
+    // exact OS schedule is asserted anywhere: the workload is
+    // predicate-driven (busy work until the target elapsed time is
+    // measured on the steady clock), never a fixed sleep treated as proof.
+
+    const double frame_rate = 250.0;
+    const uint64_t period_ns = (uint64_t) ( 1000000000.0 / frame_rate );   // 4ms
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, frame_rate );
+    rocketnet_check( frame_sync );
+
+    // Phase A: baseline normal cadence, 12 frames (~48ms of wall time).
+
+    for ( int i = 0; i < 12; i++ )
+        rocketnet_frame_sync_wait( frame_sync );
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 12 );
+    const uint64_t baseline_drops = stats.dropped_frames;
+    // documented bound: a clean cadence on a noisy host may still lose a
+    // couple of frames to scheduler latency; more than that is a defect
+    rocketnet_check( baseline_drops <= 2 );
+
+    // Phase B: bounded expensive frame work spanning several periods.
+    // Busy work until at least 10 periods have elapsed, measured
+    // independently with the steady clock; the work itself is the frame
+    // load, and its elapsed time is the evidence the bounds derive from.
+
+    const uint64_t target_work_ns = 10 * period_ns;
+    volatile uint64_t sink = 0;
+    const auto work_start = std::chrono::steady_clock::now();
+    for ( ;; )
+    {
+        sink += 1;
+        if ( std::chrono::duration<double, std::nano>(
+                 std::chrono::steady_clock::now() - work_start ).count() >= (double) target_work_ns )
+            break;
+    }
+    const uint64_t work_elapsed_ns = (uint64_t) std::chrono::duration<double, std::nano>(
+        std::chrono::steady_clock::now() - work_start ).count();
+    rocketnet_check( work_elapsed_ns >= target_work_ns );
+
+    // the wait that observes the miss, as a real frame loop would call it
+    // after expensive work
+    rocketnet_frame_sync_wait( frame_sync );
+
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    const uint64_t after_work_drops = stats.dropped_frames;
+    const uint64_t work_drops = after_work_drops - baseline_drops;
+
+    // Bounds from the measured elapsed time and the configured period,
+    // tolerant of scheduler noise on both sides. The work spans at least
+    // 10 periods, so the accounting must be multiple intervals high.
+    const double periods_of_work = (double) work_elapsed_ns / (double) period_ns;
+    rocketnet_check( work_drops >= 3 );                                     // nonzero, multiple missed intervals
+    rocketnet_check( (double) work_drops > periods_of_work - 3.0 );         // not undercounting
+    rocketnet_check( (double) work_drops < periods_of_work + 3.0 );         // not overcounting
+
+    // Phase C: recovery at normal cadence. The total stays cumulative
+    // (a reset would clear it), the frame count advances by exactly the
+    // waits run, and lateness stays coherent.
+    for ( int i = 0; i < 12; i++ )
+        rocketnet_frame_sync_wait( frame_sync );
+
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 25 );                                   // 12 + 1 + 12 waits
+    rocketnet_check( stats.dropped_frames >= after_work_drops );             // cumulative, never reset
+    rocketnet_check( stats.dropped_frames <= after_work_drops + 2 );         // recovery adds at most noise
+    rocketnet_check( stats.wakeup_error_seconds >= 0.0 );                   // lateness coherent
+
+    printf( "    frame sync dropped stats: period_ns %llu, work_elapsed_ns %llu, baseline %llu, work_drops %llu, final %llu\n",
+            (unsigned long long) period_ns, (unsigned long long) work_elapsed_ns,
+            (unsigned long long) baseline_drops, (unsigned long long) work_drops,
+            (unsigned long long) stats.dropped_frames );
+    fflush( stdout );
+    (void) sink;
 
     rocketnet_frame_sync_destroy( frame_sync );
 }

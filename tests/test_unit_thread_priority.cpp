@@ -390,6 +390,89 @@ static void test_frame_sync_advance_counts_drops_past_int_max()
 REGISTER_UNIT_TEST( test_frame_sync_time_constraint_refuses_period_over_uint32 );
 REGISTER_UNIT_TEST( test_frame_sync_advance_counts_drops_past_int_max );
 
+// The accumulation oracle for the dropped-frame accounting. rocketnet_frame_sync_wait
+// sums each advance()'s drops into dropped_frames, so the unit side pins the
+// arithmetic over a whole scripted frame loop: for a sequence of wakes, the
+// accumulated total must equal the number of grid intervals the timeline
+// skipped, computed independently by grid arithmetic that never calls
+// advance(). This is the oracle the functional dropped-stats case observes
+// through the real path: if the accumulation contract breaks (drops lost,
+// double-counted or reset between frames), the two disagree here without a
+// clock. Pure: no thread, no clock, no sleep.
+
+static void test_frame_sync_advance_accumulation_oracle()
+{
+    // a 250hz loop: period 4ms, deadline grid base + k*period, k = 0 at the
+    // anchor (what the first wait sets)
+    const uint64_t period = 4000000;
+    const uint64_t base = 1000000000;
+
+    // a scripted timeline of wake times, tenths of a period past base. the
+    // incoming deadline is grid 0:
+    //   10  -> exactly on grid 1 (the deadline itself): no lateness
+    //   15  -> half a period late: no drop
+    //   29  -> 0.9 of a period late: no drop
+    //   125 -> a 9.5-period stall past grid 3
+    //   134 -> 0.4 late on the resynchronized grid: no drop
+    //   162 -> a 2.2-period stall past grid 14
+    //   168 -> early, before the new grid 17 deadline
+    //   180 -> exactly on the grid 18 deadline
+    //   195 -> 0.5 late: no drop
+    // hand-traced: the stalls drop 9 then 2 grid intervals, total 11, and
+    // the final deadline is grid 20.
+    const uint64_t tenths[9] = { 10, 15, 29, 125, 134, 162, 168, 180, 195 };
+    const int wakes = 9;
+
+    // the loop as wait() runs it: advance the deadline, accumulate the drops
+    uint64_t deadline = base;          // grid index 0
+    uint64_t total_drops = 0;          // what dropped_frames accumulates
+    uint64_t last_total = 0;
+    uint64_t frames = 0;
+    for ( int i = 0; i < wakes; i++ )
+    {
+        const uint64_t woke = base + tenths[i] * period / 10;
+        uint64_t error = 0;
+        const uint64_t drops = rocketnet_frame_sync_advance( &deadline, period, woke, &error );
+        total_drops += drops;
+        frames++;
+        // cumulative and monotone: the total never goes down, and it only
+        // ever grows by the drops this wait reports (no reset between frames)
+        rocketnet_unit_check( total_drops >= last_total );
+        rocketnet_unit_check( total_drops == last_total + drops );
+        last_total = total_drops;
+    }
+    rocketnet_unit_check( frames == (uint64_t) wakes );
+
+    // the independent oracle, grid arithmetic that never calls advance():
+    // each wait moves the deadline to grid index
+    //   k + 1                    when the wake is not past that boundary
+    //   floor((woke - base)/p)+1  when it is (the first grid point past it)
+    // and the wait's drops are the grid points skipped in between.
+    uint64_t k = 0;
+    uint64_t oracle_drops = 0;
+    for ( int i = 0; i < wakes; i++ )
+    {
+        const uint64_t woke = base + tenths[i] * period / 10;
+        uint64_t next_k;
+        if ( woke > base + ( k + 1 ) * period )
+            next_k = ( woke - base ) / period + 1;
+        else
+            next_k = k + 1;
+        oracle_drops += next_k - k - 1;
+        k = next_k;
+    }
+
+    rocketnet_unit_check( total_drops == oracle_drops );
+    // pin the concrete number too, so a change in either the implementation
+    // or this oracle is noticed, not silently agreed
+    rocketnet_unit_check( oracle_drops == 11 );
+    // and the final deadline is the grid point the oracle walked to
+    rocketnet_unit_check( deadline == base + k * period );
+    rocketnet_unit_check( k == 20 );
+}
+
+REGISTER_UNIT_TEST( test_frame_sync_advance_accumulation_oracle );
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 REGISTER_UNIT_TEST( test_thread_priority_windows_timer_period_at_init_and_term );
 REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_once );
