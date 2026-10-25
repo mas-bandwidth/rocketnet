@@ -331,9 +331,9 @@ static bool replay_fake_sink_forget( void * context, const struct rocketnet_addr
     return rocketnet_xdp_replay_marks_forget( (struct rocketnet_xdp_replay_marks_t *) context, address );
 }
 
-static void replay_fake_sink_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
+static bool replay_fake_sink_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
 {
-    rocketnet_xdp_replay_marks_mark( (struct rocketnet_xdp_replay_marks_t *) context, address, high_water );
+    return rocketnet_xdp_replay_marks_mark( (struct rocketnet_xdp_replay_marks_t *) context, address, high_water );
 }
 
 static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark()
@@ -554,12 +554,13 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
 
 static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
 {
-    // tla/RNXdpReplay.tla MarkOwedUntilApplied and
-    // NewSessionDroppedOnlyWhileMarkOwed, walk to fake kernel map: a new
-    // session takes the old session's slot before any walk, the kernel
-    // refuses its zero mark once, and the next commit, with nothing new from
-    // the walk (its cache has already advanced), retries the kept mark and
-    // admits the new session's sequence 1.
+    // tla/RNXdpReplay.tla MarkOwedUntilApplied, HoldGreetingUntilMarked and
+    // NewSessionNeverDroppedByOldMark, walk to fake kernel map: a new session
+    // takes the old session's slot before any walk and the kernel refuses its
+    // zero mark once. Its greeting is held while the old entry stands, so it
+    // sends nothing; the next commit, with nothing new from the walk (its
+    // cache has already advanced), retries the kept mark, the greeting is
+    // released, and the new session's sequence 1, its first, is admitted.
 
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
     struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 2 );
@@ -610,14 +611,16 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     kernel.update_refusals = 1;
     replay_fake_commit( &marks, &kernel );
     rocketnet_unit_check( marks.mark_count == 1 );
-    rocketnet_unit_check( !replay_fake_kernel_admits( &kernel, &key_a, 1 ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_holding_greetings( &marks ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_holds_greeting( &marks, &a ) );
 
     // the next update: the walk takes nothing new, the kept mark is retried
-    // and lands, and sequence 1 is admitted
+    // and lands, the greeting leaves, and the client's sequence 1 is admitted
 
     rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
     replay_fake_commit( &marks, &kernel );
     rocketnet_unit_check( marks.mark_count == 0 );
+    rocketnet_unit_check( !rocketnet_xdp_replay_marks_holds_greeting( &marks, &a ) );
     rocketnet_unit_check( replay_fake_kernel_admits( &kernel, &key_a, 1 ) );
 
     // a newer mark of a key replaces its kept mark in place, and a queued

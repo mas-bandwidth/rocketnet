@@ -207,6 +207,35 @@ static inline void rocketnet_xdp_replay_marks_forgets( const struct rocketnet_xd
     *count = marks->forget_count;
 }
 
+// tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: a kept mark of 0 is a
+// new session's first mark that the kernel refused, so the old session's
+// entry may still stand for its key, and the session must not be greeted.
+// True when any kept mark is 0 (the kept prefix is empty in steady state).
+
+static inline bool rocketnet_xdp_replay_marks_holding_greetings( const struct rocketnet_xdp_replay_marks_t * marks )
+{
+    for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
+    {
+        if ( marks->mark_values[i].high_water == 0 )
+            return true;
+    }
+    return false;
+}
+
+// True when a kept mark of 0 names the address: its greeting is held.
+
+static inline bool rocketnet_xdp_replay_marks_holds_greeting( const struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
+{
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( address, &key );
+    for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
+    {
+        if ( marks->mark_values[i].high_water == 0 && memcmp( &marks->mark_keys[i], &key, sizeof(key) ) == 0 )
+            return true;
+    }
+    return false;
+}
+
 // The pending marks: any kept from the last commit first, then in insertion
 // order.
 

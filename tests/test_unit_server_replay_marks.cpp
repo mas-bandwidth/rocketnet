@@ -51,6 +51,7 @@ struct server_replay_marks_recording_t
 {
     int count;
     int forget_refusals;
+    int mark_refusals;
     struct server_replay_marks_call_t calls[ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS];
 };
 
@@ -111,7 +112,7 @@ static bool server_replay_marks_record_forget( void * context, const struct rock
     return false;
 }
 
-static void server_replay_marks_record_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
+static bool server_replay_marks_record_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
 {
     struct server_replay_marks_recording_t * recording = (struct server_replay_marks_recording_t *) context;
     rocketnet_unit_check( recording->count < ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS );
@@ -119,6 +120,10 @@ static void server_replay_marks_record_mark( void * context, const struct rocket
     call->kind = SERVER_REPLAY_MARKS_MARK;
     call->address = *address;
     call->high_water = high_water;
+    if ( recording->mark_refusals == 0 )
+        return true;
+    recording->mark_refusals--;
+    return false;
 }
 
 static void server_replay_marks_walk( struct server_replay_marks_fixture_t * fixture,
@@ -403,7 +408,87 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+// tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the sink
+// cannot queue leaves the slot's cache where it was and the slot owes it, so
+// the next walk asks again with the same value: a reconnect's zero mark, a
+// first-seen zero mark and an advanced mark alike. Once queued, nothing more.
+
+static void test_server_replay_marks_refused_mark_is_owed()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+
+    // first seen at zero, refused, owed, then queued
+    const struct server_replay_marks_client_t client = server_replay_marks_add_client( &fixture, &a, 100, 0 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof(recording) );
+    recording.mark_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
+
+    // an advance refused twice is asked for each walk until queued
+    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 9;
+    memset( &recording, 0, sizeof(recording) );
+    recording.mark_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
+
+    memset( &recording, 0, sizeof(recording) );
+    recording.mark_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
+
+    // a reconnect into the same slot before any walk: its zero mark (a fall
+    // below the slot's mark) refused, then asked again and queued
+    rocketnet_client_slots_release( fixture.slots, client.slot );
+    rocketnet_encryption_map_remove( fixture.map, client.mapping );
+    const struct server_replay_marks_client_t again = server_replay_marks_add_client( &fixture, &a, 200, 0 );
+    rocketnet_unit_check( again.slot == client.slot );
+
+    memset( &recording, 0, sizeof(recording) );
+    recording.mark_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
+
+    memset( &recording, 0, sizeof(recording) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
 REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
+REGISTER_UNIT_TEST( test_server_replay_marks_refused_mark_is_owed );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_keeps_the_slot );

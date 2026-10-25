@@ -26,13 +26,16 @@
 // before any mark. A forget the sink cannot queue leaves the seen and marked records
 // in place, so the next walk retries the old address before a new mapping may
 // replace it. Once queued, the transport owns the forget until the kernel
-// accepts the delete (tla/RNXdpReplay.tla, ForgetOwedUntilApplied).
+// accepts the delete (tla/RNXdpReplay.tla, ForgetOwedUntilApplied). A mark
+// the sink cannot queue leaves the slot's mark record where it was and the
+// slot owes the mark, so the next walk takes it again; once queued, the
+// transport owns the mark until the kernel applies it (MarkOwedUntilApplied).
 
 struct rocketnet_server_replay_sink_t
 {
     void * context;
     bool ( *forget )( void *, const struct rocketnet_address_t * );
-    void ( *mark )( void *, const struct rocketnet_address_t *, uint32_t high_water );
+    bool ( *mark )( void *, const struct rocketnet_address_t *, uint32_t high_water );
 };
 
 struct rocketnet_server_replay_marks_t;

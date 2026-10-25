@@ -1085,9 +1085,9 @@ static bool xdp_replay_forget( void * transport, const rocketnet_address_t * add
 {
     return rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) transport, address );
 }
-static void xdp_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
+static bool xdp_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
 {
-    rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) transport, address, high_water );
+    return rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) transport, address, high_water );
 }
 static void xdp_replay_commit( void * transport )
 {
