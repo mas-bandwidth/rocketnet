@@ -61,12 +61,11 @@ uplink.
 
 ## Recorded cells
 
-| cell | server | speed | clients | duration | connected | timeouts | modes | sizes | min kbps | verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gso | server-a | 2500 | 1000 | 120 | yes | 0 | 0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass | small:pass,fragmented:pass | 277 | pass |
-
-The bounded Linux gso cell above (1000 clients in four shards of 250 on
-two client machines, 120 s) ran through the script. Its retained record must
-name `server.log`, `shard0.log` through `shard3.log`, `allocation.json`, the
-host facts and start, runtime and end load samples, `merge.log`, and `row.txt`.
-Further completed cells are appended to this table.
+The results table of every native cell (gso, io_uring and xdp on Linux; iocp
+and rio on Windows; msgx on macOS) is recorded in
+[runs/lan-1000-proof.md](runs/lan-1000-proof.md), one row per completed cell,
+each with its manifest, log digests and load samples. A run is kept only
+when every host's foreign load was under half its cores at the start, the
+server host stayed at or under its core count while the cell ran, and every
+client host stayed at or under its core count at the end; otherwise it is
+discarded and the reason recorded there.
