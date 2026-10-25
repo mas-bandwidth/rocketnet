@@ -23,10 +23,11 @@ transport (ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT):
                           msgx refusal and grants its degraded rung (a pinned
                           msgx under the forced pump is refused loudly)
 The impaired cells run first, then the clean ones.
-An impaired cell turns the link simulator on at both ends through the env
-overlay (ROCKETNET_SERVER_SIMULATED_* and ROCKETNET_CLIENT_SIMULATED_*): loss
-5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent. A clean cell
-leaves it off. --cell picks cells by name (repeatable); the default is all six,
+An impaired cell turns the link simulator on at both ends
+(ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, which soak writes into the
+transport configs it creates from; its "soak link simulator:" lines show what
+each end was created with): loss 5 percent, latency 30 ms, jitter 20 ms,
+duplicate 2 percent. A clean cell leaves it off. --cell picks cells by name (repeatable); the default is all six,
 one at a time. --wait-quiet waits before each run until no other functional,
 load or soak suite runs on the machine (up to that many seconds). The watcher
 samples until soak prints its "soak finished:" line; leaks then scans the
@@ -77,10 +78,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resource_watch  # noqa: E402
 
 IMPAIRMENT = {
-    "SIMULATED_LOSS_PERCENT": "5",
-    "SIMULATED_LATENCY_MS": "30",
-    "SIMULATED_JITTER_MS": "20",
-    "SIMULATED_DUPLICATE_PERCENT": "2",
+    "PACKET_LOSS_PERCENT": "5",
+    "LATENCY_MS": "30",
+    "JITTER_MS": "20",
+    "DUPLICATE_PERCENT": "2",
 }
 
 # (cell label, server transport, client transport, ROCKETNET_PUMP). The
@@ -138,6 +139,10 @@ def cell_env(server, client, pump, impaired):
     for key in list(env):
         if key.startswith("ROCKETNET_SERVER_SIMULATED_") or key.startswith("ROCKETNET_CLIENT_SIMULATED_"):
             del env[key]
+        for end in ("SERVER", "CLIENT"):
+            if key in ["ROCKETNET_DEV_%s_%s" % (end, field) for field in IMPAIRMENT]:
+                del env[key]
+                break
     env.pop("ROCKETNET_PUMP", None)
     env["ROCKETNET_SERVER_TRANSPORT"] = server
     env["ROCKETNET_CLIENT_TRANSPORT"] = client
@@ -145,8 +150,8 @@ def cell_env(server, client, pump, impaired):
         env["ROCKETNET_PUMP"] = pump
     if impaired:
         for field, value in IMPAIRMENT.items():
-            env["ROCKETNET_SERVER_" + field] = value
-            env["ROCKETNET_CLIENT_" + field] = value
+            env["ROCKETNET_DEV_SERVER_" + field] = value
+            env["ROCKETNET_DEV_CLIENT_" + field] = value
     env["MallocStackLogging"] = "1"
     return env
 

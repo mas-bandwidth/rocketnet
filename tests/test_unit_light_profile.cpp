@@ -4,29 +4,59 @@
 */
 
 // The public light-client profile, pinned. A 1000-slot server and a client
-// size their create blocks within the figures USAGE.md records, and both
+// report lifecycle peaks within the figures USAGE.md records, and both
 // endpoints create and destroy on the profile without opening a socket.
 
 #include "test_unit_registry.h"
 #include "rocketnet.h"
 
 #include <stddef.h>
+#include <stdio.h>
 
 #define check rocketnet_unit_check
 
-// USAGE.md "Server memory footprint" and docs/LOAD.md record these exact
-// figures, measured with rocketnet_server_required_memory at max_clients
-// 1000 and rocketnet_client_required_memory under the profile. The bound
-// is that figure; the check is at most.
-//
-// The light client's create block is 3064000 bytes in a development build
-// (100 sequenced holds at 1440 bytes each) and 3063872 bytes in a
-// production build, whose connection state carries no development-only
-// fields; the 1000-slot server's is 956510400 and 956390400 bytes. One
-// constant serves both builds, so each bound is the development build's
-// exact figure.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 956510400 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 3064000 )
+// USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
+// required_memory is the lifecycle peak the caller's allocator sees (create,
+// connect or start, stop or disconnect, again, destroy) for the largest
+// transport the default ladder can grant, so it differs by platform and by
+// ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
+// bound is the figure this test read, Release, for
+// rocketnet_server_required_memory at max_clients 1000 and
+// rocketnet_client_required_memory under the profile: on Linux x86-64 with
+// io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
+// host whose ladder grants fewer transports reports less; the check is at
+// most.
+#if defined(_WIN32)
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523705813 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22968879 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517309449 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22183075 )
+#endif
+#elif defined(__APPLE__)
+// macOS adds, over the figures before them: per socket, the send failure
+// counts by call and errno (3 calls x 13 kinds x 8 bytes, plus the first
+// other errno: 320 bytes; the client opens 2 sockets, so 640); on the server,
+// the TX banks sized at 16 packets per client (3 banks x 15,000 more packets
+// x 1500 bytes at 1000 clients: 67,500,000), its socket's 320 bytes, and 231
+// bytes of the send handoff's per-path drop counts and allocation rounding.
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1591206436 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746605 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
+#endif
+#else
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3231507666ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22896245 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )
+#endif
+#endif
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
@@ -75,6 +105,8 @@ static void test_light_profile_server_1000_required_memory()
     config.max_clients = 1000;
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
+    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES )
+        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES );
     check( bytes <= LIGHT_SERVER_1000_MAX_BYTES );
 }
 
@@ -89,6 +121,8 @@ static void test_light_profile_client_required_memory()
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
+    if ( bytes != LIGHT_CLIENT_MAX_BYTES )
+        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES );
     check( bytes <= LIGHT_CLIENT_MAX_BYTES );
 }
 

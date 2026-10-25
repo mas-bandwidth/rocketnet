@@ -128,6 +128,33 @@ owned RX banks and publishes them to the caller, which copies their packets and
 performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
+Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
+configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+the three banks are one allocation made at create. A packet sent while all
+three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
+a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
+packet in `sendmsg_x`, so 45,000 packets a second keep it about 80% busy and a
+burst backs up for tens of milliseconds. With fixed banks of 1000 packets that
+backlog found every bank in flight thousands of times a minute
+(`SEND_FAILED` 9,240 in 60 s, all of them for want of a free bank, none a
+socket errno); banks sized to the client count hold it. A failed socket send
+is counted apart, by call and errno, and the first of each is logged once.
+
+`SEND_FAILED` is the sum of the socket's failures and the handoff's drops, and
+the handoff counts each drop by its path: `no-free-bank` (the producer bank is
+full and every other bank is in flight), `handoff-busy` (full, and the handoff
+lock was held), `stopping` and `invalid-packet`. The first drop on each path
+logs once; the transport logs every path's count, zeros included, beside the
+socket's send failures when it closes. On a 600 s cell at 1000 clients the
+worker's QoS class read default (0x15) and it ran on the same six cores
+throughout. It held 16.3 to 17.3 us per packet for most of the run, but in two
+episodes of about 30 s (from 210 s and from 411 s to 440 s into the run) (with the server host's load rising to 8.3) the cost rose
+to 26 to 29 us per packet. The worker then drains fewer packets a second than
+main produces, and no bank size absorbs a deficit that lasts that long: those
+episodes dropped 240,768 packets, all `no-free-bank`, no socket errno. This is
+an observation of a host loaded by other work, not a bank sizing fault: the
+banks are unchanged.
+
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
 (`rocketnet_msgx_transport` in `sdk/rocketnet_driver_builtin.cpp`), so the two
@@ -465,13 +492,30 @@ remaining transport combinations for `test_posix_destroy_under_traffic_100`.
 The ordinary suite keeps the msgx hard-killed-client cases and the msgx/msgx
 1000-client connection case.
 
-The suite runner enforces a memory bound for each case process
-(`tests/suite_runner.h`). Cases using the counting allocator are limited to
-their planned peak plus 64 MiB; other cases use the suite-wide 698 MiB bound
-or a case-specific `SUITE_CASE_RSS_BOUND`. Set
-`ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the bounds, and
-`ROCKETNET_TEST_REPORT=1` to print each case's peak and bound. These variables
-configure the test executable, not the library.
+The unit suite measures peak resident set and reports over-bound cases without
+making the OS measurement part of its verdict. The functional suite enforces
+the same bounds. Its `test_unit_case_memory` row runs the unit binary in
+enforcement mode, reusing every `SUITE_CASE_RSS_BOUND` declaration and the
+suite-wide fallback without copying their values.
+
+Cases using the counting allocator are limited to their planned peak plus 64
+MiB; other cases use the suite-wide 698 MiB bound or a case-specific
+`SUITE_CASE_RSS_BOUND`. Set `ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the
+bounds, and `ROCKETNET_TEST_REPORT=1` to print each case's peak and bound.
+These variables configure the test executable, not the library.
+
+A page is 16 KiB on Apple silicon and 4 KiB on x86_64 Linux, and a case whose
+library tables are touched sparsely holds one page resident per touch.
+`test_server_stats_current_every_update` builds a server of 1000 slots and
+1000 connected clients: the SDK allocates the same on both systems (about
+36 GiB, almost all never touched), yet the case peaks at 1149 MiB on macOS and
+567 MiB on Linux (1228 and 641 MiB in a 10000-client build), over the
+suite-wide 698 (1217) on macOS only. The case therefore declares its own
+`SUITE_CASE_RSS_BOUND` from what it builds, a byte allowance per connected
+pair plus a page count scaled by the measured page size
+(`no_worker_rss_bound_mb` in `tests/test_unit_server_stats_no_worker.cpp`):
+669 MiB on Linux and 1325 MiB on macOS at 1000 build slots. Every other case
+keeps the suite-wide bound.
 
 ## Verify a Mac
 
