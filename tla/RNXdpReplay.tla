@@ -66,14 +66,21 @@ ASSUME /\ Addresses # {}
 (*     design: W, ROCKETNET_XDP_REPLAY_WINDOW, the userspace window).      *)
 (*   KeepFailedForgets: a forget the kernel refused stays pending for the  *)
 (*     next commit (the design: TRUE).                                     *)
+(*   SupersedeStaleForgets: a refused forget whose address a mark applied  *)
+(*     in the same commit is dropped, not kept: the mark was taken after   *)
+(*     the forget was queued, so the entry is a newer session's and the   *)
+(*     stale forget no longer owns it (the design: TRUE).                  *)
 (* ForgetFailureBudget bounds the refused forgets over a run, so the       *)
 (* state space stays finite; one is a refused forget, kept, then landed.   *)
+(* The control raises it to two (MCRNXdpReplay.cfg), so a kept forget can  *)
+(* be refused again in the commit that lands a new session's mark.         *)
 (***************************************************************************)
 KernelAdvances    == FALSE
 WalkForgets       == TRUE
 WalkForgetsUnmarked == TRUE
 KernelWindow      == W
 KeepFailedForgets == TRUE
+SupersedeStaleForgets == TRUE
 
 ForgetFailureBudget == 1
 
@@ -320,7 +327,12 @@ Walk ==
 (* The only action that writes kmap in the design.  The kernel may refuse  *)
 (* any set of the forgets (failed): a refused forget leaves its entry, and *)
 (* the design keeps it pending for the next commit, whose forgets run      *)
-(* before its marks.  The broken shape KeepFailedForgets = FALSE drops it. *)
+(* before its marks, unless a mark of the same address was applied in this *)
+(* commit: that entry is a newer session's, and the stale forget is        *)
+(* superseded (rocketnet_xdp_replay_marks_reset_keeping's mark_applied).   *)
+(* Marks always apply here; a refused mark is out of the model.            *)
+(* The broken shape KeepFailedForgets = FALSE drops it; the broken shape   *)
+(* SupersedeStaleForgets = FALSE keeps it over the newer mark.             *)
 Commit ==
     /\ phase = "flush"
     /\ \E failed \in SUBSET pendingForget :
@@ -334,7 +346,11 @@ Commit ==
                                  IN  [hw |-> m.hw, sess |-> m.sess]
                             ELSE afterForget[a]]
         /\ forgetFailures' = forgetFailures + Cardinality(failed)
-        /\ pendingForget' = IF KeepFailedForgets THEN failed ELSE {}
+        /\ pendingForget' =
+               IF ~KeepFailedForgets THEN {}
+               ELSE IF SupersedeStaleForgets
+                      THEN failed \ {m.addr : m \in pendingMark}
+                      ELSE failed
         /\ replyMac' = [a \in Addresses |->
                           IF a \in pendingMacForget
                             THEN NoSession ELSE replyMac[a]]
@@ -369,6 +385,17 @@ ForgetOwedUntilApplied ==
     \A a \in Addresses :
         (kmap[a].hw # 0 /\ session[a] = NoSession)
             => (marked[a] # 0 \/ a \in pendingForget)
+
+(* RetryNeverDeletesNewerMark: a pending forget is never held over the    *)
+(* entry of the live session at its address.  Commit applies a pending     *)
+(* forget before any mark, so such a forget, once the kernel accepts it,   *)
+(* would delete the newer session's mark; the walk's cache already holds   *)
+(* that high-water, so nothing would mark it again until a fresh sequence. *)
+RetryNeverDeletesNewerMark ==
+    \A a \in pendingForget :
+        ~(/\ session[a] # NoSession
+          /\ kmap[a].hw # 0
+          /\ kmap[a].sess = session[a])
 
 (* MarkNeverAhead: with a live session, the entry for its address is none, *)
 (* or was taken from that session and is no more than its highest_opened. *)

@@ -77,7 +77,10 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 // and the next commit adds the refusal to the commit failure count. Commit
 // deletes every forget, then updates every mark, then resets the buffer,
 // keeping every forget the kernel refused (anything but a missing key) to be
-// tried first in the next commit. A failed syscall adds to the commit failure
+// tried first in the next commit, unless a mark of the same key applied in
+// that commit superseded it: the entry is then the newer session's, and the
+// stale forget is dropped (tla/RNXdpReplay.tla, RetryNeverDeletesNewerMark).
+// A failed syscall adds to the commit failure
 // count and logs one debug line naming the call, never a key. Forget returns
 // false when the pending buffer is full, so the walk keeps its slot record.
 

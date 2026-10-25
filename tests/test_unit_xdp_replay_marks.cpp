@@ -18,6 +18,9 @@
 #include "../sdk/rocketnet_wire.h"
 #include "../sdk/rocketnet_xdp_limits.h"
 #include "../sdk/rocketnet_xdp_replay_marks.h"
+#include "../sdk/rocketnet_client_slots.h"
+#include "../sdk/rocketnet_encryption_map.h"
+#include "../sdk/rocketnet_server_replay_marks.h"
 
 // the AF_XDP code is Linux only, so its tests are built there only
 #if defined(__linux__)
@@ -170,8 +173,10 @@ static void test_xdp_transport_replay_marks_failed_forgets_kept()
         rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, (uint32_t) ( 10 + i ) ) );
     }
 
+    // the kernel refused the marks too, so none supersedes a refused forget
     const bool forget_failed[6] = { false, true, false, true, true, false };
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed ) == 0 );
+    const bool mark_applied[6] = { false, false, false, false, false, false };
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied ) == 0 );
 
     const struct rocketnet_server_xdp_replay_key_t * forget_keys = NULL;
     uint32_t forget_count = 0;
@@ -223,14 +228,182 @@ static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
     rocketnet_unit_check( !rocketnet_xdp_replay_marks_mark( &marks, &extra, 101 ) );
     rocketnet_unit_check( marks.refused == 2 );
 
-    const bool no_failures[1] = { false };
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures ) == 2 );
+    static const bool no_failures[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
+    static const bool no_marks_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures, no_marks_applied ) == 2 );
     rocketnet_unit_check( marks.refused == 0 );
     rocketnet_unit_check( marks.mark_count == 0 );
     rocketnet_unit_check( marks.forget_count == 0 );
 
     // the next commit with no refusal hands over none
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures, no_marks_applied ) == 0 );
+}
+
+// A fake kernel replay map for the integrated case: a few entries, and a
+// count of the next deletes it refuses. No kernel, no sockets, no real time.
+
+#define REPLAY_FAKE_MAP_ENTRIES 4
+
+struct replay_fake_map_t
+{
+    struct rocketnet_server_xdp_replay_key_t keys[REPLAY_FAKE_MAP_ENTRIES];
+    uint32_t high_water[REPLAY_FAKE_MAP_ENTRIES];
+    bool present[REPLAY_FAKE_MAP_ENTRIES];
+    int delete_refusals;
+};
+
+static int replay_fake_map_find( const struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    for ( int i = 0; i < REPLAY_FAKE_MAP_ENTRIES; i++ )
+    {
+        if ( map->present[i] && memcmp( &map->keys[i], key, sizeof(*key) ) == 0 )
+            return i;
+    }
+    return -1;
+}
+
+static bool replay_fake_map_delete( struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    if ( map->delete_refusals > 0 )
+    {
+        map->delete_refusals--;
+        return false;
+    }
+    const int i = replay_fake_map_find( map, key );
+    if ( i >= 0 )
+        map->present[i] = false;
+    return true;
+}
+
+static bool replay_fake_map_update( struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key, uint32_t high_water )
+{
+    int i = replay_fake_map_find( map, key );
+    for ( int j = 0; i < 0 && j < REPLAY_FAKE_MAP_ENTRIES; j++ )
+    {
+        if ( !map->present[j] )
+            i = j;
+    }
+    if ( i < 0 )
+        return false;
+    map->keys[i] = *key;
+    map->high_water[i] = high_water;
+    map->present[i] = true;
+    return true;
+}
+
+// The transport's commit against the fake map, in the order of
+// rocketnet_server_socket_replay_commit: every forget, then every mark, then
+// the reset keeping the refused forgets no applied mark superseded.
+
+static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, struct replay_fake_map_t * map )
+{
+    static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    for ( uint32_t i = 0; i < marks->forget_count; i++ )
+        forget_failed[i] = !replay_fake_map_delete( map, &marks->forgets[i] );
+    for ( uint32_t i = 0; i < marks->mark_count; i++ )
+        mark_applied[i] = replay_fake_map_update( map, &marks->mark_keys[i], marks->mark_values[i].high_water );
+    rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
+}
+
+static bool replay_fake_sink_forget( void * context, const struct rocketnet_address_t * address )
+{
+    return rocketnet_xdp_replay_marks_forget( (struct rocketnet_xdp_replay_marks_t *) context, address );
+}
+
+static void replay_fake_sink_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
+{
+    rocketnet_xdp_replay_marks_mark( (struct rocketnet_xdp_replay_marks_t *) context, address, high_water );
+}
+
+static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark()
+{
+    // tla/RNXdpReplay.tla RetryNeverDeletesNewerMark, walk to fake kernel
+    // map: an old session's forget the kernel refuses, a new session from the
+    // same address whose mark lands while the old forget is refused again,
+    // then a commit whose deletes succeed. The new session's entry survives.
+
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 2 );
+    struct rocketnet_server_replay_marks_t * walk = rocketnet_server_replay_marks_create( NULL, 2 );
+    rocketnet_unit_check( map && slots && walk );
+
+    static struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_reset( &marks );
+    struct replay_fake_map_t kernel;
+    memset( &kernel, 0, sizeof(kernel) );
+
+    struct rocketnet_server_replay_sink_t sink;
+    sink.context = &marks;
+    sink.forget = replay_fake_sink_forget;
+    sink.mark = replay_fake_sink_mark;
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof(user_data) );
+
+    const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    struct rocketnet_server_xdp_replay_key_t key_a;
+    rocketnet_xdp_replay_key_from_address( &a, &key_a );
+
+    // the old session at A marks 40 and the kernel takes it
+
+    const int old_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
+    rocketnet_unit_check( old_mapping >= 0 );
+    const int old_slot = rocketnet_client_slots_assign( slots, 100, old_mapping, user_data );
+    rocketnet_unit_check( old_slot >= 0 );
+    rocketnet_encryption_map_entry( map, old_mapping )->replay_session.highest_opened = 40;
+
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( replay_fake_map_find( &kernel, &key_a ) >= 0 );
+
+    // the old session leaves; its forget fails (one)
+
+    rocketnet_client_slots_release( slots, old_slot );
+    rocketnet_encryption_map_remove( map, old_mapping );
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    rocketnet_unit_check( marks.forget_count == 1 );
+    kernel.delete_refusals = 1;
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( marks.forget_count == 1 );
+
+    // a new session from A opens 3; the held forget fails again (two) while
+    // the new session's mark lands, so the stale forget is superseded
+
+    const int new_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
+    rocketnet_unit_check( new_mapping >= 0 );
+    const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping, user_data );
+    rocketnet_unit_check( new_slot >= 0 );
+    rocketnet_encryption_map_entry( map, new_mapping )->replay_session.highest_opened = 3;
+
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    rocketnet_unit_check( marks.mark_count == 1 );
+    kernel.delete_refusals = 1;
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    // nothing changed, the kernel now accepts every delete (success): the new
+    // session's entry is still there, at its own high-water
+
+    rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+    rocketnet_unit_check( marks.forget_count == 0 && marks.mark_count == 0 );
+    replay_fake_commit( &marks, &kernel );
+    const int entry = replay_fake_map_find( &kernel, &key_a );
+    rocketnet_unit_check( entry >= 0 );
+    rocketnet_unit_check( kernel.high_water[entry] == 3 );
+
+    // a refused forget whose same-key mark the kernel also refused is kept
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 4 ) );
+    const bool forget_failed[1] = { true };
+    const bool mark_refused[1] = { false };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+    rocketnet_unit_check( marks.forget_count == 1 );
+
+    rocketnet_server_replay_marks_destroy( walk );
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
@@ -238,5 +411,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks 
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 
 #endif // #if defined(__linux__)

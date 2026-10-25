@@ -17,7 +17,13 @@
 (* MCRNXdpReplayBrokenFailedForgetDropped.cfg sets                         *)
 (* KeepFailedForgets <- KeepFailedForgetsBroken (a forget the kernel       *)
 (* refused is dropped, not kept for the next commit) and must fail         *)
-(* ForgetOwedUntilApplied.                                                 *)
+(* ForgetOwedUntilApplied;                                                 *)
+(* MCRNXdpReplayBrokenStaleForgetRetried.cfg sets                          *)
+(* SupersedeStaleForgets <- SupersedeStaleForgetsBroken (a refused forget  *)
+(* is kept over a newer session's applied mark of the same address) and    *)
+(* must fail RetryNeverDeletesNewerMark.  The control and that witness set *)
+(* ForgetFailureBudget <- ForgetFailureBudgetTwo: a kept forget refused    *)
+(* again in the commit that lands the newer mark.                          *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -28,4 +34,6 @@ WalkForgetsBroken    == FALSE
 WalkForgetsUnmarkedBroken == FALSE
 KernelWindowBroken   == W - 1
 KeepFailedForgetsBroken == FALSE
+SupersedeStaleForgetsBroken == FALSE
+ForgetFailureBudgetTwo == 2
 =============================================================================

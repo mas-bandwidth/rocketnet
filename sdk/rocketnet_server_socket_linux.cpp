@@ -2314,7 +2314,8 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
 
     // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
     // in one commit; this is the only writer of the kernel map. A forget the
-    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied).
+    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
+    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark).
 
     bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
 
@@ -2340,6 +2341,8 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         }
     }
 
+    bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
+
     if ( marks->mark_count > 0 )
     {
         struct bpf_map_batch_opts opts;
@@ -2347,25 +2350,26 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         opts.sz = sizeof(opts);
         opts.elem_flags = BPF_ANY;
         __u32 count = marks->mark_count;
-        if ( bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) != 0 )
+        const bool batch_updated = bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) == 0;
+        for ( uint32_t i = 0; i < marks->mark_count; i++ )
         {
-            if ( errno == EINVAL || errno == ENOTSUPP )
+            // a refused batch (an older kernel, or any other error) is walked
+            // one syscall at a time, so each mark's outcome is known: an
+            // applied mark supersedes a refused forget of the same key
+            // (RetryNeverDeletesNewerMark); BPF_ANY makes a repeat harmless
+
+            mark_applied[i] = true;
+            if ( !batch_updated && bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
             {
-                for ( uint32_t i = 0; i < marks->mark_count; i++ )
-                {
-                    if ( bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
-                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
-                }
-            }
-            else
-            {
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_batch" );
+                mark_applied[i] = false;
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
             }
         }
     }
 
-    // a full buffer's refusals land in the commit failure count
-    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed );
+    // a full buffer's refusals land in the commit failure count; a refused
+    // forget is kept unless an applied mark of its key superseded it
+    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
 }
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
