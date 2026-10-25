@@ -9,6 +9,7 @@
 
         handles        GetProcessHandleCount
         threads        a Toolhelp32 walk of this process's threads
+                       (process_resources_walk_threads, tests/process_resources.h)
         heap_bytes     HeapSummary cbAllocated on the library's test heap
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
@@ -71,6 +72,8 @@
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
+
+#include "../tests/process_resources.h"
 
 // defined in functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
@@ -172,26 +175,16 @@ static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
     return library_bytes;
 }
 
+// every thread of this process, the program's and the OS's pool workers alike:
+// the walk of tests/process_resources.h (process_resources_walk_threads),
+// which fails closed and splits the two; this case counts their sum
 static int64_t windows_threads()
 {
-    HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-    if ( thread_list == INVALID_HANDLE_VALUE )
+    int64_t program_threads = -1;
+    int64_t os_threads = -1;
+    if ( !process_resources_walk_threads( &program_threads, &os_threads, NULL ) )
         return -1;
-    THREADENTRY32 entry;
-    memset( &entry, 0, sizeof( entry ) );
-    entry.dwSize = sizeof( entry );
-    const DWORD self_process_id = GetCurrentProcessId();
-    int64_t threads = 0;
-    if ( Thread32First( thread_list, &entry ) )
-    {
-        do
-        {
-            if ( entry.th32OwnerProcessID == self_process_id )
-                threads++;
-        } while ( Thread32Next( thread_list, &entry ) );
-    }
-    CloseHandle( thread_list );
-    return threads;
+    return program_threads + os_threads;
 }
 
 static windows_resource_counts_t windows_read_counts()
