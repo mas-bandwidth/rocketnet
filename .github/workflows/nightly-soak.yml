@@ -282,7 +282,7 @@ jobs:
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -339,6 +339,44 @@ jobs:
 
       - name: UDP loopback soak
         run: ./bin/soak 200000
+
+      - name: Per-transport impaired soaks (1800 s each, flat resources)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build/soak-macos-per-transport
+          failures=0
+          for transport in portable msgx; do
+            log="build/soak-macos-per-transport/${transport}.log"
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT="$transport" \
+                ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT=5 ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT=5 \
+                ROCKETNET_SERVER_SIMULATED_LATENCY_MS=30 ROCKETNET_CLIENT_SIMULATED_LATENCY_MS=30 \
+                ROCKETNET_SERVER_SIMULATED_JITTER_MS=20 ROCKETNET_CLIENT_SIMULATED_JITTER_MS=20 \
+                ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT=2 ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT=2 \
+                ./bin/soak --seconds 1800 --assert-flat > "$log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$log"
+            server=$(awk '$1 == "soak" && $2 == "summary:" && $3 == "server_transport_io" { value = $4 } END { print value }' "$log")
+            client=$(awk '$1 == "soak" && $2 == "summary:" && $3 == "client_transport_io" { value = $4 } END { print value }' "$log")
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$client" = "$transport" ]; then
+              echo "SOAK cell=$transport PASS server=$server client=$client seconds=1800 log=$log"
+            else
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} client=${client:-none} log=$log"
+              failures=$((failures + 1))
+            fi
+          done
+          exit "$failures"
+
+      - name: Upload macOS per-transport soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-macos-per-transport-logs-${{ strategy.job-index }}
+          path: build/soak-macos-per-transport
+          if-no-files-found: ignore
 
   soak-windows:
     name: soak (${{ matrix.ref }} / windows)
