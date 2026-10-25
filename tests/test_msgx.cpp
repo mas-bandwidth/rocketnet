@@ -49,11 +49,56 @@ static void drain(rocketnet_platform_socket_t * socket, const rocketnet_address_
     CHECK(received == expected);
 }
 
+// Send failures by errno: pure counting on a zeroed table, no socket and no
+// clock. The first failure of each call and errno kind reports first, every
+// later one only counts, and the format names each nonzero count once.
+static void test_msgx_send_errnos_count()
+{
+    rocketnet_platform_send_errnos_t errnos;
+    memset(&errnos, 0, sizeof(errnos));
+    CHECK(rocketnet_platform_send_errno_kind(0) == ROCKETNET_PLATFORM_SEND_ERRNO_NONE);
+    CHECK(rocketnet_platform_send_errno_kind(EAGAIN) == ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN);
+    CHECK(rocketnet_platform_send_errno_kind(EWOULDBLOCK) == ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN);
+    CHECK(rocketnet_platform_send_errno_kind(ENOBUFS) == ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS);
+    CHECK(rocketnet_platform_send_errno_kind(EACCES) == ROCKETNET_PLATFORM_SEND_ERRNO_EPERM);
+    CHECK(rocketnet_platform_send_errno_kind(ENOTSUP) == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER);
+    CHECK(strcmp(rocketnet_platform_send_errno_kind_name(ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS), "ENOBUFS") == 0);
+    CHECK(strcmp(rocketnet_platform_send_errno_kind_name(ROCKETNET_PLATFORM_SEND_ERRNO_KINDS), "unknown") == 0);
+    CHECK(strcmp(rocketnet_platform_send_call_name(ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X), "sendmsg_x") == 0);
+
+    char text[256];
+    CHECK(rocketnet_platform_send_errnos_format(&errnos, text, sizeof(text)) == 0 && text[0] == '\0');
+
+    // first EAGAIN on sendmsg_x reports first; the next 999 only count
+    CHECK(rocketnet_platform_send_errnos_count(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EAGAIN));
+    for (int i = 0; i < 999; ++i)
+        CHECK(!rocketnet_platform_send_errnos_count(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EWOULDBLOCK));
+    // the same errno on another call is its own first
+    CHECK(rocketnet_platform_send_errnos_count(&errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, EAGAIN));
+    CHECK(rocketnet_platform_send_errnos_count(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ENOTSUP));
+    CHECK(!rocketnet_platform_send_errnos_count(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, 100000));
+    CHECK(rocketnet_platform_send_errnos_read(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN) == 1000);
+    CHECK(rocketnet_platform_send_errnos_read(&errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN) == 1);
+    CHECK(rocketnet_platform_send_errnos_read(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ROCKETNET_PLATFORM_SEND_ERRNO_OTHER) == 2);
+    CHECK(rocketnet_platform_send_errnos_read(&errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN) == 0);
+    CHECK(rocketnet_platform_send_errnos_read(&errnos, ROCKETNET_PLATFORM_SEND_CALLS, 0) == 0);
+    CHECK(errnos.other_error == (uint64_t) ENOTSUP); // the first other errno, kept
+
+    CHECK(rocketnet_platform_send_errnos_format(&errnos, text, sizeof(text)) == 3);
+    CHECK(strcmp(text, "sendto other=2 sendmsg_x EAGAIN=1000 replay sendto EAGAIN=1") == 0);
+    // a short buffer keeps what fit and stays terminated
+    char small[20];
+    CHECK(rocketnet_platform_send_errnos_format(&errnos, small, sizeof(small)) == 1);
+    CHECK(strcmp(small, "sendto other=2") == 0);
+    printf("test_msgx_send_errnos_count\n");
+}
+
 int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK);
     rocketnet_forbid_xdp_commit();
+    test_msgx_send_errnos_count();
     // The TX and RX workers share one msgx socket: a re-probe clears only the
     // expired pause it read, so a fresh pause set by the other worker wins.
     CHECK(rocketnet_msgx_test_pause_expiry_race());
