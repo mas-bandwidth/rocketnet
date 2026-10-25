@@ -199,23 +199,33 @@ done
 
 ## The small instance
 
-`MCRNXdpReplay.cfg`: one address, `MaxSeq = 5`, `W = 2`, `Sessions = 2`,
-`MaxInFlight = 2`. TLC explores every send, forgery, duplicate, kernel pass
-or drop, open, release, walk and commit interleaving, with one refused
-forget allowed anywhere in the run: 4,939,448 distinct states (15,236,074
-generated, depth 54) in about 58 seconds on two workers, and every invariant
-and `KernelNeverWrites` holds.
+`MCRNXdpReplay.cfg`: two addresses, `MaxSeq = 3`, `W = 2`, `Sessions = 2`,
+`MaxInFlight = 1`, `ForgetCapacity = 1`. TLC explores every send, forgery,
+duplicate, kernel pass or drop, open, release, walk and commit interleaving,
+with one refused forget allowed anywhere in the run: 197,106 distinct states
+(484,069 generated, depth 34) in about 3 seconds on two workers, and
+`TypeOK`, `ForgetOwedUntilApplied`, `MarksTakenFromTheTruth`,
+`FreshGenuineNeverDropped`, `ReleasedSlotForgetsItsReplyMac` and
+`KernelNeverWrites` hold.
+
+`MarkNeverAhead` is not in the control. With no settle guard on `Connect`,
+it fails at depth 9: `Connect(A1)`, a genuine sequence 1 opens, `Walk` and
+`Commit` write `high_water = 1` for session 1, `Release(A1)`, then
+`Connect(A1)` takes session 2 before any walk has queued the forget, so the
+live session 2 meets the entry taken from session 1. That is the
+reconnect-freshness gap of the witness above, owned by the separate remedy;
+`NewSessionNeverDroppedByOldMark` is checked there.
 
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
 | `MCRNXdpReplayBrokenKernelAdvances.cfg` | the kernel never writes: `KernelAdvances <- KernelAdvancesBroken`, `kmap[a] := seq` on every pass | `FreshGenuineNeverDropped`, exit 12, depth 6 |
-| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 17 |
+| `MCRNXdpReplayBrokenNoForget.cfg` | the walk forgets a released slot: `WalkForgets <- WalkForgetsBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
-| `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12 |
+| `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
-| `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12 |
+| `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
