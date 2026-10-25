@@ -366,7 +366,13 @@ static double windows_client_clock_callback( void * context )
     return windows_client_clock_now( (windows_client_clock_t*) context );
 }
 
-static rocketnet_client_transport_t * windows_client_create( const windows_cell_t * cell, const char * server_address, windows_client_clock_t * clock )
+// server_public_key NULL: the token is sealed to the development server key,
+// which the transport-only servers of these cases hold. A public server
+// (rocketnet_server_create) makes its own keypair, and ignores a token sealed
+// to any other key (ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY),
+// so its client's token is sealed to rocketnet_server_public_key.
+static rocketnet_client_transport_t * windows_client_create( const windows_cell_t * cell, const char * server_address, windows_client_clock_t * clock,
+                                                             const uint8_t * server_public_key )
 {
     clock->skipped.store( 0, std::memory_order_release );
 
@@ -374,9 +380,21 @@ static rocketnet_client_transport_t * windows_client_create( const windows_cell_
     rocketnet_server_transport_dev_config( &server_config );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    windows_lifecycle_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(),
-                                                                 rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 ),
-                                                                 token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 );
+    if ( server_public_key )
+    {
+        const char * addresses[1] = { server_address };
+        windows_lifecycle_check( rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key, server_public_key, ROCKETNET_DEV_PROTOCOL_ID,
+                                                                           addresses, 1, rocketnet_random_uint64(), create_timestamp,
+                                                                           create_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS,
+                                                                           ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL,
+                                                                           token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    }
+    else
+    {
+        windows_lifecycle_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), create_timestamp,
+                                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    }
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
@@ -659,14 +677,14 @@ static void windows_server_create_destroy_cycle( const windows_cell_t * cell )
 static void windows_client_create_destroy_cycle( const windows_cell_t * cell )
 {
     windows_client_clock_t clock;
-    rn_native_client_transport_stop_and_destroy( windows_client_create( cell, "127.0.0.1:40000", &clock ) );
+    rn_native_client_transport_stop_and_destroy( windows_client_create( cell, "127.0.0.1:40000", &clock, NULL ) );
 }
 
 static void windows_connect_disconnect_cycle( const windows_cell_t * cell, rocketnet_server_transport_t * server,
                                               const char * server_address, int cycle )
 {
     windows_client_clock_t clock;
-    rocketnet_client_transport_t * client = windows_client_create( cell, server_address, &clock );
+    rocketnet_client_transport_t * client = windows_client_create( cell, server_address, &clock, NULL );
     if ( !windows_wait_connected( server, client, &clock, 5.0 ) )
         printf( "[%s]: connect stalled at cycle %d\n", cell->name, cycle );
     windows_lifecycle_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -682,8 +700,10 @@ static void windows_server_restart_cycle( const windows_cell_t * cell, rocketnet
 {
     windows_lifecycle_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     windows_lifecycle_check( rocketnet_server_port( server ) == fixed_port );
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_public_key );
     windows_client_clock_t clock;
-    rocketnet_client_transport_t * client = windows_client_create( cell, fixed_address, &clock );
+    rocketnet_client_transport_t * client = windows_client_create( cell, fixed_address, &clock, server_public_key );
     const double deadline = rocketnet_platform_time() + 5.0;
     int previous_state = rocketnet_client_transport_state( client );
     while ( rocketnet_platform_time() < deadline )
@@ -706,8 +726,12 @@ static void windows_server_restart_cycle( const windows_cell_t * cell, rocketnet
     }
     if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
          rocketnet_server_num_connected_clients( server ) != 1 )
+    {
         printf( "[%s]: reconnect stalled at restart %d, client state %d, server clients %d\n", cell->name, cycle,
                 rocketnet_client_transport_state( client ), rocketnet_server_num_connected_clients( server ) );
+        windows_print_counters( "client", rocketnet_client_transport_counters( client ) );
+        fflush( stdout );
+    }
     windows_lifecycle_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                              rocketnet_server_num_connected_clients( server ) == 1 );
     rn_native_client_transport_stop_and_destroy( client );
