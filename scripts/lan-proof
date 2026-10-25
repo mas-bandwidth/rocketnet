@@ -1,0 +1,440 @@
+#!/usr/bin/env bash
+#
+# lan-proof -- print or run one LAN proof cell.
+#
+#   scripts/lan-proof --dry-run --inventory FILE --cell CELL --duration SECONDS
+#   scripts/lan-proof --inventory FILE --cell CELL --duration SECONDS [--clients N] [--commit SHA] [--run-dir DIR] [--run-id HEX16]
+#   scripts/lan-proof --parse-row ROW
+#   scripts/lan-proof --cell-row CELL SERVER-LABEL NIC-SPEED CLIENTS DURATION SERVER-LOG MERGE-LOG
+#
+# --dry-run prints every step and contacts no host. A live run checks every
+# host is at the same head and builds it, records each host's OS, kernel and
+# test interface, refuses when a host's foreign load is at or above half its
+# core count, starts the server pinned to the cell transport, starts shards
+# of at most 250 clients on the client machines, collects every log, writes
+# the allocation manifest, runs the merger and prints one table row. Every
+# remote step is the copied remote script, bounded by a timeout; teardown
+# stops only the processes this run started.
+#
+# Inventory rows, one machine per line, # comments skipped:
+#   label ssh-name role os iface uplink
+# role is server or client. os is linux, macos or windows.
+# uplink is "-" or "uplink". The xdp cell refuses an uplink interface.
+# Result lines name the label, never the ssh name.
+
+set -u
+
+cells="gso io_uring xdp iocp rio msgx"
+
+refuse()
+{
+    echo "lan-proof: $*" >&2
+    exit 2
+}
+
+lan_proof_parse_row()
+{
+    local row="$1"
+    local cell server speed clients duration connected timeouts delivery kbps verdict
+    IFS='|' read -r cell server speed clients duration connected timeouts delivery kbps verdict <<EOF
+$row
+EOF
+    [ -n "$cell" ] && [ -n "$server" ] && [ -n "$speed" ] && [ -n "$clients" ] &&
+        [ -n "$duration" ] && [ -n "$connected" ] && [ -n "$timeouts" ] &&
+        [ -n "$delivery" ] && [ -n "$kbps" ] && [ -n "$verdict" ] ||
+        refuse "row needs 10 |-separated fields"
+    printf 'cell=%s server=%s nic_speed=%s clients=%s duration=%s connected=%s timeouts=%s delivery=%s min_kbps=%s verdict=%s\n' \
+        "$cell" "$server" "$speed" "$clients" "$duration" "$connected" "$timeouts" "$delivery" "$kbps" "$verdict"
+}
+
+if [ "${1:-}" = "--parse-row" ]; then
+    [ $# -eq 2 ] || refuse "usage: lan-proof --parse-row ROW"
+    lan_proof_parse_row "$2"
+    exit 0
+fi
+
+# --cell-row: build the one table row from a collected server log and the
+# merger output. Reads only the two named files; contacts no host.
+if [ "${1:-}" = "--cell-row" ]; then
+    [ $# -eq 8 ] || refuse "usage: lan-proof --cell-row CELL SERVER-LABEL NIC-SPEED CLIENTS DURATION SERVER-LOG MERGE-LOG"
+    proof_line=$( grep '^split_proof: role=server ' "$7" 2>/dev/null | tail -n 1 )
+    cell_line=$( grep '^split_proof_cell: ' "$8" 2>/dev/null | tail -n 1 )
+    [ -n "$proof_line" ] || refuse "cell-row: no server split_proof line in $7"
+    [ -n "$cell_line" ] || refuse "cell-row: no split_proof_cell line in $8"
+    disconnects=$( printf '%s\n' "$proof_line" | sed -n 's/.* disconnects=\([0-9]*\).*/\1/p' )
+    up=$( printf '%s\n' "$proof_line" | sed -n 's/.* min_client_up_kbps=\([0-9.]*\).*/\1/p' )
+    down=$( printf '%s\n' "$proof_line" | sed -n 's/.* min_client_down_kbps=\([0-9.]*\).*/\1/p' )
+    delivery=$( printf '%s\n' "$cell_line" | sed -n 's/.* verdict=\([A-Z]*\).*/\1/p' )
+    [ -n "$disconnects" ] && [ -n "$up" ] && [ -n "$down" ] && [ -n "$delivery" ] ||
+        refuse "cell-row: a proof field is missing"
+    min_kbps=$( awk -v a="$up" -v b="$down" 'BEGIN { m = (a < b) ? a : b; printf "%d", m }' )
+    connected=no
+    [ "$disconnects" -eq 0 ] && connected=yes
+    delivery_row=fail
+    [ "$delivery" = "PASS" ] && delivery_row=pass
+    verdict=fail
+    [ "$delivery_row" = "pass" ] && [ "$connected" = "yes" ] && verdict=pass
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$2" "$3" "$4" "$5" "$6" "$connected" "$disconnects" "$delivery_row" "$min_kbps" "$verdict"
+    exit 0
+fi
+
+dry=0
+inventory=""
+cell=""
+duration=""
+clients_total=1000
+commit=""
+run_dir=""
+run_id=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) dry=1; shift ;;
+        --inventory) inventory="${2:-}"; shift 2 ;;
+        --cell) cell="${2:-}"; shift 2 ;;
+        --duration) duration="${2:-}"; shift 2 ;;
+        --clients) clients_total="${2:-}"; shift 2 ;;
+        --commit) commit="${2:-}"; shift 2 ;;
+        --run-dir) run_dir="${2:-}"; shift 2 ;;
+        --run-id) run_id="${2:-}"; shift 2 ;;
+        *) refuse "unknown argument $1" ;;
+    esac
+done
+
+[ -n "$inventory" ] && [ -n "$cell" ] && [ -n "$duration" ] ||
+    refuse "usage: lan-proof [--dry-run] --inventory FILE --cell CELL --duration SECONDS"
+[ -f "$inventory" ] || refuse "inventory not found"
+case " $cells " in
+    *" $cell "*) ;;
+    *) refuse "unknown cell $cell" ;;
+esac
+case "$duration" in
+    ''|*[!0-9]*) refuse "duration is a whole number of seconds" ;;
+esac
+
+server_label=""
+server_ssh=""
+server_os=""
+server_iface=""
+client_labels=""
+client_sshs=""
+client_ifaces=""
+uplink=0
+while read -r label ssh_name role os iface mark extra; do
+    case "$label" in
+        ''|\#*) continue ;;
+    esac
+    [ -n "${extra:-}" ] && refuse "inventory row has too many fields: $label"
+    case "$role" in
+        server|client) ;;
+        *) refuse "role must be server or client: $label" ;;
+    esac
+    case "$os" in
+        linux|macos|windows) ;;
+        *) refuse "os must be linux, macos or windows: $label" ;;
+    esac
+    [ "$mark" = "-" ] || [ "$mark" = "uplink" ] || refuse "uplink must be - or uplink: $label"
+    [ "$mark" = "uplink" ] && uplink=1
+    if [ "$role" = "server" ]; then
+        [ -z "$server_label" ] || refuse "inventory has two servers"
+        server_label=$label
+        server_ssh=$ssh_name
+        server_os=$os
+        server_iface=$iface
+    else
+        client_labels="$client_labels $label"
+        client_sshs="$client_sshs $ssh_name"
+        client_ifaces="$client_ifaces $iface"
+    fi
+done < "$inventory"
+
+[ -n "$server_label" ] || refuse "inventory has no server"
+[ -n "$client_labels" ] || refuse "inventory has no client"
+for ssh_name in $client_sshs; do
+    [ "$ssh_name" != "$server_ssh" ] || refuse "a client is the server machine"
+done
+[ "$cell" = "xdp" ] && [ "$uplink" -eq 1 ] && refuse "xdp cell refuses an uplink interface"
+
+echo "cell $cell duration $duration server $server_label"
+for label in $server_label $client_labels; do
+    echo "step $label check the same head and build it"
+    echo "step $label record os kernel nic model driver speed duplex, unknown when unread"
+done
+echo "step plan load_split for $cell"
+case "$server_os" in
+    linux) echo "step start server $server_label transport $cell by the copied remote script" ;;
+    macos) echo "step start server $server_label transport $cell by the copied remote script, open-file limit raised" ;;
+    windows) echo "step start server $server_label transport $cell under an exclusive lock" ;;
+esac
+[ "$cell" = "xdp" ] && echo "step xdp server runs in a guest on a test interface that is not the uplink"
+for label in $client_labels; do
+    echo "step start shards on $label at most 250 clients, not on the server"
+done
+echo "step collect logs and write the allocation manifest"
+echo "step tools/check_split_load.py --load proof"
+echo "table cell server-label nic-speed clients duration connected timeouts delivery min-kbps verdict"
+
+if [ "$dry" -eq 1 ]; then
+    echo "dry-run: no host contacted"
+    exit 0
+fi
+
+# ------------------------------------------------------------------------
+# live run: one cell, bounded at every step, no process left behind
+# ------------------------------------------------------------------------
+
+case "$clients_total" in
+    ''|*[!0-9]*) refuse "clients is a whole number" ;;
+esac
+[ "$clients_total" -gt 0 ] || refuse "clients is 0"
+here=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+root=$( cd "$here/.." && pwd )
+remote="$here/lan-proof-remote"
+[ -x "$remote" ] || refuse "missing remote step script: $remote"
+[ -f "$root/tools/check_split_load.py" ] || refuse "missing merger tools/check_split_load.py"
+if [ -z "$commit" ]; then
+    commit=$( git -C "$root" rev-parse HEAD 2>/dev/null ) || commit=""
+fi
+[ -n "$commit" ] || refuse "no --commit and this checkout has no HEAD"
+if [ -z "$run_id" ]; then
+    run_id=$( printf '%08x%08x' "$$" "$( date +%s )" )
+fi
+case "$run_id" in
+    *[!0-9a-fA-F]*) refuse "run-id is 16 hex characters" ;;
+esac
+[ "${#run_id}" -eq 16 ] || refuse "run-id is 16 hex characters"
+[ -n "$run_dir" ] || run_dir="$PWD/lan-proof-run-$run_id"
+mkdir -p "$run_dir" || refuse "cannot create run directory $run_dir"
+port=40000
+cap_kbps=600000
+remote_path="~/lan-proof-live/lan-proof-remote"
+remote_run="~/lan-proof-live/runs/$run_id"
+
+ssh_run()
+{
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"
+}
+
+fail()
+{
+    echo "lan-proof: FAIL: $*" >&2
+    exit 1
+}
+
+started=0
+teardown()
+{
+    [ "$started" -eq 1 ] || return 0
+    started=0
+    for host in $server_ssh $client_sshs; do
+        ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1
+        n=0
+        for name in shard0 shard1 shard2 shard3 shard4 shard5 shard6 shard7; do
+            ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/$name.pid" >/dev/null 2>&1
+            n=$(( n + 1 ))
+            [ "$n" -ge 8 ] && break
+        done
+    done
+}
+trap 'teardown' EXIT INT TERM HUP
+
+# copy the remote script to every host, then build the same head everywhere
+for host in $server_ssh $client_sshs; do
+    ssh_run "$host" mkdir -p lan-proof-live || fail "cannot prepare $host"
+    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:lan-proof-live/lan-proof-remote" ||
+        fail "cannot copy the remote script to $host"
+    ssh_run "$host" chmod +x lan-proof-live/lan-proof-remote || fail "cannot mark the remote script on $host"
+done
+
+build_one()
+{
+    ssh_run "$1" "$remote_path" build "$commit"
+}
+build_one "$server_ssh" > "$run_dir/server.build" 2>&1 &
+server_build_pid=$!
+i=0
+client_build_pids=""
+for host in $client_sshs; do
+    build_one "$host" > "$run_dir/client$i.build" 2>&1 &
+    client_build_pids="$client_build_pids $!"
+    i=$(( i + 1 ))
+done
+build_failed=0
+wait "$server_build_pid" || build_failed=1
+for pid in $client_build_pids; do
+    wait "$pid" || build_failed=1
+done
+[ "$build_failed" -eq 0 ] || fail "a build failed; see $run_dir"
+[ "$( tail -n 1 "$run_dir/server.build" )" = "$commit" ] || fail "server reported a different head"
+i=0
+for host in $client_sshs; do
+    [ "$( tail -n 1 "$run_dir/client$i.build" )" = "$commit" ] || fail "a client reported a different head"
+    i=$(( i + 1 ))
+done
+echo "head $commit on every host" | tee "$run_dir/head.txt"
+
+# host facts and the quiet-bench guard, recorded before anything starts
+record_host()
+{
+    local host=$1 iface=$2 out=$3 line load1 nproc
+    line=$( ssh_run "$host" "$remote_path" hostinfo "$iface" ) || fail "hostinfo failed on a host"
+    echo "$line" > "$out"
+    echo "host $line"
+    load1=$( printf '%s\n' "$line" | sed -n 's/.* load1=\([0-9.]*\).*/\1/p' )
+    nproc=$( printf '%s\n' "$line" | sed -n 's/.* nproc=\([0-9]*\).*/\1/p' )
+    [ -n "$load1" ] && [ -n "$nproc" ] || fail "hostinfo named no load"
+    awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l * 2 >= n) ? 0 : 1 }' &&
+        fail "a host is hot: load $load1 on $nproc cores is at or above half; discarding this run"
+}
+record_host "$server_ssh" "$server_iface" "$run_dir/server.host"
+i=0
+for host in $client_sshs; do
+    set -- $client_ifaces
+    eval "iface=\${$(( i + 1 ))}"
+    record_host "$host" "$iface" "$run_dir/client$i.host"
+    i=$(( i + 1 ))
+done
+server_address=$( sed -n 's/.* address=\([0-9.]*\).*/\1/p' "$run_dir/server.host" )
+server_speed=$( sed -n 's/.* speed_mbps=\([0-9]*\).*/\1/p' "$run_dir/server.host" )
+[ -n "$server_address" ] && [ "$server_address" != "unknown" ] || fail "server address is unknown"
+[ -n "$server_speed" ] || server_speed=unknown
+
+# start the server pinned to the transport, then read its ready line
+started=1
+case "$server_os" in
+    windows)
+        ssh_run "$server_ssh" winlock --exclusive "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
+            fail "cannot start the server"
+        ;;
+    *)
+        [ "$cell" = "xdp" ] && fail "xdp live start needs a guest test interface; this run has none recorded"
+        ssh_run "$server_ssh" "$remote_path" start-server "$commit" "$remote_run" "$cell" "$clients_total" "$duration" "$run_id" "$server_address" "$port" "$cap_kbps" > "$run_dir/server.start" 2>&1 ||
+            fail "cannot start the server"
+        ;;
+esac
+
+ready=""
+for _ in $( seq 1 60 ); do
+    if ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null; then
+        ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
+        [ -n "$ready" ] && break
+    fi
+    sleep 1
+done
+[ -n "$ready" ] || fail "the server printed no split_ready line"
+echo "$ready" > "$run_dir/ready.txt"
+key=$( printf '%s\n' "$ready" | sed -n 's/.* key=\([0-9a-fA-F]*\).*/\1/p' )
+[ -n "$key" ] || fail "the ready line named no key"
+
+# shards of at most 250, spread over the client machines, never the server's
+shard_size=250
+shard_count=$(( (clients_total + shard_size - 1) / shard_size ))
+client_count=0
+for host in $client_sshs; do client_count=$(( client_count + 1 )); done
+shard_hosts=""
+shard_names=""
+s=0
+while [ "$s" -lt "$shard_count" ]; do
+    idx=$(( s % client_count ))
+    set -- $client_sshs
+    eval "host=\${$(( idx + 1 ))}"
+    first=$(( s * shard_size ))
+    count=$shard_size
+    [ $(( first + count )) -gt "$clients_total" ] && count=$(( clients_total - first ))
+    ssh_run "$host" "$remote_path" start-shard "$commit" "$remote_run" "shard$s" "$clients_total" "$duration" "$run_id" "$first" "$count" "$server_address:$port" "$key" "$cap_kbps" > "$run_dir/shard$s.start" 2>&1 ||
+        fail "cannot start shard$s"
+    shard_hosts="$shard_hosts $host"
+    shard_names="$shard_names shard$s"
+    s=$(( s + 1 ))
+done
+
+# wait for every started process to finish, bounded
+deadline=$(( duration + 300 ))
+elapsed=0
+while [ "$elapsed" -lt "$deadline" ]; do
+    running=0
+    if ssh_run "$server_ssh" "$remote_path" alive "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1; then
+        running=1
+    fi
+    s=0
+    for host in $shard_hosts; do
+        if ssh_run "$host" "$remote_path" alive "~/lan-proof-live/runs/$run_id/shard$s.pid" >/dev/null 2>&1; then
+            running=1
+        fi
+        s=$(( s + 1 ))
+    done
+    [ "$running" -eq 0 ] && break
+    sleep 5
+    elapsed=$(( elapsed + 5 ))
+done
+[ "$elapsed" -lt "$deadline" ] || fail "a started process outlived its bound"
+
+# collect every log before teardown stops anything left
+ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null ||
+    fail "cannot collect the server log"
+s=0
+for host in $shard_hosts; do
+    ssh_run "$host" "$remote_path" collect "~/lan-proof-live/runs/$run_id/shard$s.log" > "$run_dir/shard$s.log" 2>/dev/null ||
+        fail "cannot collect shard$s"
+    s=$(( s + 1 ))
+done
+
+# end loads, recorded beside the start loads
+ssh_run "$server_ssh" "$remote_path" load > "$run_dir/server.load-end" 2>/dev/null || true
+i=0
+for host in $client_sshs; do
+    ssh_run "$host" "$remote_path" load > "$run_dir/client$i.load-end" 2>/dev/null || true
+    i=$(( i + 1 ))
+done
+
+teardown
+trap - EXIT INT TERM HUP
+
+# allocation manifest over the collected logs
+python3 - "$run_dir" "$run_id" "$clients_total" "$server_label" $client_labels <<'PYEOF'
+import hashlib, json, pathlib, sys
+run_dir, run_id, total, server_label = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sys.argv[4]
+labels = sys.argv[5:]
+def sha(name):
+    return hashlib.sha256((run_dir / name).read_bytes()).hexdigest()
+shards = []
+first = 0
+s = 0
+while first < total:
+    count = min(250, total - first)
+    label = labels[s % len(labels)] if labels else "client"
+    shards.append({"role": "client-shard", "first": first, "count": count,
+                   "host_id": label, "allocation_id": f"shard{s}-{run_id}",
+                   "allocation_ref": f"lan-proof/{run_id}/shard{s}", "runner_id": "lan-proof",
+                   "allocation_type": "client_host", "log_sha256": sha(f"shard{s}.log")})
+    first += count
+    s += 1
+manifest = {"schema": "split_allocation_v1", "run_id": run_id,
+            "server": {"role": "server", "total": total, "host_id": server_label,
+                       "allocation_id": f"server-{run_id}", "allocation_ref": f"lan-proof/{run_id}/server",
+                       "runner_id": "lan-proof", "allocation_type": "dedicated_server",
+                       "log_sha256": sha("server.log")},
+            "shards": shards}
+(run_dir / "allocation.json").write_text(json.dumps(manifest, indent=2) + "\n")
+print(f"manifest shards={len(shards)}")
+PYEOF
+
+merge_args=""
+s=0
+while [ "$s" -lt "$shard_count" ]; do
+    merge_args="$merge_args --shard $run_dir/shard$s.log"
+    s=$(( s + 1 ))
+done
+# shellcheck disable=SC2086
+python3 "$root/tools/check_split_load.py" --server "$run_dir/server.log" $merge_args \
+    --run-id "$run_id" --total "$clients_total" --duration "$duration" \
+    --aggregate-limit-kbps "$cap_kbps" --server-transport "$cell" \
+    --client-transport portable --allocation-manifest "$run_dir/allocation.json" \
+    --load proof > "$run_dir/merge.log" 2>&1
+merge_status=$?
+cat "$run_dir/merge.log"
+"$here/lan-proof" --cell-row "$cell" "$server_label" "$server_speed" "$clients_total" "$duration" "$run_dir/server.log" "$run_dir/merge.log" | tee "$run_dir/row.txt"
+[ "$merge_status" -eq 0 ] || fail "the merger refused the cell; see $run_dir/merge.log"
+grep -q '^split_proof_cell: verdict=PASS' "$run_dir/merge.log" || fail "the cell verdict is not PASS"
+echo "lan-proof: run kept in $run_dir"

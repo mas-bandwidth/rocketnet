@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Checks the dry run and the row parser. Opens no socket.
+
+set -u
+
+here=$( cd "$( dirname "$0" )" && pwd )
+proof="$here/lan-proof"
+fail=0
+
+say()
+{
+    echo "lan-proof-selftest: $*" >&2
+    fail=1
+}
+
+parsed=$("$proof" --parse-row 'gso|server-a|1000|1000|120|yes|0|pass|800|pass') || say "parser exited $?"
+echo "$parsed" | grep -q 'cell=gso' || say "parser missed the cell"
+echo "$parsed" | grep -q 'verdict=pass' || say "parser missed the verdict"
+echo "$parsed" | grep -q 'min_kbps=800' || say "parser missed min kbps"
+"$proof" --parse-row 'short|row' >/dev/null 2>&1 && say "a short row was accepted"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+cat > "$tmp/inventory" <<'EOF'
+# label ssh role os iface uplink
+server-a server-a.invalid server linux eth0 -
+client-a client-a.invalid client linux eth0 -
+EOF
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/ssh" <<'EOF'
+#!/bin/sh
+echo SSH-CALLED
+exit 9
+EOF
+chmod +x "$tmp/bin/ssh"
+
+out=$("$proof" --dry-run --inventory "$tmp/inventory" --cell gso --duration 120) || say "gso dry-run exited $?"
+echo "$out" | grep -q 'dry-run: no host contacted' || say "dry-run did not say it contacted no host"
+echo "$out" | grep -q 'cell gso' || say "dry-run missed the cell"
+echo "$out" | grep -q 'check_split_load.py --load proof' || say "dry-run missed the proof check"
+echo "$out" | grep -q 'SSH-CALLED' && say "dry-run printed an ssh call"
+
+for cell in gso io_uring xdp iocp rio msgx; do
+    PATH="$tmp/bin:$PATH" "$proof" --dry-run --inventory "$tmp/inventory" --cell "$cell" --duration 120 >"$tmp/one" || say "$cell dry-run exited $?"
+    grep -q 'dry-run: no host contacted' "$tmp/one" || say "$cell dry-run contacted a host"
+    grep -q 'SSH-CALLED' "$tmp/one" && say "$cell dry-run called ssh"
+done
+
+cat > "$tmp/uplink" <<'EOF'
+server-a server-a.invalid server linux eth0 uplink
+client-a client-a.invalid client linux eth0 -
+EOF
+"$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 >"$tmp/xdp" 2>&1 && say "xdp accepted an uplink"
+grep -q 'refuses an uplink' "$tmp/xdp" || say "xdp refusal did not name the uplink"
+
+cat > "$tmp/server.log" <<'EOF'
+split_ready: schema=split_v1 role=server run_id=0123456789abcdef total=1000 duration_s=120 profile=default payload_bytes=proof rate_target_hz=10 load=proof address=192.0.2.10:40000 key=00 transport=gso startup_utc_s=1 transport_pin=gso
+split_proof: role=server run_id=0123456789abcdef transport=gso transport_pin=gso small_bytes=1200 fragmented_bytes=2000 target_kbps=256 min_client_up_kbps=277.859200 min_client_down_kbps=279.153067 checksum_errors=0 receipt_errors=0 receipts_dropped=0 disconnects=0 verdict=PASS
+EOF
+cat > "$tmp/merge.log" <<'EOF'
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 timing_verdict=FAIL
+EOF
+row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server.log" "$tmp/merge.log") || say "cell-row exited $?"
+[ "$row" = 'gso|server-a|1000|1000|120|yes|0|pass|277|pass' ] || say "cell-row printed '$row'"
+
+if [ "$fail" -ne 0 ]; then
+    echo "lan-proof-selftest: failed" >&2
+    exit 1
+fi
+echo "lan-proof-selftest: ok"
