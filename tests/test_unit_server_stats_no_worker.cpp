@@ -96,8 +96,8 @@ REGISTER_UNIT_TEST( test_server_stats_current_every_update );
 // that is the same on every page size and a part that is a count of pages.
 // The server's build-wide tables (sized by ROCKETNET_MAX_CLIENTS) are filled
 // densely. Measured 2026-10-24, Release, the case's peak resident set:
-// 567 MiB at 4 KiB pages (amd-3, x86_64 Linux) and 1149 MiB at 16 KiB pages
-// (mini-m5, arm64 macOS) with 1000 build slots; 641 MiB and 1228 MiB with
+// 567 MiB at 4 KiB pages (x86_64 Linux) and 1149 MiB at 16 KiB pages
+// (arm64 macOS) with 1000 build slots; 641 MiB and 1228 MiB with
 // 10000. That is about 367 KiB and 49 pages for each pair, and 9 KiB for
 // each build slot. The allowances below sit 15 to 21% over every measurement.
 // The SDK's allocations are the same on both systems (36625 MiB in 21061
@@ -122,7 +122,8 @@ static long no_worker_rss_bound_mb()
 SUITE_CASE_RSS_BOUND( test_server_stats_current_every_update, no_worker_rss_bound_mb );
 
 // The bound grows with the page by NO_WORKER_PAIR_PAGES pages per pair and
-// nothing else, and the runner fails a case whose peak is one MiB over it.
+// nothing else. A peak one MiB over it is recorded in both tiers; the unit
+// tier only reports it, and the functional tier (--enforce-rss) fails it.
 static void test_server_stats_rss_bound_scales_with_page()
 {
     const long small = no_worker_rss_bound_mb_at( 4096 );
@@ -136,9 +137,14 @@ static void test_server_stats_rss_bound_scales_with_page()
     result.peak_rss_mb = large;
     suite_check_rss( result, large );
     check( !result.failed );
+    check( !result.rss_over_bound );
     result.peak_rss_mb = large + 1;
-    suite_check_rss( result, large );
-    check( result.failed );
+    suite_check_rss( result, large, false );
+    check( !result.failed && result.rss_over_bound );
+    check( result.detail.find( "peak_rss_mb=" ) != std::string::npos );
+    result.rss_over_bound = false;
+    suite_check_rss( result, large, true );
+    check( result.failed && result.rss_over_bound );
     check( result.detail.find( "peak_rss_mb=" ) != std::string::npos );
 }
 
