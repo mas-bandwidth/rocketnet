@@ -6,6 +6,7 @@
 #include "rocketnet_internal.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
+#include "test_env_source.h"
 #include "test_unit_registry.h"
 
 #include <stdint.h>
@@ -131,16 +132,12 @@ static int rocketnet_unit_worker( const char * name )
     // cases create a client transport through the public API before stepping
     // it themselves; run those step-driven, after the isolation, so the unit
     // suite starts no client I/O thread.
-    if ( strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
-         strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0 )
+    const bool step_driven_case = strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
+                                  strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0;
+    if ( step_driven_case )
     {
-#if defined(_WIN32)
-        if ( _putenv_s( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) != 0 )
+        if ( rocketnet_test_env_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
             return 1;
-#else
-        if ( setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
-            return 1;
-#endif
     }
     rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
@@ -148,6 +145,8 @@ static int rocketnet_unit_worker( const char * name )
         result = rocketnet_unit_tests_run_named( name );
     if ( result == 2 )
         result = rocketnet_unit_run_named( name );
+    if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
+        result = 1;
     rocketnet_term();
     fflush( stdout );
     return result;

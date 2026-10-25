@@ -5,7 +5,7 @@ The owner's rule: unit tests use no real time, no sleep, no threads, no
 network and no resolver. This check scans the unit suite's sources and fails,
 naming file and line, on any call that would force a real platform primitive:
 a sleep, a wall-clock read, a thread start, a hostname resolution, the C
-library's time() or a std::thread.
+library's time(), a std::thread, or a process-environment mutation.
 
 The scanned files are every tests/test_unit_*.cpp and
 sdk/rocketnet_tests.cpp (the unit-registered cases live there). Comments are
@@ -26,6 +26,11 @@ PATTERNS = [
     ("getaddrinfo", re.compile(r'(?<![A-Za-z0-9_])getaddrinfo\s*\(')),
     ("std::thread", re.compile(r'std::thread')),
     ("time(", re.compile(r'(?<![A-Za-z0-9_])time\s*\(')),
+    ("setenv", re.compile(r'(?<![A-Za-z0-9_])setenv\s*\(')),
+    ("unsetenv", re.compile(r'(?<![A-Za-z0-9_])unsetenv\s*\(')),
+    ("putenv", re.compile(r'(?<![A-Za-z0-9_])putenv\s*\(')),
+    ("_putenv_s", re.compile(r'(?<![A-Za-z0-9_])_putenv_s\s*\(')),
+    ("SetEnvironmentVariable", re.compile(r'(?<![A-Za-z0-9_])SetEnvironmentVariable(?:A|W)?\s*\(')),
 ]
 
 
@@ -81,7 +86,7 @@ def main():
             print("FAIL check_unit_purity: %s:%d: %s" % (os.path.relpath(path, root), lineno, name))
         return 1
 
-    print("ok check_unit_purity: no real-time, sleep, thread or resolver call in the unit suite")
+    print("ok check_unit_purity: no real-time, sleep, thread, resolver or process-environment mutation in the unit suite")
     return 0
 
 

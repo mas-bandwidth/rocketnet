@@ -103,4 +103,4 @@ The executable message invariants are split by concern:
   capacity and cross-endpoint behavior.
 
 The model configurations and `tla/RUNS.tsv` are the maintained execution
-inventory. Long stress and profiling campaigns are planned hardening work.
+inventory.

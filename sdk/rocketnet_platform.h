@@ -117,6 +117,9 @@ void rocketnet_platform_sleep( double time );
 
 struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
 
+// Whole milliseconds rounded up and clamped to 1 .. 0xFFFFFFFE.
+uint32_t rocketnet_platform_timeout_milliseconds( float seconds );
+
 struct rocketnet_platform_sleep_split_t
 {
     uint32_t seconds;
@@ -137,6 +140,20 @@ struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double t
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
 
 #define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
+
+#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+/** Installs the unit suite's empty in-memory environment. */
+void rocketnet_platform_test_environment_install( void );
+
+/** Sets one variable in the installed in-memory environment. */
+void rocketnet_platform_test_environment_set( const char * name, const char * value );
+
+/** Removes one variable from the installed in-memory environment. */
+void rocketnet_platform_test_environment_unset( const char * name );
+
+/** Removes every variable while keeping the in-memory environment installed. */
+void rocketnet_platform_test_environment_reset( void );
+#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 /**
  * @brief Converts a 16-bit value from network byte order to host byte order.
@@ -587,6 +604,11 @@ const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t 
 // platform socket is its portable or msgx transport's socket, NULL for any
 // other transport.
 void rocketnet_platform_inject_receive_errno_for_testing( int error );
+// the repeating form: the next count receives each return error (the
+// one-shot call is a count of 1), and the remaining count of those
+// injections not yet taken by a receive.
+void rocketnet_platform_inject_receive_errno_repeat_for_testing( int error, int count );
+int rocketnet_platform_receive_errno_remaining_for_testing( void );
 struct rocketnet_server_transport_t;
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV

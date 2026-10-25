@@ -37,6 +37,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
@@ -812,20 +813,12 @@ static void secrets_wiped_staging_seen( const uint8_t * staging, int bytes )
 
 static int secrets_wiped_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return _putenv_s( name, value );
-#else
-    return setenv( name, value, 1 );
-#endif
+    return rocketnet_test_env_setenv( name, value, 1 );
 }
 
 static int secrets_wiped_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif
+    return rocketnet_test_env_unsetenv( name );
 }
 
 struct secrets_wiped_config_t
