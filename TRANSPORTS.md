@@ -127,6 +127,21 @@ the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
 pins and its degrade path are in [docs/MACOS.md](docs/MACOS.md), "The msgx
 client".
 
+On Windows the `iocp` client (`sdk/rocketnet_client_iocp_windows.cpp`,
+pin-only: `ROCKETNET_CLIENT_TRANSPORT=iocp`) associates its one connected
+socket with a completion port of its own, never the iocp server's, and posts
+`ROCKETNET_CLIENT_IOCP_RECEIVES` (64) overlapped `WSARecvFrom` receives at
+create into buffers allocated at create. The I/O thread's wait is
+`GetQueuedCompletionStatusEx` with the timeout and its wake one
+`PostQueuedCompletionStatus` with a wake key, so the portable client's
+event wait is replaced by the port; receive_batch copies each completed
+receive and re-posts it after the copy; sends are synchronous `WSASendTo`
+(overlapped send is rn-win-client-overlapped-send). Destroy closes the
+socket and dequeues until every posted receive has completed before it frees
+(`tla/RNClientIocp.tla`, FreedOnlyWhenDrained); a drain that does not finish
+within `ROCKETNET_CLIENT_IOCP_DRAIN_WAITS` dequeues of one second leaks the
+transport rather than free memory the kernel may still write.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:

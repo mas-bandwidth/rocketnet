@@ -70,6 +70,7 @@ set(ROCKETNET_SDK_SOURCES_LINUX
 set(ROCKETNET_SDK_SOURCES_APPLE)
 
 set(ROCKETNET_SDK_SOURCES_WINDOWS
+    sdk/rocketnet_client_iocp_windows.cpp
     sdk/rocketnet_server_iocp_windows.cpp
     sdk/rocketnet_server_rio_windows.cpp)
 

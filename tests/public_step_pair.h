@@ -28,6 +28,7 @@ struct public_step_pair_t
     rocketnet_server_t * server;
     rocketnet_client_t * client;
     double time;
+    int threads_before_pair;
     int threads_before_client;
     int threads_after_client;
 };
@@ -94,6 +95,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
+    pair->threads_before_pair = thread_count ? thread_count() : -1;
     rocketnet_quiet( 1 );
 
     rocketnet_server_config_t server_config;
@@ -115,10 +117,21 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     pair->threads_after_client = thread_count ? thread_count() : -1;
 }
 
+static void public_step_pair_stop_server_and_wait( public_step_pair_t * pair )
+{
+    rocketnet_server_stop( pair->server );
+    // Poll the completion query within a fixed budget; do not sleep.
+    for ( int step = 0; step < 32 && !rocketnet_server_stopped( pair->server ); step++ )
+    {
+    }
+    check( rocketnet_server_stopped( pair->server ) );
+}
+
 static void public_step_pair_destroy( public_step_pair_t * pair )
 {
     rn_test_client_stop_and_destroy( pair->client );
-    rn_test_server_stop_and_destroy( pair->server );
+    public_step_pair_stop_server_and_wait( pair );
+    rocketnet_server_destroy( pair->server );
 }
 
 // RNClientIo CallerStep: update and send_packets execute the non-blocking I/O

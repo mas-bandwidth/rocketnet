@@ -28,6 +28,7 @@
 //     fail.
 
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -37,19 +38,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// Windows has no setenv or unsetenv: the same shim as functional/harness.inc
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static int setenv( const char * name, const char * value, int overwrite )
-{
-    size_t length = 0;
-    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
-        return 0;
-    return _putenv_s( name, value );
-}
-
-static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-#endif
 
 // the cases test struct transport lists, so the test sets the caller's env pin aside
 // for its duration and puts it back after: the env pin wins over the struct
@@ -64,14 +52,14 @@ struct env_pin_saved
 
 static void env_pin_set_aside( env_pin_saved * saved )
 {
-    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
-    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 }
 
 static void env_pin_put_back( const env_pin_saved * saved )
 {
     if ( saved->was_set )
-        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
+        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
 }
 
 
@@ -165,13 +153,13 @@ static void test_client_transport_create_ex_reports_every_status()
 
     // C2: an invalid environment overlay refuses at the env apply
     char prior[4096];
-    const bool had_prior = rocketnet_test_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
-    setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number", 1 );
+    const bool had_prior = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number", 1 );
     check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
     if ( had_prior )
-        setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, 1 );
+        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, 1 );
     else
-        unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+        rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // C3: a config field out of range refuses at validation
     {

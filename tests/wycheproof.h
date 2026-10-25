@@ -11,11 +11,14 @@
 // false, null and whitespace. It refuses trailing data after the top value,
 // a trailing comma, an unterminated string or container, a duplicate key in
 // one object, nesting deeper than 16, and any other byte.
+//
+// The files are never read at run time: the unit build compiles them into
+// ./bin/test (cmake/EmbedTestFixtures.cmake), and wycheproof_load reads the
+// embedded bytes through rocketnet_test_fixture.
 
 #pragma once
 
-#include "resource_file.h"
-
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -329,26 +332,23 @@ inline bool wycheproof_hex( const std::string & text, std::vector<uint8_t> & out
     return true;
 }
 
-// the vendor files beside the header: tests/wycheproof/<file_name>
-inline std::string wycheproof_path( const char * file_name )
-{
-    std::string source = __FILE__;
-    size_t slash = source.find_last_of( "/\\" );
-    std::string root = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
-    return root + "/wycheproof/" + file_name;
-}
+// The test fixtures compiled into the unit binary at build time
+// (cmake/EmbedTestFixtures.cmake, the generated rocketnet_test_fixtures.cpp):
+// the bytes of the committed file at path, relative to the repository root
+// ("tests/wycheproof/x25519_test.json"), and its size in *bytes; NULL, with
+// *bytes 0, for a path that was not embedded.
+const unsigned char * rocketnet_test_fixture( const char * path, size_t * bytes );
 
-inline bool wycheproof_read_file( const std::string & path, std::string & out )
+// the vendor files: tests/wycheproof/<file_name>, from the embedded copy
+inline bool wycheproof_read_file( const char * file_name, std::string & out )
 {
     out.clear();
-    FILE * file = rocketnet_test_fopen( path, "rb" );
-    if ( !file )
+    const std::string path = std::string( "tests/wycheproof/" ) + file_name;
+    size_t bytes = 0;
+    const unsigned char * data = rocketnet_test_fixture( path.c_str(), &bytes );
+    if ( !data )
         return false;
-    char buffer[4096];
-    size_t n;
-    while ( ( n = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
-        out.append( buffer, n );
-    fclose( file );
+    out.assign( reinterpret_cast<const char *>( data ), bytes );
     return true;
 }
 
@@ -415,7 +415,7 @@ inline bool wycheproof_load( const char * file_name,
     *number_of_groups = 0;
 
     std::string text;
-    if ( !wycheproof_read_file( wycheproof_path( file_name ), text ) )
+    if ( !wycheproof_read_file( file_name, text ) )
         return false;
 
     wyj::node_t root;
