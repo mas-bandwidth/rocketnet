@@ -6,11 +6,6 @@
 #include <new>
 #include <atomic>
 #include <string.h>
-#include <stdio.h>
-#if defined(__APPLE__)
-#include <pthread.h>
-#include <pthread/qos.h>
-#endif
 
 // Adapters preserve the existing native backend entry points. New backends
 // can define their operations directly in their own implementation file.
@@ -100,13 +95,6 @@ struct portable_server_t
     std::atomic<uint64_t> dropped{0};
     std::atomic<uint64_t> dropped_by_path[PORTABLE_TX_DROP_PATHS] = {}; // the paths of dropped, by PORTABLE_TX_DROP_*
     int publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY; // main only: why the last publish try failed
-    // measure (temporary)
-    std::atomic<uint64_t> m_drain_ns_sum{0}, m_drain_ns_max{0}, m_banks{0}, m_packets{0}, m_slow{0}, m_cpu[32] = {};
-    std::atomic<int> m_qos{-1}, m_qos_relative{0};
-    std::atomic<double> m_slow_at{0.0};
-    std::atomic<uint64_t> m_slow_ns{0}, m_slow_count{0};
-    double m_interval_start = 0.0;
-    uint64_t m_nfb_last = 0, m_sent_packets = 0, m_max_call = 0;
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
@@ -284,27 +272,7 @@ static void portable_tx_worker( void * arg )
         {
             for ( int i = 0; i < bank->count; ++i )
                 bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
-#if defined(__APPLE__)
-            if ( server->m_qos.load() < 0 )
-            {
-                qos_class_t qos = QOS_CLASS_UNSPECIFIED; int rel = 0;
-                pthread_get_qos_class_np( pthread_self(), &qos, &rel );
-                server->m_qos_relative.store( rel );
-                server->m_qos.store( (int) qos );
-            }
-            size_t m_cpu_number = 0;
-            if ( pthread_cpu_number_np( &m_cpu_number ) == 0 && m_cpu_number < 32 ) server->m_cpu[m_cpu_number].fetch_add( 1 );
-#endif
-            const double m_t0 = rocketnet_platform_time();
             rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
-            const double m_t1 = rocketnet_platform_time();
-            const uint64_t m_ns = (uint64_t) ( ( m_t1 - m_t0 ) * 1e9 );
-            server->m_drain_ns_sum.fetch_add( m_ns );
-            uint64_t m_max = server->m_drain_ns_max.load();
-            while ( m_ns > m_max && !server->m_drain_ns_max.compare_exchange_weak( m_max, m_ns ) ) {}
-            server->m_banks.fetch_add( 1 );
-            server->m_packets.fetch_add( (uint64_t) bank->count );
-            if ( m_ns > 100000000ull ) { server->m_slow.fetch_add( 1 ); server->m_slow_at.store( m_t0 ); server->m_slow_ns.store( m_ns ); server->m_slow_count.store( (uint64_t) bank->count ); }
         }
         bank->count = 0;
         rocketnet_platform_mutex_acquire( &server->mutex );
@@ -592,7 +560,6 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
             portable_tx_drop( server, PORTABLE_TX_DROP_INVALID, 1 );
             continue;
         }
-        server->m_sent_packets++;
         const int slot = bank->count;
         bank->to[slot] = *packet->to;
         memcpy( bank->data[slot], packet->packet_data, (size_t) packet->packet_bytes );
@@ -608,30 +575,6 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
 {
     portable_server_t * server = (portable_server_t*) transport;
     portable_tx_publish( server ); // retry a deferred batch even on an idle update
-    if ( server->socket )
-    {
-        const double m_now = rocketnet_platform_time();
-        if ( server->m_interval_start == 0.0 ) server->m_interval_start = m_now;
-        const uint64_t nfb = server->dropped_by_path[PORTABLE_TX_DROP_NO_FREE_BANK].load() + server->dropped_by_path[PORTABLE_TX_DROP_HANDOFF_BUSY].load();
-        if ( m_now - server->m_interval_start >= 10.0 || ( nfb != server->m_nfb_last && m_now - server->m_interval_start >= 1.0 ) )
-        {
-            const uint64_t banks = server->m_banks.exchange( 0 ), packets = server->m_packets.exchange( 0 );
-            const uint64_t ns = server->m_drain_ns_sum.exchange( 0 ), ns_max = server->m_drain_ns_max.exchange( 0 ), slow = server->m_slow.exchange( 0 );
-            char cpus[256]; int at = 0; cpus[0] = '\0';
-            for ( int c = 0; c < 32 && at < 240; ++c ) { const uint64_t n = server->m_cpu[c].exchange( 0 ); if ( n ) at += snprintf( cpus + at, sizeof( cpus ) - (size_t) at, "%d:%llu ", c, (unsigned long long) n ); }
-            int in_flight = 0;
-            if ( rocketnet_platform_mutex_try_acquire( &server->mutex ) ) { in_flight = PORTABLE_TX_BANKS - 1 - server->free_count; rocketnet_platform_mutex_release( &server->mutex ); } else in_flight = -1;
-            rocketnet_info( "measure tx: interval_s=%.2f packets_in=%llu banks_drained=%llu packets_drained=%llu drain_ns_per_packet=%.0f drain_ms_mean=%.2f drain_ms_max=%.2f slow_banks=%llu last_slow_at=%.3f last_slow_ms=%.1f last_slow_packets=%llu no_free_bank=%llu handoff_busy=%llu in_flight=%d producer_count=%d qos=0x%x rel=%d cpus=%s",
-                m_now - server->m_interval_start, (unsigned long long) server->m_sent_packets, (unsigned long long) banks, (unsigned long long) packets,
-                packets ? (double) ns / (double) packets : 0.0, banks ? (double) ns / 1e6 / (double) banks : 0.0, (double) ns_max / 1e6, (unsigned long long) slow,
-                server->m_slow_at.load(), (double) server->m_slow_ns.load() / 1e6, (unsigned long long) server->m_slow_count.load(),
-                (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_NO_FREE_BANK].load(), (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_HANDOFF_BUSY].load(),
-                in_flight, server->bank[server->producer].count, (unsigned) server->m_qos.load(), server->m_qos_relative.load(), cpus );
-            server->m_interval_start = m_now;
-            server->m_sent_packets = 0;
-            server->m_nfb_last = nfb;
-        }
-    }
     if ( count <= 0 || stride <= 0 || server->stopping.load( std::memory_order_acquire ) ) return 0;
     int received = 0;
     while ( received < count && portable_rx_acquire( server ) )
