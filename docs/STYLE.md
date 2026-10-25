@@ -23,11 +23,14 @@ with the counts and does not pick a side the SDK does not pick.
 writes `rocketnet_`, `rocketnet_*_t` and `ROCKETNET_`.
 
 **Enforced by.** Each rule ends with *clang-format* (and the key that does it)
-or *by hand*. In the `.clang-format` this repository uses,
-`MaxEmptyLinesToKeep: 4`, `KeepEmptyLinesAtTheStartOfBlocks: true`,
-`SeparateDefinitionBlocks: Leave`, `InsertBraces: false` and
-`ReflowComments: false`, so clang-format keeps whatever blank lines, braces
-and comment lines a person writes (up to four blank lines in a row).
+or *by hand*. In the configuration in effect (`clang-format-18
+--dump-config` with this repository's `.clang-format`), `MaxEmptyLinesToKeep: 4`
+and `ReflowComments: false` are set in `.clang-format`, and
+`KeepEmptyLinesAtTheStartOfBlocks: true`, `SeparateDefinitionBlocks: Leave`,
+`InsertBraces: false` and `RemoveBracesLLVM: false` hold by default (inherited
+from `BasedOnStyle: LLVM`, not written in the file). So clang-format keeps
+whatever blank lines, braces and comment lines a person writes (up to four
+blank lines in a row).
 
 ---
 
@@ -220,9 +223,9 @@ A comment follows code with no blank line between only 5 times in SDK code.
 
 - **`//` only, inside code.** No `/* */` comment appears inside a function
   body. `/* */` is used for the licence header at the top of each file, and
-  `/** */` for the doc blocks of the serialization classes
-  (`include/next_bitpacker.h`, `next_stream.h`, `next_serialize.h`, 71
-  blocks). Every one of the 136 `*/` closers is followed by a blank line.
+  `/** */` for doc blocks in four headers: 71 blocks, 20 in
+  `include/next_bitpacker.h`, 27 in `next_stream.h`, 11 in
+  `next_serialize.h` and 13 in `next_util.h` (its template structs). Every one of the 136 `*/` closers is followed by a blank line.
 - **Lower case, no full stop.** 263 of 298 comments start lower case; of the
   35 that start upper case, 33 are `IMPORTANT:`. 275 of 305 do not end with
   a full stop. Comments are phrases ("bind to port", "no port number"), not
@@ -236,9 +239,24 @@ A comment follows code with no blank line between only 5 times in SDK code.
   short notes on one value or one condition (`include/next_bitpacker.h:37`,
   `source/next_base64.cpp:26`).
 - **No comment directly above a function definition.** All 691 top-level
-  definitions have a blank line on the line above. A comment about a group
-  of functions goes above a section separator (rule 6), with a blank line
-  after it, the same comment-then-blank-line form as rule 3.
+  definitions have a blank line on the line above.
+- **A group comment names a group of definitions** and sits at column 0, then
+  one blank line, then the first definition of the group: 16 in the platform
+  files (`// init`, `// time`, `// sockets`, `// threads`), 12 above a
+  function and 4 above a struct. None of the 116 top-level separators has a
+  comment above it.
+
+```
+source/next_platform_windows.cpp:53  // init
+source/next_platform_windows.cpp:54
+source/next_platform_windows.cpp:55  int next_platform_init()
+```
+
+```
+source/next_platform_switch.cpp:19  // threads
+source/next_platform_switch.cpp:20
+source/next_platform_switch.cpp:21  next_platform_thread_t * next_platform_thread_create( void * context, next_platform_thread_func_t fn, void * arg )
+```
 - **`#endif` names its condition, repeating the directive that opened it**:
   302 of 346 `#endif` lines. Of those, 249 read `#endif // #if NAME`, 44 read
   `#endif // #ifndef NAME_H` (header guards), and 9 read
@@ -328,10 +346,33 @@ placement itself is clang-format, `BreakBeforeBraces: Allman`).
 - **Exactly one blank line between functions**: 559 of 559 function ends
   are followed by one blank line and the next definition.
 - **Section separators** split a file into groups (commands, notifications,
-  one struct and its functions): a line of `// ` and dashes alone, with one
-  blank line before and after it, 116 of 116. A separator carries no title
-  (the line after it is always blank). Its width is not fixed: lines of 40
-  characters (28 lines), 105 (23), 54 (19), 66 (18), others.
+  one struct and its functions). At file level (column 0) a separator is
+  a line of `// ` and dashes alone, with one blank line before and after it,
+  116 of 116, and carries no title (the line after it is always blank). Its
+  width is not fixed: lines of 40 characters (28 lines), 105 (23), 54 (19),
+  66 (18), others.
+- **Titled banners inside a function.** A very long function is split into
+  sections by a three-line banner: dashes, an UPPER CASE title, dashes as
+  wide as the title, with one blank line before and after. The SDK has 4,
+  all in the two packet-processing functions:
+  `source/next_client.cpp:1018-1020` and `1331-1333`,
+  `source/next_server.cpp:2388-2390` and `2674-2676`.
+
+```
+source/next_client.cpp:1018      // -------------------
+source/next_client.cpp:1019      // PACKETS FROM RELAYS
+source/next_client.cpp:1020      // -------------------
+source/next_client.cpp:1021
+source/next_client.cpp:1022      if ( packet_id == NEXT_ROUTE_RESPONSE_PACKET )
+```
+
+```
+source/next_server.cpp:2674      // ----------------------------------
+source/next_server.cpp:2675      // ENCRYPTED CLIENT TO SERVER PACKETS
+source/next_server.cpp:2676      // ----------------------------------
+source/next_server.cpp:2677
+source/next_server.cpp:2678      next_session_entry_t * session = NULL;
+```
 
 ```
 source/next_client.cpp:2515      return client;
@@ -356,8 +397,8 @@ source/next.cpp:98
 source/next.cpp:99  static int log_quiet = 0;
 ```
 
-*By hand* (`SeparateDefinitionBlocks: Leave`; `Always` would insert the blank
-line between definitions but is not set in this repository).
+*By hand* (`SeparateDefinitionBlocks` is `Leave` by default and not set in
+`.clang-format`; `Always` would insert the blank line between definitions).
 
 ## 7. Names
 
@@ -439,8 +480,12 @@ Read the function top to bottom and check each line:
     `/* */` inside code; no comment touching the function signature.
 11. Every `#endif` names its condition with the directive that opened it:
     `#endif // #if NAME`, `#endif // #ifdef NAME` or `#endif // #ifndef NAME_H`.
-12. One blank line after the closing `}` before the next function; a section
-    separator is an untitled `// ----` line with a blank line on each side.
+12. One blank line after the closing `}` before the next function; a file-level
+    separator is an untitled `// ----` line with a blank line on each side; a
+    section inside a long function opens with a titled three-line banner
+    (`// ----`, `// UPPER CASE TITLE`, `// ----`) with a blank line on each side;
+    a group comment (`// sockets`) sits at column 0, then a blank line, then the
+    group's first definition.
 13. Names: `rocketnet_` snake_case functions, `rocketnet_*_t` types,
     `ROCKETNET_` constants, snake_case locals that name their unit.
 14. Run clang-format 18 last; it must not change the blank lines you placed.
