@@ -190,7 +190,10 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 and walked left to right at client `connect` and server `start`. The first
 candidate that starts wins, and a list that every candidate refuses fails
 loudly. `"auto"` (the default, also NULL or the empty
-string) is the platform's recommended order; a one-element list is a pin. A
+string) is the platform's recommended order; a one-element list is a pin.
+The client's `auto` order is the native client, then `portable`: `gso`,
+`portable` on Linux; `msgx`, `portable` on macOS; `iocp`, `portable` on Windows. `portable` is ranked last on every OS and is the
+fallback when the native client's create refuses. A
 known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.

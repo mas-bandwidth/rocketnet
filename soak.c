@@ -25,13 +25,16 @@
     --rate N sends N packets per second each way (N a positive integer, at
     most 1000000), paced against the wall clock from each connect; the
     transport layer has no send budget, so the rate is the only limit. Without
-    it soak sends one packet each way per iteration. The pacing never makes a
+    it soak sends one packet each way per iteration, except that the client
+    sends none in an iteration whose update deferred the hand-off of its fill
+    ring (below): that packet is not dropped, it is the next one sent. The
+    pacing never makes a
     refusal itself: each direction sends at most ROCKETNET_SOAK_RATE_BURST
     packets per iteration and holds its unacknowledged span (its highest sent
     session sequence less the largest the other side has acknowledged, read
     through the delivery capture) under ROCKETNET_SOAK_RATE_WINDOW, so a stall
     on either side never overruns the 4096-packet send history
-    (SEND_HISTORY_OVERFLOW); and the client sends
+    (SEND_HISTORY_OVERFLOW); and, with or without --rate, the client sends
     nothing more in an iteration once a hand-off of its fill ring is deferred
     (CLIENT_SEND_DEFERRED: the I/O thread still holds the other rings), so a
     stalled I/O thread never fills the ring (SEND_RING_FULL). What a stall
@@ -107,20 +110,47 @@
     Windows "threads=<n> os_threads=<n>"; phase is
     between (no client alive) or live (a client alive), and only between
     samples are compared.
+    Every 10 s report also prints one "soak send: t=<s>
+    staged_proxy_max=<n> deferred_run_max=<n> deferred_iterations=<n>
+    unacked_span_max=<n> acked_packets=<n> refused_sends=<n>
+    iteration_gap_max_ms=<ms> client_lifetime_send_deferred=<n>
+    client_lifetime_send_ring_full=<n> library_bytes=<n>" line, the client
+    send path over the interval read from what the library already keeps
+    (soak_print_send). staged_proxy_max is a proxy, not the fill ring's
+    occupancy, which the library does not expose: it counts only the
+    payloads soak staged since the last hand-off that did not defer, not the
+    packets update stages or the rings the I/O thread holds. The
+    client_lifetime_ counters are the current client's totals since its
+    create (they restart at each reconnect), not interval values. What tells
+    a stalled I/O thread (deferred_run_max and staged_proxy_max climb)
+    from a retire leak (unacked_span_max and library_bytes climb) and from
+    memory the OS holds (library_bytes flat while resident_bytes moves).
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes,
     os_threads on Windows, where every thread proven the OS's by its start
     address also prints at the post-warmup and end samples as
     "soak resources: <sample> os_thread id=<n> start=ntdll+0x<offset>");
-    library_bytes prints the same way on every platform as a per-source
-    figure and is not compared; a run that ends inside the warm cycle, as every run under 30 s
+    library_bytes prints the same way on every platform; a run that ends inside the warm cycle, as every run under 30 s
     does, has no post-warmup sample and prints
     "soak resources: none (the run ended inside the warm cycle)".
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
-    and the memory count grows by at most one page per ten minutes of run
-    since the post-warmup sample (at least one page); on Windows os_threads
+    and library_bytes, the library's own allocator bytes, grows by at most
+    one page per ten minutes of run since the post-warmup sample (at least
+    one page). The process's memory count (resident_bytes, or private_bytes
+    on Windows) is held to the same rule only where the library allocates
+    outside the allocator soak gives rocketnet_init: when the server or the
+    client transport is io_uring (an anonymous mmap and the liburing rings),
+    xdp (the umem) or rio (a VirtualAlloc region). On every other transport
+    (portable, msgx, gso, iocp, loopback: every library allocation goes
+    through that allocator, and thread stacks are held by the thread count)
+    it is printed and not asserted, since it counts what the OS and the C
+    runtime hold (socket buffers, first touch of preallocated pages, the
+    runtime's own heaps) beside the library. The guard a run used prints as
+    "soak resources: memory guard library_bytes" or "soak resources: memory
+    guard library_bytes and <memory count> (server <name>, client <name>)";
+    on Windows os_threads
     may fall and never rise, so the full thread count never grows. A resource
     read that fails (a thread walk that ends on an error among them) fails
     the run. A count that is not
@@ -556,6 +586,72 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
     fflush( stdout );
 }
 
+// Whether every library allocation a transport makes goes through the
+// allocator soak gives rocketnet_init. io_uring maps its buffers and liburing
+// maps its rings (sdk/rocketnet_server_uring_linux.cpp), xdp allocates its
+// umem directly (sdk/rocketnet_server_socket_linux.cpp) and rio commits its
+// region with VirtualAlloc (sdk/rocketnet_server_rio_windows.cpp); every
+// other transport allocates only through the allocator, and its threads'
+// stacks are held by the thread count.
+
+static int soak_transport_memory_counted( const char * transport_name )
+{
+    return strcmp( transport_name, "io_uring" ) != 0 && strcmp( transport_name, "xdp" ) != 0 && strcmp( transport_name, "rio" ) != 0;
+}
+
+// The client send path, per report interval, from what the library already
+// keeps: a proxy for the fill ring's occupancy, which the library does not
+// expose (staged: the payloads soak staged since the last hand-off that was
+// not deferred, never update's packets or the rings the I/O thread holds;
+// the fill ring holds 256 packets),
+// the longest run of consecutive iterations whose update hand-off was
+// deferred (CLIENT_SEND_DEFERRED moved: the I/O thread still held the other
+// rings), the client's unacknowledged span (its highest sent session sequence
+// less the largest the server acknowledged, from the delivery capture), the
+// packet ids the client's updates reported acknowledged, the sends the
+// transport refused (start_packet or finish_packet; soak retries the same
+// payload on a later iteration, never drops it), the longest gap between two
+// iteration starts, and the current client's lifetime CLIENT_SEND_DEFERRED
+// and SEND_RING_FULL counters (they restart at each reconnect). Printed and reset every report interval as one "soak send:" line.
+
+struct soak_send_interval_t
+{
+    uint64_t staged;                    // now, carried across intervals
+    uint64_t staged_proxy_max;
+    uint64_t deferred_run;              // now, carried across intervals
+    uint64_t deferred_run_max;
+    uint64_t deferred_iterations;
+    uint64_t unacked_span_max;
+    uint64_t acked_packets;
+    uint64_t refused_sends;
+    double iteration_gap_max;
+};
+
+static void soak_send_interval_reset( struct soak_send_interval_t * send )
+{
+    send->staged_proxy_max = send->staged;
+    send->deferred_run_max = send->deferred_run;
+    send->deferred_iterations = 0;
+    send->unacked_span_max = 0;
+    send->acked_packets = 0;
+    send->refused_sends = 0;
+    send->iteration_gap_max = 0.0;
+}
+
+static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
+{
+    const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+    printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
+            seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
+            (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
+            (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
+            (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
+            (unsigned long long) ( counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( counters, counter_send_ring_full ) : 0 ),
+            (long long) soak_library_bytes_read() );
+    fflush( stdout );
+}
+
 int main( int argc, char ** argv )
 {
     // before anything is created: the allocator keeps the pages the warm-up
@@ -782,7 +878,11 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+    const int counter_send_ring_full = soak_counter_index( "SEND_RING_FULL" );
+    struct soak_send_interval_t send_interval;
+    memset( &send_interval, 0, sizeof( send_interval ) );
     const double start_time = rocketnet_time();
+    double last_iteration_time = start_time;
     double last_report_time = start_time;
     double last_assert_time = start_time;
     double reconnect_time = start_time;
@@ -797,6 +897,12 @@ int main( int argc, char ** argv )
         }
 
         iteration++;
+        {
+            const double now = rocketnet_time();
+            if ( now - last_iteration_time > send_interval.iteration_gap_max )
+                send_interval.iteration_gap_max = now - last_iteration_time;
+            last_iteration_time = now;
+        }
 
         // reconnect on a cycle: the connect path is never a rare path
 
@@ -904,6 +1010,8 @@ int main( int argc, char ** argv )
             }
             reconnect_time = rocketnet_time();
             connected = 0;
+            send_interval.staged = 0;
+            send_interval.deferred_run = 0;
         }
 
         // a deferred hand-off in update means the I/O thread still holds the
@@ -912,6 +1020,22 @@ int main( int argc, char ** argv )
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
         const int client_ring_held = counter_send_deferred >= 0 && rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) != deferred_before_update;
+        {
+            const uint64_t * acked_packet_ids = NULL;
+            send_interval.acked_packets += (uint64_t) rocketnet_client_transport_acked_packets( client, &acked_packet_ids );
+        }
+        if ( client_ring_held )
+        {
+            send_interval.deferred_iterations++;
+            send_interval.deferred_run++;
+            if ( send_interval.deferred_run > send_interval.deferred_run_max )
+                send_interval.deferred_run_max = send_interval.deferred_run;
+        }
+        else
+        {
+            send_interval.deferred_run = 0;
+            send_interval.staged = 0;
+        }
 
         // flush what the update staged (the handshake's replies, the
         // disconnects): a buffered transport, xdp, sends only at a flush
@@ -953,7 +1077,7 @@ int main( int argc, char ** argv )
             // the wall clock owes since the connect, inside the burst and the
             // window (soak_rate_send_count)
 
-            uint64_t client_send_count = 1;
+            uint64_t client_send_count = client_ring_held ? 0 : 1;
             uint64_t server_send_count = 1;
             if ( rate )
             {
@@ -976,13 +1100,32 @@ int main( int argc, char ** argv )
             for ( uint64_t n = 0; n < client_send_count; n++ )
             {
                 if ( !soak_client_send( client, client_payload_size ) )
+                {
+                    send_interval.refused_sends++;
                     break;
+                }
                 client_sent++;
                 connection_client_sent++;
+                send_interval.staged++;
+                if ( send_interval.staged > send_interval.staged_proxy_max )
+                    send_interval.staged_proxy_max = send_interval.staged;
                 client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
             }
             if ( client_send_count )
+            {
+                const uint64_t deferred_before_send = counter_send_deferred >= 0 ? rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) : 0;
                 rocketnet_client_transport_send_packets( client );
+                if ( counter_send_deferred < 0 || rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) == deferred_before_send )
+                    send_interval.staged = 0;
+            }
+            {
+                struct rocketnet_delivery_capture_t client_capture;
+                memset( &client_capture, 0, sizeof( client_capture ) );
+                rocketnet_client_transport_delivery_capture( client, &client_capture );
+                const uint64_t unacked_span = soak_unacked_span( &client_capture, client_sent_sequence_at_connect );
+                if ( unacked_span > send_interval.unacked_span_max )
+                    send_interval.unacked_span_max = unacked_span;
+            }
             for ( uint64_t n = 0; n < server_send_count; n++ )
             {
                 if ( !soak_server_send( server, client_index, server_payload_size ) )
@@ -1096,6 +1239,8 @@ int main( int argc, char ** argv )
                     soak_print_memory( client ? "live" : "between", rocketnet_time() - start_time, &sample );
                 }
             }
+            soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
+            soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
                     (unsigned long long) payloads_verified, (unsigned long long) failures );
@@ -1194,6 +1339,17 @@ int main( int argc, char ** argv )
         soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
+    // the memory guard: the process's memory count joins library_bytes
+    // wherever either end's transport allocates outside the counting
+    // allocator
+    const int memory_guard_process = !soak_transport_memory_counted( server_transport_name ) ||
+                                     ( client_transport_name[0] != '\0' && !soak_transport_memory_counted( client_transport_name ) );
+    if ( memory_guard_process )
+        printf( "soak resources: memory guard library_bytes and %s (server %s, client %s)\n", process_resources_name( PROCESS_RESOURCES_MEMORY ),
+                server_transport_name, client_transport_name[0] ? client_transport_name : "none" );
+    else
+        printf( "soak resources: memory guard library_bytes\n" );
+
     if ( resources_started && resources_ended )
     {
         const double seconds_since_start = rocketnet_time() - resources_start_time;
@@ -1201,6 +1357,20 @@ int main( int argc, char ** argv )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
+            // the process's memory count is the OS's and the C runtime's as
+            // much as the library's: asserted only where the library
+            // allocates outside the counting allocator (memory_guard_process),
+            // otherwise printed; the memory flat rule holds the library's
+            // own bytes below on every transport. The owner's
+            // rule: the library is not responsible for the OS. Measured: a
+            // 300 s impaired portable soak on macOS held library_bytes at
+            // 105680858 at every between sample while resident_bytes grew
+            // 212992, and vmmap --summary put the growth in the malloc
+            // zones' residency (Malloc Small 1024K to 1152K, Malloc Large
+            // 14.1M to 14.2M); a 60 s iocp soak on Windows grew
+            // private_bytes 8192 with handles and threads flat.
+            if ( i == PROCESS_RESOURCES_MEMORY && !memory_guard_process )
+                continue;
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
                 printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
@@ -1213,6 +1383,13 @@ int main( int argc, char ** argv )
         }
         printf( "soak resources: library_bytes start=%lld end=%lld peak=%lld\n",
                 (long long) library_bytes_start, (long long) library_bytes_end, (long long) library_bytes_peak );
+        if ( assert_flat && !process_resources_flat( PROCESS_RESOURCES_MEMORY, library_bytes_start, library_bytes_end, seconds_since_start ) )
+        {
+            printf( "soak: --assert-flat FAILED: library_bytes start=%lld end=%lld (allowed growth %lld bytes over %.0f s)\n",
+                    (long long) library_bytes_start, (long long) library_bytes_end,
+                    (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+            failures++;
+        }
     }
     else
     {
