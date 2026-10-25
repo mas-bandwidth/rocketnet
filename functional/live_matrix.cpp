@@ -203,6 +203,8 @@ struct live_matrix_t
     uint64_t not_delivered;              // modes 0, 1 and 4: lost or superseded, counted, not failed
     uint64_t refusals;
     uint64_t iteration;
+    int mode_first;
+    int mode_past;
 };
 
 static double live_matrix_now( struct live_matrix_t * m )
@@ -674,7 +676,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
 
 static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
 {
-    for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
+    for ( int mode = m->mode_first; mode < m->mode_past; mode++ )
     {
         const int channels[2] = { 0, LIVE_MATRIX_CHANNELS - 1 };
         for ( int c = 0; c < 2; c++ )
@@ -808,7 +810,7 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
     const int channel = 1;
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
     {
-        for ( int mode = 0; mode < LIVE_MATRIX_MODES && m->failures == 0; mode++ )
+        for ( int mode = m->mode_first; mode < m->mode_past && m->failures == 0; mode++ )
         {
             uint32_t lengths[8];
             int n = 0;
@@ -885,7 +887,7 @@ static void live_matrix_window_reset( struct live_matrix_t * m )
             for ( int channel = 0; channel < live_matrix_channels( mode ); channel++ )
             {
                 struct live_matrix_stream_t * s = &d->streams[mode][channel];
-                s->active = 1;
+                s->active = mode >= m->mode_first && mode < m->mode_past;
                 s->total = total;
                 s->last = -1;
                 // mode 4's closing message must be identified by its sequence, so
@@ -1101,12 +1103,15 @@ static void live_matrix_print_table()
 //                     the case
 // ---------------------------------------------------------------
 
-void live_message_matrix_loopback()
+static void live_message_matrix_loopback( int mode_first, int mode_past )
 {
     const double case_start = rocketnet_platform_time();
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
+    live_matrix_check( mode_first >= 0 && mode_first < mode_past && mode_past <= LIVE_MATRIX_MODES );
+    m->mode_first = mode_first;
+    m->mode_past = mode_past;
     char verbose[256];
     live_matrix_verbose = rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) );
     memset( live_matrix_table_sent, 0, sizeof( live_matrix_table_sent ) );
@@ -1186,4 +1191,19 @@ void live_message_matrix_loopback()
 
     live_matrix_check( m->edge_failures == 0 );
     live_matrix_check( elapsed < LIVE_MATRIX_WALL_BOUND );
+}
+
+void live_message_matrix_loopback_unreliable()
+{
+    live_message_matrix_loopback( 0, 2 );
+}
+
+void live_message_matrix_loopback_reliable()
+{
+    live_message_matrix_loopback( 2, 5 );
+}
+
+void live_message_matrix_loopback_receipts()
+{
+    live_message_matrix_loopback( 5, 8 );
 }

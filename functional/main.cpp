@@ -105,7 +105,8 @@ static int rocketnet_functional_test_group( const char * name )
         if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
             return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
 #endif
-    if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
+    static const char live_matrix_prefix[] = "test_loopback_transport_live_message_matrix_";
+    if ( strncmp( name, live_matrix_prefix, sizeof( live_matrix_prefix ) - 1 ) == 0 )
         return 2;
 #if defined(_WIN32)
     return 0;

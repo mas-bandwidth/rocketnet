@@ -425,6 +425,15 @@ TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
 ```
 
+The live message matrix is three functional cases so each keeps the fixed
+120-second case budget under ThreadSanitizer. Together they are the former
+single matrix without omitted cells: `test_loopback_transport_live_message_matrix_unreliable`
+covers modes 0 and 1, `test_loopback_transport_live_message_matrix_reliable`
+covers modes 2 through 4, and `test_loopback_transport_live_message_matrix_receipts`
+covers modes 5 through 7. Each case runs both directions, every channel its
+modes permit, the complete size schedule and edge probes, and the over-maximum
+refusals for its modes.
+
 One case under `leaks`, in process:
 
 ```sh
