@@ -429,6 +429,21 @@ static int sweep_component_create( allocator_state & state, CreateFn create_fn, 
     }
 }
 
+static void check_token_history_create_sweep( allocator_state & state )
+{
+    const int baseline = state.live;
+    // rocketnet_used_token_history_create: 19 allocations (fail N=1..19,
+    // succeed N=20). One history holder, eight allocations for the
+    // independent response-binding table, and ten for the claim table, whose
+    // two extra arrays hold generation-tagged chronological handles.
+    check( sweep_component_create<rocketnet_used_token_history_t>(
+        state,
+        [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
+        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 19 );
+    check( state.live == baseline );
+    printf( "token history allocation sweep OK: 19 allocations\n" );
+}
+
 static void check_component_create_sweeps( allocator_state & state )
 {
     const int baseline = state.live;
@@ -438,14 +453,6 @@ static void check_component_create_sweeps( allocator_state & state )
         state,
         [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
         []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 7 );
-
-    // 2. rocketnet_used_token_history_create: 17 allocations (fail N=1..17, succeed N=18).
-    //    the history holder plus two independent eight-allocation tables, the
-    //    response-binding table and the request-claim table.
-    check( sweep_component_create<rocketnet_used_token_history_t>(
-        state,
-        [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
-        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 17 );
 
     // 4. rocketnet_client_slots_create: 9 allocations (fail N=1..9, succeed N=10).
     check( sweep_component_create<rocketnet_client_slots_t>(
@@ -684,6 +691,8 @@ int main()
     rocketnet_allocator_ex( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
+    allocator_state token_history_state;
+    check_token_history_create_sweep( token_history_state );
     rocketnet_server_transport_config_t memory_config;
     rocketnet_server_transport_default_config(&memory_config);
     check(rocketnet_server_transport_required_memory(NULL, "portable") > 0);

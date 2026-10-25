@@ -60,6 +60,9 @@ static const int XDP_HOST_REDIRECT = 4;
 #define XDP_HOST_COUNTS( counter ) ( counter )
 #define XDP_HOST_NO_COUNTER ( -1 )
 
+static uint64_t xdp_host_runtime_counter_mask = 0;
+static uint32_t xdp_host_runtime_counter_rows = 0;
+
 // The configured server: 192.0.2.10 and 2001:db8::10 (documentation
 // addresses, RFC 5737 and RFC 3849), port 40000, epoch 0, the published test
 // filter value.
@@ -379,6 +382,13 @@ static void xdp_host_run_row( const xdp_host_row_t & row )
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
         rocketnet_unit_check( rocketnet_xdp_host_counter( i ) == ( i == row.want_counter ? 1u : 0u ) );
 
+    if ( row.want_counter >= 0 )
+    {
+        rocketnet_unit_check( row.want_counter < ROCKETNET_SERVER_XDP_NUM_COUNTERS );
+        xdp_host_runtime_counter_mask |= (uint64_t) 1 << row.want_counter;
+        xdp_host_runtime_counter_rows++;
+    }
+
     // a redirect decision is observed independently of the counter: the
     // helper was asked for exactly this queue's slot
 
@@ -448,11 +458,41 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     }
 }
 
-static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
+static void xdp_host_ipv4_rocketnet_packet_redirects_case()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 4, rows );
     xdp_host_run_rows( rows );
+}
+
+// The master registered unit executes every registered host-filter case in
+// this file. xdp_host_run_row records a counter only after its verdict and
+// complete counter table assertions pass, so the final mask is an execution
+// result rather than a lexical inventory.
+static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
+{
+    xdp_host_runtime_counter_mask = 0;
+    xdp_host_runtime_counter_rows = 0;
+    xdp_host_ipv4_rocketnet_packet_redirects_case();
+
+    const char host_prefix[] = "test_xdp_transport_host_";
+    const char filter_prefix[] = "test_xdp_filter_host_";
+    for ( struct rocketnet_unit_file_test_t * test = *rocketnet_unit_file_head(); test != NULL; test = test->next )
+    {
+        const bool host_case = strncmp( test->name, host_prefix, sizeof(host_prefix) - 1 ) == 0;
+        const bool filter_case = strncmp( test->name, filter_prefix, sizeof(filter_prefix) - 1 ) == 0;
+        if ( ( host_case || filter_case ) &&
+             strcmp( test->name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
+            test->function();
+    }
+
+    const uint64_t expected_mask = ( (uint64_t) 1 << ROCKETNET_SERVER_XDP_NUM_COUNTERS ) - 1;
+    printf( "XDP runtime counter coverage: rows=%u mask=0x%llx expected=0x%llx counters=%d\n",
+            xdp_host_runtime_counter_rows, (unsigned long long) xdp_host_runtime_counter_mask,
+            (unsigned long long) expected_mask, ROCKETNET_SERVER_XDP_NUM_COUNTERS );
+    fflush( stdout );
+    rocketnet_unit_check( xdp_host_runtime_counter_mask == expected_mask );
+    rocketnet_unit_check( xdp_host_runtime_counter_rows >= ROCKETNET_SERVER_XDP_NUM_COUNTERS );
 }
 
 static void test_xdp_transport_host_ipv6_rocketnet_packet_redirects()

@@ -361,6 +361,140 @@ static void test_connection_reset_inventory_covers_every_field()
 }
 REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
 
+static void test_connection_reset_client_slots_reuse_keeps_full_identity()
+{
+    enum { CAPACITY = 16, LIVE = 8, CHURN = 4096 };
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, CAPACITY );
+    check( slots );
+
+    // These identities deliberately agree in their low bits across 32-bit and
+    // signed boundaries.  An index entry is identified by the complete id and
+    // its current slot generation, never by a truncated key or bucket alone.
+    const uint64_t initial[LIVE] =
+    {
+        UINT64_C( 0x0000000000000001 ),
+        UINT64_C( 0x0000000100000001 ),
+        UINT64_C( 0x7fffffff00000001 ),
+        UINT64_C( 0x8000000000000001 ),
+        UINT64_C( 0xffffffff00000001 ),
+        UINT64_C( 0x00000000ffffffff ),
+        UINT64_C( 0xfffffffffffffffe ),
+        UINT64_MAX
+    };
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xA5, sizeof(user_data) );
+    int index[LIVE];
+    for ( int i = 0; i < LIVE; ++i )
+    {
+        index[i] = rocketnet_client_slots_assign( slots, initial[i], 100 + i, user_data );
+        check( index[i] == i );
+        check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
+    }
+    check( rocketnet_client_slots_num_connected( slots ) == LIVE );
+    check( rocketnet_client_slots_num_free( slots ) == CAPACITY - LIVE );
+
+    // Remove an interior set and insert replacements in the dense free
+    // stack's LIFO order.  Deleting one open-addressed entry must not make a
+    // later entry in the same probe cluster unreachable.
+    rocketnet_client_slots_release( slots, index[2] );
+    rocketnet_client_slots_release( slots, index[5] );
+    check( rocketnet_client_slots_find( slots, initial[2] ) == -1 );
+    check( rocketnet_client_slots_find( slots, initial[5] ) == -1 );
+    for ( int i = 0; i < LIVE; ++i )
+        if ( i != 2 && i != 5 )
+            check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
+
+    const uint64_t replacement_5 = UINT64_C( 0x1234567800000001 );
+    const uint64_t replacement_2 = UINT64_C( 0xfedcba9800000001 );
+    check( rocketnet_client_slots_assign( slots, replacement_5, 205, user_data ) == index[5] );
+    check( rocketnet_client_slots_assign( slots, replacement_2, 202, user_data ) == index[2] );
+    check( rocketnet_client_slots_find( slots, replacement_5 ) == index[5] );
+    check( rocketnet_client_slots_find( slots, replacement_2 ) == index[2] );
+
+    // Reuse one physical slot enough times to wrap small generation fields and
+    // accumulate far more removals than the index capacity.  Every old full id
+    // stays absent, the replacement is exact, and the retained clients never
+    // move or disappear.  Confirmation, mapping and user data are connection
+    // state and must be reset/replaced on every reuse.
+    uint64_t current = replacement_5;
+    for ( uint64_t generation = 1; generation <= CHURN; ++generation )
+    {
+        rocketnet_client_slots_confirm( slots, index[5] );
+        check( rocketnet_client_slots_confirmed( slots, index[5] ) );
+        rocketnet_client_slots_release( slots, index[5] );
+        check( rocketnet_client_slots_find( slots, current ) == -1 );
+
+        uint8_t next_user_data[ROCKETNET_USER_DATA_BYTES];
+        memset( next_user_data, (int) ( generation & 0xFF ), sizeof(next_user_data) );
+        const uint64_t next = ( generation << 32 ) | UINT64_C( 0xa5a50007 );
+        check( rocketnet_client_slots_assign( slots, next, (int) generation, next_user_data ) == index[5] );
+        check( rocketnet_client_slots_find( slots, next ) == index[5] );
+        check( rocketnet_client_slots_client_id( slots, index[5] ) == next );
+        check( rocketnet_client_slots_mapping_index( slots, index[5] ) == (int) generation );
+        check( !rocketnet_client_slots_confirmed( slots, index[5] ) );
+        check( memcmp( rocketnet_client_slots_user_data( slots, index[5] ), next_user_data,
+                       sizeof(next_user_data) ) == 0 );
+        for ( int i = 0; i < LIVE; ++i )
+        {
+            if ( i == 2 || i == 5 )
+                continue;
+            check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
+        }
+        check( rocketnet_client_slots_find( slots, replacement_2 ) == index[2] );
+        check( rocketnet_client_slots_num_connected( slots ) == LIVE );
+        current = next;
+    }
+
+    rocketnet_client_slots_destroy( slots );
+}
+REGISTER_UNIT_TEST( test_connection_reset_client_slots_reuse_keeps_full_identity );
+
+#if ROCKETNET_DEV
+
+static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse()
+{
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
+    check( slots );
+    uint8_t old_user_data[ROCKETNET_USER_DATA_BYTES];
+    uint8_t new_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( old_user_data, 0x37, sizeof(old_user_data) );
+    memset( new_user_data, 0xC8, sizeof(new_user_data) );
+
+    const uint64_t old_id = UINT64_C( 0x00000001ffffffff );
+    const uint64_t new_id = UINT64_C( 0xffffffff00000001 );
+    check( rocketnet_client_slots_assign( slots, old_id, 17, old_user_data ) == 0 );
+    rocketnet_client_slot_handle_t stale;
+    check( rocketnet_client_slots_handle( slots, 0, &stale ) );
+    check( stale.client_id == old_id );
+    check( stale.client_index == 0 );
+    check( rocketnet_client_slots_release_handle( slots, &stale ) );
+
+    check( rocketnet_client_slots_assign( slots, new_id, 23, new_user_data ) == 0 );
+    rocketnet_client_slot_handle_t current;
+    check( rocketnet_client_slots_handle( slots, 0, &current ) );
+    check( current.client_id == new_id );
+    check( current.client_index == 0 );
+    check( current.generation != stale.generation );
+
+    // The delayed release still names the same physical slot, but its full id
+    // and generation belong to the prior occupant.  It must be a no-op: the
+    // replacement remains findable with all of its connection state intact.
+    check( !rocketnet_client_slots_release_handle( slots, &stale ) );
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, old_id ) == -1 );
+    check( rocketnet_client_slots_find( slots, new_id ) == 0 );
+    check( rocketnet_client_slots_mapping_index( slots, 0 ) == 23 );
+    check( memcmp( rocketnet_client_slots_user_data( slots, 0 ), new_user_data,
+                   sizeof(new_user_data) ) == 0 );
+
+    check( rocketnet_client_slots_release_handle( slots, &current ) );
+    check( rocketnet_client_slots_num_connected( slots ) == 0 );
+    rocketnet_client_slots_destroy( slots );
+}
+REGISTER_UNIT_TEST( test_connection_reset_client_slots_stale_handle_cannot_release_reuse );
+
+#endif // #if ROCKETNET_DEV
+
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };

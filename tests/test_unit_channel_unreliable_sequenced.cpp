@@ -278,6 +278,9 @@ static void test_rnchannel_sequenced_witness_replays()
 {
     // The reversed traces in README-RNChannelTypes: reject backwards state,
     // reset the watermark on the ordered drain, and keep one future state.
+    // Keep this combined run because the last case must see ordered_read reset
+    // after the middle case advances it to 1; otherwise ordering 1 is delivered
+    // instead of held. The cases reuse the same static region.
     test_older_dropped_newest_delivered();
     test_watermark_resets_on_ordered_delivery();
     test_held_newest_ahead_of_epoch();
