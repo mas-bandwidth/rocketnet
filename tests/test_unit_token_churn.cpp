@@ -37,6 +37,26 @@
 #include <stdio.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
+extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
+extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history );
+extern "C" uint64_t rocketnet_dev_token_claim_order_steps( const struct rocketnet_used_token_history_t * history );
+extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
+                                                       const uint8_t * token_identifier );
+extern "C" void rocketnet_dev_token_claim_set_wide_state( struct rocketnet_used_token_history_t * history,
+                                                           uint64_t generation,
+                                                           uint64_t next_ticket );
+extern "C" int rocketnet_dev_token_claim_reset( struct rocketnet_used_token_history_t * history );
+extern "C" int rocketnet_dev_token_claim_head_handle( const struct rocketnet_used_token_history_t * history,
+                                                       int * slot,
+                                                       uint64_t * generation,
+                                                       uint64_t * owner_epoch );
+extern "C" int rocketnet_dev_token_claim_remove_handle( struct rocketnet_used_token_history_t * history,
+                                                         int slot,
+                                                         uint64_t generation,
+                                                         uint64_t owner_epoch );
+#endif
+
 #define check rocketnet_unit_check
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
@@ -423,12 +443,13 @@ static void test_response_replay_does_not_refresh_connected_slot()
 REGISTER_UNIT_TEST( test_response_replay_does_not_refresh_connected_slot );
 
 // ---------------------------------------------------------------------------
-// The request-claim table in O(1) (sdk/rocketnet_token_tables.cpp;
+// The request-claim table's common capacity check is O(1) after its bounded
+// full-token index probe (sdk/rocketnet_token_tables.cpp;
 // tla/RNSecurityTables.tla, ClaimRecord, ClaimRelease,
 // FreeAndOrderPartitionSlots, LiveClaimNeverReplaced and
 // CanRecordMatchesScan). A released claim goes back on the free list, live
-// claims sit in an order list by deadline, and the capacity test reads the
-// free list and the order list's head: no walk over the table. Each case
+// claims sit in a chronological slot array, and the capacity test reads the
+// free stack and the order array's head: no walk over the slot table. Each case
 // drives the table directly, with addresses built in memory and time an
 // argument from 1000.0.
 // ---------------------------------------------------------------------------
@@ -652,3 +673,168 @@ static void test_claim_expired_identifier_moves_to_order_tail()
 }
 
 REGISTER_UNIT_TEST( test_claim_expired_identifier_moves_to_order_tail );
+
+#if ROCKETNET_DEV
+// Find full identifiers that share one keyed-index start, then prove that
+// each remains distinct and that the full-table capacity check does only a
+// bounded index probe plus the O(1) chronological-head query.
+static void test_claim_flat_index_full_key_collisions_are_bounded()
+{
+    const int capacity = 4;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t colliding[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    int found = 0;
+    int wanted_start = -1;
+    for ( int candidate = 0; candidate < 10000 && found < 5; ++candidate )
+    {
+        uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        memset( identifier, 0, sizeof(identifier) );
+        identifier[0] = (uint8_t) candidate;
+        identifier[1] = (uint8_t) ( candidate >> 8 );
+        identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 1] = (uint8_t) ( candidate ^ 0xA5 );
+        const int start = rocketnet_dev_token_claim_index_start( history, identifier );
+        if ( wanted_start == -1 )
+            wanted_start = start;
+        if ( start == wanted_start )
+            memcpy( colliding[found++], identifier, sizeof(identifier) );
+    }
+    check( found == 5 );
+
+    for ( int i = 0; i < capacity; ++i )
+        check( rocketnet_used_token_history_claim_record( history, colliding[i], &holder, 1010.0, 1000.0 ) == 1 );
+    for ( int i = 0; i < capacity; ++i )
+    {
+        check( rocketnet_used_token_history_claim_check( history, colliding[i], &holder, 1001.0 ) == 1 );
+        check( rocketnet_used_token_history_claim_check( history, colliding[i], &other, 1001.0 ) == 0 );
+    }
+
+    rocketnet_dev_token_table_reset_operation_counts( history );
+    check( rocketnet_used_token_history_claim_can_record( history, colliding[4], 1001.0 ) == 0 );
+    check( rocketnet_dev_token_claim_probe_steps( history ) <= (uint64_t) ( capacity * 2 ) );
+    check( rocketnet_dev_token_claim_order_steps( history ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+// Ticket exhaustion refuses without wrapping or replacing a live claim. A
+// reset advances ownership, invalidates the old tagged handle and restarts
+// tickets and generations at one.
+static void test_claim_wide_ticket_exhaustion_and_reset()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 3 );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t first[ROCKETNET_TOKEN_IDENTIFIER_BYTES], second[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    uint8_t refused[ROCKETNET_TOKEN_IDENTIFIER_BYTES], after_reset[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    tc_claim_id( first, 0x31 );
+    tc_claim_id( second, 0x32 );
+    tc_claim_id( refused, 0x33 );
+    tc_claim_id( after_reset, 0x34 );
+
+    rocketnet_dev_token_claim_set_wide_state( history, 0, UINT64_MAX - 1 );
+    check( rocketnet_used_token_history_claim_record( history, first, &holder, 1005.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, second, &other, 1006.0, 1001.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, refused, &holder, 1007.0, 1002.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, first, &other, 1002.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, second, &holder, 1001.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 1 );
+
+    int old_slot = -1;
+    uint64_t old_generation = 0, old_epoch = 0;
+    check( rocketnet_dev_token_claim_head_handle( history, &old_slot, &old_generation, &old_epoch ) == 1 );
+    check( rocketnet_dev_token_claim_reset( history ) == 1 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 3 );
+    check( rocketnet_dev_token_claim_remove_handle( history, old_slot, old_generation, old_epoch ) == 0 );
+    check( rocketnet_used_token_history_claim_record( history, after_reset, &holder, 1010.0, 1003.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, after_reset, &other, 1003.0 ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+// The final generation is issued once. Reusing that physical slot refuses,
+// and reset is the only operation that begins a new owner generation.
+static void test_claim_generation_exhaustion_refuses_wrap()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 1 );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t first[ROCKETNET_TOKEN_IDENTIFIER_BYTES], second[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    tc_claim_id( first, 0x41 );
+    tc_claim_id( second, 0x42 );
+
+    rocketnet_dev_token_claim_set_wide_state( history, UINT64_MAX - 1, 1 );
+    check( rocketnet_used_token_history_claim_record( history, first, &holder, 1005.0, 1000.0 ) == 1 );
+    rocketnet_used_token_history_claim_release( history, first, &holder );
+    check( rocketnet_used_token_history_claim_record( history, second, &other, 1006.0, 1001.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_free_count( history ) == 1 );
+    check( rocketnet_dev_token_claim_reset( history ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, second, &other, 1006.0, 1001.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, second, &holder, 1001.0 ) == 0 );
+    rocketnet_used_token_history_destroy( history );
+}
+
+// Removing an interior claim shifts at most capacity tagged handles. Reusing
+// its physical slot advances the generation, so the saved handle cannot
+// remove the new owner even when the address is unchanged.
+static void test_claim_interior_churn_is_bounded_and_stale_safe()
+{
+    const int capacity = 4;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 6; ++i )
+        tc_claim_id( ids[i], (uint8_t) ( 0x50 + i ) );
+    for ( int i = 0; i < capacity; ++i )
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, 1010.0, 1000.0 ) == 1 );
+
+    // Save the head, retire it, and reuse its slot. The old tag is stale.
+    int stale_slot = -1;
+    uint64_t stale_generation = 0, stale_epoch = 0;
+    check( rocketnet_dev_token_claim_head_handle( history, &stale_slot, &stale_generation, &stale_epoch ) == 1 );
+    check( rocketnet_dev_token_claim_remove_handle( history, stale_slot, stale_generation, stale_epoch ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &holder, 1010.0, 1000.0 ) == 1 );
+    check( rocketnet_dev_token_claim_remove_handle( history, stale_slot, stale_generation, stale_epoch ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[4], &other, 1001.0 ) == 0 );
+
+    rocketnet_dev_token_table_reset_operation_counts( history );
+    rocketnet_used_token_history_claim_release( history, ids[2], &holder );
+    check( rocketnet_dev_token_claim_probe_steps( history ) <= (uint64_t) ( capacity * 2 ) );
+    check( rocketnet_dev_token_claim_order_steps( history ) <= (uint64_t) capacity );
+    check( rocketnet_used_token_history_claim_record( history, ids[5], &holder, 1010.0, 1000.0 ) == 1 );
+    rocketnet_used_token_history_destroy( history );
+}
+
+// Equal deadlines retain insertion chronology: expiry reuses the oldest
+// physical owner first, without making the other full-token claim disappear.
+static void test_claim_equal_deadlines_reuse_in_insertion_order()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 2 );
+    check( history );
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+    uint8_t ids[3][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 3; ++i )
+        tc_claim_id( ids[i], (uint8_t) ( 0x60 + i ) );
+    check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1005.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[1], &holder, 1005.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1010.0, 1005.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1005.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, ids[1], &other, 1004.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, ids[2], &holder, 1005.0 ) == 0 );
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_claim_flat_index_full_key_collisions_are_bounded );
+REGISTER_UNIT_TEST( test_claim_wide_ticket_exhaustion_and_reset );
+REGISTER_UNIT_TEST( test_claim_generation_exhaustion_refuses_wrap );
+REGISTER_UNIT_TEST( test_claim_interior_churn_is_bounded_and_stale_safe );
+REGISTER_UNIT_TEST( test_claim_equal_deadlines_reuse_in_insertion_order );
+#endif
