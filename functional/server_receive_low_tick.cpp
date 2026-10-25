@@ -159,12 +159,13 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
 
 #if defined(_WIN32) && ROCKETNET_DEV
-    char actual_grant_line[96];
-    snprintf( actual_grant_line, sizeof( actual_grant_line ), "actual grant %%d of %d requested bytes", request );
-    int actual_grant = 0;
     const char * actual_grant_text = strstr( server_receive_low_tick_log, "actual grant " );
     server_receive_low_tick_require( actual_grant_text != NULL );
-    server_receive_low_tick_require( sscanf( actual_grant_text, actual_grant_line, &actual_grant ) == 1 );
+    actual_grant_text += strlen( "actual grant " );
+    char * actual_grant_end = NULL;
+    const long actual_grant_value = strtol( actual_grant_text, &actual_grant_end, 10 );
+    server_receive_low_tick_require( actual_grant_end != actual_grant_text );
+    int actual_grant = (int) actual_grant_value;
     server_receive_low_tick_require( actual_grant > 0 );
     const bool warning_grant_override_used = actual_grant >= request;
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, "DEV test warning grant override" ) != NULL );
