@@ -9601,6 +9601,183 @@ void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( 
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
+// ---------------------------------------------------
+// The Windows iocp client (sdk/rocketnet_client_iocp_windows.cpp,
+// tla/RNClientIocp.tla): the iocp client pinned, against the portable
+// server, carries payloads both ways per family, the granted client
+// transport is iocp, and the client runs the I/O thread design of
+// docs/CLIENT-IO.md on the completion port's wait and wake.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+struct iocp_client_pair_t
+{
+    struct rocketnet_server_transport_t * server;
+    struct rocketnet_client_transport_t * client;
+};
+
+static const int IOCP_CLIENT_PAYLOAD_BYTES = 100;
+
+static void iocp_client_fill_payload( uint8_t * payload, int tag )
+{
+    payload[0] = (uint8_t) tag;
+    for ( int j = 1; j < IOCP_CLIENT_PAYLOAD_BYTES; j++ )
+        payload[j] = (uint8_t) ( tag * 31 + j );
+}
+
+static int iocp_client_payload_tag( const uint8_t * payload, int bytes )
+{
+    rocketnet_check( bytes == IOCP_CLIENT_PAYLOAD_BYTES );
+    for ( int j = 1; j < IOCP_CLIENT_PAYLOAD_BYTES; j++ )
+        rocketnet_check( payload[j] == (uint8_t) ( payload[0] * 31 + j ) );
+    return payload[0];
+}
+
+static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const char * server_bind, const char * token_host )
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", "portable" );
+    pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
+    rocketnet_check( pair->server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) == 0 );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "%s:%d", token_host, rocketnet_server_transport_port( pair->server ) );
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.transport, sizeof(client_config.transport), "%s", "iocp" );
+    pair->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( pair->client );
+    rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair->client ), "iocp" ) == 0 );
+    // the client I/O thread runs the transport (docs/CLIENT-IO.md, RNClientIo)
+    rocketnet_check( rocketnet_client_transport_client_io( pair->client ) != NULL );
+
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( pair->server ) == 1 );
+}
+
+static void iocp_client_pair_destroy( struct iocp_client_pair_t * pair )
+{
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( pair->client );
+    rocketnet_server_transport_stop( pair->server );
+    rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair->server );
+}
+
+// one hand-off of num_packets client payloads; the server collects every tag once
+static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        struct rocketnet_packet_context_t context = {};
+        uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
+        rocketnet_check( payload );
+        iocp_client_fill_payload( payload + context.payload_index, tag );
+        rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, IOCP_CLIENT_PAYLOAD_BYTES ) > IOCP_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_client_transport_send_packets( pair->client );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        const int num_payloads = rocketnet_server_transport_num_payloads( pair->server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( pair->server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            const int tag = iocp_client_payload_tag( payload, payload_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        uint8_t drain[ROCKETNET_RECEIVE_CEILING];
+        while ( rocketnet_client_transport_receive_packet( pair->client, drain, (int) sizeof(drain) ) > 0 ) {}
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+// num_packets server payloads, every one received by the iocp client once
+static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    uint8_t payload[IOCP_CLIENT_PAYLOAD_BYTES];
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        iocp_client_fill_payload( payload, tag );
+        rocketnet_server_transport_send_packet( pair->server, 0, payload, IOCP_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_server_transport_send_packets( pair->server );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            const int tag = iocp_client_payload_tag( packet, packet_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+static void iocp_client_wire( const char * server_bind, const char * token_host )
+{
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+    struct iocp_client_pair_t pair;
+    iocp_client_pair_create( &pair, server_bind, token_host );
+    iocp_client_send_and_collect( &pair, 64 );
+    iocp_client_receive_from_server( &pair, 64 );
+    // and again: every buffer the first round completed was re-posted
+    iocp_client_send_and_collect( &pair, 64 );
+    iocp_client_receive_from_server( &pair, 64 );
+    iocp_client_pair_destroy( &pair );
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+}
+
+void rocketnet_test_iocp_client_transport_wire_ipv4() { iocp_client_wire( "127.0.0.1", "127.0.0.1" ); }
+void rocketnet_test_iocp_client_transport_wire_ipv6() { iocp_client_wire( "[::1]", "[::1]" ); }
+// a server on the IPv6 wildcard serving an IPv4 client
+void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 // getaddrinfo can open a socket (the nscd lookup on glibc), so name
 // resolution is a functional case, never a unit one.
 
@@ -9879,6 +10056,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_msgx_client_transport_wire_ipv4", rocketnet_test_msgx_client_transport_wire_ipv4, NULL },
     { "test_msgx_client_transport_wire_ipv6", rocketnet_test_msgx_client_transport_wire_ipv6, NULL },
     { "test_msgx_client_transport_wire_dual_stack", rocketnet_test_msgx_client_transport_wire_dual_stack, NULL },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_iocp_client_transport_wire_ipv4", rocketnet_test_iocp_client_transport_wire_ipv4, NULL },
+    { "test_iocp_client_transport_wire_ipv6", rocketnet_test_iocp_client_transport_wire_ipv6, NULL },
+    { "test_iocp_client_transport_wire_dual_stack", rocketnet_test_iocp_client_transport_wire_dual_stack, NULL },
 #endif
     { "test_transport_all_skipped_uses_auto", rocketnet_test_transport_all_skipped_uses_auto, rocketnet_test_server_pin_allows_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases, NULL },
