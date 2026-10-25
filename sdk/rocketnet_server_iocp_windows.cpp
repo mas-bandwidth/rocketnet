@@ -828,6 +828,8 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    // Release callers may not use a frame or packet id the transport did not issue.
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     (void) frame;
     iocp->sends[packet_id].packet_bytes = packet_bytes;
 }
@@ -836,6 +838,8 @@ void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp, uint64_
 {
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
+    // Release callers may not use a frame or packet id the transport did not issue.
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     (void) frame;
     iocp->sends[packet_id].packet_bytes = 0;
 }
@@ -1232,6 +1236,12 @@ bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t 
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
 {
     return iocp->stopping.load( std::memory_order_acquire );
+}
+
+int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id )
+{
+    rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
+    return iocp->sends[packet_id].packet_bytes;
 }
 
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status )
