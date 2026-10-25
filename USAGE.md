@@ -407,8 +407,10 @@ memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
 rings, kernel socket buffers) and process overhead. In a production build
 (`ROCKETNET_DEV=OFF`) they are 3,225,111,282 and 21,960,217 bytes. Other
 platforms report their own figures (macOS has no io_uring or XDP, so its
-server figure is about half). The default profile remains the stock
-acceptance.
+server figure is about half). On Windows x64 with MSVC, the server/client
+figures are 1,523,705,813 / 22,745,949 bytes in development builds and
+1,517,309,449 / 21,960,145 bytes with `ROCKETNET_DEV=OFF`. The default profile
+remains the stock acceptance.
 
 ```c
 #include "rocketnet.h"
