@@ -279,8 +279,9 @@ KernelFilter(p) ==
                                                       seq |-> p.seq,
                                                       session |-> p.session,
                                                       against |-> e.sess,
-                                                      owed |-> \E m \in pendingMark :
-                                                                 m.addr = p.addr /\ m.sess = p.session]}
+                                                      owed |-> \/ p.session # session[p.addr]
+                                                               \/ \E m \in pendingMark :
+                                                                    m.addr = p.addr /\ m.sess = p.session]}
                                   ELSE dropped
                   /\ UNCHANGED kmap
              ELSE /\ net' = (net \ {p}) \cup {[p EXCEPT !.stage = "user"]}
@@ -515,7 +516,9 @@ MarkOwedUntilApplied ==
 (* genuine packet of a session is dropped against an earlier session's     *)
 (* mark only while a refused mark of its own session is kept for the next  *)
 (* commit: the client was greeted after a commit whose mark the kernel     *)
-(* refused, and the retry ends the window (MarkOwedUntilApplied).          *)
+(* refused, and the retry ends the window (MarkOwedUntilApplied).  The     *)
+(* ghost owed is also TRUE for a packet whose session had already ended    *)
+(* when it was dropped: it has no mapping, so dropping it loses nothing.   *)
 NewSessionDroppedOnlyWhileMarkOwed ==
     \A d \in dropped : (d.against # NoSession /\ d.against < d.session) => d.owed
 
