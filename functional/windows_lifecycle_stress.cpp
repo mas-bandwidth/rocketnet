@@ -29,8 +29,10 @@
     pass. The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
     Each case prints the before and after counts, every heap's allocated
-    bytes, SDK-owned resource identities and the run time. Process-wide
-    handle deltas remain unattributed unless ownership is proven separately.
+    bytes, SDK-owned resource identities and the run time, then the handle
+    table line: every handle value the loop added or removed with its object
+    type, and the cycles at which the handle count reached a new high, so a
+    process-wide delta is named handle by handle.
 
     The cells are the Windows server transports (portable, iocp, rio), each
     with the portable client, and each case is one function per cell:
@@ -283,6 +285,212 @@ static windows_resource_counts_t windows_stable_counts()
 }
 
 // ---------------------------------------------------------------
+// the handle table
+// ---------------------------------------------------------------
+
+// The process handle count says how many handles changed, not whose they
+// are. The table names each one: every handle value the process holds,
+// found by GetHandleInformation over the value range (which opens nothing),
+// with its object type from NtQueryObject. A socket is told apart from other
+// File objects by getsockopt SO_TYPE, a thread by GetThreadId and whether it
+// still runs. The case prints the handles the loop added and removed, so a
+// process-wide delta comes with the type and value of every handle in it.
+
+#define WINDOWS_HANDLE_TABLE_ENTRIES 8192
+#define WINDOWS_HANDLE_VALUE_LIMIT 0x40000
+
+struct windows_handle_entry_t
+{
+    uint32_t value;
+    wchar_t type[32];
+};
+
+struct windows_handle_table_t
+{
+    int count;
+    bool overflow;
+    windows_handle_entry_t entries[WINDOWS_HANDLE_TABLE_ENTRIES];
+};
+
+typedef LONG ( WINAPI * windows_query_object_t )( HANDLE, int, void *, ULONG, ULONG * );
+
+// the counted UTF-16 string NtQueryObject writes at the start of its buffer
+struct windows_counted_string_t
+{
+    USHORT length_bytes;
+    USHORT maximum_length_bytes;
+    wchar_t * buffer;
+};
+
+static windows_handle_table_t windows_handles_before;
+static windows_handle_table_t windows_handles_after;
+
+static void windows_handle_type( windows_query_object_t query, HANDLE handle, wchar_t * type, size_t type_chars )
+{
+    // ObjectTypeInformation (2): a UNICODE_STRING type name, then the type's figures
+    union
+    {
+        windows_counted_string_t name;
+        uint8_t bytes[1024];
+    } information;
+    ULONG returned_bytes = 0;
+    wcscpy_s( type, type_chars, L"?" );
+    if ( !query || query( handle, 2, &information, (ULONG) sizeof( information ), &returned_bytes ) < 0 )
+        return;
+    const size_t chars = information.name.length_bytes / sizeof( wchar_t );
+    if ( information.name.buffer && chars > 0 )
+        wcsncpy_s( type, type_chars, information.name.buffer, chars < type_chars - 1 ? chars : type_chars - 1 );
+}
+
+static void windows_handle_table_read( windows_handle_table_t * table )
+{
+    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+    const windows_query_object_t query = ntdll ? (windows_query_object_t) (void *) GetProcAddress( ntdll, "NtQueryObject" ) : NULL;
+    table->count = 0;
+    table->overflow = false;
+    for ( uint32_t value = 4; value < WINDOWS_HANDLE_VALUE_LIMIT; value += 4 )
+    {
+        const HANDLE handle = (HANDLE) (uintptr_t) value;
+        DWORD flags = 0;
+        if ( !GetHandleInformation( handle, &flags ) )
+            continue;
+        if ( table->count == WINDOWS_HANDLE_TABLE_ENTRIES )
+        {
+            table->overflow = true;
+            return;
+        }
+        windows_handle_entry_t * entry = &table->entries[table->count++];
+        entry->value = value;
+        windows_handle_type( query, handle, entry->type, sizeof( entry->type ) / sizeof( entry->type[0] ) );
+    }
+}
+
+static bool windows_handle_table_has( const windows_handle_table_t * table, const windows_handle_entry_t * entry )
+{
+    for ( int i = 0; i < table->count; i++ )
+    {
+        if ( table->entries[i].value == entry->value && wcscmp( table->entries[i].type, entry->type ) == 0 )
+            return true;
+    }
+    return false;
+}
+
+// what a handle the loop added still refers to, read while it is held
+static void windows_handle_describe( const windows_handle_entry_t * entry )
+{
+    const HANDLE handle = (HANDLE) (uintptr_t) entry->value;
+    printf( " 0x%x:%ls", entry->value, entry->type );
+    if ( wcscmp( entry->type, L"File" ) == 0 )
+    {
+        int socket_type = 0;
+        int option_bytes = (int) sizeof( socket_type );
+        if ( getsockopt( (SOCKET) (uintptr_t) entry->value, SOL_SOCKET, SO_TYPE, (char*) &socket_type, &option_bytes ) == 0 )
+        {
+            struct sockaddr_storage address;
+            int address_bytes = (int) sizeof( address );
+            memset( &address, 0, sizeof( address ) );
+            unsigned port = 0;
+            if ( getsockname( (SOCKET) (uintptr_t) entry->value, (struct sockaddr*) &address, &address_bytes ) == 0 )
+                port = address.ss_family == AF_INET6 ? ntohs( ( (struct sockaddr_in6*) &address )->sin6_port )
+                                                     : ntohs( ( (struct sockaddr_in*) &address )->sin_port );
+            printf( "(socket type %d port %u)", socket_type, port );
+        }
+        else
+            printf( "(file type %lu)", (unsigned long) GetFileType( handle ) );
+    }
+    else if ( wcscmp( entry->type, L"Thread" ) == 0 )
+    {
+        DWORD exit_code = 0;
+        const bool running = GetExitCodeThread( handle, &exit_code ) && exit_code == STILL_ACTIVE;
+        printf( "(thread %lu %s)", (unsigned long) GetThreadId( handle ), running ? "running" : "exited" );
+    }
+}
+
+// one line: every handle value the loop added and every one it removed, by type
+static void windows_handle_table_print( const char * case_name, const windows_handle_table_t * before, const windows_handle_table_t * after )
+{
+    printf( "%s handle table: %d -> %d%s, added", case_name, before->count, after->count,
+            before->overflow || after->overflow ? " (table full)" : "" );
+    int added = 0;
+    for ( int i = 0; i < after->count; i++ )
+    {
+        if ( windows_handle_table_has( before, &after->entries[i] ) )
+            continue;
+        windows_handle_describe( &after->entries[i] );
+        added++;
+    }
+    if ( added == 0 )
+        printf( " none" );
+    printf( ", removed" );
+    int removed = 0;
+    for ( int i = 0; i < before->count; i++ )
+    {
+        if ( windows_handle_table_has( after, &before->entries[i] ) )
+            continue;
+        printf( " 0x%x:%ls", before->entries[i].value, before->entries[i].type );
+        removed++;
+    }
+    if ( removed == 0 )
+        printf( " none" );
+    printf( "\n" );
+    fflush( stdout );
+}
+
+// the cycles at which the process handle count first reached each new high
+// over the before count, at most eight, printed with the case's result
+static int64_t windows_handle_high = 0;
+static int windows_handle_high_count = 0;
+static int windows_handle_high_cycle[8];
+static int64_t windows_handle_high_value[8];
+
+static void windows_handle_high_begin( int64_t handles )
+{
+    windows_handle_high = handles;
+    windows_handle_high_count = 0;
+}
+
+static void windows_handle_high_note( int cycle )
+{
+    DWORD handles = 0;
+    if ( !GetProcessHandleCount( GetCurrentProcess(), &handles ) || (int64_t) handles <= windows_handle_high )
+        return;
+    windows_handle_high = (int64_t) handles;
+    if ( windows_handle_high_count < 8 )
+    {
+        windows_handle_high_cycle[windows_handle_high_count] = cycle;
+        windows_handle_high_value[windows_handle_high_count] = (int64_t) handles;
+        windows_handle_high_count++;
+    }
+}
+
+static void windows_handle_high_print( const char * case_name )
+{
+    printf( "%s handle count highs:", case_name );
+    if ( windows_handle_high_count == 0 )
+        printf( " none" );
+    for ( int i = 0; i < windows_handle_high_count; i++ )
+        printf( " %lld at cycle %d", (long long) windows_handle_high_value[i], windows_handle_high_cycle[i] );
+    printf( "\n" );
+    fflush( stdout );
+}
+
+// the before table, read with the before counts
+static void windows_handle_before( const windows_resource_counts_t * before )
+{
+    windows_handle_table_read( &windows_handles_before );
+    windows_handle_high_begin( before->handles );
+}
+
+// the after table, read with the after counts and printed at once, while
+// every handle it names is still held
+static void windows_handle_after( const char * case_name )
+{
+    windows_handle_table_read( &windows_handles_after );
+    windows_handle_table_print( case_name, &windows_handles_before, &windows_handles_after );
+    windows_handle_high_print( case_name );
+}
+
+// ---------------------------------------------------------------
 // the cells
 // ---------------------------------------------------------------
 
@@ -516,7 +724,7 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
         if ( !found )
             printf( ", heap[%p:new] -1 -> %lld", after->heap_handles[j], (long long) after->heap_used_bytes[j] );
     }
-    printf( ", process_handle_delta %lld UNATTRIBUTED\n", (long long) ( after->handles - before->handles ) );
+    printf( ", process_handle_delta %lld (each handle by type on the handle table line)\n", (long long) ( after->handles - before->handles ) );
     fflush( stdout );
     return flat;
 }
@@ -835,13 +1043,18 @@ static void windows_init_term_1000( const char * server_transport )
     windows_ledger_read( &initial_resources );
     windows_init_term_cycle();
     const windows_resource_counts_t before = windows_stable_counts();
+    windows_handle_before( &before );
     rocketnet_lifecycle_resources_t before_resources;
     windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
+    {
         windows_init_term_cycle();
+        windows_handle_high_note( i );
+    }
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    windows_handle_after( "init_term_1000" );
     rocketnet_lifecycle_resources_t after_resources;
     windows_ledger_read( &after_resources );
     const bool counts_ok = windows_case_result( "init_term_1000", cell, &before, &after, seconds );
@@ -861,13 +1074,18 @@ static void windows_server_create_destroy_1000( const char * server_transport )
     windows_ledger_read( &initial_resources );
     windows_server_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
+    windows_handle_before( &before );
     rocketnet_lifecycle_resources_t before_resources;
     windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
+    {
         windows_server_create_destroy_cycle( cell );
+        windows_handle_high_note( i );
+    }
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    windows_handle_after( "server_create_destroy_1000" );
     rocketnet_lifecycle_resources_t after_resources;
     windows_ledger_read( &after_resources );
     const bool counts_ok = windows_case_result( "server_create_destroy_1000", cell, &before, &after, seconds );
@@ -887,13 +1105,18 @@ static void windows_client_create_destroy_1000( const char * server_transport )
     windows_ledger_read( &initial_resources );
     windows_client_create_destroy_cycle( cell );
     const windows_resource_counts_t before = windows_stable_counts();
+    windows_handle_before( &before );
     rocketnet_lifecycle_resources_t before_resources;
     windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
+    {
         windows_client_create_destroy_cycle( cell );
+        windows_handle_high_note( i );
+    }
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    windows_handle_after( "client_create_destroy_1000" );
     rocketnet_lifecycle_resources_t after_resources;
     windows_ledger_read( &after_resources );
     const bool counts_ok = windows_case_result( "client_create_destroy_1000", cell, &before, &after, seconds );
@@ -918,13 +1141,18 @@ static void windows_connect_disconnect_1000( const char * server_transport )
     windows_server_address( server, server_address, sizeof( server_address ) );
     windows_connect_disconnect_cycle( cell, server, server_address, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
+    windows_handle_before( &before );
     rocketnet_lifecycle_resources_t before_resources;
     windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
+    {
         windows_connect_disconnect_cycle( cell, server, server_address, i );
+        windows_handle_high_note( i );
+    }
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    windows_handle_after( "connect_disconnect_1000" );
     rocketnet_lifecycle_resources_t after_resources;
     windows_ledger_read( &after_resources );
     rn_native_server_transport_stop_and_destroy( server );
@@ -962,13 +1190,18 @@ static void windows_server_restart_1000( const char * server_transport )
     windows_lifecycle_check( server != NULL );
     windows_server_restart_cycle( cell, server, fixed_address, fixed_port, -1 );
     const windows_resource_counts_t before = windows_stable_counts();
+    windows_handle_before( &before );
     rocketnet_lifecycle_resources_t before_resources;
     windows_ledger_read( &before_resources );
     const double start = windows_run_clock();
     for ( int i = 0; i < WINDOWS_LIFECYCLE_CYCLES; i++ )
+    {
         windows_server_restart_cycle( cell, server, fixed_address, fixed_port, i );
+        windows_handle_high_note( i );
+    }
     const double seconds = windows_run_clock() - start;
     const windows_resource_counts_t after = windows_settled_counts( &before, seconds );
+    windows_handle_after( "server_restart_1000" );
     rocketnet_lifecycle_resources_t after_resources;
     windows_ledger_read( &after_resources );
     rocketnet_server_destroy( server );
