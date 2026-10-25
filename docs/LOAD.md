@@ -61,10 +61,13 @@ or binding a socket. It reports `client_public_required_bytes`,
 `server_public_required_bytes` and checked
 `total_public_required_bytes = server + clients * client`. A zero required
 size, arithmetic overflow or failed SDK termination returns a FAIL receipt and
-nonzero exit. The `public_memory_scope=create_only` and
-`transport_selection=unresolved_before_start` labels matter: required-memory
-figures include public create allocations, while connect/start may allocate
-more transport memory and native resources. The planner cannot certify host
+nonzero exit. Required-memory figures bound allocator memory over the
+lifecycle for the largest planned built-in transport in the configured ladder,
+including create and connect/start allocations. Development builds include the
+link simulator. Operating-system-owned memory, custom-transport allocations
+and configuration or environment overrides changed after planning remain
+outside this bound. `transport_selection=unresolved_before_start` means the
+eventual transport is still unknown. The planner cannot certify host
 capacity or the eventual transport choice; a runner needs a separately
 justified reserve and should use the exact binary and environment for both
 planning and execution. The reserve byte count and evidence string are
@@ -79,29 +82,39 @@ memory or link capacity.
 The nightly many-client step (`.github/workflows/nightly-soak.yml`) runs the
 xdp cell as root inside a virtme-ng guest, with the server and all 1,000
 default-profile clients in one `bin/load` process. That guest must hold the
-whole run, not just the create-only plan. The plan reports
+whole run, including operating-system-owned memory outside the lifecycle
+allocator plan. Historical create-only measurements reported
 `total_public_required_bytes=18214470336` (16.96 GiB: 13.32 GB server, 4.90 MB
-per client), and the xdp server's start adds about 1.87 GB of allocator memory
-and 1.88 GB of UMEM on top. A fixed 16G guest is OOM-killed (exit 137,
-anon-rss 15.9 GB) and a 24G guest is killed at the shutdown wipe. The step
+per client), with the xdp server's start adding about 1.87 GB of allocator
+memory and 1.88 GB of UMEM. The current lifecycle plan includes the allocator
+portion; do not add it a second time. In those historical runs a fixed 16G
+guest was OOM-killed (exit 137,
+anon-rss 15.9 GB) and a 24G guest was killed at the shutdown wipe. The step
 runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first
-and sizes the guest from the plan plus a measured run reserve: `need = plan + 1000 * reserve_per_client_bytes`, and the guest is `need * 5 / 4 + 1 GiB` (the
+and sizes the guest from the plan plus conservative operational headroom: `need = plan + 1000 * reserve_per_client_bytes`, and the guest is `need * 5 / 4 + 1 GiB` (the
 1 GiB is the guest kernel's own), rounded up to whole GiB. It prints `LOAD cell=xdp FAIL runner has ... MiB available` when the runner's `MemAvailable` is
 below that. The guest's load exit status, peak RSS, `/proc/meminfo` totals and
 `dmesg | tail -n 50` go into `vm.log` on every run, so an early end names its
 cause, and the step prints `guest_peak_rss_kib` beside `need_bytes`, with a
 WARN line when the peak passes the need.
 
-The reserve was measured in an unconstrained 48G guest on a
+The historical reserve was measured against the create-only plan in an
+unconstrained 48G guest on a
 121 GB runner: peak RSS 27397952 kB at 1,000 clients and 13703716 kB at 500,
 against plans of 18214470336 and 9108290368 bytes. That is 9841033 and 9848630
-bytes of reserve per client; the step uses the larger. The peak is 1.54 times
+bytes per client; the step retains the larger as conservative operational
+headroom. It is not a measured residual above the current lifecycle plan:
+part of that historical difference is transport allocator memory now counted
+in the plan. The peak is 1.54 times
 the plan at both counts, so an earlier `plan * 3 / 2 + 2 GiB` sizing sat below
 the peak in its ratio term and passed only on its 2 GiB constant (28G guest,
-27.4 GiB `MemTotal`, 1.3 GiB over the 26.1 GiB peak). For the default profile
-the need is 28063100336 bytes (26.1 GiB) and the guest is 34G, about 7.9 GiB
-above the measured peak. A profile change, or a WARN line, means the reserve
-must be re-measured.
+27.4 GiB `MemTotal`, 1.3 GiB over the 26.1 GiB peak). For that historical default-profile plan, the need was 28063100336 bytes
+(26.1 GiB) and the guest was 34G, about 7.9 GiB above the measured peak.
+Current guest sizing uses the current plan and therefore differs. Measure
+residual OS and process overhead again against the exact current head,
+configuration and population before treating this allowance as measured
+headroom or reducing it. A profile change or a WARN line also requires new
+measurement.
 
 For a constant offered application rate across population sizes, set
 `LOAD_MESSAGES_PER_CLIENT_SECOND=1`. This offers one 32-byte message per client
@@ -176,13 +189,17 @@ receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-956,510,400 bytes (956,510 bytes per slot on average), and
-`rocketnet_client_required_memory` for the client profile is 3,064,000 bytes.
-These are configuration calculations and measured create-block sizes, not
+3,231,507,666 bytes, and `rocketnet_client_required_memory` for the client
+profile is 22,896,245 bytes (Linux x86-64, development build, io_uring and
+XDP built; each is the lifecycle peak the caller's allocator sees, for the
+largest transport the ladder can grant). On Windows x64 with MSVC, the
+server/client figures are 1,523,705,813 / 22,968,879 bytes in development builds
+and 1,517,309,449 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`.
+These are configuration calculations and planned allocator peaks, not
 measured wire usage. The summary reports each endpoint's
-`rocketnet_*_required_memory` public block size. Those figures exclude the
-transport allocations made at connect/start, native resources and process
-overhead, so they are not whole-session memory estimates. The harness's own
+`rocketnet_*_required_memory` figure. Those figures exclude the memory the
+operating system owns (thread stacks, XDP UMEM, io_uring rings, kernel socket
+buffers) and process overhead, so they are not whole-process memory estimates. The harness's own
 payloads are 32 bytes, so its wire rates stay far below the profile's budget.
 
 The summary also reports per-call Release timing samples during the traffic and
