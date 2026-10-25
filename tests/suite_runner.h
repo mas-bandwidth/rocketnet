@@ -1062,6 +1062,16 @@ inline void suite_drain( HANDLE pipe, std::string & output )
     }
 }
 
+// A spawn failure names the call and its Windows error code, so a red that
+// never started its case says why (1455 is the commit limit, 8 and 1450 are
+// out of memory or system resources).
+inline std::string suite_spawn_failure_text( const char * call, DWORD error )
+{
+    char text[96];
+    snprintf( text, sizeof( text ), " failed to spawn (%s error %lu)", call, (unsigned long) error );
+    return text;
+}
+
 inline int suite_main( int argc, char ** argv,
     int ( *worker )( const char * name ),
     int ( *count )(),
@@ -1152,13 +1162,14 @@ inline int suite_main( int argc, char ** argv,
                 inherit.bInheritHandle = TRUE;
                 if ( !CreatePipe( &read_end, &write_end, &inherit, 1 << 20 ) || !SetHandleInformation( read_end, HANDLE_FLAG_INHERIT, 0 ) )
                 {
+                    const DWORD error = GetLastError();
                     if ( read_end )
                         CloseHandle( read_end );
                     if ( write_end )
                         CloseHandle( write_end );
                     result.done = true;
                     result.failed = true;
-                    result.detail = item.name + " failed to spawn";
+                    result.detail = item.name + suite_spawn_failure_text( "CreatePipe", error );
                     continue;
                 }
                 startup.dwFlags = STARTF_USESTDHANDLES;
@@ -1169,6 +1180,7 @@ inline int suite_main( int argc, char ** argv,
             PROCESS_INFORMATION info;
             std::memset( &info, 0, sizeof( info ) );
             const BOOL created = !wide_path.empty() && CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info );
+            const DWORD error = created ? 0 : GetLastError();
             if ( write_end )
                 CloseHandle( write_end );
             if ( !created )
@@ -1177,7 +1189,7 @@ inline int suite_main( int argc, char ** argv,
                     CloseHandle( read_end );
                 result.done = true;
                 result.failed = true;
-                result.detail = item.name + " failed to spawn";
+                result.detail = item.name + suite_spawn_failure_text( "CreateProcessW", error );
                 continue;
             }
             CloseHandle( info.hThread );
