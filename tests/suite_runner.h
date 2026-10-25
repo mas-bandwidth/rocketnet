@@ -111,13 +111,11 @@ inline bool suite_env_is_set( const char * name )
 inline bool suite_case_limit( double case_limit_s, double * limit_s )
 {
     *limit_s = case_limit_s;
-    char env[64];
-    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", env, sizeof( env ) ) || env[0] == '\0' )
-        return true;
-    char * end = NULL;
-    const double scale = std::strtod( env, &end );
-    if ( end == env || *end != '\0' || !( scale > 0.0 && scale <= 1000.0 ) )
+    double scale = 1.0;
+    if ( !rocketnet_test_case_env_time_scale( &scale ) )
     {
+        char env[64];
+        rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", env, sizeof( env ) );
         printf( "check failed: ROCKETNET_TEST_CASE_TIME_SCALE=%s is not a number over 0 and at most 1000\n", env );
         return false;
     }
