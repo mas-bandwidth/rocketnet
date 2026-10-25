@@ -433,23 +433,42 @@ jobs:
 
       - name: Portable transport soak under loss, jitter and duplication (Windows)
         shell: bash
-        env:
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
-          ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: 5
-          ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: 5
-          ROCKETNET_SERVER_SIMULATED_LATENCY_MS: 30
-          ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: 30
-          ROCKETNET_SERVER_SIMULATED_JITTER_MS: 20
-          ROCKETNET_CLIENT_SIMULATED_JITTER_MS: 20
-          ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: 2
-          ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: 2
         run: |
-          set -eo pipefail
+          set -uo pipefail
+          # the portable server with the portable client, impaired at both
+          # ends of the link simulator under the names soak writes into the
+          # transport configs it creates (ROCKETNET_DEV_SERVER_* and
+          # ROCKETNET_DEV_CLIENT_*); --assert-flat fails a run whose handles,
+          # threads or library bytes grow, or whose impairment left no trace
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
           mkdir -p build/soak-windows
-          ./bin/Release/soak.exe --seconds 1800 --assert-flat 2>&1 | tee build/soak-windows/portable.log
-          grep -Fx 'soak summary: server_transport_io portable' build/soak-windows/portable.log
-          grep -Fx 'soak summary: client_transport_io portable' build/soak-windows/portable.log
+          log=build/soak-windows/portable.log
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)\r?$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          if env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+              ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+              ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+              ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+              ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+              ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+            status=0
+          else
+            status=$?
+          fi
+          cat "$log"
+          server=$(summary "$log" server_transport_io | tr -d '\r')
+          client=$(summary "$log" client_transport_io | tr -d '\r')
+          link_ok=1
+          for end in server client; do
+            tr -d '\r' < "$log" | grep -qx "soak link simulator: $end $want_link" || link_ok=0
+          done
+          if [ "$status" -eq 0 ] && [ "$server" = portable ] && [ "$client" = portable ] && [ "$link_ok" = 1 ]; then
+            echo "SOAK cell=portable PASS server=$server client=$client seconds=$seconds handles=$(resources "$log" handles) threads=$(resources "$log" threads) private_bytes=$(resources "$log" private_bytes) library_bytes=$(resources "$log" library_bytes) link=impaired missing=$(summary "$log" client_to_server_missing | tr -d '\r')/$(summary "$log" server_to_client_missing | tr -d '\r') duplicates_refused=$(summary "$log" duplicates_refused_at_server | tr -d '\r')/$(summary "$log" duplicates_refused_at_client | tr -d '\r') log=$log"
+          else
+            echo "SOAK cell=portable FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
+            exit 1
+          fi
 
       - name: Keep Windows transport soak log
         if: always()
