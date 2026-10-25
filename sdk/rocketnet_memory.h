@@ -43,6 +43,20 @@ inline uint64_t rocketnet_memory_allocations(std::initializer_list<uint64_t> siz
     return total <= SIZE_MAX ? total : 0;
 }
 
+// The bytes the SDK holds in blocks it takes from the OS itself, outside the
+// installed allocator: the blocks a transport registers with or maps from the
+// kernel (the AF_XDP UMEM and rings, the io_uring rings and provided buffer
+// rings; the RIO registered region comes from the allocator).
+// A create adds a block's bytes once the OS grants it and its destroy removes
+// them at the release, both on the creating or destroying thread, never in
+// update work, so the count is back at its start once every transport is
+// destroyed. The plan names the UMEM apart from allocator bytes; this count is what a memory check adds to the
+// allocator's to cover every byte the library holds. The reader is extern "C"
+// so the C soak tool reads it beside its allocator count.
+void rocketnet_direct_allocation_add( uint64_t bytes );
+void rocketnet_direct_allocation_remove( uint64_t bytes );
+extern "C" uint64_t rocketnet_direct_allocation_bytes( void );
+
 // Internal component accounting stays beside the corresponding concrete types.
 uint64_t rocketnet_client_slots_allocation_bytes(int clients);
 uint64_t rocketnet_encryption_map_allocation_bytes(int capacity);

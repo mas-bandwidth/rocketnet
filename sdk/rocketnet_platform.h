@@ -576,6 +576,86 @@ uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_sock
  */
 uint64_t rocketnet_platform_socket_send_replay_failures( struct rocketnet_platform_socket_t * socket );
 
+// Send failures by errno. Each failed send call is counted by the call that
+// failed and the errno it returned, and the first failure of each call and
+// errno is logged once at info level; later ones are only counted, so a
+// lasting refusal costs no log line per packet. The socket logs the counts
+// when it is destroyed. Pure counting: no socket or clock is read here.
+
+#define ROCKETNET_PLATFORM_SEND_CALL_SENDTO             0   // an ordinary per-packet send
+#define ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X          1   // a refused sendmsg_x chunk, counted once per chunk
+#define ROCKETNET_PLATFORM_SEND_CALL_REPLAY             2   // a refused per-packet replay send of a refused sendmsg_x chunk
+#define ROCKETNET_PLATFORM_SEND_CALLS                   3
+
+#define ROCKETNET_PLATFORM_SEND_ERRNO_NONE              0   // the call failed with no errno (sendmsg_x accepted nothing)
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN            1   // EAGAIN or EWOULDBLOCK: the socket send buffer is full
+#define ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS           2
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTUNREACH      3
+#define ROCKETNET_PLATFORM_SEND_ERRNO_ENETUNREACH       4
+#define ROCKETNET_PLATFORM_SEND_ERRNO_ECONNREFUSED      5
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTDOWN         6
+#define ROCKETNET_PLATFORM_SEND_ERRNO_ENETDOWN          7
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EMSGSIZE          8
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EADDRNOTAVAIL     9
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EPERM             10  // EPERM or EACCES
+#define ROCKETNET_PLATFORM_SEND_ERRNO_EINTR             11
+#define ROCKETNET_PLATFORM_SEND_ERRNO_OTHER             12
+#define ROCKETNET_PLATFORM_SEND_ERRNO_KINDS             13
+
+struct rocketnet_platform_send_errnos_t
+{
+    uint64_t counts[ROCKETNET_PLATFORM_SEND_CALLS][ROCKETNET_PLATFORM_SEND_ERRNO_KINDS]; // atomic, monotonic
+    uint64_t other_error;       // the errno of the first OTHER failure, so the log can name it; atomic
+};
+
+/**
+ * @brief Maps an errno a send call returned to its counting kind.
+ * @param error errno value, including zero.
+ * @return One of the ROCKETNET_PLATFORM_SEND_ERRNO_* kinds.
+ */
+int rocketnet_platform_send_errno_kind( int error );
+
+/**
+ * @brief Names a counting kind, as the log line prints it.
+ * @param kind One of the ROCKETNET_PLATFORM_SEND_ERRNO_* kinds.
+ * @return A static string, "unknown" for a kind out of range.
+ */
+const char * rocketnet_platform_send_errno_kind_name( int kind );
+
+/**
+ * @brief Names a send call, as the log line prints it.
+ * @param call One of the ROCKETNET_PLATFORM_SEND_CALL_* values.
+ * @return A static string, "unknown" for a call out of range.
+ */
+const char * rocketnet_platform_send_call_name( int call );
+
+/**
+ * @brief Counts one failed send call by call and errno.
+ * @param errnos Zero-initialized counts; must be non-NULL.
+ * @param call One of the ROCKETNET_PLATFORM_SEND_CALL_* values.
+ * @param error errno the call returned, including zero.
+ * @return True for the first failure of this call and errno kind, which the caller logs once.
+ */
+bool rocketnet_platform_send_errnos_count( struct rocketnet_platform_send_errnos_t * errnos, int call, int error );
+
+/**
+ * @brief Reads one count.
+ * @param errnos Counts; must be non-NULL.
+ * @param call One of the ROCKETNET_PLATFORM_SEND_CALL_* values.
+ * @param kind One of the ROCKETNET_PLATFORM_SEND_ERRNO_* kinds.
+ * @return Failures counted for that call and kind; zero out of range.
+ */
+uint64_t rocketnet_platform_send_errnos_read( struct rocketnet_platform_send_errnos_t * errnos, int call, int kind );
+
+/**
+ * @brief Writes every nonzero count as "call kind=count" words, separated by spaces.
+ * @param errnos Counts; must be non-NULL.
+ * @param buffer Output; must be non-NULL. Always terminated when size is positive.
+ * @param size Capacity of buffer in bytes.
+ * @return Number of nonzero counts written.
+ */
+int rocketnet_platform_send_errnos_format( struct rocketnet_platform_send_errnos_t * errnos, char * buffer, size_t size );
+
 #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
  * @brief Test-only seam: makes the next sends on one socket report an error.
@@ -1143,6 +1223,7 @@ bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t *
         rocketnet_platform_socket_handle_t handle;
         uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
         uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
+        struct rocketnet_platform_send_errnos_t send_errnos; // every failed send call above, by call and errno
     };
 
 struct sockaddr_storage;

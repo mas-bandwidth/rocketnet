@@ -52,6 +52,20 @@
 (* AdvanceOnQueueRefusal <- AdvanceOnQueueRefusalBroken (the walk's cache  *)
 (* advances on a mark the buffer refused) and must fail                    *)
 (* MarkOwedUntilApplied.                                                   *)
+(* MCRNXdpReplayHeldReply.cfg is the held-reply control: the link holds up *)
+(* to two replies (HeldReplyBudget <- HeldReplyBudgetTwo), a handshake     *)
+(* reply, a session reply or one to an address no frame came from, and     *)
+(* sends each later with no frame in hand.  Its reversed witnesses:        *)
+(* MCRNXdpReplayBrokenAnsweredNotKept.cfg sets KeepAnswered <-             *)
+(* KeepAnsweredBroken (the table before the answered entry: a held         *)
+(* handshake reply finds no MAC) and must fail HeldReplyFindsItsMac;       *)
+(* MCRNXdpReplayBrokenForgetDropsAnswered.cfg sets ForgetLeavesAnswered <- *)
+(* ForgetLeavesAnsweredBroken (a forget drops the MAC outright: a reply    *)
+(* held for the released client finds none) and must fail                  *)
+(* HeldReplyFindsItsMac; MCRNXdpReplayBrokenAnswerAnyAddress.cfg sets      *)
+(* AnswerKeyedByAddress <- AnswerKeyedByAddressBroken (a reply with no     *)
+(* frame in hand takes any address's answered MAC) and must fail           *)
+(* NeverSeenNeverSentTo.                                                   *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -72,4 +86,8 @@ MarkFailureBudgetOne == 1
 MarkFailureBudgetTwo == 2
 HoldGreetingUntilMarkedBroken == FALSE
 AdvanceOnQueueRefusalBroken == TRUE
+HeldReplyBudgetTwo == 2
+KeepAnsweredBroken == FALSE
+ForgetLeavesAnsweredBroken == FALSE
+AnswerKeyedByAddressBroken == FALSE
 =============================================================================

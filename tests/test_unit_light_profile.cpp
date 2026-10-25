@@ -35,12 +35,18 @@
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22183075 )
 #endif
 #elif defined(__APPLE__)
+// macOS adds, over the figures before them: per socket, the send failure
+// counts by call and errno (3 calls x 13 kinds x 8 bytes, plus the first
+// other errno: 320 bytes; the client opens 2 sockets, so 640); on the server,
+// the TX banks sized at 16 packets per client (3 banks x 15,000 more packets
+// x 1500 bytes at 1000 clients: 67,500,000), its socket's 320 bytes, and 231
+// bytes of the send handoff's per-path drop counts and allocation rounding.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523705885 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745965 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1591206436 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746605 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517309521 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960161 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
 #endif
 #else
 #if ROCKETNET_DEV

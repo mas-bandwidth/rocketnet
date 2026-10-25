@@ -195,6 +195,13 @@ Properties:
 - `KernelNeverWrites`, an action property: every step but `Commit` leaves
   `kmap` unchanged.
 - `ReleasedSlotForgetsItsReplyMac`: an accepted forget removes the learned reply MAC, including for a released slot that was seen before it acquired a mark.
+- `NeverSeenNeverSentTo`: a reply with no frame in hand goes only to an
+  address a frame came from; to any other it is refused.
+- `HeldReplyFindsItsMac`: a held reply, or its duplicate, to an address a
+  frame came from is never refused for want of a MAC, before the learn (a
+  handshake reply) or after the forget (a reply held for a released client).
+- `AnsweredOnlyHeard`: an answered entry exists only for an address a frame
+  came from.
 - `ForgetOwedUntilApplied`: an entry for an address with no live session is
   owed a forget: the walk has yet to take it (`marked[a] # 0`, or `seen[a]`:
   the walk forgets every seen released slot, and a refused zero mark leaves
@@ -243,6 +250,38 @@ mark, zero included, replaces the old entry in the commit that greets it, so
 nonzero `highest_opened` only, `MarkNewSessions <- MarkNewSessionsBroken`)
 and fails `NewSessionNeverDroppedByOldMark`.
 
+## Held replies and the reply MAC
+
+With no gateway the server addresses a reply by the client's learned MAC
+(`replyMac[a]`, learned at `Connect`) or, for a direct response, by the
+source MAC of the frame it answers. The development link simulator holds a
+reply for its latency, may send it twice, and the transport looks the MAC up
+only when the simulator lets it go, after the receive view it answered is
+gone. Measured on the XDP bench before this rule: every held cookie reply
+was refused (`SEND_NO_LINK_ADDRESS`), so no client connected on an impaired
+link, and an ack still held for a released client was refused after its
+forget.
+
+The rule (`sdk/rocketnet_xdp_frame.h`): a direct response keeps its frame's
+MAC as the address's answered entry (`Answer`, `answered[a]`); a reply with
+no frame in hand takes the learned MAC, else its own address's answered
+entry, else it is refused (`Drain`); a learn takes the answered entry's slot
+(`Connect`), and a forget leaves the learned MAC as the answered entry
+(`Commit`). `replyMac[a]`, the learned MAC, is still dropped by the forget, so
+`ReleasedSlotForgetsItsReplyMac` is unchanged. `HoldSessionReply` holds a live
+session's reply and `HoldStray` a reply to any address, one no frame need
+ever have come from. `HeldReplyBudget` bounds the held replies over a run; it
+is 0 in every control but `MCRNXdpReplayHeldReply.cfg`, so those controls
+reach exactly the states they did before.
+
+The code marks a send addressed by an answered entry `mac_learned` (its
+pointer is inside the table), so the socket's finish does not refresh it
+from a learn made between its start and its finish. Such a send has no frame
+in hand, so it is started and finished outside receive processing, where no
+learn runs. Measured with a probe on a 120 s impaired soak in the guest: 13
+sends addressed by an answered entry, 0 with a learn of their address
+between start and finish.
+
 ## Left out
 
 - **The 32-bit wrap.** Sequences are naturals and `hw - seq` is integer
@@ -267,6 +306,12 @@ and fails `NewSessionNeverDroppedByOldMark`.
 - **Addresses are independent.** Every action touches one address. The
   retention control uses two addresses and one pending-forget entry, so it
   reaches a full buffer while another unique delete remains owed.
+- **The reply MAC's value, the gateway and the table's size.** A MAC is the
+  client's own one, so the model names whether a MAC is known, not which; a
+  spoofed frame's MAC, which the newest answer would take as a direct
+  response does, is left out, as are the gateway (with one, every reply to an
+  unlearned address goes to it), the probe window and the answered entries a
+  full window cannot keep.
 - **The userspace window's bits.** Only its depth `W` enters, through
   `FreshGenuineNeverDropped`; a genuine packet that reaches userspace opens
   to the same maximum whether the window would accept or refuse it.
@@ -277,9 +322,9 @@ From the Rocketnet checkout, with the pinned runner and JAR of
 `tla/README.md`:
 
 ```sh
-for i in 0 1 2; do
+for i in $(seq 0 17); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnxdpreplay --shards 3 --shard "$i" --workers 2 --timeout 110s \
+    --group rnxdpreplay --shards 18 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnxdpreplay-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -315,6 +360,15 @@ held throughout. `NewSessionNeverDroppedByOldMark`, `MarkOwedUntilApplied`,
 `MarkNeverAhead`, `ForgetOwedUntilApplied`, `RetryNeverDeletesNewerMark` and
 the rest hold. The measured records are in `tla/RUNS.tsv`.
 
+`MCRNXdpReplayHeldReply.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
+`Sessions = 2`, `MaxInFlight = 1`, `ForgetCapacity = 1`, and up to two held
+replies (`HeldReplyBudget <- HeldReplyBudgetTwo`): a handshake reply, a live
+session's reply or a reply to an address no frame came from, each sent later
+with no frame in hand, before or after a learn, a release and its forget.
+`NeverSeenNeverSentTo`, `HeldReplyFindsItsMac`, `AnsweredOnlyHeard` and
+every property of the design control hold. The measured records are in
+`tla/RUNS.tsv`.
+
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
@@ -330,6 +384,9 @@ the rest hold. The measured records are in `tla/RUNS.tsv`.
 | `MCRNXdpReplayBrokenKeptMarkAfterForget.cfg` | a queued forget drops a kept mark of its address: `ForgetDropsKeptMark <- ForgetDropsKeptMarkBroken` | `ForgetOwedUntilApplied`, exit 12 |
 | `MCRNXdpReplayBrokenGreetBeforeMark.cfg` | the greeting waits for the zero mark: `HoldGreetingUntilMarked <- HoldGreetingUntilMarkedBroken` | `NewSessionNeverDroppedByOldMark`, exit 12, a 21-state trace |
 | `MCRNXdpReplayBrokenQueueRefusedAdvances.cfg` | a refused queue leaves the cache: `AdvanceOnQueueRefusal <- AdvanceOnQueueRefusalBroken` | `MarkOwedUntilApplied`, exit 12, a 9-state trace |
+| `MCRNXdpReplayBrokenAnsweredNotKept.cfg` | a direct response keeps its answered entry: `KeepAnswered <- KeepAnsweredBroken` | `HeldReplyFindsItsMac`, exit 12, a 3-state trace |
+| `MCRNXdpReplayBrokenForgetDropsAnswered.cfg` | a forget leaves the answered entry: `ForgetLeavesAnswered <- ForgetLeavesAnsweredBroken` | `HeldReplyFindsItsMac`, exit 12, a 9-state trace |
+| `MCRNXdpReplayBrokenAnswerAnyAddress.cfg` | a reply takes its own address's answered entry: `AnswerKeyedByAddress <- AnswerKeyedByAddressBroken` | `NeverSeenNeverSentTo`, exit 12, a 4-state trace |
 
 Each witness configuration leaves out the properties that restate the rule it
 removes, so the run reaches the harm rather than the rule itself. Run with
@@ -515,3 +572,35 @@ next successful delete removed session 2's mark, and the walk's cached
 high-water kept it from being marked again until a fresh sequence opened.
 The fake-map regression is
 `test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark`.
+
+### AnsweredNotKept, checked by hand against the design
+
+The TLC trace, 3 states: `Answer(A1)`, a handshake frame from `A1` with no
+session, answered by a direct response the link holds; `Drain(A1)`: the
+reply leaves with no frame in hand, nothing is learned and no answered entry
+was kept, so it is refused. This is the table before the answered entry, and
+the measured failure: on the XDP bench the cookie reply (38 bytes) was
+reserved inside the receive view with the request's MAC, held by the link
+simulator, and refused when it left 30 to 50 ms later, 93 of 94, with no
+learn ever made, since the client never received a cookie. In the design the
+answer keeps `answered[A1]` and the drain sends to it. The regression is
+`test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac`.
+
+### ForgetDropsAnswered, checked by hand against the design
+
+The TLC trace, 9 states: `Connect(A1)`, `Walk`, `Commit`; `Release(A1)`;
+`Walk` queues the forget; `Commit` applies it and drops the learned MAC with
+no answered entry left; `HoldStray(A1)` and `Drain(A1)`: a reply held for the
+released client leaves and is refused. This is the measured failure of the
+first answered-entry table: an ack (765 bytes) the link simulator held for a
+client released at a reconnect was refused after its forget, one refusal in
+a 120 s impaired soak. In the design the forget leaves `answered[A1]`, and
+the drain sends to it.
+
+### AnswerAnyAddress, checked by hand against the design
+
+The TLC trace, 4 states: `Answer(A1)` keeps `answered[A1]`; `HoldStray(A2)`,
+a reply to an address no frame came from; `Drain(A2)` takes `A1`'s answered
+MAC and sends. The design looks the answered entry up by the reply's own
+address (`rocketnet_xdp_reply_macs_find_state`), so the drain to `A2` finds
+none and is refused.
