@@ -379,6 +379,33 @@ jobs:
         shell: bash
         run: ./bin/Release/soak.exe 200000
 
+      - name: Portable transport soak under loss, jitter and duplication (Windows)
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+          ROCKETNET_SERVER_SIMULATED_LOSS_PERCENT: 5
+          ROCKETNET_CLIENT_SIMULATED_LOSS_PERCENT: 5
+          ROCKETNET_SERVER_SIMULATED_LATENCY_MS: 30
+          ROCKETNET_CLIENT_SIMULATED_LATENCY_MS: 30
+          ROCKETNET_SERVER_SIMULATED_JITTER_MS: 20
+          ROCKETNET_CLIENT_SIMULATED_JITTER_MS: 20
+          ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT: 2
+          ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT: 2
+        run: |
+          set -eo pipefail
+          mkdir -p build/soak-windows
+          ./bin/Release/soak.exe --seconds 1800 --assert-flat 2>&1 | tee build/soak-windows/portable.log
+          grep -Fx 'soak summary: server_transport_io portable' build/soak-windows/portable.log
+          grep -Fx 'soak summary: client_transport_io portable' build/soak-windows/portable.log
+
+      - name: Keep Windows transport soak log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-windows-portable-${{ github.run_id }}
+          path: build/soak-windows/portable.log
+
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
   # 297 seconds it WAS the wall: the whole per-commit tier finished when this
