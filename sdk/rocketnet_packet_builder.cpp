@@ -27,14 +27,14 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
 static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 static thread_local struct rn_packet_builder_plan_t rn_builder_last_plan;
 
 const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void )
 {
     return &rn_builder_last_plan;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
 // RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
 // the seeds, so the interleave describes a backlog and nothing else.
@@ -142,20 +142,20 @@ static bool rn_builder_writable( const struct rn_packet_item_t * item )
 
 static inline void rn_builder_plan_operation( struct rn_packet_builder_plan_t * plan )
 {
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     plan->plan_operations++;
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     (void) plan;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 }
 
 static inline void rn_builder_selection_operation( struct rn_packet_builder_plan_t * plan )
 {
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     plan->selection_operations++;
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     (void) plan;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 }
 
 // One byte of the stable radix key: class in the most significant pass and
@@ -562,9 +562,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     if ( drained )
         rn_builder_reset_clocks( builder );
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     rn_builder_last_plan = plan;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
     return (int) builder->packets;
 }

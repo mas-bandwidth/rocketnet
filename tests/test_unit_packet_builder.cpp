@@ -767,9 +767,9 @@ static void test_packet_builder_matches_reference_order()
 // inspects one contiguous group head per pick, never the items of that group.
 // BASE's picker, counted the same way, is quadratic in the plan per pick.
 
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 static void test_packet_builder_operations_bounded()
 {
-#if ROCKETNET_TEST_SEAMS
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -836,8 +836,8 @@ static void test_packet_builder_operations_bounded()
     }
 
     rn_arena_destroy( arena );
-#endif // #if ROCKETNET_TEST_SEAMS
 }
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
 // The flat plan is tagged by the call's full-width epoch and exact caller
 // item index. Channel/class groups are contiguous across sparse channels all
@@ -868,8 +868,9 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 
     uint8_t * frames[1] = { plan_builder_frames[0] };
     rocketnet_unit_check( rn_packet_builder_write( &builder, items, 8, frames, 1 ) == 1 );
-    const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( builder.call_epoch == 1 );
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+    const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( plan->group_count == 8 );
 
     for ( uint32_t g = 0; g < plan->group_count; g++ )
@@ -891,17 +892,20 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
             rocketnet_unit_check( entry->suffix_level == suffix );
         }
     }
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
     // A one-item next call advances the epoch and exposes only its one group;
     // every slot outside that range remains invalid for the current epoch.
     builder_item( &items[0], 65535, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_NEW_RELIABLE, plan_data[0], 2 );
     rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 1 );
-    plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( builder.call_epoch == 2 );
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+    plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( plan->group_count == 1 );
     rocketnet_unit_check( plan->sequence[0].call_epoch == 2 );
     rocketnet_unit_check( plan->sequence[0].item_index == 0 );
     rocketnet_unit_check( plan->sequence[1].call_epoch != builder.call_epoch );
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
     struct rn_packet_item_t over[ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1];
     for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
@@ -926,5 +930,7 @@ REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
 REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 REGISTER_UNIT_TEST( test_packet_builder_operations_bounded );
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 REGISTER_UNIT_TEST( test_packet_builder_flat_plan_tags_ranges_and_bounds );
