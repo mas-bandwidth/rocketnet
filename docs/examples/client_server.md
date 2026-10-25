@@ -33,9 +33,12 @@ The client-side development token helper:
 
 `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
 `rocketnet_create_dev_connect_token` exist only in the development library. A
-release server refuses the development key. In production, the game's backend
-owns token minting and returns the same kind of opaque token string; RocketNet
-does not expose production key-generation or token-minting calls.
+release server (`ROCKETNET_DEV=0`) refuses the development key, development
+tokens, and the default test `packet_filter`. In production, the game's backend
+owns the signing secret key, mints tokens for the title's `protocol_id` and
+server public key, and returns the same kind of opaque token string
+([docs/SESSION.md](../SESSION.md), [KEYS.md](../../KEYS.md)); RocketNet does
+not expose production key-generation or token-minting calls.
 
 ## Running the two programs
 
@@ -61,21 +64,28 @@ directory:
 ```
 
 The message exchange is: the client connects,
-sends one reliable-ordered message, receives the server's echo, disconnects,
+sends one reliable-ordered message (guarded by checking the non-`NULL` pointer
+from `rocketnet_client_start_message` before calling
+`rocketnet_client_finish_message` inside that branch), drains
+`rocketnet_client_receive_messages` until `NULL` to receive the server's echo,
+disconnects, polls `rocketnet_client_disconnected` before destroy,
 and reports failures with a nonzero exit status. Use `--wrong-protocol` to create the development token with a different protocol id and check
-that the connection is refused.
+that the connection is refused. See [docs/GETTING-STARTED.md](../GETTING-STARTED.md)
+for the step-by-step walkthrough of these two files.
 
 ## Public calls in the final flow
 
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_start`, `rocketnet_server_stop`, `rocketnet_server_stopped`,
+  `rocketnet_server_destroy`,
   `rocketnet_server_public_key`, `rocketnet_server_ipv4_address`,
   `rocketnet_server_ipv6_address`, `rocketnet_server_update`,
   `rocketnet_server_send_packets`, `rocketnet_server_start_message`,
   `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_connect`, `rocketnet_client_disconnected`,
+  `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
   `rocketnet_client_disconnect`, `rocketnet_client_state`,
   `rocketnet_client_state_name`, `rocketnet_client_start_message`,

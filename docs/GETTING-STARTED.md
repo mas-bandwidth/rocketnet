@@ -129,10 +129,11 @@ while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
         printf( "server received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
         uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-        if ( !p )
-            continue;
-        memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-        echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+        if ( p )
+        {
+            memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+            echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+        }
     }
 }
 
@@ -141,7 +142,8 @@ rocketnet_server_send_packets( server );
 
 The client's frame, from
 [examples/client_server_client.c](../examples/client_server_client.c), lines
-90 to 107:
+90 to 107, with the canonical non-`NULL` `start_message` guard around
+`finish_message`:
 
 ```c
 rocketnet_client_update( client, 1000.0 + rocketnet_time() - start );
@@ -157,8 +159,11 @@ if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECT
 {
     const char message[] = "hello from the client";
     uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
-    memcpy( p, message, strlen( message ) );
-    sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+    if ( p )
+    {
+        memcpy( p, message, strlen( message ) );
+        sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+    }
 }
 
 rocketnet_client_send_packets( client );
@@ -176,11 +181,20 @@ What each step requires:
   queue ends that connection with `MESSAGE_NOT_RECEIVED`, because its sender
   was already told it arrived. A `data` pointer is valid until the next receive
   or update on that endpoint; process or copy it first.
-- **Start message, write in place, finish message.** Start returns a pointer to
-  write the message into, or `NULL` when the send is refused or the connection
-  is not CONNECTED; check it, as the server loop does. Finish returns a nonzero
-  serial, or `0` when the send was refused. One start is open per object at a
-  time.
+- **Start message, check `if ( p )`, write in place, finish message.** Start
+  returns a pointer to write the message into, or `NULL` when the send is
+  refused or the connection is not CONNECTED; always check `if ( p )` and call
+  `rocketnet_client_finish_message` or `rocketnet_server_finish_message` (or
+  `abort_message`) only inside that non-`NULL` branch. Calling `finish_message`
+  without a successful outstanding `start_message` is an error and returns `0`.
+  Finish returns a nonzero serial, or `0` when the send was refused. One start
+  is open per object at a time. When sending under load where overflowing
+  message memory (`MESSAGE_MEMORY_EXHAUSTED`) must be avoided, call the optional
+  preflight `rocketnet_client_can_send_message` or
+  `rocketnet_server_can_send_message` first; `start_message` remains the
+  authoritative reservation result, and what the game does when
+  `can_send_message` returns `false` (skip, defer, drop, or coalesce) is
+  application policy rather than library behavior.
 - **Send packets last.** Sending before this frame's messages are queued
   delays them a frame. Never assume a send has left the machine or a message
   has arrived when the call returns: receipts report the outcome later, and
@@ -210,20 +224,27 @@ common split:
 The channel is the ordering scope. Ordered and sequenced modes hold order only
 within their channel, so a lost chat message holds back later chat on its
 channel and never the positions on another. From
-[examples/channels.c](../examples/channels.c), lines 103 to 115:
+[examples/channels.c](../examples/channels.c), lines 103 to 115, with the
+canonical non-`NULL` `start_message` guards:
 
 ```c
 if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
 {
     position_sent++;
     uint8_t * p = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( position_sent ) );
-    memcpy( p, &position_sent, sizeof( position_sent ) );
-    rocketnet_client_finish_message( client, sizeof( position_sent ) );
+    if ( p )
+    {
+        memcpy( p, &position_sent, sizeof( position_sent ) );
+        rocketnet_client_finish_message( client, sizeof( position_sent ) );
+    }
     if ( chat_sent < NUM_CHAT )
     {
         p = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
-        p[0] = ++chat_sent;
-        rocketnet_client_finish_message( client, 1 );
+        if ( p )
+        {
+            p[0] = ++chat_sent;
+            rocketnet_client_finish_message( client, 1 );
+        }
     }
 }
 ```
@@ -314,10 +335,12 @@ why destroy comes after completion.
 
 ## Where to go next
 
+- [AGENTS.md](../AGENTS.md): complete technical reference for AI coding agents integrating RocketNet.
 - [USAGE.md](../USAGE.md): configuration, stats, send budgets, and every state
   and refusal.
+- [docs/SESSION.md](SESSION.md): connect tokens, session isolation, and reconnect lifecycle.
 - [examples/README.md](../examples/README.md): one example per feature, and how
-  to run them.
+  to run them ([hello](examples/hello.md), [client_server](examples/client_server.md), [game_loop](examples/game_loop.md), [transports](examples/transports.md)).
 - [KEYS.md](../KEYS.md) and [AGENTS.md, "Before production"](../AGENTS.md#before-production):
   what changes before a server is deployed.
 - [docs/LINUX.md](LINUX.md), [docs/MACOS.md](MACOS.md) and
