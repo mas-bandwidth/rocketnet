@@ -133,6 +133,15 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_config.game_clock_epoch = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
+#if defined(_WIN32)
+    // Windows reports the actual SO_RCVBUF grant but does not naturally clamp
+    // this request. Inject only the warning decision while creating the real
+    // production server socket below.
+    const int warning_grant_override = request / 2;
+    server_receive_low_tick_require( warning_grant_override > 0 );
+    rocketnet_server_receive_buffer_warning_grant_override_for_testing( warning_grant_override );
+#endif
+
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
     server_receive_low_tick_require( server != NULL );
@@ -145,10 +154,30 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, "socket receive buffer" ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
 
+#if defined(_WIN32)
+    char actual_grant_line[96];
+    snprintf( actual_grant_line, sizeof( actual_grant_line ), "actual grant %%d of %d requested bytes", request );
+    int actual_grant = 0;
+    const char * actual_grant_text = strstr( server_receive_low_tick_log, "actual grant " );
+    server_receive_low_tick_require( actual_grant_text != NULL );
+    server_receive_low_tick_require( sscanf( actual_grant_text, actual_grant_line, &actual_grant ) == 1 );
+    server_receive_low_tick_require( actual_grant > 0 );
+    const bool warning_grant_override_used = actual_grant >= request;
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, "DEV test warning grant override" ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log,
+        warning_grant_override_used ? "bytes applied" : "bytes not needed" ) != NULL );
+    char override_text[64];
+    const int warning_decision_grant = warning_grant_override_used ? warning_grant_override : actual_grant;
+    snprintf( override_text, sizeof( override_text ), "granted %d of", warning_decision_grant );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, override_text ) != NULL );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, server_receive_low_tick_limit_name() ) != NULL );
+#endif
+
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, 1000.0 );
     rn_native_server_transport_stop_and_destroy( server );
 
+#if !defined(_WIN32)
     // a real socket whose request no kernel grants in full: the grant that
     // comes back is short, and the warning names the limit to raise
     struct rocketnet_address_t address;
@@ -160,16 +189,6 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     const int granted = rocketnet_platform_socket_receive_buffer_bytes( socket );
     server_receive_low_tick_require( granted > 0 );
     int warned_grant = granted;
-#if defined(_WIN32)
-    // Windows does not clamp a receive buffer request: it grants the bytes
-    // asked for in full, so no real socket comes back short. Drive the warning
-    // with a grant below the request instead and check its text the same way.
-    printf( "SKIP short-grant from a real socket: Windows grants the request in full (request=%d granted=%d)\n", oversized_request, granted );
-    if ( granted >= oversized_request )
-    {
-        warned_grant = oversized_request / 2;
-    }
-#endif
     server_receive_low_tick_require( warned_grant < oversized_request );
     rocketnet_platform_socket_destroy( socket );
 
@@ -180,9 +199,16 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     char granted_text[64];
     snprintf( granted_text, sizeof( granted_text ), "granted %d of", warned_grant );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, granted_text ) != NULL );
+#endif
 
+#if defined(_WIN32)
+    printf( "server_receive_buffer_sized clients=%d request_bytes=%d actual_grant_bytes=%d warning_grant_override_bytes=%d warning_grant_override_used=%s limit=%s\n",
+            server_receive_low_tick_server_clients, request, actual_grant, warning_grant_override,
+            warning_grant_override_used ? "yes" : "no", server_receive_low_tick_limit_name() );
+#else
     printf( "server_receive_buffer_sized clients=%d request_bytes=%d short_grant_bytes=%d limit=%s\n",
             server_receive_low_tick_server_clients, request, warned_grant, server_receive_low_tick_limit_name() );
+#endif
     fflush( stdout );
 
     rocketnet_log_function( NULL, NULL );
