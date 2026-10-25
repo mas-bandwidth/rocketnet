@@ -189,8 +189,8 @@ receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-3,231,507,646 bytes, and `rocketnet_client_required_memory` for the client
-profile is 22,746,021 bytes (Linux x86-64, development build, io_uring and
+3,231,507,666 bytes, and `rocketnet_client_required_memory` for the client
+profile is 22,896,245 bytes (Linux x86-64, development build, io_uring and
 XDP built; each is the lifecycle peak the caller's allocator sees, for the
 largest transport the ladder can grant). On Windows x64 with MSVC, the
 server/client figures are 1,523,705,813 / 22,745,949 bytes in development builds

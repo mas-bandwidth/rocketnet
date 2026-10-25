@@ -399,16 +399,16 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 3,231,507,646 bytes (about 3.2 GB) on Linux x86-64 with io_uring
+reports 3,231,507,666 bytes (about 3.2 GB) on Linux x86-64 with io_uring
 and XDP built. The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 22,746,021 bytes.
+`rocketnet_client_required_memory` report 22,896,245 bytes.
 
 Both figures are the lifecycle peak the caller's allocator sees: create, the
 transport connect or start allocates for the largest transport the ladder can
 grant, disconnect or stop, the next cycle, and destroy. They exclude the
 memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
 rings, kernel socket buffers) and process overhead. In a production build
-(`ROCKETNET_DEV=OFF`) they are 3,225,111,282 and 21,960,217 bytes. Other
+(`ROCKETNET_DEV=OFF`) they are 3,225,111,302 and 22,110,441 bytes. Other
 platforms report their own figures (macOS has no io_uring or XDP, so its
 server figure is about half). On Windows x64 with MSVC, the server/client
 figures are 1,523,705,813 / 22,745,949 bytes in development builds and
