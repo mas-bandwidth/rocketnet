@@ -284,7 +284,7 @@ jobs:
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -341,6 +341,56 @@ jobs:
 
       - name: UDP loopback soak
         run: ./bin/soak 200000
+
+      - name: Per-transport impaired soaks (1800 s each, flat resources)
+        shell: bash
+        run: |
+          set -uo pipefail
+          # the impairment at both ends of the link simulator, the names soak
+          # writes into the transport configs it creates from (the values
+          # scripts/soak-per-transport runs); --assert-flat fails a run they
+          # leave no drops or refused duplicates in
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-macos-per-transport
+          failures=0
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          for transport in portable msgx; do
+            log="build/soak-macos-per-transport/${transport}.log"
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT="$transport" \
+                ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+                ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+                ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+                ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+                ./bin/soak --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$log"
+            server=$(summary "$log" server_transport_io)
+            client=$(summary "$log" client_transport_io)
+            link_ok=1
+            for end in server client; do
+              grep -qx "soak link simulator: $end $want_link" "$log" || link_ok=0
+            done
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$client" = "$transport" ] && [ "$link_ok" = 1 ]; then
+              echo "SOAK cell=$transport PASS server=$server client=$client seconds=$seconds verified=$(summary "$log" verified) fds=$(resources "$log" fds) threads=$(resources "$log" threads) resident_bytes=$(resources "$log" resident_bytes) link=impaired missing=$(summary "$log" client_to_server_missing)/$(summary "$log" server_to_client_missing) duplicates_refused=$(summary "$log" duplicates_refused_at_server)/$(summary "$log" duplicates_refused_at_client) log=$log"
+            else
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
+              failures=$((failures + 1))
+            fi
+          done
+          exit "$failures"
+
+      - name: Upload macOS per-transport soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-macos-per-transport-logs-${{ strategy.job-index }}
+          path: build/soak-macos-per-transport
+          if-no-files-found: ignore
 
   soak-windows:
     name: soak (${{ matrix.ref }} / windows)
