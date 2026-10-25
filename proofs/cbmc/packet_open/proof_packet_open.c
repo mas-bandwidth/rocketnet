@@ -239,7 +239,7 @@ void harness_open_sealed_packet( void )
     else
     {
         __CPROVER_assert( result == -1 || result == packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES,
-            "an opened packet returns the plaintext length" );
+                          "an opened packet returns the plaintext length" );
     }
 
     /* a session nonce on a type that does not carry one is refused */
@@ -309,7 +309,7 @@ void harness_write_packet_associated_data( void )
                                                                    connection_salt,
                                                                    ephemeral );
     __CPROVER_assert( with_bytes == ROCKETNET_AD_WITH_EPHEMERAL_BYTES,
-        "the writer returns 53 bytes with the ephemeral key" );
+                      "the writer returns 53 bytes with the ephemeral key" );
 
     const int without_bytes = rocketnet_write_packet_associated_data( without_ephemeral,
                                                                       protocol_id,
@@ -317,7 +317,7 @@ void harness_write_packet_associated_data( void )
                                                                       connection_salt,
                                                                       NULL );
     __CPROVER_assert( without_bytes == ROCKETNET_AD_BYTES,
-        "the writer returns 21 bytes without the ephemeral key" );
+                      "the writer returns 21 bytes without the ephemeral key" );
 }
 
 /* the sequence nonce: four zero bytes then the sequence little-endian, all
@@ -331,10 +331,10 @@ void harness_sequence_nonce( void )
     rocketnet_sequence_nonce( nonce, sequence );
 
     __CPROVER_assert( nonce[0] == 0 && nonce[1] == 0 && nonce[2] == 0 && nonce[3] == 0,
-        "the nonce starts with four zero bytes" );
+                      "the nonce starts with four zero bytes" );
     for ( int i = 0; i < 8; i++ )
         __CPROVER_assert( nonce[4 + i] == (uint8_t) ( ( sequence >> ( 8 * i ) ) & 0xFF ),
-            "the nonce carries the sequence little-endian" );
+                          "the nonce carries the sequence little-endian" );
 }
 
 int main( void )

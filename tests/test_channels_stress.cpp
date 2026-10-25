@@ -135,7 +135,7 @@ static void stress_message_config( int * num_channels, int * reliable_messages_i
     *max_message_receipts = STRESS_RECEIPTS_PER_UPDATE;
 }
 
-static void stress_client_config( rocketnet_client_test_config_t * config, int channels, double (*clock)( void * ) )
+static void stress_client_config( rocketnet_client_test_config_t * config, int channels, double ( *clock )( void * ) )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
@@ -165,7 +165,7 @@ static void stress_server_config( rocketnet_server_config_t * config, const uint
 // channel c carries reliability c % 8
 static enum rocketnet_reliability_t stress_mode( int channel )
 {
-    return (enum rocketnet_reliability_t) ( channel % STRESS_NUM_MODES );
+    return ( enum rocketnet_reliability_t )( channel % STRESS_NUM_MODES );
 }
 
 static bool stress_mode_reliable( enum rocketnet_reliability_t mode )
@@ -472,7 +472,8 @@ static void stress_world_create( stress_world_t * world )
                                         1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( world->client, token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 2000 && !( rocketnet_client_state( world->client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
-                                    rocketnet_server_client_connected( world->server, 0 ) ); i++ )
+                                    rocketnet_server_client_connected( world->server, 0 ) );
+          i++ )
     {
         stress_world_frame( world );
         stress_world_send_packets( world );
@@ -706,7 +707,8 @@ static void test_channels_stress_memory_is_planned()
     }
     const int top = STRESS_NUM_CHANNELS - stride;
     check( ( stress_server_plan( 2, STRESS_NUM_CHANNELS ) - stress_server_plan( 1, STRESS_NUM_CHANNELS ) ) -
-           ( stress_server_plan( 2, top ) - stress_server_plan( 1, top ) ) == connection_step );
+               ( stress_server_plan( 2, top ) - stress_server_plan( 1, top ) ) ==
+           connection_step );
     const double client_per_channel = (double) client_step / stride;
     const double connection_per_channel = (double) connection_step / stride;
 

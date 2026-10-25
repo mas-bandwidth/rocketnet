@@ -172,24 +172,21 @@ static inline bool rocketnet_fake_client_connect( void * transport, const rocket
 // (all eight), each in rocketnet_client_transport_io_operations_t member order;
 // none has send_failures or connect.
 
-static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_base =
-{
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_base = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, NULL, NULL,
     NULL, NULL
 };
 
-static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_io =
-{
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_io = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake,
     NULL, NULL
 };
 
-static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_batch =
-{
+static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_batch = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch,

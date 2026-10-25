@@ -24,8 +24,7 @@
 
 // the transport counter of each kernel prefilter counter, in wire order
 
-static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-{
+static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
     ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_LARGE,
@@ -45,7 +44,7 @@ static void test_prefilter_counters_map_each_kernel_counter()
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
     {
         struct rocketnet_counters_t counters;
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] = 7;
 
         uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = { 0 };
@@ -66,20 +65,38 @@ REGISTER_UNIT_TEST( test_prefilter_counters_map_each_kernel_counter );
 static void test_prefilter_counters_are_assigned_not_added()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
-    const uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-    {
-        5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    const uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
     };
     rocketnet_counters_apply_prefilter( &counters, prefilter );
     rocketnet_counters_apply_prefilter( &counters, prefilter );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
         check( counters.values[prefilter_kernel_counters[i]] == prefilter[i] );
 
-    const uint64_t smaller[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-    {
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    const uint64_t smaller[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
     };
     rocketnet_counters_apply_prefilter( &counters, smaller );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )

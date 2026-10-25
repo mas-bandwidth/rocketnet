@@ -56,7 +56,7 @@
 #include "../sdk/rocketnet_driver_loopback.h"
 #include "suite_runner.h"
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
@@ -89,7 +89,7 @@ static void secrets_wiped_mint_vector_token( uint8_t * token_data )
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
 
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -100,7 +100,7 @@ static void secrets_wiped_mint_vector_token( uint8_t * token_data )
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = 0x5EC12E7ULL;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -115,7 +115,7 @@ static void secrets_wiped_mint_vector_token( uint8_t * token_data )
 static void secrets_wiped_reach_connection_request( struct rocketnet_client_protocol_t * client,
                                                     struct rocketnet_counters_t * counters )
 {
-    memset( counters, 0, sizeof(*counters) );
+    memset( counters, 0, sizeof( *counters ) );
     rocketnet_client_protocol_init( client, counters );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -129,8 +129,8 @@ static void secrets_wiped_reach_connection_request( struct rocketnet_client_prot
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
-    check( rocketnet_client_protocol_process_packet( client, cookie, sizeof(cookie), 1000.5,
-                                                     payload, sizeof(payload), &payload_bytes ) );
+    check( rocketnet_client_protocol_process_packet( client, cookie, sizeof( cookie ), 1000.5,
+                                                     payload, sizeof( payload ), &payload_bytes ) );
     check( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
     check( !secrets_wiped_all_zero( client->client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 }
@@ -164,9 +164,9 @@ static void test_secrets_wiped_ephemeral_on_integrity_limit_from_connection_requ
 
     // a denied sealed under keys this attempt does not hold: it never opens
     uint8_t wrong_key[ROCKETNET_KEY_BYTES];
-    memset( wrong_key, 0x3B, sizeof(wrong_key) );
+    memset( wrong_key, 0x3B, sizeof( wrong_key ) );
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    memset( session_nonce, 0x5A, sizeof(session_nonce) );
+    memset( session_nonce, 0x5A, sizeof( session_nonce ) );
     uint8_t denied[ROCKETNET_RECEIVE_CEILING];
     const int denied_bytes = rocketnet_write_sealed_packet( denied, ROCKETNET_CONNECTION_DENIED_PACKET,
                                                             client.packet_filter, 1, session_nonce, NULL, 0,
@@ -178,7 +178,7 @@ static void test_secrets_wiped_ephemeral_on_integrity_limit_from_connection_requ
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     check( rocketnet_client_protocol_process_packet( &client, denied, denied_bytes, 1000.6,
-                                                     payload, sizeof(payload), &payload_bytes ) == 0 );
+                                                     payload, sizeof( payload ), &payload_bytes ) == 0 );
 
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     check( secrets_wiped_all_zero( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
@@ -243,7 +243,7 @@ struct secrets_wiped_watch_t
 };
 
 static std::map<void *, size_t> * secrets_wiped_sizes = NULL;
-static std::map<void *, std::vector<uint8_t> > * secrets_wiped_copies = NULL;
+static std::map<void *, std::vector<uint8_t>> * secrets_wiped_copies = NULL;
 static secrets_wiped_watch_t secrets_wiped_watches[3];
 static int secrets_wiped_num_watches = 0;
 static size_t secrets_wiped_written_most = 0;       // the most bytes a destroy wrote outside the spans of one block
@@ -303,7 +303,7 @@ static void secrets_wiped_free( void * context, void * p )
             }
             if ( secrets_wiped_copies )
             {
-                std::map<void *, std::vector<uint8_t> >::iterator copy = secrets_wiped_copies->find( p );
+                std::map<void *, std::vector<uint8_t>>::iterator copy = secrets_wiped_copies->find( p );
                 if ( copy != secrets_wiped_copies->end() )
                 {
                     secrets_wiped_watch_t * watch = NULL;
@@ -363,7 +363,7 @@ static void secrets_wiped_pump( secrets_wiped_pair_t * pair )
 // allocator, then one planted message each way, received and released
 static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint8_t * user_data = NULL )
 {
-    memset( pair, 0, sizeof(*pair) );
+    memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     rocketnet_quiet( 1 );
 
@@ -392,8 +392,8 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity.backend_secret, identity.server_public,
-        SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, user_data,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, user_data,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
     sodium_memzero( token, sizeof( token ) );
@@ -466,7 +466,7 @@ static void * secrets_wiped_containing( const void * p )
     return NULL;
 }
 
-static void secrets_wiped_watch( const void * object, int ( * spans )( size_t *, size_t *, int ) )
+static void secrets_wiped_watch( const void * object, int ( *spans )( size_t *, size_t *, int ) )
 {
     check( object != NULL );
     void * block = secrets_wiped_containing( object );
@@ -520,7 +520,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     const int server_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
     const int transport_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[1] );
 
-    std::map<void *, std::vector<uint8_t> > copies;
+    std::map<void *, std::vector<uint8_t>> copies;
     for ( std::map<void *, size_t>::iterator it = sizes.begin(); it != sizes.end(); ++it )
         copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
     secrets_wiped_copies = &copies;
@@ -700,7 +700,7 @@ static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
     check( arena != NULL );
     secrets_wiped_plant_in_arena( arena );
-    std::map<void *, std::vector<uint8_t> > copies;
+    std::map<void *, std::vector<uint8_t>> copies;
     void * block = secrets_wiped_containing( arena );
     check( block != NULL );
     copies[block].assign( (const uint8_t *) block, (const uint8_t *) block + sizes[block] );
@@ -793,13 +793,13 @@ REGISTER_UNIT_TEST( test_secrets_wiped_user_data_with_client_connected );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned_writes_nothing );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
-#if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+#if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
 
 // ---------------------------------------------------------------------------
 // the config parse's base64 staging (sdk/rocketnet_config.cpp)
 // ---------------------------------------------------------------------------
 
-extern void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes );
+extern void ( *rocketnet_config_decode_staging_hook )( const uint8_t * staging, int bytes );
 
 static uint8_t secrets_wiped_staging[256];
 static int secrets_wiped_staging_bytes = -1;
@@ -826,8 +826,7 @@ struct secrets_wiped_config_t
     uint8_t secret_key[32];
 };
 
-static const struct rocketnet_config_field_t secrets_wiped_fields[] =
-{
+static const struct rocketnet_config_field_t secrets_wiped_fields[] = {
     { "secret_key", ROCKETNET_CONFIG_KIND_BYTES, 0, 32, 0, 0, ROCKETNET_CONFIG_SECRET },
 };
 
@@ -839,7 +838,7 @@ static bool secrets_wiped_parse( const char * value, struct secrets_wiped_config
     char env_name[128];
     check( rocketnet_config_env_var_name_for( "secretwipe", "secret_key", env_name, sizeof( env_name ) ) );
     check( secrets_wiped_setenv( env_name, value ) == 0 );
-    memset( config, 0, sizeof(*config) );
+    memset( config, 0, sizeof( *config ) );
     memset( secrets_wiped_staging, 0xA5, sizeof( secrets_wiped_staging ) );
     secrets_wiped_staging_bytes = -1;
     rocketnet_config_decode_staging_hook = secrets_wiped_staging_seen;
@@ -888,7 +887,7 @@ REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
 // ---------------------------------------------------------------------------
 
-extern void (*rocketnet_token_private_block_hook)( uint8_t * block, int bytes, int at_exit );
+extern void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit );
 
 static uint8_t secrets_wiped_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
 static int secrets_wiped_block_exits = 0;
@@ -966,13 +965,13 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     check( first == 0 && second == 1 );
     const uint8_t * data = rocketnet_client_slots_user_data( slots, first );
     bool unused_untouched = true;
-    for ( size_t i = 2 * sizeof(user_data); i < 32 * sizeof(user_data); ++i )
+    for ( size_t i = 2 * sizeof( user_data ); i < 32 * sizeof( user_data ); ++i )
         unused_untouched &= data[i] == 0xC5;
     rocketnet_client_slots_release( slots, first );
-    const bool released_wiped = secrets_wiped_all_zero( data, sizeof(user_data) );
-    std::map<void *, std::vector<uint8_t> > copies;
+    const bool released_wiped = secrets_wiped_all_zero( data, sizeof( user_data ) );
+    std::map<void *, std::vector<uint8_t>> copies;
     for ( auto it = sizes.begin(); it != sizes.end(); ++it )
-        copies[it->first].assign( (const uint8_t *)it->first, (const uint8_t *)it->first + it->second );
+        copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
     secrets_wiped_copies = &copies;
     secrets_wiped_num_watches = 0;
     secrets_wiped_written_most = 0;
@@ -988,7 +987,7 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     check( unused_untouched && released_wiped );
     check( secrets_left == 0 );
-    check( changed > 0 && changed <= sizeof(user_data) );
+    check( changed > 0 && changed <= sizeof( user_data ) );
 }
 REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );
 
@@ -997,7 +996,10 @@ REGISTER_UNIT_TEST( test_secrets_wiped_slots_touch_only_live_user_data );
 // num_connected never goes negative. the hook keeps assert-on builds quiet.
 static void secrets_wiped_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 static void test_client_slots_release_of_free_slot_is_refused()

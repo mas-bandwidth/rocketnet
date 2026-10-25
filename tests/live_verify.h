@@ -82,14 +82,14 @@ static inline const char * rocketnet_live_result_name( int result )
 {
     switch ( result )
     {
-        case ROCKETNET_LIVE_OK:             return "ok";
-        case ROCKETNET_LIVE_SHORT:          return "short";
-        case ROCKETNET_LIVE_BAD_LENGTH:     return "bad-length";
-        case ROCKETNET_LIVE_BAD_HEADER:     return "bad-header";
-        case ROCKETNET_LIVE_BAD_CHANNEL:    return "bad-channel";
-        case ROCKETNET_LIVE_BAD_CYCLE:      return "bad-cycle";
-        case ROCKETNET_LIVE_BAD_BYTE:       return "bad-byte";
-        default:                            return "unknown";
+        case ROCKETNET_LIVE_OK:          return "ok";
+        case ROCKETNET_LIVE_SHORT:       return "short";
+        case ROCKETNET_LIVE_BAD_LENGTH:  return "bad-length";
+        case ROCKETNET_LIVE_BAD_HEADER:  return "bad-header";
+        case ROCKETNET_LIVE_BAD_CHANNEL: return "bad-channel";
+        case ROCKETNET_LIVE_BAD_CYCLE:   return "bad-cycle";
+        case ROCKETNET_LIVE_BAD_BYTE:    return "bad-byte";
+        default:                         return "unknown";
     }
 }
 
@@ -119,9 +119,11 @@ static inline uint32_t rocketnet_live_mode_max( const rocketnet_live_config_t * 
     if ( mode == 1 )
     {
         uint32_t m = ROCKETNET_LIVE_MAX_RECORD_BYTES;
-        if ( mmb < m ) m = mmb;
+        if ( mmb < m )
+            m = mmb;
         const uint32_t payload = ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES > ROCKETNET_LIVE_CODE1_OVERHEAD ? ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - ROCKETNET_LIVE_CODE1_OVERHEAD : 1u;
-        if ( payload < m ) m = payload;
+        if ( payload < m )
+            m = payload;
         return m;
     }
     return mmb;
@@ -138,11 +140,14 @@ static inline uint32_t rocketnet_live_edge( const rocketnet_live_config_t * conf
     uint32_t e;
     switch ( mode )
     {
-        case 0: case 5: e = 1411u; break;
-        case 2: case 6: e = 1408u; break;
-        case 3: case 7: e = 1401u; break;
-        case 4:         e = 1399u; break;
-        default:        e = 1404u; break;
+        case 0:
+        case 5:  e = 1411u; break;
+        case 2:
+        case 6:  e = 1408u; break;
+        case 3:
+        case 7:  e = 1401u; break;
+        case 4:  e = 1399u; break;
+        default: e = 1404u; break;
     }
     const uint32_t m = rocketnet_live_mode_max( config, mode );
     return e < m ? e : m;
@@ -161,7 +166,7 @@ static inline void rocketnet_live_boundary_add( uint32_t * list, int * count, in
             return;
     }
     if ( *count < ROCKETNET_LIVE_MAX_BOUNDARIES )
-        list[(*count)++] = v;
+        list[( *count )++] = v;
 }
 
 // Section 4, the boundary list B of a mode, in the order the section lists
@@ -355,17 +360,20 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
         return ROCKETNET_LIVE_SHORT;
     if ( buffer[0] != rocketnet_live_tag( direction, mode ) )
     {
-        if ( bad_offset ) *bad_offset = 0;
+        if ( bad_offset )
+            *bad_offset = 0;
         return ROCKETNET_LIVE_BAD_HEADER;
     }
     if ( bytes >= 2 && buffer[1] != (uint8_t) channel )
     {
-        if ( bad_offset ) *bad_offset = 1;
+        if ( bad_offset )
+            *bad_offset = 1;
         return ROCKETNET_LIVE_BAD_CHANNEL;
     }
     if ( bytes >= 3 && buffer[2] != (uint8_t) cycle )
     {
-        if ( bad_offset ) *bad_offset = 2;
+        if ( bad_offset )
+            *bad_offset = 2;
         return ROCKETNET_LIVE_BAD_CYCLE;
     }
 
@@ -388,7 +396,8 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
     {
         if ( buffer[i] != (uint8_t) ( sequence >> ( 8 * ( i - 3 ) ) ) )
         {
-            if ( bad_offset ) *bad_offset = i;
+            if ( bad_offset )
+                *bad_offset = i;
             return ROCKETNET_LIVE_BAD_BYTE;
         }
     }
@@ -396,7 +405,8 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
     {
         if ( buffer[i] != (uint8_t) ( ( (uint32_t) i + sequence ) % 256u ) )
         {
-            if ( bad_offset ) *bad_offset = i;
+            if ( bad_offset )
+                *bad_offset = i;
             return ROCKETNET_LIVE_BAD_BYTE;
         }
     }

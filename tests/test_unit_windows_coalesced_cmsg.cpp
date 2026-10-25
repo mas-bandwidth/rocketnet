@@ -10,7 +10,7 @@
 
 #include "test_unit_registry.h"
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -29,7 +29,7 @@ struct coalesced_cmsg_buffer_t
     WSAMSG message;
     // the padding to control is written out, so the compiler adds none (MSVC C4324)
     char pad[( sizeof( WSAMSG ) + 15 ) / 16 * 16 - sizeof( WSAMSG )];
-    alignas(16) char control[64];
+    alignas( 16 ) char control[64];
 };
 
 // One UDP_COALESCED_INFO header of the given cmsg_len, with the DWORD 1234

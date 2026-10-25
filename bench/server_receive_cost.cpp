@@ -28,7 +28,7 @@
 #include <time.h>
 #include <vector>
 
-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "server receive cost bench failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
+#define CHECK( x ) do { if (!(x)) { fprintf(stderr, "server receive cost bench failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
 
 // ---- the arena -------------------------------------------------------------
 
@@ -67,7 +67,7 @@ static void receive_cost_free( void *, void * p )
 
 // ---- the capture and replay receive ------------------------------------------
 
-typedef int (*receive_cost_receive_batch_t)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
+typedef int ( *receive_cost_receive_batch_t )( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
 
 struct receive_cost_capture_t
 {
@@ -126,11 +126,14 @@ static double percentile( std::vector<double> samples, double p )
 {
     std::sort( samples.begin(), samples.end() );
     const size_t n = samples.size();
-    if ( n == 0 ) return 0.0;
+    if ( n == 0 )
+        return 0.0;
     const double rank = ( p / 100.0 ) * (double) n;
     size_t index = (size_t) rank;
-    if ( (double) index < rank ) index++;
-    if ( index > 0 ) index--;
+    if ( (double) index < rank )
+        index++;
+    if ( index > 0 )
+        index--;
     return samples[index < n ? index : n - 1];
 }
 

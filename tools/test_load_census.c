@@ -8,7 +8,7 @@
        cl /W4 /WX /I. tools\test_load_census.c && test_load_census.exe
 */
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 #endif
@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 static HANDLE test_release;
 static DWORD WINAPI test_thread_main( LPVOID arg )
 {
@@ -52,7 +52,7 @@ static struct load_census_survivors_t test_survivors( void )
 
 int main( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     test_release = CreateEventA( NULL, TRUE, FALSE, NULL );
     assert( test_release );
 #endif
@@ -71,7 +71,7 @@ int main( void )
     survivors = test_survivors();
     assert( survivors.handles == 0 );
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     /* a closed descriptor's number reused by another file is a different
        object: identity, not number, decides (posix census only) */
     FILE * first = rocketnet_test_fopen( "test_load_census.tmp", "w" );
@@ -88,7 +88,7 @@ int main( void )
     assert( load_census_take( &test_before ) );
 #endif
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     /* the random device is init-scope state: a pair that ends before term
        reports it without counting it; the pair through term counts it */
     FILE * device = rocketnet_test_fopen( "/dev/urandom", "r" );
@@ -104,7 +104,7 @@ int main( void )
 
     /* a thread left running survives, a joined one does not: this process
        created it, so it is never an operating-system pool worker */
-#if defined(_WIN32)
+#if defined( _WIN32 )
     HANDLE thread = CreateThread( NULL, 0, test_thread_main, NULL, 0, NULL );
     assert( thread );
     survivors = test_survivors();

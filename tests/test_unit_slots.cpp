@@ -99,7 +99,10 @@ static void test_slots_same_batch_churn_discards_the_old_connection()
 
 static void slots_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 // An out-of-range count is refused as zero slots, never clamped to a working

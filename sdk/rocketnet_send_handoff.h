@@ -10,37 +10,45 @@
 // is free; a later flush retries after the worker retires a generation.
 // reopen remains the defensive recovery for a preexisting fully queued state:
 // it hands back the newest generation, never the front.
-template<int NumBuffers> struct rocketnet_send_handoff_t
+template <int NumBuffers> struct rocketnet_send_handoff_t
 {
-    bool free[size_t(NumBuffers)];
-    int queued[size_t(NumBuffers)];
+    bool free[size_t( NumBuffers )];
+    int queued[size_t( NumBuffers )];
     int head = 0;
     int count = 0;
     int filling = -1;
 
     rocketnet_send_handoff_t()
     {
-        static_assert(NumBuffers >= 2, "producer and consumer storage");
-        for (int i = 0; i < NumBuffers; ++i) free[i] = true;
+        static_assert( NumBuffers >= 2, "producer and consumer storage" );
+        for ( int i = 0; i < NumBuffers; ++i )
+            free[i] = true;
     }
     // tla/SendHandoff.tla Acquire: reserves a free generation as the filling one.
     int acquire()
     {
-        if (filling >= 0) return filling;
-        for (int i = 0; i < NumBuffers; ++i)
-            if (free[i]) { free[i] = false; return filling = i; }
+        if ( filling >= 0 )
+            return filling;
+        for ( int i = 0; i < NumBuffers; ++i )
+            if ( free[i] )
+            {
+                free[i] = false;
+                return filling = i;
+            }
         return -1;
     }
     // tla/SendHandoff.tla Publish: appends the filling generation to the queue.
     bool publish()
     {
-        rocketnet_assert(filling >= 0 && count < NumBuffers);
+        rocketnet_assert( filling >= 0 && count < NumBuffers );
         // tla/SendHandoff.tla Publish needs a filling generation: the model
         // enables it only with one, so a publish without one is refused here
         // instead of queueing -1.
-        if (filling < 0) return false;
-        if (count == NumBuffers - 1) return false;
-        queued[(head + count) % NumBuffers] = filling;
+        if ( filling < 0 )
+            return false;
+        if ( count == NumBuffers - 1 )
+            return false;
+        queued[( head + count ) % NumBuffers] = filling;
         ++count;
         filling = -1;
         return true;
@@ -54,23 +62,26 @@ template<int NumBuffers> struct rocketnet_send_handoff_t
     // first.
     int reopen()
     {
-        if (filling >= 0) return filling;
-        if (count < 2) return -1;
+        if ( filling >= 0 )
+            return filling;
+        if ( count < 2 )
+            return -1;
         --count;
-        return filling = queued[(head + count) % NumBuffers];
+        return filling = queued[( head + count ) % NumBuffers];
     }
     // tla/SendHandoff.tla TakeFront: the worker reads the front generation.
     int front() const { return count ? queued[head] : -1; }
     // tla/SendHandoff.tla Retire: frees the copied front and advances the queue.
     void retire()
     {
-        rocketnet_assert(count > 0);
+        rocketnet_assert( count > 0 );
         // tla/SendHandoff.tla Retire needs a queued generation: the model
         // enables it only with one, so a retire on an empty queue is refused
         // here instead of freeing a stale generation.
-        if (count == 0) return;
+        if ( count == 0 )
+            return;
         free[queued[head]] = true;
-        head = (head + 1) % NumBuffers;
+        head = ( head + 1 ) % NumBuffers;
         --count;
     }
 };

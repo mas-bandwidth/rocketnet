@@ -45,17 +45,23 @@ static void run_receiver( int port, double warmup, double window, int windows )
 {
     int fd = bench_udp_socket();
     int one = 1;
-    if ( setsockopt( fd, IPPROTO_UDP, UDP_GRO, &one, sizeof(one) ) < 0 )
-        { perror( "setsockopt UDP_GRO" ); exit( 1 ); }
+    if ( setsockopt( fd, IPPROTO_UDP, UDP_GRO, &one, sizeof( one ) ) < 0 )
+    {
+        perror( "setsockopt UDP_GRO" );
+        exit( 1 );
+    }
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
-    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        { perror( "bind" ); exit( 1 ); }
+    if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
+    {
+        perror( "bind" );
+        exit( 1 );
+    }
     bench_report_buffers( fd );
 
     static uint8_t buffers[GSO_RECV_VLEN][GSO_RECV_BUFFER];
     struct mmsghdr messages[GSO_RECV_VLEN];
     struct iovec iovecs[GSO_RECV_VLEN];
-    static char controls[GSO_RECV_VLEN][CMSG_SPACE(sizeof(int))];
+    static char controls[GSO_RECV_VLEN][CMSG_SPACE( sizeof( int ) )];
 
     struct bench_windows_t w;
     bench_windows_init( &w, warmup, window, windows );
@@ -66,11 +72,11 @@ static void run_receiver( int port, double warmup, double window, int windows )
         {
             iovecs[i].iov_base = buffers[i];
             iovecs[i].iov_len = GSO_RECV_BUFFER;
-            memset( &messages[i].msg_hdr, 0, sizeof(struct msghdr) );
+            memset( &messages[i].msg_hdr, 0, sizeof( struct msghdr ) );
             messages[i].msg_hdr.msg_iov = &iovecs[i];
             messages[i].msg_hdr.msg_iovlen = 1;
             messages[i].msg_hdr.msg_control = controls[i];
-            messages[i].msg_hdr.msg_controllen = sizeof(controls[i]);
+            messages[i].msg_hdr.msg_controllen = sizeof( controls[i] );
         }
 
         uint64_t t0 = bench_time_ns();
@@ -95,7 +101,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
             {
                 if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
                 {
-                    memcpy( &segment_size, CMSG_DATA( cmsg ), sizeof(int) );
+                    memcpy( &segment_size, CMSG_DATA( cmsg ), sizeof( int ) );
                     break;
                 }
             }
@@ -130,10 +136,10 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     struct sockaddr_in to = bench_address( ip, port );
 
     static uint8_t buffer[BENCH_BATCH_SIZE * BENCH_MAX_PACKET];
-    char control[CMSG_SPACE(sizeof(uint16_t))];
+    char control[CMSG_SPACE( sizeof( uint16_t ) )];
 
     struct bench_send_health_t health;
-    memset( &health, 0, sizeof(health) );
+    memset( &health, 0, sizeof( health ) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -145,7 +151,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     for ( ;; )
     {
-        int size = bench_sizes[ batch_index % BENCH_NUM_SIZES ];
+        int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
         batch_index++;
 
@@ -163,32 +169,33 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
             struct iovec iov = { buffer, (size_t) ( BENCH_BATCH_SIZE * size ) };
             struct msghdr msg;
-            memset( &msg, 0, sizeof(msg) );
+            memset( &msg, 0, sizeof( msg ) );
             msg.msg_name = &to;
-            msg.msg_namelen = sizeof(to);
+            msg.msg_namelen = sizeof( to );
             msg.msg_iov = &iov;
             msg.msg_iovlen = 1;
             msg.msg_control = control;
-            msg.msg_controllen = sizeof(control);
+            msg.msg_controllen = sizeof( control );
             struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
             cmsg->cmsg_level = IPPROTO_UDP;
             cmsg->cmsg_type = UDP_SEGMENT;
-            cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+            cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
             uint16_t segment_size = (uint16_t) size;
-            memcpy( CMSG_DATA( cmsg ), &segment_size, sizeof(segment_size) );
+            memcpy( CMSG_DATA( cmsg ), &segment_size, sizeof( segment_size ) );
 
             ssize_t result = sendmsg( fd, &msg, 0 );
             const int error = errno;
             syscalls++;
-            if ( bench_fault( "send-short" ) ) result = size;
-            if ( bench_fault( "send-zero" ) ) result = 0;
+            if ( bench_fault( "send-short" ) )
+                result = size;
+            if ( bench_fault( "send-zero" ) )
+                result = 0;
             // sendmsg returns bytes. Only whole accepted segments count;
             // any partial segment and the remaining messages are refusals.
             sent += bench_send_batch_observe( &health, "sendmsg (UDP_SEGMENT)",
-                                             result >= 0 ? (int) (result / size) : 0, BENCH_BATCH_SIZE,
-                                             result < 0 ? error : EIO );
+                                              result >= 0 ? (int) ( result / size ) : 0, BENCH_BATCH_SIZE,
+                                              result < 0 ? error : EIO );
         }
-
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;

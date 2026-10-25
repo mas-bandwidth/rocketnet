@@ -71,8 +71,7 @@ static int standard_replay_observe( rn_replay_check_t check, rn_replay_advance_t
     return at;
 }
 
-static const rn_standard_vector_t standard_replay_table[] =
-{
+static const rn_standard_vector_t standard_replay_table[] = {
     RN_STANDARD_VECTOR( "t14.in-window-duplicate", "00100000f20300000000000000010001" ),
     RN_STANDARD_VECTOR( "t14.behind-window", "001000002c10000000000000000100" ),
     RN_STANDARD_VECTOR( "t14.forward-jump-clears", "001000000110000000000000000001" ),

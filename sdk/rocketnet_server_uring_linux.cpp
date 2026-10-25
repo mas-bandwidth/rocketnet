@@ -44,15 +44,15 @@
 // ROCKETNET_URING_SEND_BUDGET, each from its own budget; completions past a
 // budget stay in the completion queue for the next call.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(ROCKETNET_IO_URING) && ROCKETNET_IO_URING
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #include <liburing.h>
 #include "rocketnet_uring_codec.h"
-#if defined(IORING_RECV_MULTISHOT)
+#if defined( IORING_RECV_MULTISHOT )
 #define ROCKETNET_URING_BUILT 1
 #endif
 #endif
 
-#if defined(ROCKETNET_URING_BUILT) && ROCKETNET_URING_BUILT
+#if defined( ROCKETNET_URING_BUILT ) && ROCKETNET_URING_BUILT
 
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
@@ -94,7 +94,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 // one receive buffer holds the multishot header, the name area, the UDP_GRO
 // control area and the largest coalesced receive (the 16-bit UDP payload)
 
-ROCKETNET_STATIC_ASSERT( sizeof(struct io_uring_recvmsg_out) + sizeof(struct sockaddr_storage) + ROCKETNET_URING_GRO_CONTROL_BYTES + 65535 <= ROCKETNET_URING_RECV_BUFFER_BYTES,
+ROCKETNET_STATIC_ASSERT( sizeof( struct io_uring_recvmsg_out ) + sizeof( struct sockaddr_storage ) + ROCKETNET_URING_GRO_CONTROL_BYTES + 65535 <= ROCKETNET_URING_RECV_BUFFER_BYTES,
                          "an io_uring receive buffer holds a whole UDP_GRO coalesced receive" );
 
 // each slot's info: the destination and bytes the fill threads write, and,
@@ -103,21 +103,21 @@ ROCKETNET_STATIC_ASSERT( sizeof(struct io_uring_recvmsg_out) + sizeof(struct soc
 // many packets the run carries. finish threads write packet_bytes, so a
 // slot's info is cache line aligned.
 
-struct alignas(64) rocketnet_server_uring_send_info_t
+struct alignas( 64 ) rocketnet_server_uring_send_info_t
 {
     rocketnet_address_t to;
     int packet_bytes;
     int run_packets;                            // first slot of a run: the slots the run's one CQE retires
     struct msghdr message;
     struct sockaddr_storage name;
-    alignas(8) uint8_t control[ROCKETNET_URING_GSO_CONTROL_BYTES];
+    alignas( 8 ) uint8_t control[ROCKETNET_URING_GSO_CONTROL_BYTES];
 };
 
 struct rocketnet_server_uring_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets{0};
+    std::atomic<int> num_packets{ 0 };
 
     uint8_t padding_1[4096];
 
@@ -130,7 +130,7 @@ struct rocketnet_server_uring_send_buffer_t
 
     uint8_t padding_2[4096];
 
-    alignas(16) uint8_t data[ROCKETNET_URING_SEND_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
+    alignas( 16 ) uint8_t data[ROCKETNET_URING_SEND_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
 
     uint8_t padding_3[4096];
 };
@@ -140,7 +140,7 @@ struct rocketnet_server_uring_bank_t
     int num_packets;
     rocketnet_address_t from[ROCKETNET_URING_BANK_SIZE];
     int packet_bytes[ROCKETNET_URING_BANK_SIZE];
-    alignas(16) uint8_t packet_data[ROCKETNET_URING_BANK_SIZE][ROCKETNET_FRAME_STRIDE];
+    alignas( 16 ) uint8_t packet_data[ROCKETNET_URING_BANK_SIZE][ROCKETNET_FRAME_STRIDE];
 };
 
 // a queue is constructed by default-initialization (placement new with no
@@ -160,7 +160,7 @@ struct rocketnet_server_uring_queue_t
     struct io_uring_buf_ring * buf_ring = NULL;
     bool buf_ring_inverted_resv = false;        // registered through the inverted resv check (see setup_buf_ring)
     struct msghdr receive_message = {};         // the multishot's msghdr: the name area reserved, and the UDP_GRO control area when GRO is on
-    alignas(64) uint8_t buffers[ROCKETNET_URING_RECV_BUFFERS][ROCKETNET_URING_RECV_BUFFER_BYTES];
+    alignas( 64 ) uint8_t buffers[ROCKETNET_URING_RECV_BUFFERS][ROCKETNET_URING_RECV_BUFFER_BYTES];
 };
 
 struct rocketnet_server_uring_t
@@ -179,7 +179,7 @@ struct rocketnet_server_uring_t
 
     struct rocketnet_server_uring_queue_t * queues;
 
-    std::atomic<uint64_t> packet_id{0};
+    std::atomic<uint64_t> packet_id{ 0 };
 
     uint64_t send_rotation;                     // main thread only: rotates submit chunks across the group's sockets
     int sends_pending;                          // sends submitted, by this send_packets or an earlier one, with no CQE reaped
@@ -207,7 +207,7 @@ struct rocketnet_server_uring_t
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
     // the test seam: a queue whose multishot is cancelled so its terminating
     // CQE carries this error in place of -ECANCELED (zero: none pending), and
     // the next send SQEs prepared with no destination, so the kernel answers
@@ -216,7 +216,7 @@ struct rocketnet_server_uring_t
     int test_fail_sends;
 #endif
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     // the unit suite's fake completion source (rocketnet_server_uring_test_create):
     // non-NULL means no kernel ring. its submission entries queue here until
     // a submit hands their user_data to the source, and a peek copies its
@@ -238,8 +238,8 @@ struct rocketnet_server_uring_t
 // the ring operations, each through the fake completion source when the
 // unit suite's seam is compiled in and the transport has one
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
-static_assert( sizeof(struct rocketnet_server_uring_test_completion_t) == sizeof(struct io_uring_cqe), "a fake completion is laid out as a cqe" );
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+static_assert( sizeof( struct rocketnet_server_uring_test_completion_t ) == sizeof( struct io_uring_cqe ), "a fake completion is laid out as a cqe" );
 #define ROCKETNET_URING_FAKE( uring ) ( (uring)->test_source != NULL )
 #else
 #define ROCKETNET_URING_FAKE( uring ) false
@@ -247,13 +247,13 @@ static_assert( sizeof(struct rocketnet_server_uring_test_completion_t) == sizeof
 
 static struct io_uring_sqe * rocketnet_server_uring_ring_get_sqe( struct rocketnet_server_uring_t * uring )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         if ( uring->test_sqes_queued >= ROCKETNET_URING_ENTRIES )
             return NULL;
         struct io_uring_sqe * sqe = &uring->test_sqes[uring->test_sqes_queued++];
-        memset( sqe, 0, sizeof(*sqe) );
+        memset( sqe, 0, sizeof( *sqe ) );
         return sqe;
     }
 #endif
@@ -262,7 +262,7 @@ static struct io_uring_sqe * rocketnet_server_uring_ring_get_sqe( struct rocketn
 
 static unsigned rocketnet_server_uring_ring_sq_space( struct rocketnet_server_uring_t * uring )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
         return (unsigned) ( ROCKETNET_URING_ENTRIES - uring->test_sqes_queued );
 #endif
@@ -271,7 +271,7 @@ static unsigned rocketnet_server_uring_ring_sq_space( struct rocketnet_server_ur
 
 static unsigned rocketnet_server_uring_ring_sq_ready( struct rocketnet_server_uring_t * uring )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
         return (unsigned) uring->test_sqes_queued;
 #endif
@@ -280,7 +280,7 @@ static unsigned rocketnet_server_uring_ring_sq_ready( struct rocketnet_server_ur
 
 static int rocketnet_server_uring_ring_submit( struct rocketnet_server_uring_t * uring )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         const int count = uring->test_sqes_queued;
@@ -295,7 +295,7 @@ static int rocketnet_server_uring_ring_submit( struct rocketnet_server_uring_t *
 
 static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_t * uring, struct io_uring_cqe ** cqes, unsigned max )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         if ( max > ROCKETNET_URING_CQE_BATCH )
@@ -306,7 +306,7 @@ static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_
         if ( count > (int) max )
             count = (int) max;
         for ( int i = 0; i < count; i++ )
-            cqes[i] = (struct io_uring_cqe*) (void*) &uring->test_completions[i];
+            cqes[i] = (struct io_uring_cqe *) (void *) &uring->test_completions[i];
         return (unsigned) count;
     }
 #endif
@@ -315,7 +315,7 @@ static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_
 
 static void rocketnet_server_uring_ring_advance( struct rocketnet_server_uring_t * uring, unsigned count )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         uring->test_source->advance( uring->test_source->context, (int) count );
@@ -327,7 +327,7 @@ static void rocketnet_server_uring_ring_advance( struct rocketnet_server_uring_t
 
 static unsigned rocketnet_server_uring_ring_cq_ready( struct rocketnet_server_uring_t * uring )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         const int ready = uring->test_source->ready( uring->test_source->context );
@@ -355,23 +355,23 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
             rocketnet_address_convert_ipv4_to_ipv6( &to );
         }
 
-        struct sockaddr_in6 * addr = (struct sockaddr_in6*) out;
-        memset( addr, 0, sizeof(struct sockaddr_in6) );
+        struct sockaddr_in6 * addr = (struct sockaddr_in6 *) out;
+        memset( addr, 0, sizeof( struct sockaddr_in6 ) );
         addr->sin6_family = AF_INET6;
         for ( int i = 0; i < 8; i++ )
         {
-            ( (uint16_t*) &addr->sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
+            ( (uint16_t *) &addr->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
         addr->sin6_port = rocketnet_platform_htons( to.port );
-        return sizeof(struct sockaddr_in6);
+        return sizeof( struct sockaddr_in6 );
     }
     else
     {
         if ( to.type != ROCKETNET_ADDRESS_IPV4 )
             return 0;
 
-        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in*) out );
-        return sizeof(struct sockaddr_in);
+        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in *) out );
+        return sizeof( struct sockaddr_in );
     }
 }
 
@@ -403,7 +403,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     const bool discovers_port = *bound_port == 0 && bind_address->port == 0;
 
     int one = 1;
-    if ( !discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( !discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
         rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
@@ -413,7 +413,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     if ( ipv6 )
     {
         int zero = 0;
-        if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero) ) != 0 )
+        if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
         {
             rocketnet_error( "io_uring transport: failed to clear socket ipv6 only: %s", strerror( errno ) );
             close( fd );
@@ -427,14 +427,14 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     // (a request; the kernel charges only what it holds)
     int receive_buffer_size = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
+    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
         rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof(int) ) != 0 )
+    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
     {
         rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
@@ -443,9 +443,9 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     int granted_send = 0;
     int granted_receive = 0;
-    socklen_t optlen = sizeof(int);
+    socklen_t optlen = sizeof( int );
     getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
-    optlen = sizeof(int);
+    optlen = sizeof( int );
     getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
     granted_send /= 2;
     granted_receive /= 2;
@@ -466,14 +466,14 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     struct sockaddr_storage sockaddr;
     socklen_t socklen = rocketnet_server_uring_address_to_sockaddr( &addr, ipv6, &sockaddr );
 
-    if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
+    if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, socklen ) < 0 )
     {
         rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    if ( discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
     {
         rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
@@ -483,9 +483,9 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     if ( *bound_port == 0 )
     {
         struct sockaddr_storage bound;
-        memset( &bound, 0, sizeof(bound) );
-        socklen_t bound_length = sizeof(bound);
-        if ( getsockname( fd, (struct sockaddr*) &bound, &bound_length ) != 0 )
+        memset( &bound, 0, sizeof( bound ) );
+        socklen_t bound_length = sizeof( bound );
+        if ( getsockname( fd, (struct sockaddr *) &bound, &bound_length ) != 0 )
         {
             rocketnet_error( "io_uring transport: failed to get bound socket port: %s", strerror( errno ) );
             close( fd );
@@ -511,12 +511,12 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
     if ( ipv6 )
     {
         int df = 1;
-        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof(df) );
+        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof( df ) );
     }
     else
     {
         int pmtud = IP_PMTUDISC_DO;
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof(pmtud) );
+        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof( pmtud ) );
     }
 
     return fd;
@@ -541,17 +541,17 @@ static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct 
     *inverted_resv = false;
     struct io_uring_buf_ring * buf_ring = io_uring_setup_buf_ring( ring, entries, bgid, 0, error );
     if ( buf_ring )
-        rocketnet_direct_allocation_add( (uint64_t) entries * sizeof(struct io_uring_buf) );
+        rocketnet_direct_allocation_add( (uint64_t) entries * sizeof( struct io_uring_buf ) );
     if ( buf_ring || *error != -EINVAL )
         return buf_ring;
 
-    const size_t bytes = (size_t) entries * sizeof(struct io_uring_buf);
+    const size_t bytes = (size_t) entries * sizeof( struct io_uring_buf );
     void * memory = mmap( NULL, bytes, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0 );
     if ( memory == MAP_FAILED )
         return NULL;                                // keep the EINVAL of the plain form
 
     struct io_uring_buf_reg reg;
-    memset( &reg, 0, sizeof(reg) );
+    memset( &reg, 0, sizeof( reg ) );
     reg.ring_addr = (uint64_t) (uintptr_t) memory;
     reg.ring_entries = entries;
     reg.bgid = (uint16_t) bgid;
@@ -572,7 +572,7 @@ static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct 
 
 static void rocketnet_server_uring_free_buf_ring( struct io_uring * ring, struct io_uring_buf_ring * buf_ring, unsigned int entries, int bgid, bool inverted_resv )
 {
-    rocketnet_direct_allocation_remove( (uint64_t) entries * sizeof(struct io_uring_buf) );
+    rocketnet_direct_allocation_remove( (uint64_t) entries * sizeof( struct io_uring_buf ) );
     if ( !inverted_resv )
     {
         io_uring_free_buf_ring( ring, buf_ring, entries, bgid );
@@ -580,11 +580,11 @@ static void rocketnet_server_uring_free_buf_ring( struct io_uring * ring, struct
     }
 
     struct io_uring_buf_reg reg;
-    memset( &reg, 0, sizeof(reg) );
+    memset( &reg, 0, sizeof( reg ) );
     reg.bgid = (uint16_t) bgid;
     reg.resv[0] = 1;
     syscall( __NR_io_uring_register, ring->ring_fd, IORING_UNREGISTER_PBUF_RING, &reg, 1 );
-    munmap( buf_ring, (size_t) entries * sizeof(struct io_uring_buf) );
+    munmap( buf_ring, (size_t) entries * sizeof( struct io_uring_buf ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +594,7 @@ bool rocketnet_server_uring_available()
     // the probe: a ring, the three opcodes, and a provided buffer ring.
     // -1 not yet probed, 0 no, 1 yes
 
-    static std::atomic<int> available{-1};
+    static std::atomic<int> available{ -1 };
 
     int known = available.load( std::memory_order_relaxed );
     if ( known >= 0 )
@@ -633,8 +633,8 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues )
 {
     if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES )
         return 0;
-    uint64_t bytes = rocketnet_memory_allocations( { sizeof(rocketnet_server_uring_t),
-        (uint64_t) queues * sizeof(rocketnet_server_uring_queue_t) } );
+    uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_uring_t ),
+                                                     (uint64_t) queues * sizeof( rocketnet_server_uring_queue_t ) } );
     return bytes <= SIZE_MAX ? bytes : 0;
 }
 
@@ -647,7 +647,7 @@ uint64_t rocketnet_server_uring_mapped_bytes( int queues )
     if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES )
         return 0;
     const uint64_t page = (uint64_t) getpagesize();
-    const uint64_t ring = ( (uint64_t) ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf) + page - 1 ) / page * page;
+    const uint64_t ring = ( (uint64_t) ROCKETNET_URING_RECV_BUFFERS * sizeof( struct io_uring_buf ) + page - 1 ) / page * page;
     return (uint64_t) queues * ring;
 }
 
@@ -672,7 +672,7 @@ static struct io_uring_sqe * rocketnet_server_uring_get_sqe( struct rocketnet_se
 static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring, int queue_index )
 {
     struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( uring->test_arm_find_no_sqe > 0 )
     {
         uring->test_arm_find_no_sqe--;
@@ -731,7 +731,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
                                                        &segment_bytes, &uring->counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] );
 
     rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     bool source_ok = false;
     int offsets[ROCKETNET_URING_MAX_SEGMENTS];
     int lengths[ROCKETNET_URING_MAX_SEGMENTS];
@@ -739,7 +739,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     if ( verdict == ROCKETNET_URING_RECV_OK )
     {
         struct sockaddr_storage source;
-        memset( &source, 0, sizeof(source) );
+        memset( &source, 0, sizeof( source ) );
         memcpy( &source, name, (size_t) name_bytes );
         source_ok = rocketnet_uring_sockaddr_to_address( &source, name_bytes, uring->ipv6, &from );
         segments = rocketnet_coalesce_split( payload_bytes, segment_bytes, offsets, lengths, ROCKETNET_URING_MAX_SEGMENTS );
@@ -883,7 +883,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
     if ( kind == ROCKETNET_URING_TAG_RECV )
     {
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
         struct io_uring_cqe injected;
         if ( uring->test_receive_error[queue_index] != 0 && ( cqe->flags & IORING_CQE_F_MORE ) == 0 && cqe->res == -ECANCELED )
         {
@@ -956,10 +956,11 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
 
 static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring, double seconds )
 {
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     uring->test_wait_calls++;
 #endif
-    if ( ROCKETNET_URING_FAKE( uring ) ) return;
+    if ( ROCKETNET_URING_FAKE( uring ) )
+        return;
     struct __kernel_timespec timeout;
     timeout.tv_sec = (long long) seconds;
     timeout.tv_nsec = (long long) ( ( seconds - (double) timeout.tv_sec ) * 1000000000.0 );
@@ -972,8 +973,8 @@ static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring
 
 // bytes left allocated by destroys that gave up waiting, and how many did
 
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{0};
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_transports_total{0};
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{ 0 };
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_transports_total{ 0 };
 
 uint64_t rocketnet_server_uring_leaked_bytes()
 {
@@ -993,7 +994,7 @@ static void rocketnet_server_uring_abort_create( rocketnet_server_uring_t * urin
     rocketnet_server_uring_destroy( uring );
 }
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error )
 {
@@ -1041,7 +1042,7 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 
 // the no-kernel-ring seam: a fake transport with queues but no ring. the test
 // owns it through these calls only. both blocks come from the counted
@@ -1051,18 +1052,18 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create_fake( int n
 {
     if ( num_queues <= 0 )
         return NULL;
-    void * storage = rocketnet_malloc( NULL, sizeof(struct rocketnet_server_uring_t) );
+    void * storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_uring_t ) );
     if ( !storage )
         return NULL;
     struct rocketnet_server_uring_t * uring = new ( storage ) rocketnet_server_uring_t();
-    void * queues = rocketnet_malloc( NULL, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
+    void * queues = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !queues )
     {
         uring->~rocketnet_server_uring_t();
         rocketnet_free( NULL, storage );
         return NULL;
     }
-    uring->queues = (struct rocketnet_server_uring_queue_t*) queues;
+    uring->queues = (struct rocketnet_server_uring_queue_t *) queues;
     for ( int i = 0; i < num_queues; i++ )
         new ( &uring->queues[i] ) rocketnet_server_uring_queue_t();
     uring->num_queues = num_queues;
@@ -1117,7 +1118,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     if ( num_queues < 1 || num_queues > ROCKETNET_URING_MAX_QUEUES )
         return NULL;
 
-    struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_t) );
+    struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_t ) );
     if ( !uring )
         return NULL;
 
@@ -1129,7 +1130,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     uring->packet_id = 1;
     uring->test_source = source;
 
-    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
+    uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !uring->queues )
     {
         uring->~rocketnet_server_uring_t();
@@ -1146,12 +1147,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     uring->ring_ready = true;
 
     struct io_uring_recvmsg_out out;
-    memset( &out, 0, sizeof(out) );
-    out.namelen = sizeof(struct sockaddr_in);
+    memset( &out, 0, sizeof( out ) );
+    out.namelen = sizeof( struct sockaddr_in );
     out.payloadlen = ROCKETNET_URING_TEST_PAYLOAD_BYTES;
 
     struct sockaddr_in source_address;
-    memset( &source_address, 0, sizeof(source_address) );
+    memset( &source_address, 0, sizeof( source_address ) );
     source_address.sin_family = AF_INET;
     source_address.sin_port = htons( 1000 );
     source_address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
@@ -1160,7 +1161,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     {
         struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
 
-        queue->buf_ring = (struct io_uring_buf_ring*) rocketnet_malloc( context, ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf) );
+        queue->buf_ring = (struct io_uring_buf_ring *) rocketnet_malloc( context, ROCKETNET_URING_RECV_BUFFERS * sizeof( struct io_uring_buf ) );
         if ( !queue->buf_ring )
         {
             rocketnet_server_uring_abort_create( uring );
@@ -1172,16 +1173,16 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
         for ( int b = 0; b < ROCKETNET_URING_RECV_BUFFERS; b++ )
         {
             uint8_t * buffer = queue->buffers[b];
-            memset( buffer, 0, sizeof(out) + sizeof(struct sockaddr_storage) + ROCKETNET_URING_TEST_PAYLOAD_BYTES );
-            memcpy( buffer, &out, sizeof(out) );
-            memcpy( buffer + sizeof(out), &source_address, sizeof(source_address) );
-            memset( buffer + sizeof(out) + sizeof(struct sockaddr_storage), (uint8_t) b, ROCKETNET_URING_TEST_PAYLOAD_BYTES );
+            memset( buffer, 0, sizeof( out ) + sizeof( struct sockaddr_storage ) + ROCKETNET_URING_TEST_PAYLOAD_BYTES );
+            memcpy( buffer, &out, sizeof( out ) );
+            memcpy( buffer + sizeof( out ), &source_address, sizeof( source_address ) );
+            memset( buffer + sizeof( out ) + sizeof( struct sockaddr_storage ), (uint8_t) b, ROCKETNET_URING_TEST_PAYLOAD_BYTES );
             io_uring_buf_ring_add( queue->buf_ring, buffer, ROCKETNET_URING_RECV_BUFFER_BYTES, (unsigned short) b, mask, b );
         }
         io_uring_buf_ring_advance( queue->buf_ring, ROCKETNET_URING_RECV_BUFFERS );
 
-        memset( &queue->receive_message, 0, sizeof(queue->receive_message) );
-        queue->receive_message.msg_namelen = sizeof(struct sockaddr_storage);
+        memset( &queue->receive_message, 0, sizeof( queue->receive_message ) );
+        queue->receive_message.msg_namelen = sizeof( struct sockaddr_storage );
 
         if ( !rocketnet_server_uring_arm( uring, i ) )
         {
@@ -1225,7 +1226,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
         return NULL;
     }
 
-    struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_t) );
+    struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_t ) );
     if ( !uring )
         return NULL;
 
@@ -1236,7 +1237,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->packet_id = 1;
 
-    uring->queues = (struct rocketnet_server_uring_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_uring_queue_t) * (size_t) num_queues );
+    uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !uring->queues )
     {
         uring->~rocketnet_server_uring_t();
@@ -1279,7 +1280,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
         for ( int i = 0; i < num_queues; i++ )
         {
             int zero = 0;
-            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) ) == 0 )
+            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof( zero ) ) == 0 )
                 segment_sockets++;
         }
         if ( segment_sockets == num_queues )
@@ -1298,7 +1299,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
         for ( int i = 0; i < num_queues; i++ )
         {
             int one = 1;
-            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &one, sizeof(one) ) == 0 )
+            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &one, sizeof( one ) ) == 0 )
                 gro_sockets++;
         }
         if ( gro_sockets == num_queues )
@@ -1310,7 +1311,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
             for ( int i = 0; i < num_queues; i++ )
             {
                 int zero = 0;
-                setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &zero, sizeof(zero) );
+                setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &zero, sizeof( zero ) );
             }
         }
     }
@@ -1319,7 +1320,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     // queue twice that
 
     struct io_uring_params params;
-    memset( &params, 0, sizeof(params) );
+    memset( &params, 0, sizeof( params ) );
     params.flags = IORING_SETUP_CQSIZE;
     params.cq_entries = ROCKETNET_URING_ENTRIES * 2;
 
@@ -1336,7 +1337,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     // completion ring where it is a mapping of its own, and the entries
     uring->ring_mapped_bytes = (uint64_t) uring->ring.sq.ring_sz +
                                ( uring->ring.cq.ring_ptr != uring->ring.sq.ring_ptr ? (uint64_t) uring->ring.cq.ring_sz : 0 ) +
-                               (uint64_t) params.sq_entries * sizeof(struct io_uring_sqe);
+                               (uint64_t) params.sq_entries * sizeof( struct io_uring_sqe );
     rocketnet_direct_allocation_add( uring->ring_mapped_bytes );
 
     if ( ( params.features & IORING_FEAT_NODROP ) == 0 )
@@ -1367,8 +1368,8 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
             io_uring_buf_ring_add( queue->buf_ring, queue->buffers[b], ROCKETNET_URING_RECV_BUFFER_BYTES, (unsigned short) b, mask, b );
         io_uring_buf_ring_advance( queue->buf_ring, ROCKETNET_URING_RECV_BUFFERS );
 
-        memset( &queue->receive_message, 0, sizeof(queue->receive_message) );
-        queue->receive_message.msg_namelen = sizeof(struct sockaddr_storage);
+        memset( &queue->receive_message, 0, sizeof( queue->receive_message ) );
+        queue->receive_message.msg_namelen = sizeof( struct sockaddr_storage );
         queue->receive_message.msg_controllen = ( uring->features & ROCKETNET_SERVER_URING_FEATURE_GRO ) ? ROCKETNET_URING_GRO_CONTROL_BYTES : 0;
 
         if ( !rocketnet_server_uring_arm( uring, i ) )
@@ -1403,15 +1404,18 @@ void rocketnet_server_uring_stop( rocketnet_server_uring_t * uring )
 
 bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
 {
-    if ( !uring || !uring->destroying ) return false;
-    if ( !uring->ring_ready ) return true;
+    if ( !uring || !uring->destroying )
+        return false;
+    if ( !uring->ring_ready )
+        return true;
     for ( int i = 0; i < uring->num_queues; ++i )
     {
         rocketnet_server_uring_queue_t * queue = &uring->queues[i];
         if ( queue->armed && !queue->cancel_pending )
         {
             io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
-            if ( !sqe ) break;
+            if ( !sqe )
+                break;
             io_uring_prep_cancel64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, i, 0 ), 0 );
             io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, i, 0 ) );
             queue->cancel_pending = true;
@@ -1420,9 +1424,11 @@ bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
     rocketnet_server_uring_submit( uring );
     rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
     if ( uring->test_stall_destroy || uring->sends_pending ||
-         rocketnet_server_uring_ring_sq_ready( uring ) || rocketnet_server_uring_ring_cq_ready( uring ) ) return false;
+         rocketnet_server_uring_ring_sq_ready( uring ) || rocketnet_server_uring_ring_cq_ready( uring ) )
+        return false;
     for ( int i = 0; i < uring->num_queues; ++i )
-        if ( uring->queues[i].armed || uring->queues[i].cancel_pending ) return false;
+        if ( uring->queues[i].armed || uring->queues[i].cancel_pending )
+            return false;
     return true;
 }
 
@@ -1435,7 +1441,8 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
     rocketnet_assert( uring );
     const bool stopped = rocketnet_server_uring_stopped( uring );
     rocketnet_assert( stopped );
-    if ( !stopped ) return;
+    if ( !stopped )
+        return;
     if ( uring->ring_ready )
     {
         for ( int i = 0; i < uring->num_queues; i++ )
@@ -1446,7 +1453,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
                     rocketnet_free( uring->context, uring->queues[i].buf_ring );
                 else
                     rocketnet_server_uring_free_buf_ring( &uring->ring, uring->queues[i].buf_ring, ROCKETNET_URING_RECV_BUFFERS, i,
-                                                           uring->queues[i].buf_ring_inverted_resv );
+                                                          uring->queues[i].buf_ring_inverted_resv );
                 uring->queues[i].buf_ring = NULL;
             }
         }
@@ -1495,7 +1502,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 {
     rocketnet_assert( uring );
     rocketnet_assert( counters );
-    memcpy( counters, uring->counters, sizeof(uring->counters) );
+    memcpy( counters, uring->counters, sizeof( uring->counters ) );
 }
 
 // the builtin transport's receive_drops hook: the size
@@ -1623,7 +1630,8 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
         {
             const int reaped = rocketnet_server_uring_reap_available( uring, budget );
             budget -= reaped;
-            if ( reaped == 0 || budget == 0 ) break;
+            if ( reaped == 0 || budget == 0 )
+                break;
             continue;
         }
 
@@ -1688,13 +1696,13 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
             // (KernelComplete frees the whole run; NoReuseWhileKernelOwned)
 
             const int run = rocketnet_uring_gso_message( &info->message, &uring->send.iovecs[slot],
-                                                         info->control, (int) sizeof(info->control),
+                                                         info->control, (int) sizeof( info->control ),
                                                          &info->name, namelen,
                                                          uring->run_wire, uring->run_packet_bytes, uring->run_to, ahead,
                                                          ROCKETNET_URING_MAX_SEGMENTS, ROCKETNET_URING_MAX_SUPER_BYTES );
             rocketnet_assert( run >= 1 );
             info->run_packets = run;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
             if ( uring->test_fail_sends > 0 )
             {
                 uring->test_fail_sends--;
@@ -1788,7 +1796,7 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 {
     rocketnet_assert( uring );
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     if ( uring->test_no_ring )
     {
         rocketnet_server_uring_rearm_unarmed( uring );
@@ -1916,7 +1924,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 {
     (void) uring;
     if ( counters )
-        memset( counters, 0, ROCKETNET_SERVER_URING_NUM_COUNTERS * sizeof(uint64_t) );
+        memset( counters, 0, ROCKETNET_SERVER_URING_NUM_COUNTERS * sizeof( uint64_t ) );
 }
 
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large )
@@ -1965,13 +1973,13 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
     return NULL;
 }
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 #endif
 
-#if defined(ROCKETNET_URING_REAP_TEST_HOOKS)
+#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void *, int, const struct rocketnet_server_uring_test_source_t * )
 {
     return NULL;

@@ -48,7 +48,12 @@
 #define EP_STEP                 0.01        // seconds per loop step
 #define EP_MAX_STEPS            40000
 
-enum { EP_KIND_ORDERED = 0, EP_KIND_RELIABLE = 1, EP_KIND_UNRELIABLE = 2 };
+enum
+{
+    EP_KIND_ORDERED = 0,
+    EP_KIND_RELIABLE = 1,
+    EP_KIND_UNRELIABLE = 2
+};
 
 struct ep_packet_t
 {
@@ -162,10 +167,8 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     const uint32_t index = from->next_index;
     const uint64_t pick = ep_random( random ) % 10;
     const int kind = pick < 5 ? EP_KIND_ORDERED : ( pick < 8 ? EP_KIND_RELIABLE : EP_KIND_UNRELIABLE );
-    const int channel = kind == EP_KIND_ORDERED ? (int) ( ep_random( random ) % EP_ORDERED_CHANNELS ) :
-                        ( kind == EP_KIND_RELIABLE ? EP_RELIABLE_CHANNEL : EP_UNRELIABLE_CHANNEL );
-    const int reliability = kind == EP_KIND_ORDERED ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED :
-                            ( kind == EP_KIND_RELIABLE ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE );
+    const int channel = kind == EP_KIND_ORDERED ? (int) ( ep_random( random ) % EP_ORDERED_CHANNELS ) : ( kind == EP_KIND_RELIABLE ? EP_RELIABLE_CHANNEL : EP_UNRELIABLE_CHANNEL );
+    const int reliability = kind == EP_KIND_ORDERED ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ( kind == EP_KIND_RELIABLE ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE );
 
     // the message: its index, its kind, then filler up to its size
     const int bytes = 8 + (int) ( ep_random( random ) % 200 );

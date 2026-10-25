@@ -454,7 +454,10 @@ static uint32_t live_matrix_start_finish( struct live_matrix_t * m, int directio
     const int written = rocketnet_live_generate( &m->live, direction, mode, channel, m->cycle, sequence, p, (int) length );
     if ( written != (int) length )
     {
-        if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+        if ( direction == 0 )
+            rocketnet_message_client_abort( m->client );
+        else
+            rocketnet_message_server_abort( m->server, 0 );
         return 0;
     }
     return direction == 0 ? rocketnet_message_client_finish( m->client, written )
@@ -666,7 +669,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
     {
         printf( "fail connect %u client_state=%d server_connected=%d\n", m->cycle, rocketnet_message_client_state( m->client ),
                 rocketnet_message_server_client_connected( m->server, 0 ) );
-        live_matrix_check_failed( "connect failed", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
+        live_matrix_check_failed( "connect failed", (const char *) __FUNCTION__, (const char *) __FILE__, __LINE__ );
     }
 }
 
@@ -698,7 +701,10 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
                     live_matrix_fail( m, "over", direction, mode, channel, -1, "promotion-refused", (int) over );
                 if ( q )
                 {
-                    if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+                    if ( direction == 0 )
+                        rocketnet_message_client_abort( m->client );
+                    else
+                        rocketnet_message_server_abort( m->server, 0 );
                 }
                 // the refusal boundary left: max_message_bytes
                 over = m->live.max_message_bytes + 1;
@@ -719,7 +725,10 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
                 live_matrix_fail( m, "over", direction, mode, channel, -1, p ? "start-succeeded" : "wrong-counter", (int) over );
                 if ( p )
                 {
-                    if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+                    if ( direction == 0 )
+                        rocketnet_message_client_abort( m->client );
+                    else
+                        rocketnet_message_server_abort( m->server, 0 );
                 }
             }
             live_matrix_table_sent[direction][mode][channel][ROCKETNET_LIVE_BUCKET_OVER]++;
@@ -790,7 +799,10 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
                 else
                     arrived = 1;
-                if ( direction == 0 ) rocketnet_message_server_release( m->server, data ); else rocketnet_message_client_release( m->client, data );
+                if ( direction == 0 )
+                    rocketnet_message_server_release( m->server, data );
+                else
+                    rocketnet_message_client_release( m->client, data );
             }
         }
         live_matrix_take_receipts( m, 0 );
@@ -902,8 +914,7 @@ static void live_matrix_window_reset( struct live_matrix_t * m )
     }
 }
 
-static const int live_matrix_window_counters[] =
-{
+static const int live_matrix_window_counters[] = {
     ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED,
     ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL,
     ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED,
@@ -970,7 +981,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK ),
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) );
             }
-            live_matrix_check_failed( "unplanned disconnect", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
+            live_matrix_check_failed( "unplanned disconnect", (const char *) __FUNCTION__, (const char *) __FILE__, __LINE__ );
         }
         if ( m->failures > 0 )
             break;

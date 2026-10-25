@@ -63,19 +63,19 @@
 
 // under AddressSanitizer the harness can read the live heap, so it checks
 // that an input leaves the heap as it found it (fuzz_overlay below)
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
+#if defined( __has_feature )
+#if __has_feature( address_sanitizer )
 #define ROCKETNET_FUZZ_HEAP_CHECK 1
 #endif
 #endif
-#if !defined(ROCKETNET_FUZZ_HEAP_CHECK) && defined(__SANITIZE_ADDRESS__)
+#if !defined( ROCKETNET_FUZZ_HEAP_CHECK ) && defined( __SANITIZE_ADDRESS__ )
 #define ROCKETNET_FUZZ_HEAP_CHECK 1
 #endif
-#if defined(ROCKETNET_FUZZ_HEAP_CHECK) && defined(_WIN32)
+#if defined( ROCKETNET_FUZZ_HEAP_CHECK ) && defined( _WIN32 )
 #undef ROCKETNET_FUZZ_HEAP_CHECK  // the check is for the POSIX environ; MSVC's ASan headers differ
 #endif
-#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined( ROCKETNET_FUZZ_HEAP_CHECK )
+#if defined( __GNUC__ ) && !defined( __clang__ )
 // GCC's ASan runtime exports this interface but does not install its header.
 extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
 #else
@@ -85,14 +85,15 @@ extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
 
 static void fuzz_setenv( const char * name, const char * value )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     _putenv_s( name, value );
 #else
     // putenv over one buffer the harness owns, not setenv: glibc's setenv
@@ -108,7 +109,7 @@ static void fuzz_setenv( const char * name, const char * value )
 
 static void fuzz_unsetenv( const char * name )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     _putenv_s( name, "" );
 #else
     unsetenv( name );
@@ -141,10 +142,10 @@ static void fuzz_defaults( int table, union fuzz_config_storage_t * config )
     memset( config, 0, sizeof( *config ) );
     switch ( table )
     {
-        case 0: rocketnet_client_transport_default_config_current( &config->client ); break;
-        case 1: rocketnet_server_transport_default_config_current( &config->server ); break;
+        case 0:  rocketnet_client_transport_default_config_current( &config->client ); break;
+        case 1:  rocketnet_server_transport_default_config_current( &config->server ); break;
         case 2:
-        case 3: rocketnet_message_default_config( &config->message ); break;
+        case 3:  rocketnet_message_default_config( &config->message ); break;
         default: config->budget = 0; break;
     }
 }
@@ -162,7 +163,7 @@ static void fuzz_check_ladder( const char * value )
     {
         int num_available = 0;
         const int * available = side == 0 ? rocketnet_server_transport_io_availability( &num_available )
-                                           : rocketnet_client_transport_io_availability( &num_available );
+                                          : rocketnet_client_transport_io_availability( &num_available );
         struct rocketnet_transport_ladder_t ladder;
         memset( &ladder, 0, sizeof( ladder ) );
         if ( !rocketnet_transport_ladder_parse( value, available, num_available, &ladder ) )
@@ -209,8 +210,8 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
     fuzz_unsetenv( name );
 
     const size_t length = strlen( value );
-    const uint8_t * a = (const uint8_t*) &before;
-    const uint8_t * b = (const uint8_t*) &config;
+    const uint8_t * a = (const uint8_t *) &before;
+    const uint8_t * b = (const uint8_t *) &config;
     const size_t start = (size_t) field->offset;
     const size_t end = start + (size_t) field->size;
 
@@ -284,7 +285,7 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
         {
             rocketnet_fuzz_require( applied == ( (int) length < field->size ), "a STRING field applies exactly when it fits with its terminator" );
             if ( applied )
-                rocketnet_fuzz_require( strcmp( (const char*) ( b + start ), value ) == 0, "an applied STRING field holds the value" );
+                rocketnet_fuzz_require( strcmp( (const char *) ( b + start ), value ) == 0, "an applied STRING field holds the value" );
             rocketnet_fuzz_require( rocketnet_config_validate( table->endpoint, &config, table->fields, table->num_fields ), "a string overlay leaves a valid config" );
         }
         break;
@@ -327,7 +328,7 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     {
         union fuzz_config_storage_t config;
         fuzz_defaults( t, &config );
-        const uint8_t * base = (const uint8_t*) &config;
+        const uint8_t * base = (const uint8_t *) &config;
         bool kind_written[4] = { false, false, false, false };
         bool range_written = false;
         for ( int i = 0; i < fuzz_tables[t].num_fields; i++ )
@@ -370,7 +371,7 @@ static void fuzz_write_seeds( const char * dir, const char * from )
                         abort();
                     break;
                 default:
-                    snprintf( value, sizeof( value ), "%s", (const char*) ( base + field->offset ) );
+                    snprintf( value, sizeof( value ), "%s", (const char *) ( base + field->offset ) );
                     break;
             }
             if ( value[0] == '\0' )
@@ -486,11 +487,11 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         value[n++] = (char) data[i];
     value[n] = '\0';
 
-#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+#if defined( ROCKETNET_FUZZ_HEAP_CHECK )
     const size_t heap_before = __sanitizer_get_current_allocated_bytes();
 #endif
     fuzz_overlay( data[0] % FUZZ_NUM_TABLES, data[1], data[2], value );
-#if defined(ROCKETNET_FUZZ_HEAP_CHECK)
+#if defined( ROCKETNET_FUZZ_HEAP_CHECK )
     rocketnet_fuzz_require( __sanitizer_get_current_allocated_bytes() <= heap_before,
                             "an overlay leaves the heap as it found it" );
 #endif

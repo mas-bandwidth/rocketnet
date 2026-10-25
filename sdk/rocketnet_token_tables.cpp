@@ -51,7 +51,7 @@ struct rocketnet_token_table_t
     int order_head;                                         // the live claim with the earliest deadline, or -1
     int order_tail;                                         // the most recently recorded claim, or -1
 
-    uint8_t ( * identifier )[ROCKETNET_TOKEN_IDENTIFIER_BYTES];   // hot: walked by find
+    uint8_t ( *identifier )[ROCKETNET_TOKEN_IDENTIFIER_BYTES];   // hot: walked by find
     struct rocketnet_address_t * address;                   // cold, history and claim
     uint64_t * expire_timestamp;                            // cold: the response binding's expiry
     double * claim_deadline;                                // cold: the request claim's handshake deadline
@@ -69,25 +69,24 @@ struct rocketnet_used_token_history_t
     struct rocketnet_token_table_t * claims;     // request-claim table
 };
 
-uint64_t rocketnet_token_table_allocation_bytes(int capacity)
+uint64_t rocketnet_token_table_allocation_bytes( int capacity )
 {
-    if (capacity < 1) return 0;
-    const uint64_t n = (uint64_t)capacity;
+    if ( capacity < 1 )
+        return 0;
+    const uint64_t n = (uint64_t) capacity;
     // the history holder plus two independent tables, the response-binding
     // table and the request-claim table, each with its own expiry and
     // deadline arrays and its two order-list link arrays: 1 + 10 + 10 = 21
     // allocations
-    return rocketnet_memory_allocations({
-        sizeof(rocketnet_used_token_history_t),
-        sizeof(rocketnet_token_table_t), 2*n*sizeof(int), n*sizeof(int),
-        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
-        n*sizeof(uint64_t), n*sizeof(uint64_t), n*sizeof(uint64_t),
-        n*sizeof(int), n*sizeof(int),
-        sizeof(rocketnet_token_table_t), 2*n*sizeof(int), n*sizeof(int),
-        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
-        n*sizeof(uint64_t), n*sizeof(uint64_t), n*sizeof(uint64_t),
-        n*sizeof(int), n*sizeof(int)
-    });
+    return rocketnet_memory_allocations( { sizeof( rocketnet_used_token_history_t ),
+                                           sizeof( rocketnet_token_table_t ), 2 * n * sizeof( int ), n * sizeof( int ),
+                                           n * ROCKETNET_TOKEN_IDENTIFIER_BYTES, n * sizeof( rocketnet_address_t ),
+                                           n * sizeof( uint64_t ), n * sizeof( uint64_t ), n * sizeof( uint64_t ),
+                                           n * sizeof( int ), n * sizeof( int ),
+                                           sizeof( rocketnet_token_table_t ), 2 * n * sizeof( int ), n * sizeof( int ),
+                                           n * ROCKETNET_TOKEN_IDENTIFIER_BYTES, n * sizeof( rocketnet_address_t ),
+                                           n * sizeof( uint64_t ), n * sizeof( uint64_t ), n * sizeof( uint64_t ),
+                                           n * sizeof( int ), n * sizeof( int ) } );
 }
 
 static struct rocketnet_token_table_t * rocketnet_token_table_create( void * context, int capacity )
@@ -101,25 +100,25 @@ static struct rocketnet_token_table_t * rocketnet_token_table_create( void * con
     if ( capacity < 1 || capacity > INT_MAX / 2 )
         return NULL;
 
-    struct rocketnet_token_table_t * table = (struct rocketnet_token_table_t*) rocketnet_malloc( context, sizeof(struct rocketnet_token_table_t) );
+    struct rocketnet_token_table_t * table = (struct rocketnet_token_table_t *) rocketnet_malloc( context, sizeof( struct rocketnet_token_table_t ) );
     if ( !table )
         return NULL;
-    memset( table, 0, sizeof(struct rocketnet_token_table_t) );
+    memset( table, 0, sizeof( struct rocketnet_token_table_t ) );
 
     table->context = context;
     table->capacity = capacity;
     table->num_buckets = capacity * 2;
-    randombytes_buf( table->hash_key, sizeof(table->hash_key) );
+    randombytes_buf( table->hash_key, sizeof( table->hash_key ) );
 
-    table->bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) table->num_buckets );
-    table->next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    table->identifier = (uint8_t(*)[ROCKETNET_TOKEN_IDENTIFIER_BYTES]) rocketnet_malloc( context, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
-    table->address = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    table->expire_timestamp = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
-    table->claim_deadline = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) capacity );
-    table->insert_order = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
-    table->order_prev = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    table->order_next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
+    table->bucket_head = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) table->num_buckets );
+    table->next = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
+    table->identifier = (uint8_t( * )[ROCKETNET_TOKEN_IDENTIFIER_BYTES]) rocketnet_malloc( context, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
+    table->address = (struct rocketnet_address_t *) rocketnet_malloc( context, sizeof( struct rocketnet_address_t ) * (size_t) capacity );
+    table->expire_timestamp = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) capacity );
+    table->claim_deadline = (double *) rocketnet_malloc( context, sizeof( double ) * (size_t) capacity );
+    table->insert_order = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) capacity );
+    table->order_prev = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
+    table->order_next = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
 
     if ( !table->bucket_head || !table->next || !table->identifier || !table->address || !table->expire_timestamp || !table->claim_deadline || !table->insert_order ||
          !table->order_prev || !table->order_next )
@@ -154,10 +153,10 @@ static struct rocketnet_token_table_t * rocketnet_token_table_create( void * con
     table->order_tail = -1;
 
     memset( table->identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
-    memset( table->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    memset( table->expire_timestamp, 0, sizeof(uint64_t) * (size_t) capacity );
-    memset( table->claim_deadline, 0, sizeof(double) * (size_t) capacity );
-    memset( table->insert_order, 0, sizeof(uint64_t) * (size_t) capacity );
+    memset( table->address, 0, sizeof( struct rocketnet_address_t ) * (size_t) capacity );
+    memset( table->expire_timestamp, 0, sizeof( uint64_t ) * (size_t) capacity );
+    memset( table->claim_deadline, 0, sizeof( double ) * (size_t) capacity );
+    memset( table->insert_order, 0, sizeof( uint64_t ) * (size_t) capacity );
 
     return table;
 }
@@ -339,7 +338,7 @@ static void rocketnet_token_table_insert( struct rocketnet_token_table_t * table
     if ( address )
         table->address[index] = *address;
     else
-        memset( &table->address[index], 0, sizeof(struct rocketnet_address_t) );
+        memset( &table->address[index], 0, sizeof( struct rocketnet_address_t ) );
     table->expire_timestamp[index] = expire_timestamp;
     table->claim_deadline[index] = claim_deadline;
     table->insert_order[index] = table->next_insert_order++;
@@ -367,10 +366,10 @@ struct rocketnet_used_token_history_t * rocketnet_used_token_history_create( voi
         return NULL;
 
     struct rocketnet_used_token_history_t * history =
-        (struct rocketnet_used_token_history_t*) rocketnet_malloc( context, sizeof(struct rocketnet_used_token_history_t) );
+        (struct rocketnet_used_token_history_t *) rocketnet_malloc( context, sizeof( struct rocketnet_used_token_history_t ) );
     if ( !history )
         return NULL;
-    memset( history, 0, sizeof(struct rocketnet_used_token_history_t) );
+    memset( history, 0, sizeof( struct rocketnet_used_token_history_t ) );
 
     history->context = context;
     history->bindings = rocketnet_token_table_create( context, capacity );

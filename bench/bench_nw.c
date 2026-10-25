@@ -57,22 +57,21 @@ static void nw_check_error( const char * call, nw_error_t error )
             code = EIO;                         /* not an errno; refuse under a code never tolerated */
     }
     bench_receive_refused_or_empty_except( call, code, nw_teardown_errors,
-                                           (int) ( sizeof(nw_teardown_errors) / sizeof(nw_teardown_errors[0]) ) );
+                                           (int) ( sizeof( nw_teardown_errors ) / sizeof( nw_teardown_errors[0] ) ) );
 }
 
 static void nw_receive_loop( nw_connection_t connection )
 {
-    nw_connection_receive_message( connection, ^( dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t error )
-    {
-        (void) context;
-        (void) is_complete;
+    nw_connection_receive_message( connection, ^( dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t error ) {
+      (void) context;
+      (void) is_complete;
 
         /* checked on EVERY completion, success included, so the fault switch
            can turn a healthy run into the failure a broken listener produces */
-        nw_check_error( "nw_connection_receive_message", error );
+      nw_check_error( "nw_connection_receive_message", error );
 
-        if ( error != NULL )
-        {
+      if ( error != NULL )
+      {
             /* A tolerated teardown: this connection stops re-arming and the
                listener keeps running. If it was the ONLY connection, the run
                now produces no further windows and simply hangs.
@@ -84,37 +83,36 @@ static void nw_receive_loop( nw_connection_t connection )
                it at least says why it went quiet. No new state: this is the
                one place the loop stops. */
 
-            printf( "nw receive loop stopped re-arming: %s (errno %d). If no further WINDOW lines follow, this connection was the only one and the run has nothing left to measure.\n",
-                    nw_error_get_error_domain( error ) == nw_error_domain_posix ? "posix" : "non-posix",
-                    nw_error_get_error_code( error ) );
-            fflush( stdout );
-            return;
-        }
+          printf( "nw receive loop stopped re-arming: %s (errno %d). If no further WINDOW lines follow, this connection was the only one and the run has nothing left to measure.\n",
+                  nw_error_get_error_domain( error ) == nw_error_domain_posix ? "posix" : "non-posix",
+                  nw_error_get_error_code( error ) );
+          fflush( stdout );
+          return;
+      }
 
-        uint64_t t0 = bench_time_ns();
-        __block uint64_t batch_bytes = 0;
-        __block uint64_t batch_fold = 0;
-        int batch_packets = 0;
+      uint64_t t0 = bench_time_ns();
+      __block uint64_t batch_bytes = 0;
+      __block uint64_t batch_fold = 0;
+      int batch_packets = 0;
 
-        if ( content != NULL )
-        {
-            dispatch_data_apply( content, ^bool( dispatch_data_t region, size_t offset, const void * buffer, size_t size )
-            {
-                (void) region;
-                (void) offset;
-                batch_fold += bench_fold_packet( (const uint8_t*) buffer, (int) size );
-                batch_bytes += (uint64_t) size;
-                return true;
-            } );
-            batch_packets = 1;
-        }
+      if ( content != NULL )
+      {
+          dispatch_data_apply( content, ^bool( dispatch_data_t region, size_t offset, const void * buffer, size_t size ) {
+            (void) region;
+            (void) offset;
+            batch_fold += bench_fold_packet( (const uint8_t *) buffer, (int) size );
+            batch_bytes += (uint64_t) size;
+            return true;
+          } );
+          batch_packets = 1;
+      }
 
-        uint64_t batch_ns = bench_time_ns() - t0;
+      uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &bench_windows, batch_ns, batch_packets, batch_bytes, 1, content == NULL ? 1 : 0, batch_fold, 1 ) )
-            exit( 0 );
+      if ( bench_window_tick( &bench_windows, batch_ns, batch_packets, batch_bytes, 1, content == NULL ? 1 : 0, batch_fold, 1 ) )
+          exit( 0 );
 
-        nw_receive_loop( connection );
+      nw_receive_loop( connection );
     } );
 }
 
@@ -127,34 +125,35 @@ static void run_receiver( int port, double warmup, double window, int windows )
     nw_parameters_set_reuse_local_address( parameters, true );
 
     char port_string[16];
-    snprintf( port_string, sizeof(port_string), "%d", port );
+    snprintf( port_string, sizeof( port_string ), "%d", port );
     nw_endpoint_t local = nw_endpoint_create_host( "0.0.0.0", port_string );
     nw_parameters_set_local_endpoint( parameters, local );
 
     nw_listener_t listener = nw_listener_create( parameters );
     if ( listener == NULL )
-        { fprintf( stderr, "nw_listener_create failed\n" ); exit( 1 ); }
+    {
+        fprintf( stderr, "nw_listener_create failed\n" );
+        exit( 1 );
+    }
 
     dispatch_queue_t queue = dispatch_queue_create( "bench_nw.recv", DISPATCH_QUEUE_SERIAL );
     nw_listener_set_queue( listener, queue );
 
-    nw_listener_set_new_connection_handler( listener, ^( nw_connection_t connection )
-    {
-        nw_retain( connection );
-        nw_connection_set_queue( connection, queue );
-        nw_connection_start( connection );
-        nw_receive_loop( connection );
+    nw_listener_set_new_connection_handler( listener, ^( nw_connection_t connection ) {
+      nw_retain( connection );
+      nw_connection_set_queue( connection, queue );
+      nw_connection_start( connection );
+      nw_receive_loop( connection );
     } );
 
-    nw_listener_set_state_changed_handler( listener, ^( nw_listener_state_t state, nw_error_t error )
-    {
-        if ( state == nw_listener_state_failed )
-        {
-            fprintf( stderr, "nw listener failed: %d\n", error ? nw_error_get_error_code( error ) : 0 );
-            exit( 1 );
-        }
-        if ( state == nw_listener_state_ready )
-            printf( "nw listener ready on port %d\n", port );
+    nw_listener_set_state_changed_handler( listener, ^( nw_listener_state_t state, nw_error_t error ) {
+      if ( state == nw_listener_state_failed )
+      {
+          fprintf( stderr, "nw listener failed: %d\n", error ? nw_error_get_error_code( error ) : 0 );
+          exit( 1 );
+      }
+      if ( state == nw_listener_state_ready )
+          printf( "nw listener ready on port %d\n", port );
     } );
 
     nw_listener_start( listener );
@@ -166,7 +165,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     nw_parameters_t parameters = nw_parameters_create_secure_udp( NW_PARAMETERS_DISABLE_PROTOCOL, NW_PARAMETERS_DEFAULT_CONFIGURATION );
 
     char port_string[16];
-    snprintf( port_string, sizeof(port_string), "%d", port );
+    snprintf( port_string, sizeof( port_string ), "%d", port );
     nw_endpoint_t endpoint = nw_endpoint_create_host( ip, port_string );
     nw_connection_t connection = nw_connection_create( endpoint, parameters );
 
@@ -174,13 +173,15 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     nw_connection_set_queue( connection, queue );
 
     dispatch_semaphore_t ready = dispatch_semaphore_create( 0 );
-    nw_connection_set_state_changed_handler( connection, ^( nw_connection_state_t state, nw_error_t error )
-    {
-        (void) error;
-        if ( state == nw_connection_state_ready )
-            dispatch_semaphore_signal( ready );
-        if ( state == nw_connection_state_failed )
-            { fprintf( stderr, "nw connection failed\n" ); exit( 1 ); }
+    nw_connection_set_state_changed_handler( connection, ^( nw_connection_state_t state, nw_error_t error ) {
+      (void) error;
+      if ( state == nw_connection_state_ready )
+          dispatch_semaphore_signal( ready );
+      if ( state == nw_connection_state_failed )
+      {
+          fprintf( stderr, "nw connection failed\n" );
+          exit( 1 );
+      }
     } );
     nw_connection_start( connection );
     dispatch_semaphore_wait( ready, DISPATCH_TIME_FOREVER );
@@ -200,7 +201,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     for ( ;; )
     {
-        int size = bench_sizes[ batch_index % BENCH_NUM_SIZES ];
+        int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
         batch_index++;
 
@@ -217,23 +218,22 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 bench_fill_packet( packet, size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
                 dispatch_data_t data = dispatch_data_create( packet, (size_t) size, queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT );
-                nw_connection_send( connection, data, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^( nw_error_t error )
-                {
+                nw_connection_send( connection, data, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^( nw_error_t error ) {
                     /* a send completion that failed is not a sent packet, and
                        a long run of them is a host that cannot do this */
-                    if ( error == NULL )
-                        sent += bench_send_ok( &nw_send_health, "nw_connection_send" );
-                    else
-                        sent += bench_send_refused( &nw_send_health, "nw_connection_send",
-                                            nw_error_get_error_domain( error ) == nw_error_domain_posix
-                                                ? nw_error_get_error_code( error ) : EIO );
-                    dispatch_semaphore_signal( batch_done );
+                  if ( error == NULL )
+                      sent += bench_send_ok( &nw_send_health, "nw_connection_send" );
+                  else
+                      sent += bench_send_refused( &nw_send_health, "nw_connection_send",
+                                                  nw_error_get_error_domain( error ) == nw_error_domain_posix
+                                                      ? nw_error_get_error_code( error )
+                                                      : EIO );
+                  dispatch_semaphore_signal( batch_done );
                 } );
                 dispatch_release( data );
             }
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
                 dispatch_semaphore_wait( batch_done, DISPATCH_TIME_FOREVER );
-
         }
     }
 

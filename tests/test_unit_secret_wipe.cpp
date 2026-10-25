@@ -33,7 +33,7 @@
 #include "wycheproof.h"
 
 // Match the header to the sodium implementation linked into the SDK.
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
@@ -74,7 +74,7 @@ static void mint_test_token( uint8_t * token_data, uint64_t client_id )
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
 
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -85,7 +85,7 @@ static void mint_test_token( uint8_t * token_data, uint64_t client_id )
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = client_id;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -124,8 +124,8 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
-    rocketnet_unit_check( rocketnet_client_protocol_process_packet( client, cookie, sizeof(cookie),
-                                                                    current_time, payload, sizeof(payload), &payload_bytes ) );
+    rocketnet_unit_check( rocketnet_client_protocol_process_packet( client, cookie, sizeof( cookie ),
+                                                                    current_time, payload, sizeof( payload ), &payload_bytes ) );
     rocketnet_unit_check( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 }
 
@@ -140,7 +140,7 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 static void test_client_token_keys_are_wiped_on_disconnect()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -172,7 +172,7 @@ static void test_client_token_keys_are_wiped_on_disconnect()
 static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -193,7 +193,7 @@ static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 static void test_client_ephemeral_secret_wiped_on_token_expired()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -216,7 +216,7 @@ static void test_client_ephemeral_secret_wiped_on_token_expired()
 static void test_client_ephemeral_secret_wiped_on_denied()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -227,7 +227,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
     // the server seals the denied under the handshake keys derived from the
     // token keys, this attempt's salt and a carried nonce
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    memset( session_nonce, 0x5A, sizeof(session_nonce) );
+    memset( session_nonce, 0x5A, sizeof( session_nonce ) );
 
     struct rocketnet_connection_keys_t keys;
     rocketnet_derive_handshake_keys( &keys, client.token.client_to_server_key, client.token.server_to_client_key,
@@ -243,7 +243,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, denied, denied_bytes,
-                                                                    100.6, payload, sizeof(payload), &payload_bytes ) == 1 );
+                                                                    100.6, payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
     rocketnet_counters_assert_conserved( &counters );
@@ -255,7 +255,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
 static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -278,7 +278,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 {
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     struct rocketnet_client_protocol_t client;
     connect_live_attempt( &client, &counters, 100.0 );
@@ -286,7 +286,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 
     // craft a valid challenge the client will accept (mirrors server construction)
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
-    memset( session_nonce, 0x5A, sizeof(session_nonce) );
+    memset( session_nonce, 0x5A, sizeof( session_nonce ) );
 
     uint8_t server_eph_pub[ROCKETNET_KEY_BYTES];
     memcpy( server_eph_pub, rocketnet_test_server_eph_public, ROCKETNET_KEY_BYTES );
@@ -303,14 +303,14 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
                                                   client.client_ephemeral_public_key,
                                                   keys.handshake_server_to_client );
     rocketnet_unit_check( ch_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-    memset( &keys, 0, sizeof(keys) );
+    memset( &keys, 0, sizeof( keys ) );
 
     plant_canary( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES );
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, challenge, ch_bytes,
-                                                                     100.6, payload, sizeof(payload), &payload_bytes ) == 1 );
+                                                                    100.6, payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     // zero happened on entry to state 3
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
@@ -337,7 +337,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 // (rocketnet-wycheproof-x25519)
 // ---------------------------------------------------------------------------
 
-#if !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 // The tests below drive the vendored subset the SDK links (sodium/sodium.c),
 // never a system libsodium, so a green run is a statement about the code
@@ -410,7 +410,7 @@ static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally
         rocketnet_unit_check( wp_x25519_field( test, "shared", shared ) );
 
         uint8_t out[32];
-        memset( out, 0, sizeof(out) );
+        memset( out, 0, sizeof( out ) );
         const int result = crypto_scalarmult( out, private_key, public_key );
         const bool all_zero = wp_x25519_all_zero( shared );
 
@@ -440,7 +440,7 @@ static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally
             *every_disagreement_zero_shared = false;
             wp_x25519_print_disagreement( test, "refused_low_order" );
         }
-        else if ( memcmp( out, shared, sizeof(shared) ) != 0 )
+        else if ( memcmp( out, shared, sizeof( shared ) ) != 0 )
         {
             tally->accepted++;
             disagreements++;
@@ -492,7 +492,7 @@ static void test_wycheproof_x25519_vectors()
         rocketnet_unit_check( wp_x25519_field( test, "shared", shared ) );
 
         struct rocketnet_connection_keys_t keys;
-        memset( &keys, 0, sizeof(keys) );
+        memset( &keys, 0, sizeof( keys ) );
         const int accepted = rocketnet_derive_connection_keys( &keys,
                                                                rocketnet_test_token_c2s_key,
                                                                rocketnet_test_token_s2c_key,

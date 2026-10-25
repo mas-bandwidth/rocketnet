@@ -108,13 +108,13 @@ uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_
 // The exact reason is counted, always, along with the arrival.
 
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
-                                                 const struct rocketnet_address_t * from,
-                                                 const uint8_t * packet_data,
-                                                 int packet_bytes,
-                                                 uint64_t current_timestamp,
-                                                 double current_time,
-                                                 uint8_t * response_packet,
-                                                 int * response_bytes );
+                                                          const struct rocketnet_address_t * from,
+                                                          const uint8_t * packet_data,
+                                                          int packet_bytes,
+                                                          uint64_t current_timestamp,
+                                                          double current_time,
+                                                          uint8_t * response_packet,
+                                                          int * response_bytes );
 
 // The server's receive entry for every packet: the reading order from the
 // standard over one function. Runs the prefilter, refuses reserved types and
@@ -128,16 +128,16 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 // out_payload_bytes zero.
 
 int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
-                                     const struct rocketnet_address_t * from,
-                                     const uint8_t * packet_data,
-                                     int packet_bytes,
-                                     uint64_t current_timestamp,
-                                     double current_time,
-                                     uint8_t * response_packet,
-                                     int * response_bytes,
-                                     uint8_t * out_payload,
-                                     int * out_payload_bytes,
-                                     int * out_payload_client_index );
+                                              const struct rocketnet_address_t * from,
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              uint64_t current_timestamp,
+                                              double current_time,
+                                              uint8_t * response_packet,
+                                              int * response_bytes,
+                                              uint8_t * out_payload,
+                                              int * out_payload_bytes,
+                                              int * out_payload_client_index );
 
 // The receive entry the server transport calls, with nothing copied twice.
 // known_mapping_index is the caller's encryption-map lookup for from (-1 for
@@ -183,7 +183,7 @@ void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server
 // because the decision touches the slots.
 
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
-                              double current_time );
+                                       double current_time );
 
 // Builds a keep-alive for a connected client at the mapping's next session
 // sequence, and stamps the send. The sealed plaintext opens with the ack
@@ -226,15 +226,15 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 // not connected or not due.
 
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
-                                              int client_index,
-                                              double current_time,
-                                              uint8_t * out_packet );
+                                                       int client_index,
+                                                       double current_time,
+                                                       uint8_t * out_packet );
 
 // Read-only preflight for the update sweep. True when the keep-alive or
 // standalone ACK writer may need a frame; the writers retain priority and
 // all packet/state changes. Also leaves a missing mapping for the transport's diagnostic.
 int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_protocol_t * server,
-                                                int client_index, double current_time );
+                                               int client_index, double current_time );
 
 // Records the same missing-mapping diagnostic as the protocol writers when
 // the transport cannot look up an address for an internally allowed -1 slot.
@@ -252,10 +252,10 @@ void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_pro
 // client is not connected.
 
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
-                                         int client_index,
-                                         uint8_t * out_packets,
-                                         int * out_packet_count,
-                                         int * out_packet_bytes );
+                                                  int client_index,
+                                                  uint8_t * out_packets,
+                                                  int * out_packet_count,
+                                                  int * out_packet_bytes );
 
 // Builds a payload packet for a connected client. Returns the wire size, or
 // 0 when the client is not connected or the payload does not fit.
@@ -279,11 +279,11 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
                                                   double current_time );
 
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
-                                    int client_index,
-                                    const uint8_t * payload_data,
-                                    int payload_bytes,
-                                    double current_time,
-                                    uint8_t * out_packet );
+                                             int client_index,
+                                             const uint8_t * payload_data,
+                                             int payload_bytes,
+                                             double current_time,
+                                             uint8_t * out_packet );
 
 // the connected client's address, for fill-phase callers that build wire
 // frames without burning a sequence. returns 0 when not connected.

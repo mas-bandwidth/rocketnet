@@ -24,7 +24,7 @@
 #include "wycheproof.h"
 
 // Match the header to the sodium implementation linked into the SDK.
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
@@ -44,8 +44,10 @@
 
 static int ctv_unhex_digit( char c )
 {
-    if ( c >= '0' && c <= '9' ) return c - '0';
-    if ( c >= 'a' && c <= 'f' ) return c - 'a' + 10;
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
     return -1;
 }
 
@@ -56,8 +58,8 @@ static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
         return 0;
     for ( int i = 0; i < count; i++ )
     {
-        int hi = ctv_unhex_digit( text[(size_t) ( 2*i )] );
-        int lo = ctv_unhex_digit( text[(size_t) ( 2*i+1 )] );
+        int hi = ctv_unhex_digit( text[(size_t) ( 2 * i )] );
+        int lo = ctv_unhex_digit( text[(size_t) ( 2 * i + 1 )] );
         if ( hi < 0 || lo < 0 )
             return 0;
         bytes[i] = (uint8_t) ( ( hi << 4 ) | lo );
@@ -215,7 +217,7 @@ static void test_each_vector_verifies_and_opens()
         rocketnet_unit_check( crypto_sign_seed_keypair( backend_public_key, backend_secret_key, v.backend_seed ) == 0 );
         rocketnet_unit_check( memcmp( backend_public_key, rocketnet_test_backend_public_key, 32 ) == 0 );
         rocketnet_unit_check( memcmp( backend_secret_key, rocketnet_test_backend_secret_key, 64 ) == 0 );
-        sodium_memzero( backend_secret_key, sizeof(backend_secret_key) );
+        sodium_memzero( backend_secret_key, sizeof( backend_secret_key ) );
         rocketnet_unit_check( memcmp( v.server_public_key, rocketnet_test_server_public_key, 32 ) == 0 );
 
         struct rocketnet_connect_token_t token;
@@ -303,7 +305,7 @@ static void test_deterministic_seal_matches_libsodium_open()
         rocketnet_unit_check( crypto_generichash_update( &state, epk, 32 ) == 0 );
         rocketnet_unit_check( crypto_generichash_update( &state, rocketnet_test_server_public_key, 32 ) == 0 );
         rocketnet_unit_check( crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) == 0 );
-        memset( opened, 0, sizeof(opened) );
+        memset( opened, 0, sizeof( opened ) );
         rocketnet_unit_check( crypto_box_open_easy( opened, sealed + 32, ROCKETNET_SEALED_BLOCK_BYTES - 32, nonce,
                                                     epk, rocketnet_test_server_secret_key ) == 0 );
         rocketnet_unit_check( memcmp( opened, expected_private_block, ROCKETNET_PRIVATE_BLOCK_BYTES ) == 0 );
@@ -343,13 +345,13 @@ static void test_tampered_vector_refused()
         const ctv_file_vector_t & v = vectors[i];
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
 
-        memcpy( token, v.token, sizeof(token) );
+        memcpy( token, v.token, sizeof( token ) );
         rocketnet_unit_check( rocketnet_verify_signed_connect_data( token, token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                                                                     rocketnet_test_backend_public_key ) );
 
         for ( int b = 0; b < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; b++ )
         {
-            memcpy( token, v.token, sizeof(token) );
+            memcpy( token, v.token, sizeof( token ) );
             token[b] ^= 0x01;
             rocketnet_unit_check( !rocketnet_verify_signed_connect_data( token, token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                                                                          rocketnet_test_backend_public_key ) );
@@ -357,9 +359,9 @@ static void test_tampered_vector_refused()
 
         // the ephemeral public key, the first ciphertext byte, the last mac byte
         const int positions[] = { 0, 31, 32, 33 + ROCKETNET_PRIVATE_BLOCK_BYTES / 2, ROCKETNET_SEALED_BLOCK_BYTES - 1 };
-        for ( size_t p = 0; p < sizeof(positions) / sizeof(positions[0]); p++ )
+        for ( size_t p = 0; p < sizeof( positions ) / sizeof( positions[0] ); p++ )
         {
-            memcpy( token, v.token, sizeof(token) );
+            memcpy( token, v.token, sizeof( token ) );
             token[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + positions[p]] ^= 0x01;
             rocketnet_unit_check( crypto_sign_detached( token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES, NULL, token,
                                                         ROCKETNET_SIGNED_CONNECT_DATA_BYTES, rocketnet_test_backend_secret_key ) == 0 );
@@ -386,7 +388,7 @@ REGISTER_UNIT_TEST( test_tampered_vector_refused );
 // subset in sodium/sodium.c that the SDK links. The vectors are
 // tests/wycheproof/ed25519_test.json at the pin the vendor card landed.
 
-#if !defined(ROCKETNET_USE_SYSTEM_SODIUM) // rocketnet-wycheproof-ed25519
+#if !defined( ROCKETNET_USE_SYSTEM_SODIUM ) // rocketnet-wycheproof-ed25519
 
 struct wp_ed25519_tally_t
 {
@@ -524,8 +526,7 @@ static void test_wycheproof_ed25519_vectors()
                                                                 rocketnet_test_backend_public_key ) == 1 );
 
     // L = 2^252 + 27742317777372353535851937790883648493, little endian
-    static const uint8_t group_order[32] =
-    {
+    static const uint8_t group_order[32] = {
         0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
         0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -533,7 +534,7 @@ static void test_wycheproof_ed25519_vectors()
     };
 
     uint8_t malleable[ROCKETNET_SIGNATURE_BYTES];
-    memcpy( malleable, signature, sizeof(malleable) );
+    memcpy( malleable, signature, sizeof( malleable ) );
     int carry = 0;
     for ( int i = 0; i < 32; i++ )
     {
@@ -546,19 +547,19 @@ static void test_wycheproof_ed25519_vectors()
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t flipped_r[ROCKETNET_SIGNATURE_BYTES];
-    memcpy( flipped_r, signature, sizeof(flipped_r) );
+    memcpy( flipped_r, signature, sizeof( flipped_r ) );
     flipped_r[0] ^= 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, flipped_r,
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t flipped_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
-    memcpy( flipped_data, data, sizeof(flipped_data) );
+    memcpy( flipped_data, data, sizeof( flipped_data ) );
     flipped_data[100] ^= 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( flipped_data, signature,
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t identity[32];
-    memset( identity, 0, sizeof(identity) );
+    memset( identity, 0, sizeof( identity ) );
     identity[0] = 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, signature, identity ) );
 }

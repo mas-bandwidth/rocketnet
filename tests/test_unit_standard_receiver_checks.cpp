@@ -22,8 +22,7 @@
 
 #define RN_STANDARD_ORDERING_BEHIND 100
 
-static const rn_standard_vector_t standard_receiver_checks_table[] =
-{
+static const rn_standard_vector_t standard_receiver_checks_table[] = {
     RN_STANDARD_VECTOR( "m4.check-1-bad-form", "02" ),
     RN_STANDARD_VECTOR( "m4.check-2-truncated", "0001" ),
     RN_STANDARD_VECTOR( "m4.check-3-bad-flags", "050100aa01" ),
@@ -62,40 +61,46 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
 
     if ( strcmp( id, "m4.check-1-bad-form" ) == 0 )
     {
-        if ( capacity < 1 ) return -1;
+        if ( capacity < 1 )
+            return -1;
         out[0] = 2;
         return 1;
     }
     if ( strcmp( id, "m4.check-2-truncated" ) == 0 )
     {
-        if ( capacity < 2 ) return -1;
+        if ( capacity < 2 )
+            return -1;
         out[0] = 0;
         return emit_records( out, 1 );
     }
     if ( strcmp( id, "m4.check-3-bad-flags" ) == 0 )
     {
         const uint8_t bytes[] = { 0x05, 0x01, 0x00, 0xAA, 0x01 };
-        if ( capacity < (int) sizeof( bytes ) ) return -1;
+        if ( capacity < (int) sizeof( bytes ) )
+            return -1;
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
     if ( strcmp( id, "m4.check-4-bad-length" ) == 0 )
     {
         const uint8_t bytes[] = { 0x00, 0x00, 0x00, 0x01 };
-        if ( capacity < (int) sizeof( bytes ) ) return -1;
+        if ( capacity < (int) sizeof( bytes ) )
+            return -1;
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
     if ( strcmp( id, "m4.check-9-over-maximum" ) == 0 )
     {
-        if ( capacity < 1417 ) return -1;
+        if ( capacity < 1417 )
+            return -1;
         memset( out, 0, 1416 );
         return rocketnet_message_single_finish( out, capacity, 1416 );
     }
     if ( strcmp( id, "m4.check-7-bad-block" ) == 0 )
     {
         const uint8_t bytes[] = { 0x0A, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xAA, 0x01 };
-        if ( capacity < (int) sizeof( bytes ) ) return -1;
+        if ( capacity < (int) sizeof( bytes ) )
+            return -1;
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
@@ -237,8 +242,7 @@ static void test_standard_receiver_checks_vectors()
     {
         const char * id;
         int violation;
-    } expected[] =
-    {
+    } expected[] = {
         { "m4.check-1-bad-form", ROCKETNET_MESSAGE_VIOLATION_BAD_FORM },
         { "m4.check-2-truncated", ROCKETNET_MESSAGE_VIOLATION_TRUNCATED },
         { "m4.check-3-bad-flags", ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS },

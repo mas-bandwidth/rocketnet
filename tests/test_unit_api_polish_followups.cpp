@@ -21,14 +21,17 @@
 
 #define check rocketnet_unit_check
 
-static_assert( std::is_same<decltype( &rocketnet_quiet ), void (*)( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
+static_assert( std::is_same<decltype( &rocketnet_quiet ), void ( * )( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
 static_assert( ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO == -31, "the failures are dense down to the last code" );
 
 static int api_polish_followups_count = 0;
 
 static void api_polish_followups_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
-    (void) context; (void) level; (void) message; (void) length;
+    (void) context;
+    (void) level;
+    (void) message;
+    (void) length;
     api_polish_followups_count++;
 }
 
@@ -36,7 +39,10 @@ static int api_polish_followups_asserts = 0;
 
 static void api_polish_followups_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
     api_polish_followups_asserts++;
 }
 

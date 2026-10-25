@@ -111,7 +111,7 @@ void control_fragment_packets_each_end()
     // client to server: fragments arrive, the server reassembles one payload
     const uint64_t server_reassembled_before = h.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED];
     const int client_count = rocketnet_client_protocol_write_fragments( &h.client, payload, 3000, h.now,
-                                                                       packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
+                                                                        packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
     control_check( client_count >= 2, "client write fragments" );
     for ( int i = 0; i < client_count; i++ )
     {
@@ -124,7 +124,7 @@ void control_fragment_packets_each_end()
     // server to client: fragments arrive, the client reassembles one payload
     const uint64_t client_reassembled_before = h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED];
     const int server_count = rocketnet_server_protocol_write_fragments( &h.server, 0, payload, 3000, h.now,
-                                                                       packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
+                                                                        packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
     control_check( server_count >= 2, "server write fragments" );
     for ( int i = 0; i < server_count; i++ )
     {
@@ -158,11 +158,11 @@ void control_denied_when_server_full()
     // whole case, as the connect path gives every slot it assigns a live
     // mapping behind it.
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 9, sizeof(user_data) );
+    memset( user_data, 9, sizeof( user_data ) );
     for ( int i = 0; i < 4; i++ )
     {
         char filler_address_string[64];
-        snprintf( filler_address_string, sizeof(filler_address_string), "198.51.100.%d:5000", 20 + i );
+        snprintf( filler_address_string, sizeof( filler_address_string ), "198.51.100.%d:5000", 20 + i );
         struct rocketnet_address_t filler_address;
         control_check( rocketnet_address_parse( &filler_address, filler_address_string ), "filler address" );
         const int mapping_index = rocketnet_encryption_map_add( h.server.encryption_map, &filler_address, h.now + h.server.handshake_deadline_seconds );

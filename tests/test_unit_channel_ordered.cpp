@@ -602,7 +602,7 @@ static void exchange_perfect( node_t * a, node_t * b, double * now, int updates,
             const uint32_t records = a->ordered.builder.packet[p].records;
             if ( out_records_max && (int) records > *out_records_max )
                 *out_records_max = (int) records;
-            (*out_packets)++;
+            ( *out_packets )++;
             check( open_packet( b, &out[p] ) );
         }
         std::vector<uint64_t> acks;

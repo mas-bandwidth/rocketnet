@@ -59,7 +59,9 @@ static int create_and_prove( const char * label, const char * transport )
         rocketnet_client_update( client, now );
 
         const struct rocketnet_message_batch_t * batch;
-        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL ) {}
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+        }
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             received += batch->num_messages;
 

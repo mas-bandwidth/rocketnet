@@ -59,8 +59,8 @@ static void sized_config_check_table( const size_t * known, int count, size_t cu
 {
     check( count >= 1 );
     for ( int i = 1; i < count; i++ )
-        check( known[i] > known[i-1] );
-    check( known[count-1] == current );
+        check( known[i] > known[i - 1] );
+    check( known[count - 1] == current );
 }
 
 static void test_sized_config_accepts_every_known_size()
@@ -152,7 +152,7 @@ static void test_sized_config_accepts_every_known_size()
     // exercise the create guards without opening sockets. The plain-create
     // simulation regression below uses an in-memory loopback connection.
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
@@ -243,7 +243,7 @@ static void test_sized_config_refuses_unknown_size()
     {
         alignas( 8 ) uint8_t buffer[sizeof( struct rocketnet_client_transport_config_t ) + 16];
         memset( buffer, 0xCD, sizeof( buffer ) );
-        check( rocketnet_client_transport_default_config_sized( (struct rocketnet_client_transport_config_t*) buffer, client_unknown[i] ) == 0 );
+        check( rocketnet_client_transport_default_config_sized( (struct rocketnet_client_transport_config_t *) buffer, client_unknown[i] ) == 0 );
         for ( size_t j = 0; j < sizeof( buffer ); j++ )
             check( buffer[j] == 0xCD );
     }
@@ -252,7 +252,7 @@ static void test_sized_config_refuses_unknown_size()
     {
         alignas( 8 ) uint8_t buffer[sizeof( struct rocketnet_server_transport_config_t ) + 16];
         memset( buffer, 0xCD, sizeof( buffer ) );
-        check( rocketnet_server_transport_default_config_sized( (struct rocketnet_server_transport_config_t*) buffer, server_unknown[i] ) == 0 );
+        check( rocketnet_server_transport_default_config_sized( (struct rocketnet_server_transport_config_t *) buffer, server_unknown[i] ) == 0 );
         for ( size_t j = 0; j < sizeof( buffer ); j++ )
             check( buffer[j] == 0xCD );
     }
@@ -261,7 +261,7 @@ static void test_sized_config_refuses_unknown_size()
     {
         alignas( 8 ) uint8_t buffer[sizeof( struct rocketnet_message_config_t ) + 16];
         memset( buffer, 0xCD, sizeof( buffer ) );
-        check( rocketnet_message_default_config_sized( (struct rocketnet_message_config_t*) buffer, message_unknown[i] ) == 0 );
+        check( rocketnet_message_default_config_sized( (struct rocketnet_message_config_t *) buffer, message_unknown[i] ) == 0 );
         for ( size_t j = 0; j < sizeof( buffer ); j++ )
             check( buffer[j] == 0xCD );
     }
@@ -289,7 +289,7 @@ static void test_sized_config_refuses_unknown_size()
     // the creates refuse an unknown size before any other check: uncounted,
     // never reaching the NULL token or address guard
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
     struct rocketnet_server_transport_config_t server_config;
@@ -377,7 +377,7 @@ do                                                                              
 
 static void test_sized_config_create_refuses_before_init()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
@@ -421,7 +421,7 @@ static void test_sized_config_create_refuses_before_init()
 
 static void test_sized_config_client_create_checks_the_config()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
     // accepted
@@ -442,7 +442,7 @@ static void test_sized_config_client_create_checks_the_config()
 
 static void test_sized_config_server_create_checks_the_config()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
     // accepted
@@ -764,8 +764,8 @@ static void public_config_token( const struct rocketnet_server_t * server, const
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        PUBLIC_CONFIG_PROTOCOL, addresses, 1, 0xC0F1, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     PUBLIC_CONFIG_PROTOCOL, addresses, 1, 0xC0F1, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 

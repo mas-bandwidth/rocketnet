@@ -42,7 +42,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
 // Reserve a block's consecutive numbers and contiguous ring span together.
 // Returns its fragment count, or zero while a bound stops reliable numbering.
 uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
-                                            uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start );
+                                           uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start );
 
 // A sent-packet map calls this for each acknowledged number. Stale or repeat
 // acks return zero; a newly marked number returns one.

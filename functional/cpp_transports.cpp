@@ -52,7 +52,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     rocketnet_check( server );
 
     char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t loopback_connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), loopback_connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
@@ -86,12 +86,12 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     {
         if ( sent_to_server < 16 )
         {
-            rocketnet_client_transport_send_packet( client, (const uint8_t*) "hello", 5 );
+            rocketnet_client_transport_send_packet( client, (const uint8_t *) "hello", 5 );
             sent_to_server++;
         }
         if ( sent_to_client < 16 )
         {
-            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "world", 5 );
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t *) "world", 5 );
             sent_to_client++;
         }
 
@@ -118,7 +118,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
 
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes;
-        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
         {
             rocketnet_check( packet_bytes == 5 );
             rocketnet_check( memcmp( packet, "world", 5 ) == 0 );

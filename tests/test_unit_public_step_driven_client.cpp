@@ -39,21 +39,26 @@ static void test_public_step_driven_client_delivers_both_ways()
     public_step_pair_create( &pair, &identity );
     public_step_connect( &pair );
 
-    const uint8_t client_messages[2][4] = { {1,2,3,4}, {5,6,7,8} };
-    const uint8_t server_messages[2][4] = { {9,10,11,12}, {13,14,15,16} };
+    const uint8_t client_messages[2][4] = { { 1, 2, 3, 4 }, { 5, 6, 7, 8 } };
+    const uint8_t server_messages[2][4] = { { 9, 10, 11, 12 }, { 13, 14, 15, 16 } };
     for ( int i = 0; i < 2; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
+        check( out != NULL );
+        memcpy( out, client_messages[i], 4 );
+        check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
         out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish_message( pair.server, 4 ) != 0 );
+        check( out != NULL );
+        memcpy( out, server_messages[i], 4 );
+        check( rocketnet_server_finish_message( pair.server, 4 ) != 0 );
     }
 
     int at_server = 0, at_client = 0;
     for ( int step = 0; step < 400 && ( at_server < 2 || at_client < 2 ); step++ )
     {
         public_step_pump( &pair );
-        const uint8_t * data = NULL; int bytes = 0;
+        const uint8_t * data = NULL;
+        int bytes = 0;
         uint64_t sender = ~0ULL;
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
@@ -97,17 +102,23 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
-        check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
+        check( out != NULL );
+        out[0] = (uint8_t) i;
+        check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
         // every delivery is received before the next update (standard/MESSAGES.md m1.6)
-        while ( rocketnet_server_receive_messages( pair.server ) != NULL ) {}
-        while ( rocketnet_client_receive_messages( pair.client ) != NULL ) {}
+        while ( rocketnet_server_receive_messages( pair.server ) != NULL )
+        {
+        }
+        while ( rocketnet_client_receive_messages( pair.client ) != NULL )
+        {
+        }
     }
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( pair.client, &stats );
     const uint64_t values[PUBLIC_STEP_NUM_COUNTERS] = { stats.packets_sent, stats.packets_received, stats.bytes_sent,
-        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
-        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected };
+                                                        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
+                                                        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected };
     memcpy( counters, values, sizeof( values ) );
     public_step_pair_destroy( &pair );
 }
@@ -169,8 +180,10 @@ static void test_public_step_driven_client_env_selects_the_mode()
     rocketnet_client_transport_default_config( &config );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
-    if ( present ) check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
-    else check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
+    if ( present )
+        check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
+    else
+        check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 

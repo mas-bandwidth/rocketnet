@@ -32,7 +32,7 @@ struct rocketnet_session_server_t
 
 static void rocketnet_session_server_setup_clients( struct rocketnet_session_server_t * test, int max_clients )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = 0x1122334455667788ULL;
@@ -60,7 +60,7 @@ static void rocketnet_session_server_setup_clients( struct rocketnet_session_ser
     memset( mapping->keys.session_server_to_client, 0x42, 32 );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
     rocketnet_unit_check( rocketnet_client_slots_assign( server->client_slots, 0x1234, test->mapping_index, user_data ) == 0 );
 }
 
@@ -118,8 +118,7 @@ static int rocketnet_session_generate( const char * id, uint8_t * out, int capac
     return bytes;
 }
 
-static const rn_standard_vector_t standard_session_table[] =
-{
+static const rn_standard_vector_t standard_session_table[] = {
     RN_STANDARD_VECTOR( "t13.keep-alive-suppression", "00010001000001" ),
 };
 
@@ -148,7 +147,7 @@ static void test_standard_session_accept_payload_without_mapping_touches_nothing
     rocketnet_session_server_setup_clients( &test, 2 );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
     const int client_index = rocketnet_client_slots_assign( test.server.client_slots, 0x5678, -1, user_data );
     rocketnet_unit_check( client_index == 1 );
     rocketnet_unit_check( rocketnet_client_slots_connected( test.server.client_slots, client_index ) );

@@ -94,8 +94,7 @@ struct rocketnet_fuzz_message_type_info_t
     const char * name;
 };
 
-static const struct rocketnet_fuzz_message_type_info_t rocketnet_fuzz_message_types[ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT] =
-{
+static const struct rocketnet_fuzz_message_type_info_t rocketnet_fuzz_message_types[ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT] = {
     { "violation_none" },
     { "violation_bad_form" },
     { "violation_truncated" },
@@ -138,7 +137,8 @@ static void rocketnet_fuzz_message_run( const uint8_t * data, size_t size );
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -300,7 +300,9 @@ static int rocketnet_fuzz_message_record( uint8_t * out, int at, uint8_t flags, 
     out[p++] = (uint8_t) ( ( length >> 8 ) & 0xFF );
     if ( code == 2 || code == 3 || code == 4 )
     {
-        out[p++] = 1; out[p++] = 0; out[p++] = 0;                    // the number
+        out[p++] = 1;
+        out[p++] = 0;
+        out[p++] = 0;                    // the number
     }
     if ( code == 3 || code == 4 || block )
     {
@@ -309,11 +311,15 @@ static int rocketnet_fuzz_message_record( uint8_t * out, int at, uint8_t flags, 
     }
     if ( code == 1 || code == 4 )
     {
-        out[p++] = 2; out[p++] = 0; out[p++] = 0;                    // the sequencing
+        out[p++] = 2;
+        out[p++] = 0;
+        out[p++] = 0;                    // the sequencing
     }
     if ( code == 1 || code == 3 || code == 4 )
     {
-        out[p++] = 3; out[p++] = 0; out[p++] = 0;                    // the ordering
+        out[p++] = 3;
+        out[p++] = 0;
+        out[p++] = 0;                    // the ordering
         if ( wide )
         {
             out[p++] = (uint8_t) ( channel & 0xFF );

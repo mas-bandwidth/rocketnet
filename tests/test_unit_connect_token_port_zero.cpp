@@ -73,7 +73,7 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     int status = -1;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( fake, token, &config, 1000.0,
-        &rocketnet_fake_client_operations_base, fake, &status );
+                                                                                                 &rocketnet_fake_client_operations_base, fake, &status );
     check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
     if ( transport )
     {
@@ -129,7 +129,7 @@ REGISTER_UNIT_TEST( test_client_transport_refuses_connect_token_port_zero );
 // that wrote nothing left the caller's bytes alone
 static bool port_zero_buffer_untouched( const void * buffer, size_t bytes )
 {
-    const uint8_t * view = (const uint8_t*) buffer;
+    const uint8_t * view = (const uint8_t *) buffer;
     for ( size_t i = 0; i < bytes; ++i )
     {
         if ( view[i] != PORT_ZERO_SENTINEL )
@@ -142,7 +142,7 @@ static void test_token_makers_refuse_port_zero()
 {
     rocketnet_quiet( true );
 
-    #if ROCKETNET_DEV
+#if ROCKETNET_DEV
     // the development maker refuses an address naming port 0, with or
     // without an explicit ":0", and writes nothing into the token buffer
     char dev_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
@@ -173,7 +173,7 @@ static void test_token_makers_refuse_port_zero()
     memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
     check( rocketnet_create_dev_connect_token( NULL, "[2001:0db8::1]:40000", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
     check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
-    #endif
+#endif
 
     // the production writer refuses an address naming port 0 before it
     // writes any field, so the token buffer is left alone

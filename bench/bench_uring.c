@@ -66,7 +66,7 @@ static struct io_uring_sqe * bench_get_sqe_or_die( struct io_uring * ring, const
     if ( !sqe )
     {
         char detail[192];
-        snprintf( detail, sizeof(detail),
+        snprintf( detail, sizeof( detail ),
                   "the submission queue had no free entry for %s -- the harness has more in flight than URING_ENTRIES (%d) allows, and every number after this point would be wrong",
                   what, URING_ENTRIES );
         bench_fatal( "io_uring_get_sqe", detail );
@@ -89,14 +89,14 @@ static void run_receiver( int port, double warmup, double window, int windows )
 {
     int fd = bench_udp_socket();
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
-    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        bench_fatal( "bind", strerror(errno) );
+    if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
+        bench_fatal( "bind", strerror( errno ) );
     bench_report_buffers( fd );
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        bench_fatal( "io_uring_queue_init", strerror(-result) );
+        bench_fatal( "io_uring_queue_init", strerror( -result ) );
 
     static uint8_t buffer_memory[URING_NUM_BUFFERS * URING_BUFFER_SIZE];
     int ring_error = 0;
@@ -107,8 +107,8 @@ static void run_receiver( int port, double warmup, double window, int windows )
            receiver with nothing to receive into: this run measured nothing,
            and says so rather than exiting as if it had merely failed */
         char detail[256];
-        snprintf( detail, sizeof(detail), "%s (errno %d) -- this host cannot run the io_uring multishot receiver, so nothing was measured",
-                  strerror(-ring_error), -ring_error );
+        snprintf( detail, sizeof( detail ), "%s (errno %d) -- this host cannot run the io_uring multishot receiver, so nothing was measured",
+                  strerror( -ring_error ), -ring_error );
         bench_fatal( "io_uring_setup_buf_ring", detail );
     }
     for ( int i = 0; i < URING_NUM_BUFFERS; i++ )
@@ -119,7 +119,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
     resubmit_multishot( &ring, fd );
     int submit_result = io_uring_submit( &ring );
     if ( submit_result < 0 )
-        bench_fatal( "io_uring_submit", strerror(-submit_result) );
+        bench_fatal( "io_uring_submit", strerror( -submit_result ) );
 
     struct bench_windows_t w;
     bench_windows_init( &w, warmup, window, windows );
@@ -164,7 +164,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
                    stopped receiving, and used to be stepped straight over. */
                 bench_receive_refused_or_empty_except( "io_uring multishot recv", -cqe->res,
                                                        uring_recv_tolerated,
-                                                       (int) ( sizeof(uring_recv_tolerated) / sizeof(uring_recv_tolerated[0]) ) );
+                                                       (int) ( sizeof( uring_recv_tolerated ) / sizeof( uring_recv_tolerated[0] ) ) );
             }
             else if ( cqe->res > 0 && ( cqe->flags & IORING_CQE_F_BUFFER ) )
             {
@@ -187,7 +187,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
             resubmit_multishot( &ring, fd );
             int submit_result = io_uring_submit( &ring );
             if ( submit_result < 0 )
-                bench_fatal( "io_uring_submit", strerror(-submit_result) );
+                bench_fatal( "io_uring_submit", strerror( -submit_result ) );
             batch_syscalls++;
         }
 
@@ -215,18 +215,18 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
        not, which makes every io_uring ratio against them an upper bound
        rather than like for like (#98 item 2). */
 
-    if ( connect( fd, (struct sockaddr*) &to, sizeof(to) ) < 0 )
-        bench_fatal( "connect", strerror(errno) );
+    if ( connect( fd, (struct sockaddr *) &to, sizeof( to ) ) < 0 )
+        bench_fatal( "connect", strerror( errno ) );
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        bench_fatal( "io_uring_queue_init", strerror(-result) );
+        bench_fatal( "io_uring_queue_init", strerror( -result ) );
 
     static uint8_t buffers[BENCH_BATCH_SIZE][BENCH_MAX_PACKET];
 
     struct bench_send_health_t health;
-    memset( &health, 0, sizeof(health) );
+    memset( &health, 0, sizeof( health ) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -238,7 +238,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     for ( ;; )
     {
-        int size = bench_sizes[ batch_index % BENCH_NUM_SIZES ];
+        int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
         batch_index++;
 
@@ -291,8 +291,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
-                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 : bench_fault( "send-zero" ) ? 0
+                                                                                                                    : cqe->res;
                     if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion" );
@@ -317,8 +317,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
-                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 : bench_fault( "send-zero" ) ? 0
+                                                                                                                    : cqe->res;
                     if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion (zc)" );
@@ -334,7 +334,6 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 io_uring_cqe_seen( &ring, cqe );
             }
         }
-
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;

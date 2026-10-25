@@ -155,12 +155,12 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
     const int oversized_request = 2000000000;
     struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &address,
-        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, oversized_request );
+                                                                                    ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, oversized_request );
     server_receive_low_tick_require( socket != NULL );
     const int granted = rocketnet_platform_socket_receive_buffer_bytes( socket );
     server_receive_low_tick_require( granted > 0 );
     int warned_grant = granted;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     // Windows does not clamp a receive buffer request: it grants the bytes
     // asked for in full, so no real socket comes back short. Drive the warning
     // with a grant below the request instead and check its text the same way.
@@ -189,7 +189,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 }
 
-#if defined(__linux__)
+#if defined( __linux__ )
 
 #include <sys/resource.h>
 
@@ -221,7 +221,11 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
         bool header = true;
         while ( fgets( line, sizeof( line ), f ) )
         {
-            if ( header ) { header = false; continue; }
+            if ( header )
+            {
+                header = false;
+                continue;
+            }
             char local[128], remote[128];
             unsigned int state = 0;
             unsigned long tx_queue = 0, rx_queue = 0;
@@ -232,9 +236,11 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
                 continue;
             const size_t length = strlen( line );
             size_t end = length;
-            while ( end > 0 && ( line[end - 1] == '\n' || line[end - 1] == ' ' ) ) --end;
+            while ( end > 0 && ( line[end - 1] == '\n' || line[end - 1] == ' ' ) )
+                --end;
             size_t start = end;
-            while ( start > 0 && line[start - 1] != ' ' ) --start;
+            while ( start > 0 && line[start - 1] != ' ' )
+                --start;
             row.found = true;
             row.receive_queue_bytes += rx_queue;
             row.drops += strtoull( line + start, NULL, 10 );
@@ -263,7 +269,7 @@ static bool server_receive_low_tick_measurement_requested()
 {
     char value[32];
     return rocketnet_test_getenv( "ROCKETNET_LOW_TICK_MEASURE", value, sizeof( value ) ) &&
-        ( value[0] == '1' || ( value[0] != '\0' && value[0] != '0' ) );
+           ( value[0] == '1' || ( value[0] != '\0' && value[0] != '0' ) );
 }
 
 void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
@@ -323,7 +329,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
 
-    std::vector<struct rocketnet_client_transport_t*> clients;
+    std::vector<struct rocketnet_client_transport_t *> clients;
     clients.reserve( max_clients );
     for ( int i = 0; i < max_clients; ++i )
     {

@@ -60,17 +60,17 @@ struct rocketnet_server_rio_t;
 // region is registered, 4 after the completion queues, 5 after the request
 // queue, 6 after the first posted receive. Production passes zero.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
-    rocketnet_address_t * bind_address, int fail_stage = 0 );
+                                                      rocketnet_address_t * bind_address, int fail_stage = 0 );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );
 
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio,
-    const rocketnet_address_t * to, uint64_t * packet_id );
+                                             const rocketnet_address_t * to, uint64_t * packet_id );
 void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio,
-    uint64_t packet_id, uint8_t * frame, int packet_bytes );
+                                         uint64_t packet_id, uint8_t * frame, int packet_bytes );
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio,
-    uint64_t packet_id, uint8_t * frame );
+                                        uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio );
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio );
@@ -98,7 +98,7 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
 
-#if defined(ROCKETNET_RIO_TESTS)
+#if defined( ROCKETNET_RIO_TESTS )
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
@@ -130,7 +130,7 @@ int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
 #endif
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 bool rocketnet_server_rio_available();
 #else
 inline bool rocketnet_server_rio_available() { return false; }

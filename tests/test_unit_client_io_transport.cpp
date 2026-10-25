@@ -44,7 +44,7 @@ static double client_io_transport_time( void * context )
 static void client_io_transport_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -63,7 +63,7 @@ static void client_io_transport_token( uint8_t * token )
 }
 
 static rocketnet_client_transport_t * client_io_transport_create( rocketnet_fake_client_transport_io_t * fake,
-    const rocketnet_client_transport_io_operations_t * operations, client_io_transport_clock_t * clock )
+                                                                  const rocketnet_client_transport_io_operations_t * operations, client_io_transport_clock_t * clock )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_io_transport_token( token );
@@ -110,7 +110,7 @@ static int client_io_completed_batch_receive( void * context, rocketnet_address_
     if ( fake->inbound_count == 0 && fake->remaining > 0 )
     {
         const uint8_t datagram[64] = {};
-        rocketnet_fake_client_push( fake, &fake->source, datagram, sizeof(datagram) );
+        rocketnet_fake_client_push( fake, &fake->source, datagram, sizeof( datagram ) );
         --fake->remaining;
     }
     return rocketnet_fake_client_receive( fake, from, data, capacity );
@@ -129,7 +129,7 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     int fill, ready, free_count;
     for ( int i = 0; i < 2; ++i )
     {
-        rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
+        rocketnet_fake_client_push( fake, &server, datagram, sizeof( datagram ) );
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
     }
     rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
@@ -158,7 +158,7 @@ static void test_client_legacy_receive_handoff_and_backpressure()
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
         check( fake->remaining == 0 && fake->inbound_count == 0 );
     }
-    rocketnet_fake_client_push( fake, &server, datagram, sizeof(datagram) );
+    rocketnet_fake_client_push( fake, &server, datagram, sizeof( datagram ) );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
     check( fake->inbound_count == 1 );
     rocketnet_client_transport_update( transport, 1000.4 );
@@ -349,8 +349,8 @@ static void test_client_io_update_exposes_published_batch()
     rocketnet_address_t server;
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
     uint8_t datagram[64];
-    memset( datagram, 0, sizeof(datagram) );
-    rocketnet_fake_client_push( fake, &server, datagram, (int) sizeof(datagram) );
+    memset( datagram, 0, sizeof( datagram ) );
+    rocketnet_fake_client_push( fake, &server, datagram, (int) sizeof( datagram ) );
 
     const int clock_calls = clock.calls;
     check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
@@ -383,7 +383,7 @@ static void test_client_simulator_stop_defers_backend_send()
     config.time_callback = client_io_transport_time;
     config.simulated_latency_ms = 500;
     auto * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config,
-        clock.now, &rocketnet_fake_client_operations_base, fake );
+                                                                              clock.now, &rocketnet_fake_client_operations_base, fake );
     check( transport );
     rocketnet_client_transport_update( transport, clock.now );
     check( fake->send_calls == 0 ); // cookie request still held by latency

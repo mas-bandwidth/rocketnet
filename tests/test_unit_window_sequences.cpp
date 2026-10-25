@@ -172,7 +172,7 @@ static int seq_admit( rn_window_send_t * send, uint32_t count, uint64_t span, in
 }
 
 static void seq_set_number( rn_window_send_t * send, uint64_t number, uint32_t descriptor,
-                             uint16_t fragment, uint64_t ring_start, uint64_t bytes16 )
+                            uint16_t fragment, uint64_t ring_start, uint64_t bytes16 )
 {
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
@@ -582,7 +582,7 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
 }
 
 static void world_commit( world_t * w, uint64_t first, uint32_t count, uint32_t descriptor,
-                           uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
+                          uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
 {
     for ( uint32_t f = 0; f < count; f++ )
     {

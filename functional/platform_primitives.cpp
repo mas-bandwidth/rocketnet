@@ -36,7 +36,7 @@ do                                                                              
 
 static bool threads_work = false;
 
-static void test_thread_function(void*)
+static void test_thread_function( void * )
 {
     threads_work = true;
 }
@@ -80,7 +80,7 @@ void rocketnet_test_frame_sync_wait()
 static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                                struct rocketnet_connect_token_private_t * private_fields )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -91,7 +91,7 @@ static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_d
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -201,8 +201,8 @@ static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack
     result->ok = false;
     result->acked = 0;
 
-    struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
-        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     if ( !endpoint )
         return;
     rocketnet_ack_endpoint_reset( endpoint );
@@ -223,7 +223,7 @@ static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack
             rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, time );
 
         struct rocketnet_ack_block_t block;
-        memset( &block, 0, sizeof(block) );
+        memset( &block, 0, sizeof( block ) );
         block.largest = sequence - 1;
         block.first_range_length = (uint32_t) ( sequence - first );
 

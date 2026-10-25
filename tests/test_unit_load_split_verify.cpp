@@ -360,8 +360,7 @@ static void test_split_verify_offer_rotation()
         for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
         {
             check( small[mode] == offers / SPLIT_VERIFY_NUM_MODES );
-            check( fragmented[mode] == ( split_verify_mode_is_reliable( mode ) ?
-                                         offers / SPLIT_VERIFY_FRAGMENTED_MODES : 0 ) );
+            check( fragmented[mode] == ( split_verify_mode_is_reliable( mode ) ? offers / SPLIT_VERIFY_FRAGMENTED_MODES : 0 ) );
         }
     }
     // the five fragmented modes are the reliable ones, in the SDK's order

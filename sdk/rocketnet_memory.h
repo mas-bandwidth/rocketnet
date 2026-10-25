@@ -23,22 +23,24 @@
 #error RocketNet memory budgets must be 1..1048576 MiB
 #endif
 
-inline bool rocketnet_memory_add(uint64_t & total, uint64_t count, uint64_t stride)
+inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t stride )
 {
-    if (stride && count > (UINT64_MAX - total) / stride) return false;
+    if ( stride && count > ( UINT64_MAX - total ) / stride )
+        return false;
     total += count * stride;
     return true;
 }
 
 // The allocator's alignment and ownership header, measured in its defining TU.
 uint64_t rocketnet_allocation_overhead();
-inline uint64_t rocketnet_memory_allocations(std::initializer_list<uint64_t> sizes)
+inline uint64_t rocketnet_memory_allocations( std::initializer_list<uint64_t> sizes )
 {
     uint64_t total = 0;
     const uint64_t overhead = rocketnet_allocation_overhead();
-    for (uint64_t bytes : sizes)
+    for ( uint64_t bytes : sizes )
     {
-        if (bytes > SIZE_MAX - overhead || !rocketnet_memory_add(total, 1, bytes + overhead)) return 0;
+        if ( bytes > SIZE_MAX - overhead || !rocketnet_memory_add( total, 1, bytes + overhead ) )
+            return 0;
     }
     return total <= SIZE_MAX ? total : 0;
 }
@@ -58,19 +60,19 @@ void rocketnet_direct_allocation_remove( uint64_t bytes );
 extern "C" uint64_t rocketnet_direct_allocation_bytes( void );
 
 // Internal component accounting stays beside the corresponding concrete types.
-uint64_t rocketnet_client_slots_allocation_bytes(int clients);
-uint64_t rocketnet_encryption_map_allocation_bytes(int capacity);
-uint64_t rocketnet_token_table_allocation_bytes(int capacity);
-uint64_t rocketnet_server_acks_allocation_bytes(int clients);
-uint64_t rocketnet_send_arena_allocation_bytes(int slots, int bytes);
+uint64_t rocketnet_client_slots_allocation_bytes( int clients );
+uint64_t rocketnet_encryption_map_allocation_bytes( int capacity );
+uint64_t rocketnet_token_table_allocation_bytes( int capacity );
+uint64_t rocketnet_server_acks_allocation_bytes( int clients );
+uint64_t rocketnet_send_arena_allocation_bytes( int slots, int bytes );
 uint64_t rocketnet_platform_socket_allocation_bytes();
 uint64_t rocketnet_platform_thread_allocation_bytes();
-uint64_t rocketnet_server_gso_allocation_bytes(int queues);
-uint64_t rocketnet_server_iocp_allocation_bytes(int workers);
-uint64_t rocketnet_server_xdp_allocation_bytes(int queues);
+uint64_t rocketnet_server_gso_allocation_bytes( int queues );
+uint64_t rocketnet_server_iocp_allocation_bytes( int workers );
+uint64_t rocketnet_server_xdp_allocation_bytes( int queues );
 uint64_t rocketnet_server_rio_registered_region_bytes();
 // UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
-uint64_t rocketnet_xdp_umem_bytes(int queues);
+uint64_t rocketnet_xdp_umem_bytes( int queues );
 
 // The OS-owned memory a transport takes at connect or start that never comes
 // from the caller's allocator: the default stack of each thread
@@ -78,7 +80,7 @@ uint64_t rocketnet_xdp_umem_bytes(int queues);
 // attributes, CreateThread with zero: the platform default), and on Linux the
 // io_uring provided buffer rings, which liburing or the fallback mmap.
 uint64_t rocketnet_thread_stack_bytes();
-uint64_t rocketnet_server_uring_mapped_bytes(int queues);
+uint64_t rocketnet_server_uring_mapped_bytes( int queues );
 
 // allocator_bytes is the most the caller's allocator holds for one transport
 // generation, every rocketnet_malloc with its overhead; os_bytes is what the
@@ -92,8 +94,8 @@ struct rocketnet_server_memory_plan_t
     uint64_t allocator_bytes, thread_stack_bytes, mapped_ring_bytes, os_bytes;
     int worker_threads, sockets;
 };
-bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
-    const char * transport, rocketnet_server_memory_plan_t & plan);
+bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_config_t * config,
+                                             const char * transport, rocketnet_server_memory_plan_t & plan );
 // Native built-in adapter resource policy; fills transport, UMEM, RIO registered
 // region, worker and socket fields.
 // the xdp transport's queue count when num_xdp_queues is zero or negative; the
@@ -102,16 +104,16 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
 #define ROCKETNET_XDP_DEFAULT_QUEUES 7
 #endif
 
-bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
-    const char * transport, rocketnet_server_memory_plan_t & plan);
+bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_config_t * config,
+                                           const char * transport, rocketnet_server_memory_plan_t & plan );
 
 // The most the caller's allocator holds for any candidate of the config's
 // transport list, the one start may grant: the transport generation start
 // creates, which stop retires and the next start frees before it creates the
 // next. A candidate with no plan (a custom transport) adds nothing.
-uint64_t rocketnet_server_transport_ladder_allocator_bytes(const rocketnet_server_transport_config_t * config);
+uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config );
 struct rocketnet_client_transport_config_t;
-uint64_t rocketnet_client_transport_ladder_allocator_bytes(const rocketnet_client_transport_config_t * config);
+uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config );
 
 // Zero an object's raw storage except its buffers, before it is constructed:
 // skip lists the buffers as (offset, bytes) spans, ascending and disjoint.

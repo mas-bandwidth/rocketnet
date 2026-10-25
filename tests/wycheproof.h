@@ -27,282 +27,320 @@
 #include <string>
 #include <vector>
 
-namespace wyj {
-
-enum node_type_t
+namespace wyj
 {
-    NODE_OBJ,
-    NODE_ARR,
-    NODE_STR,
-    NODE_INT,
-    NODE_TRUE,
-    NODE_FALSE,
-    NODE_NULL
-};
 
-struct node_t
-{
-    node_type_t type;
-    std::string text;                                   // NODE_STR value or NODE_INT decimal text
-    std::vector<std::pair<std::string, node_t>> obj;    // NODE_OBJ members, in order
-    std::vector<node_t> arr;                            // NODE_ARR elements
-};
-
-namespace {
-
-const int k_max_depth = 16;
-
-inline void skip_ws( const std::string & s, size_t & i )
-{
-    while ( i < s.size() && ( s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' ) )
-        i++;
-}
-
-inline bool hex_digit( char c, int & v )
-{
-    if ( c >= '0' && c <= '9' ) { v = c - '0'; return true; }
-    if ( c >= 'a' && c <= 'f' ) { v = c - 'a' + 10; return true; }
-    if ( c >= 'A' && c <= 'F' ) { v = c - 'A' + 10; return true; }
-    return false;
-}
-
-bool parse_value( const std::string & s, size_t & i, node_t & out, int depth );
-
-bool parse_string( const std::string & s, size_t & i, std::string & out )
-{
-    if ( i >= s.size() || s[i] != '"' )
-        return false;
-    i++;
-    out.clear();
-    while ( i < s.size() )
+    enum node_type_t
     {
-        unsigned char c = (unsigned char) s[i];
-        if ( c == '"' )
+        NODE_OBJ,
+        NODE_ARR,
+        NODE_STR,
+        NODE_INT,
+        NODE_TRUE,
+        NODE_FALSE,
+        NODE_NULL
+    };
+
+    struct node_t
+    {
+        node_type_t type;
+        std::string text;                                   // NODE_STR value or NODE_INT decimal text
+        std::vector<std::pair<std::string, node_t>> obj;    // NODE_OBJ members, in order
+        std::vector<node_t> arr;                            // NODE_ARR elements
+    };
+
+    namespace
+    {
+
+        const int k_max_depth = 16;
+
+        inline void skip_ws( const std::string & s, size_t & i )
         {
-            i++;
-            return true;
+            while ( i < s.size() && ( s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' ) )
+                i++;
         }
-        if ( c == '\\' )
+
+        inline bool hex_digit( char c, int & v )
         {
-            i++;
-            if ( i >= s.size() )
-                return false;
-            char e = s[i];
-            switch ( e )
+            if ( c >= '0' && c <= '9' )
             {
-                case '"':  out += '"';  i++; break;
-                case '\\': out += '\\'; i++; break;
-                case '/':  out += '/';  i++; break;
-                case 'b':  out += '\b'; i++; break;
-                case 'f':  out += '\f'; i++; break;
-                case 'n':  out += '\n'; i++; break;
-                case 'r':  out += '\r'; i++; break;
-                case 't':  out += '\t'; i++; break;
-                case 'u':
+                v = c - '0';
+                return true;
+            }
+            if ( c >= 'a' && c <= 'f' )
+            {
+                v = c - 'a' + 10;
+                return true;
+            }
+            if ( c >= 'A' && c <= 'F' )
+            {
+                v = c - 'A' + 10;
+                return true;
+            }
+            return false;
+        }
+
+        bool parse_value( const std::string & s, size_t & i, node_t & out, int depth );
+
+        bool parse_string( const std::string & s, size_t & i, std::string & out )
+        {
+            if ( i >= s.size() || s[i] != '"' )
+                return false;
+            i++;
+            out.clear();
+            while ( i < s.size() )
+            {
+                unsigned char c = (unsigned char) s[i];
+                if ( c == '"' )
                 {
                     i++;
-                    if ( i + 4 > s.size() )
-                        return false;
-                    int value = 0;
-                    for ( size_t k = 0; k < 4; k++ )
-                    {
-                        int v;
-                        if ( !hex_digit( s[i + k], v ) )
-                            return false;
-                        value = ( value << 4 ) | v;
-                    }
-                    if ( value >= 0x80 )
-                        return false;
-                    out += (char) value;
-                    i += 4;
-                    break;
+                    return true;
                 }
-                default:
+                if ( c == '\\' )
+                {
+                    i++;
+                    if ( i >= s.size() )
+                        return false;
+                    char e = s[i];
+                    switch ( e )
+                    {
+                        case '"':
+                            out += '"';
+                            i++;
+                            break;
+                        case '\\':
+                            out += '\\';
+                            i++;
+                            break;
+                        case '/':
+                            out += '/';
+                            i++;
+                            break;
+                        case 'b':
+                            out += '\b';
+                            i++;
+                            break;
+                        case 'f':
+                            out += '\f';
+                            i++;
+                            break;
+                        case 'n':
+                            out += '\n';
+                            i++;
+                            break;
+                        case 'r':
+                            out += '\r';
+                            i++;
+                            break;
+                        case 't':
+                            out += '\t';
+                            i++;
+                            break;
+                        case 'u':
+                        {
+                            i++;
+                            if ( i + 4 > s.size() )
+                                return false;
+                            int value = 0;
+                            for ( size_t k = 0; k < 4; k++ )
+                            {
+                                int v;
+                                if ( !hex_digit( s[i + k], v ) )
+                                    return false;
+                                value = ( value << 4 ) | v;
+                            }
+                            if ( value >= 0x80 )
+                                return false;
+                            out += (char) value;
+                            i += 4;
+                            break;
+                        }
+                        default:
+                            return false;
+                    }
+                    continue;
+                }
+                if ( c < 0x20 || c >= 0x80 )
                     return false;
+                out += (char) c;
+                i++;
             }
-            continue;
+            return false;
         }
-        if ( c < 0x20 || c >= 0x80 )
-            return false;
-        out += (char) c;
-        i++;
-    }
-    return false;
-}
 
-bool parse_int( const std::string & s, size_t & i, node_t & out )
-{
-    size_t start = i;
-    if ( i < s.size() && s[i] == '-' )
-        i++;
-    if ( i >= s.size() || s[i] < '0' || s[i] > '9' )
-        return false;
-    while ( i < s.size() && s[i] >= '0' && s[i] <= '9' )
-        i++;
-    out.type = NODE_INT;
-    out.text = s.substr( start, i - start );
-    return true;
-}
-
-bool parse_object( const std::string & s, size_t & i, node_t & out, int depth )
-{
-    if ( depth + 1 > k_max_depth )
-        return false;
-    depth++;
-    if ( i >= s.size() || s[i] != '{' )
-        return false;
-    i++;
-    node_t o;
-    o.type = NODE_OBJ;
-    skip_ws( s, i );
-    if ( i < s.size() && s[i] == '}' )
-    {
-        i++;
-        out = o;
-        return true;
-    }
-    while ( true )
-    {
-        skip_ws( s, i );
-        std::string key;
-        if ( !parse_string( s, i, key ) )
-            return false;
-        for ( size_t k = 0; k < o.obj.size(); k++ )
-            if ( o.obj[k].first == key )
+        bool parse_int( const std::string & s, size_t & i, node_t & out )
+        {
+            size_t start = i;
+            if ( i < s.size() && s[i] == '-' )
+                i++;
+            if ( i >= s.size() || s[i] < '0' || s[i] > '9' )
                 return false;
-        skip_ws( s, i );
-        if ( i >= s.size() || s[i] != ':' )
-            return false;
-        i++;
-        skip_ws( s, i );
-        node_t value;
-        if ( !parse_value( s, i, value, depth ) )
-            return false;
-        o.obj.push_back( std::make_pair( key, value ) );
-        skip_ws( s, i );
-        if ( i >= s.size() )
-            return false;
-        if ( s[i] == ',' )
-        {
-            i++;
-            continue;
-        }
-        if ( s[i] == '}' )
-        {
-            i++;
-            out = o;
+            while ( i < s.size() && s[i] >= '0' && s[i] <= '9' )
+                i++;
+            out.type = NODE_INT;
+            out.text = s.substr( start, i - start );
             return true;
         }
-        return false;
-    }
-}
 
-bool parse_array( const std::string & s, size_t & i, node_t & out, int depth )
-{
-    if ( depth + 1 > k_max_depth )
-        return false;
-    depth++;
-    if ( i >= s.size() || s[i] != '[' )
-        return false;
-    i++;
-    node_t o;
-    o.type = NODE_ARR;
-    skip_ws( s, i );
-    if ( i < s.size() && s[i] == ']' )
-    {
-        i++;
-        out = o;
-        return true;
-    }
-    while ( true )
-    {
-        skip_ws( s, i );
-        node_t value;
-        if ( !parse_value( s, i, value, depth ) )
-            return false;
-        o.arr.push_back( value );
-        skip_ws( s, i );
-        if ( i >= s.size() )
-            return false;
-        if ( s[i] == ',' )
+        bool parse_object( const std::string & s, size_t & i, node_t & out, int depth )
         {
+            if ( depth + 1 > k_max_depth )
+                return false;
+            depth++;
+            if ( i >= s.size() || s[i] != '{' )
+                return false;
             i++;
-            continue;
+            node_t o;
+            o.type = NODE_OBJ;
+            skip_ws( s, i );
+            if ( i < s.size() && s[i] == '}' )
+            {
+                i++;
+                out = o;
+                return true;
+            }
+            while ( true )
+            {
+                skip_ws( s, i );
+                std::string key;
+                if ( !parse_string( s, i, key ) )
+                    return false;
+                for ( size_t k = 0; k < o.obj.size(); k++ )
+                    if ( o.obj[k].first == key )
+                        return false;
+                skip_ws( s, i );
+                if ( i >= s.size() || s[i] != ':' )
+                    return false;
+                i++;
+                skip_ws( s, i );
+                node_t value;
+                if ( !parse_value( s, i, value, depth ) )
+                    return false;
+                o.obj.push_back( std::make_pair( key, value ) );
+                skip_ws( s, i );
+                if ( i >= s.size() )
+                    return false;
+                if ( s[i] == ',' )
+                {
+                    i++;
+                    continue;
+                }
+                if ( s[i] == '}' )
+                {
+                    i++;
+                    out = o;
+                    return true;
+                }
+                return false;
+            }
         }
-        if ( s[i] == ']' )
+
+        bool parse_array( const std::string & s, size_t & i, node_t & out, int depth )
         {
+            if ( depth + 1 > k_max_depth )
+                return false;
+            depth++;
+            if ( i >= s.size() || s[i] != '[' )
+                return false;
             i++;
-            out = o;
-            return true;
+            node_t o;
+            o.type = NODE_ARR;
+            skip_ws( s, i );
+            if ( i < s.size() && s[i] == ']' )
+            {
+                i++;
+                out = o;
+                return true;
+            }
+            while ( true )
+            {
+                skip_ws( s, i );
+                node_t value;
+                if ( !parse_value( s, i, value, depth ) )
+                    return false;
+                o.arr.push_back( value );
+                skip_ws( s, i );
+                if ( i >= s.size() )
+                    return false;
+                if ( s[i] == ',' )
+                {
+                    i++;
+                    continue;
+                }
+                if ( s[i] == ']' )
+                {
+                    i++;
+                    out = o;
+                    return true;
+                }
+                return false;
+            }
         }
-        return false;
-    }
-}
 
-bool parse_value( const std::string & s, size_t & i, node_t & out, int depth )
-{
-    if ( i >= s.size() )
-        return false;
-    char c = s[i];
-    if ( c == '{' )
-        return parse_object( s, i, out, depth );
-    if ( c == '[' )
-        return parse_array( s, i, out, depth );
-    if ( c == '"' )
-    {
-        std::string text;
-        if ( !parse_string( s, i, text ) )
+        bool parse_value( const std::string & s, size_t & i, node_t & out, int depth )
+        {
+            if ( i >= s.size() )
+                return false;
+            char c = s[i];
+            if ( c == '{' )
+                return parse_object( s, i, out, depth );
+            if ( c == '[' )
+                return parse_array( s, i, out, depth );
+            if ( c == '"' )
+            {
+                std::string text;
+                if ( !parse_string( s, i, text ) )
+                    return false;
+                out.type = NODE_STR;
+                out.text = text;
+                return true;
+            }
+            if ( c == '-' || ( c >= '0' && c <= '9' ) )
+                return parse_int( s, i, out );
+            if ( s.compare( i, 4, "true" ) == 0 )
+            {
+                out.type = NODE_TRUE;
+                i += 4;
+                return true;
+            }
+            if ( s.compare( i, 5, "false" ) == 0 )
+            {
+                out.type = NODE_FALSE;
+                i += 5;
+                return true;
+            }
+            if ( s.compare( i, 4, "null" ) == 0 )
+            {
+                out.type = NODE_NULL;
+                i += 4;
+                return true;
+            }
             return false;
-        out.type = NODE_STR;
-        out.text = text;
-        return true;
-    }
-    if ( c == '-' || ( c >= '0' && c <= '9' ) )
-        return parse_int( s, i, out );
-    if ( s.compare( i, 4, "true" ) == 0 )
-    {
-        out.type = NODE_TRUE;
-        i += 4;
-        return true;
-    }
-    if ( s.compare( i, 5, "false" ) == 0 )
-    {
-        out.type = NODE_FALSE;
-        i += 5;
-        return true;
-    }
-    if ( s.compare( i, 4, "null" ) == 0 )
-    {
-        out.type = NODE_NULL;
-        i += 4;
-        return true;
-    }
-    return false;
-}
+        }
 
-const node_t * find_member( const node_t & o, const std::string & key )
-{
-    if ( o.type != NODE_OBJ )
-        return NULL;
-    for ( size_t k = 0; k < o.obj.size(); k++ )
-        if ( o.obj[k].first == key )
-            return &o.obj[k].second;
-    return NULL;
-}
+        const node_t * find_member( const node_t & o, const std::string & key )
+        {
+            if ( o.type != NODE_OBJ )
+                return NULL;
+            for ( size_t k = 0; k < o.obj.size(); k++ )
+                if ( o.obj[k].first == key )
+                    return &o.obj[k].second;
+            return NULL;
+        }
 
-} // namespace
+    } // namespace
 
-inline bool parse_text( const std::string & s, node_t & root )
-{
-    size_t i = 0;
-    skip_ws( s, i );
-    if ( !parse_value( s, i, root, 0 ) )
-        return false;
-    skip_ws( s, i );
-    if ( i != s.size() )
-        return false;
-    return true;
-}
+    inline bool parse_text( const std::string & s, node_t & root )
+    {
+        size_t i = 0;
+        skip_ws( s, i );
+        if ( !parse_value( s, i, root, 0 ) )
+            return false;
+        skip_ws( s, i );
+        if ( i != s.size() )
+            return false;
+        return true;
+    }
 
 } // namespace wyj
 

@@ -228,9 +228,12 @@ static void live_verify_tiny_prefix()
         const int l = rocketnet_live_generate( &config, 1, 2, 0, 3, sequence, buffer, (int) sizeof( buffer ) );
         rocketnet_unit_check( l == (int) ( k + 1 ) );
         rocketnet_unit_check( buffer[0] == 0xAA );
-        if ( l >= 2 ) rocketnet_unit_check( buffer[1] == 0 );
-        if ( l >= 3 ) rocketnet_unit_check( buffer[2] == 3 );
-        if ( l >= 4 ) rocketnet_unit_check( buffer[3] == (uint8_t) sequence );
+        if ( l >= 2 )
+            rocketnet_unit_check( buffer[1] == 0 );
+        if ( l >= 3 )
+            rocketnet_unit_check( buffer[2] == 3 );
+        if ( l >= 4 )
+            rocketnet_unit_check( buffer[3] == (uint8_t) sequence );
         // without a sequence the check proves the bytes it carries; with the
         // expected one it proves the length too
         rocketnet_unit_check( rocketnet_live_check( &config, buffer, l, 1, 2, 0, 3, -1, NULL ) == ROCKETNET_LIVE_OK );
