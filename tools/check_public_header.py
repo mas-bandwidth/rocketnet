@@ -34,6 +34,10 @@ ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
 ALLOWED_INLINES = ("rocketnet_client_default_config", "rocketnet_server_default_config")
+ALLOWED_LIGHT_CONFIG_INLINES = (
+    ("rocketnet_client_light_config", "rocketnet_client_config_t", "rocketnet_client_light_config_internal"),
+    ("rocketnet_server_light_config", "rocketnet_server_config_t", "rocketnet_server_light_config_internal"),
+)
 BANNED_WORDS = ("inline", "__inline", "__forceinline", "static", "namespace", "class",
                 "template", "operator", "typename", "using", "virtual")
 
@@ -210,13 +214,24 @@ def check_declarations(raw):
     code = code[:open_block.start()] + re.sub(r"[^\n]", " ", code[open_block.start():open_block.end()]) + code[open_block.end():]
     code = code[:close_block.start()] + re.sub(r"[^\n]", " ", code[close_block.start():close_block.end()]) + code[close_block.end():]
 
-    # the one allowed definition form: each config's inline default_config,
-    # which sets config_bytes from the caller's compile and calls the
-    # library's _internal fill. Exactly these, each once, are blanked here.
+    # The allowed inline config wrappers are exact forms. The default_config
+    # wrappers set config_bytes and call the library's _internal fill; the
+    # light_config wrappers do the same for the size-preserving public view.
+    # Exactly these, each once, are blanked here so the declaration checks
+    # below still apply to every other public declaration.
     for name in ALLOWED_INLINES:
         pattern = (r"static\s+inline\s+enum\s+rocketnet_status_t\s+%s\s*\(\s*struct\s+(\w+)\s*\*\s*config\s*\)\s*\{"
                    r"\s*if\s*\(\s*config\s*\)\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;"
                    r"\s*return\s+%s_internal\s*\(\s*config\s*\)\s*;\s*\}") % ( name, name )
+        found = list(re.finditer(pattern, code))
+        report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
+        for m in found:
+            code = code[:m.start()] + re.sub(r"[^\n]", " ", code[m.start():m.end()]) + code[m.end():]
+
+    for name, config_type, internal_name in ALLOWED_LIGHT_CONFIG_INLINES:
+        pattern = (r"static\s+inline\s+enum\s+rocketnet_status_t\s+%s\s*\(\s*struct\s+%s\s*\*\s*config\s*\)\s*\{"
+                   r"\s*if\s*\(\s*config\s*\)\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;"
+                   r"\s*return\s+%s\s*\(\s*config\s*\)\s*;\s*\}") % (name, config_type, internal_name)
         found = list(re.finditer(pattern, code))
         report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
         for m in found:

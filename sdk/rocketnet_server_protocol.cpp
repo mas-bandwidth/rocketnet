@@ -547,13 +547,16 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the token-to-address claim and the map capacity are the remaining cheap
-    // rungs, both above the signature and both read-only. the first address
-    // to present a request whose signature verifies owns the token until the
-    // handshake deadline or until its response binds the token; a request
-    // from a second address is refused here, so one token buys one half-open
-    // mapping and no asymmetric work (TRANSPORT.md t12 rule 9;
-    // tla/ReceiveOrder.tla, ClaimCheck, Capacity and ClaimWrite).
+    // the token-to-address claim, the map capacity and the claim capacity are
+    // the remaining cheap rungs, all above the signature and all read-only.
+    // the claim rung runs before the capacity rung, as tla/ReceiveOrder.tla's
+    // Pos orders them: used, verifybudget, claim, capacity, claimfull
+    // (standard/TRANSPORT.md t12 rule 9).
+    // the first address to present a request whose signature verifies owns
+    // the token until the handshake deadline or until its response binds the
+    // token; a request from a second address is refused here, so one token
+    // buys one half-open mapping and no asymmetric work (tla/ReceiveOrder.tla,
+    // ClaimCheck, Capacity and ClaimWrite).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
     {
@@ -570,15 +573,17 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the claim rung refuses on capacity here, read-only: the claim is
-    // written only once the signature verifies, so a request that proves
-    // nothing writes nothing (tla/ReceiveOrder.tla, ClaimCheck and
-    // ClaimWrite).
+    // the claim-capacity rung refuses here, read-only: the claim is written
+    // only once the signature verifies, so a request that proves nothing
+    // writes nothing (tla/ReceiveOrder.tla, ClaimCheck and ClaimWrite). a
+    // full claim table is its own reason; the mapping table had room, so it
+    // is not a mapping failure (standard/TRANSPORT.md t12 rule 9, step 5;
+    // tla/ReceiveOrder.tla, the claimfull rung).
 
     if ( !rocketnet_used_token_history_claim_can_record( server->used_token_history, token_identifier, current_time ) )
     {
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
@@ -598,7 +603,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     {
         rocketnet_assert( 0 );
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
