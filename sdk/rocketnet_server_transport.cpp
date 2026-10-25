@@ -3416,6 +3416,23 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
 }
+
+// The burst key lives at a ring index, the same index drain wipes
+// (disconnect_burst_keys[disconnect_burst_head]), not at the client slot.
+// Copies ROCKETNET_KEY_BYTES from that ring slot. head and count may be NULL.
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport, int index, uint8_t * out, int out_bytes, int * head, int * count )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( out );
+    if ( index < 0 || index >= ROCKETNET_MAX_CLIENTS || out_bytes < ROCKETNET_KEY_BYTES )
+        return 0;
+    memcpy( out, server_transport->disconnect_burst_keys[index], ROCKETNET_KEY_BYTES );
+    if ( head )
+        *head = server_transport->disconnect_burst_head;
+    if ( count )
+        *count = server_transport->disconnect_burst_count;
+    return 1;
+}
 #endif // #if ROCKETNET_TEST_SEAMS
 
 // tla/RNDriverSendStaging.tla DisconnectClient

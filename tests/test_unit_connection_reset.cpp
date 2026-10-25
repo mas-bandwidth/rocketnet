@@ -639,6 +639,22 @@ static void reset_loopback_slot_reuse_scenario()
 }
 
 uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport, int index, uint8_t * out, int out_bytes, int * head, int * count );
+
+static int reset_key_nonzero( const uint8_t * key )
+{
+    int nonzero = 0;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+        nonzero += key[i] != 0;
+    return nonzero;
+}
+
+static void reset_wipe_key( uint8_t * key )
+{
+    volatile uint8_t * bytes = key;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+        bytes[i] = 0;
+}
 
 static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slot()
 {
@@ -747,6 +763,21 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     check( seals_after_disconnects - seals_before ==
            (uint64_t) ( ( DEFERRED_INITIAL_CLIENTS - 1 ) * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) );
 
+    // The one deferred burst copied its session key into the ring. The ring
+    // head is not the reused client slot. The client-slot index of the key
+    // array was never written.
+    uint8_t populated_key[ROCKETNET_KEY_BYTES];
+    uint8_t slot_key[ROCKETNET_KEY_BYTES];
+    int burst_head = -1;
+    int burst_count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, populated_key, (int) sizeof( populated_key ), &burst_head, &burst_count ) == 1 );
+    check( burst_count == 1 );
+    check( burst_head != deferred_slot );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, burst_head, populated_key, (int) sizeof( populated_key ), NULL, NULL ) == 1 );
+    check( reset_key_nonzero( populated_key ) > 0 );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, deferred_slot, slot_key, (int) sizeof( slot_key ), NULL, NULL ) == 1 );
+    check( reset_key_nonzero( slot_key ) == 0 );
+
     rocketnet_server_transport_stats_t server_after_immediate = {};
     rocketnet_server_transport_stats( transport, &server_after_immediate );
     check( server_after_immediate.packets_sent - server_before_disconnects.packets_sent ==
@@ -802,6 +833,23 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     check( slot_after.packets_sent == 1 );
     check( slot_after.bytes_sent > 0 );
     check( server_after_drain.bytes_sent - server_after_immediate.bytes_sent > slot_after.bytes_sent );
+
+    // Drain wipes the key at the ring head that held it, then advances the
+    // head. The client slot's key entry stays empty: the wipe is not by
+    // client index.
+    uint8_t wiped_key[ROCKETNET_KEY_BYTES];
+    int head_after = -1;
+    int count_after = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, burst_head, wiped_key, (int) sizeof( wiped_key ), &head_after, &count_after ) == 1 );
+    check( count_after == 0 );
+    check( head_after != burst_head );
+    check( reset_key_nonzero( wiped_key ) == 0 );
+    check( memcmp( wiped_key, populated_key, ROCKETNET_KEY_BYTES ) != 0 );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, deferred_slot, slot_key, (int) sizeof( slot_key ), NULL, NULL ) == 1 );
+    check( reset_key_nonzero( slot_key ) == 0 );
+    reset_wipe_key( populated_key );
+    reset_wipe_key( wiped_key );
+    reset_wipe_key( slot_key );
 
     rn_test_message_client_stop_and_destroy( replacement );
     rn_test_message_server_stop_and_destroy( server );

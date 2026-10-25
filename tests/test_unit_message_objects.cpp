@@ -4045,3 +4045,77 @@ REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
+
+// Carve writes session metadata once. The receive ring and the send store
+// keep their bytes, so a larger payload capacity does not add carve work.
+static uint64_t mo_count_byte( const uint8_t * bytes, uint64_t n, uint8_t value )
+{
+    uint64_t count = 0;
+    for ( uint64_t i = 0; i < n; i++ )
+        count += bytes[i] == value;
+    return count;
+}
+
+static void mo_payload_capacity_config( rocketnet_message_config_t * config, int receive_bytes, int send_bytes )
+{
+    mo_small_config( config );
+    config->reliable_messages_in_flight = 64;
+    config->packets_in_flight = 64;
+    config->send_queue_messages = 16;
+    config->receive_message_buffer_bytes = receive_bytes;
+    config->max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    config->send_message_buffer_bytes = send_bytes;
+}
+
+static int mo_carve_leaves_payload_and_counts_one( const rocketnet_message_config_t * config, uint32_t * ring_bytes, uint64_t * store_bytes, uint32_t * window, uint32_t * packets )
+{
+    check( rocketnet_message_validate_config( config ) == 1 );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region && region->receive_ring && region->store_memory );
+    *ring_bytes = region->ring_bytes;
+    *store_bytes = region->store_bytes;
+    *window = region->window;
+    *packets = region->packets;
+
+    memset( region->receive_ring, 0xA5, region->ring_bytes );
+    memset( region->store_memory, 0x5A, (size_t) region->store_bytes );
+    region->channel_receive[0].ordered_read = 3;
+    region->sent_packets[0].packet_id = 9;
+    const uint64_t carves = region->carves;
+    rn_region_reset( region );
+
+    const int one_carve = region->carves == carves + 1;
+    const int metadata_reset = region->channel_receive[0].ordered_read == 0 && region->sent_packets[0].packet_id == 0;
+    const int ring_kept = mo_count_byte( region->receive_ring, region->ring_bytes, 0xA5 ) == region->ring_bytes;
+    const int store_kept = mo_count_byte( region->store_memory, region->store_bytes, 0x5A ) == region->store_bytes;
+    rn_arena_destroy( arena );
+    check( one_carve );
+    check( metadata_reset );
+    check( ring_kept );
+    check( store_kept );
+    return one_carve && metadata_reset && ring_kept && store_kept;
+}
+
+static void test_region_carve_scales_with_session_metadata_not_payload_capacity()
+{
+    rocketnet_message_config_t small_config;
+    rocketnet_message_config_t large_config;
+    mo_payload_capacity_config( &small_config, 4096, 12288 );
+    mo_payload_capacity_config( &large_config, 65536, 65536 );
+
+    uint32_t small_ring = 0, large_ring = 0, small_window = 0, large_window = 0, small_packets = 0, large_packets = 0;
+    uint64_t small_store = 0, large_store = 0;
+    check( mo_carve_leaves_payload_and_counts_one( &small_config, &small_ring, &small_store, &small_window, &small_packets ) );
+    check( mo_carve_leaves_payload_and_counts_one( &large_config, &large_ring, &large_store, &large_window, &large_packets ) );
+
+    check( small_window == large_window );
+    check( small_packets == large_packets );
+    check( small_ring == 4096 && large_ring == 65536 );
+    check( small_store < large_store );
+    check( (uint64_t) small_ring + small_store < (uint64_t) large_ring + large_store );
+}
+REGISTER_UNIT_TEST( test_region_carve_scales_with_session_metadata_not_payload_capacity );

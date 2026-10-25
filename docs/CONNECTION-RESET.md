@@ -136,7 +136,9 @@ material is overwritten in place with `sodium_memzero`:
   zeroes the slot's `user_data` copy; and deferred server disconnect bursts copy
   only `session_server_to_client`, `connection_salt`, and `sequence` into the
   bounded burst entry and erase that entry with `sodium_memzero` as soon as the
-  burst drains or is replaced.
+  burst drains or is replaced. The key is stored at the ring index where the
+  burst is appended, and the completing drain wipes `disconnect_burst_keys` at
+  `disconnect_burst_head`, not at the ended connection's client slot.
 
 ## Statistics lifecycle and public counter contract
 
