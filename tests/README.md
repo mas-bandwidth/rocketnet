@@ -33,6 +33,13 @@ is a source-policy gate: it reads source, header and doc files through
 `ROCKETNET_SOURCE_DIR`, opens no socket, starts no thread, and CI runs it on
 a Linux leg beside `tools/check_client_server_words.py`.
 
+Shared-library export cases are functional because they load a separately
+built library through the OS loader: `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant`, and
+`test_dev_token_minting_absent_in_release`. They are registered in
+`functional/rocketnet_functional_tests.cpp` and run by `./bin/functional`,
+not `./bin/test`.
+
 Functional cases run one at a time, even with `ROCKETNET_TEST_JOBS` set.
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
