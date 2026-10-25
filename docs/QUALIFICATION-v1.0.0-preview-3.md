@@ -8,15 +8,19 @@ result carried from another commit names that commit.
 
 ## Candidate head
 
-The candidate head is `160a880b99468ecb3dd2094dad535b394946178b`: `main` at
-`7d70806b` plus the shipping version label and documentation only. Every
-native suite below ran at that head. The commit that adds this record and the
-release notes changes documentation only (no compiled file), so the suites at
-`160a880b` hold for it.
+The candidate head is `0de59c5c26e66342b76dbc65e60e894feef43fcf`: `main` at
+`e4b05244` plus the shipping version label and documentation only. Every
+native suite below ran at that head. The same suites also passed at
+`160a880b99468ecb3dd2094dad535b394946178b` (`main` at `7d70806b` plus the
+label); between the two, the only compiled change from `main` is
+`tests/suite_runner.h`, the unit runner's handling of full-capacity cases on
+Windows. The commit that adds the results of the second run to this record
+changes documentation only (no compiled file), so the suites at `0de59c5c`
+hold for it.
 
 ## Native unit and functional suites at the candidate head
 
-Each suite ran in a Release build at `160a880b`, from a fresh clone. The
+Each suite ran in a Release build at `0de59c5c`, from a fresh clone. The
 last line of each run is copied.
 
 | platform | command | exit | last line |
@@ -25,29 +29,29 @@ last line of each run is copied.
 | Linux x64, gcc 15.2 | `./bin/test` | 0 | `*** ALL TESTS PASSED ***` |
 | Linux x64, gcc 15.2 | `./bin/functional` | 0 | `*** ALL TESTS PASSED ***` |
 | Linux x64, gcc 15.2 | `make clean && make ROCKETNET_DEV=OFF -j4` | 0 | `[100%] Built target functional` (0 warnings) |
-| Linux x64, clang 21.1 | `CC=clang CXX=clang++ make ROCKETNET_DEV=OFF -j4` | 0 | `[100%] Built target functional` (0 warnings) |
-| Linux x64, clang 21.1 | `CC=clang CXX=clang++ make -j4` | 0 | `[100%] Built target functional` (0 warnings) |
+| Linux x64, clang 21.1 (at `160a880b`) | `CC=clang CXX=clang++ make ROCKETNET_DEV=OFF -j4` | 0 | `[100%] Built target functional` (0 warnings) |
+| Linux x64, clang 21.1 (at `160a880b`) | `CC=clang CXX=clang++ make -j4` | 0 | `[100%] Built target functional` (0 warnings) |
 | macOS arm64, Apple clang 21.0, macOS 27.2 | `make -j4` | 0 | `[100%] Built target functional` (0 warnings) |
 | macOS arm64 | `./bin/test` | 0 | `*** ALL TESTS PASSED ***` |
 | macOS arm64 | `./bin/functional` | 0 | `*** ALL TESTS PASSED ***` |
 | macOS arm64 | `make clean && make ROCKETNET_DEV=OFF -j4` | 0 | `[100%] Built target functional` (0 warnings) |
 | Windows x64, MSVC (Visual Studio 18), Windows 11 | `cmake -B build -A x64 -DROCKETNET_DEV=ON && cmake --build build --config Release --parallel 4` | 0 | `functional.vcxproj -> ...\bin\Release\functional.exe` (0 warnings, 0 errors) |
 | Windows x64, MSVC | `cmake -B build -A x64 -DROCKETNET_DEV=OFF && cmake --build build --config Release --parallel 4` | 0 | `functional.vcxproj -> ...\bin\Release\functional.exe` (0 warnings, 0 errors) |
-| Windows x64, MSVC | `bin/Release/test.exe` | 0 | `*** ALL TESTS PASSED ***` (31 s) |
-| Windows x64, MSVC | `bin/Release/functional.exe` | 0 | `*** ALL TESTS PASSED ***` (430 s) |
+| Windows x64, MSVC | `bin/Release/test.exe` | 0 | `*** ALL TESTS PASSED ***` (32 s) |
+| Windows x64, MSVC | `bin/Release/functional.exe` | 0 | `*** ALL TESTS PASSED ***` (434 s) |
 
 The Windows unit suite ran with up to two other builds or unit suites on the
 same host; the Windows functional suite ran with the host to itself.
 
-## Release checks at the candidate head
+## Release checks
 
 | check | command | result |
 | --- | --- | --- |
-| Release document | `python3 tools/check_release_doc.py` | exit 0: `ok: docs/RELEASING.md names 1 version site(s): sdk/rocketnet.h` |
+| Release document (on this record's docs/RELEASING.md) | `python3 tools/check_release_doc.py` | exit 0: `ok: docs/RELEASING.md names 1 version site(s): sdk/rocketnet.h` |
 | version consistency | the `version-consistency` step of [release-check.yml](../.github/workflows/release-check.yml), run by hand | exit 0: `shipping: ROCKETNET_VERSION_FULL=v1.0.0-preview-3  MAJOR.MINOR.PATCH=1.0.0`, `shipping prerelease: preview-3`, `development: ROCKETNET_VERSION_FULL=dev  MAJOR.MINOR.PATCH=255.255.255` |
 | version consistency, tag mode | the same step with `GITHUB_REF=refs/tags/v1.0.0-preview-3` | exit 0: `release tag: v1.0.0-preview-3` |
 | unreleased wire changes | the `unreleased-wire-changes` step, run by hand | exit 0 with the expected warning: 46 wire-affecting commits past `v1.0.0-preview-2`, version already bumped to `v1.0.0-preview-3`. With the previous header label the same step exits 1 (`the shipping version is still v1.0.0-preview-2`) |
-| API documentation | `make docs && make docs-undocumented` | exit 0: `Generated 226 pages`; the undocumented list names two parameters, `configuration` of `rocketnet_client_light_config_internal` and of `rocketnet_server_light_config_internal` |
+| API documentation (at `160a880b`; the header is unchanged at `0de59c5c`) | `make docs && make docs-undocumented` | exit 0: `Generated 226 pages`; the undocumented list names two parameters, `configuration` of `rocketnet_client_light_config_internal` and of `rocketnet_server_light_config_internal` |
 
 ## LAN proof
 
