@@ -301,3 +301,319 @@ outcomes and increments `receipts_dropped`. A smaller output capacity copies
 only the first entries that fit. A zero-filled receipt is NONE; ACKED and LOSS
 are reported outcomes. See the function declarations in `sdk/rocketnet.h` for
 NULL, free-slot and stopped-server behavior.
+
+---
+
+## 5. TROUBLESHOOTING GUIDE
+
+This section maps public status codes (`rocketnet_status_t`), client states
+(`rocketnet_client_state_t`), disconnect reasons
+(`rocketnet_disconnect_reason_t`), and statistics counters
+(`rocketnet_client_stats_t`, `rocketnet_server_stats_t`,
+`rocketnet_server_client_stats_t`) to their root causes and bounded recovery
+actions.
+
+### 5.1 Create, Connect, and Start Refusals
+
+When `rocketnet_client_create` or `rocketnet_server_create` returns `NULL`
+(writing the reason to `*status`), or `rocketnet_client_connect` /
+`rocketnet_server_start` returns a negative `rocketnet_status_t`, inspect the
+status code and the accompanying `ERROR` log line:
+
+| Status code (`rocketnet_status_name`) | Where returned | Root cause | Bounded recovery action |
+| --- | --- | --- | --- |
+| `NOT_INITIALIZED` (`-3`) | `create`, `term` | `rocketnet_init` (or `rocketnet_init_ex`) was not called before `create` / `term`. Increments `api_misuses`. | Call `rocketnet_init()` once at process startup before creating any endpoint, and `rocketnet_term()` once after all endpoints are destroyed. |
+| `CONFIG_NOT_INITIALIZED` (`-27`) | `create`, `*_default_config`, `*_light_config` | `config->config_bytes` is `0`, smaller than `sizeof(size_t)`, or ends inside a struct field (`docs/ABI-EVOLUTION.md`). | Always initialize the config struct with `rocketnet_client_default_config(&cfg)` or `rocketnet_server_default_config(&cfg)` (or `*_light_config`) before modifying fields. |
+| `CONFIG_ENV_INVALID` (`-21`) | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (empty string, whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong hex key/filter length). | Read the `ERROR` log line naming the variable, fix or unset the environment variable (`docs/ENVIRONMENT.md`), and recreate the endpoint. |
+| `CONFIG_OUT_OF_RANGE` (`-22`) | `create` (`required_memory` returns `0`) | A field is outside its valid range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `max_message_bytes > send_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the `ERROR` log line naming the field and adjust the configuration using the sizing rules in [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
+| `MEMORY_BUDGET_EXCEEDED` (`-23`) | `create` (`required_memory` returns `0`) | Create-time endpoint + message arena exceeds `ROCKETNET_*_MEMORY_BUDGET_BYTES`, or server fragment reassembly (`max_clients * max_fragmented_messages * ceil(max_message_bytes / 1024)`) exceeds compile-time `-DROCKETNET_REASSEMBLY_MEMORY_MIB` (512 MiB default), or AF_XDP memory exceeds `-DROCKETNET_XDP_MEMORY_MIB` (2048 MiB default). | Query `rocketnet_*_required_memory` first; lower `max_clients`, `max_message_bytes`, `max_fragmented_messages`, or `send_message_buffer_bytes`, pin `transport` to the intended runtime transport, or raise the budget (`docs/LOAD.md`). |
+| `INVALID_ADDRESS` (`-6`) | `rocketnet_server_create` | `ipv4_address` or `ipv6_address` (or `ROCKETNET_SERVER_IPV4_ADDRESS` / `ROCKETNET_SERVER_IPV6_ADDRESS`) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). | Pass a valid address string with port for at least one family. |
+| `TRANSPORT_PORT_ZERO_UNSUPPORTED` (`-25`) | `rocketnet_server_start` | Bound address specifies port `0` (`:0`) on a server transport that requires an explicit non-zero port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`). |
+| `CONNECT_TOKEN_PORT_ZERO` (`-31`) | `rocketnet_client_connect` | The connect token advertises a server address with port `0`. The client stays `DISCONNECTED`. | Fix the token issuer so every advertised server address in the connect token carries the server's bound non-zero port. |
+| `OUT_OF_MEMORY` (`-2`), `MUTEX_CREATE_FAILED` (`-7`), `THREAD_CREATE_FAILED` (`-8`), `TIMER_CREATE_FAILED` (`-9`) | `create`, `connect`, `start` | The caller allocator returned `NULL` or the OS refused mutex, thread, or timer creation. | Provision the full byte count returned by `rocketnet_*_required_memory` in the caller allocator and verify OS thread/descriptor limits (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
+
+### 5.2 Token, Filter, Transport Mismatch, and Handshake Failures
+
+1. **Production build guards (`ROCKETNET_DEV=0`)**:
+   - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`): returned at
+     `rocketnet_client_create` and `rocketnet_server_create` (and causes
+     `rocketnet_*_required_memory` to return `0`) when `config.packet_filter`
+     is left at all zeros or set to the published 8-byte test filter
+     (`00:01:02:03:04:05:06:07`) in a production library (`ROCKETNET_DEV=0`).
+     **Action**: set a non-test 8-byte `packet_filter` in `config.packet_filter`
+     (or `ROCKETNET_CLIENT_PACKET_FILTER` / `ROCKETNET_SERVER_PACKET_FILTER`)
+     identically on both client and server before calling
+     `rocketnet_*_required_memory` or `rocketnet_*_create`.
+   - `ROCKETNET_STATUS_MISSING_KEYS` (`-18`): `config.backend_public_key` is
+     all-zero at `rocketnet_server_create` / `start`.
+     **Action**: configure the backend's 32-byte Ed25519 public key in
+     `config.backend_public_key` or `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`.
+   - `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION` (`-19`) and
+     `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`): a production
+     build (`ROCKETNET_DEV=0`) refused the published development backend key or
+     a connect token sealed to the development server key.
+     **Action**: generate production backend signing keys, read the server's
+     runtime X25519 public key via `rocketnet_server_public_key(server, pub)`,
+     and mint connect tokens with those production keys.
+2. **Connect token refusals (`INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`)**:
+   - If `rocketnet_client_connect` returns `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`
+     (`-14`) or `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-15`), `rocketnet_client_state(client)`
+     also transitions to `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`)
+     or `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
+   - **Action**: never re-submit the same invalid or expired token. Request a
+     fresh connect token from the backend and verify that client and server
+     wall clocks (or `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` and
+     `ROCKETNET_SERVER_GAME_CLOCK_EPOCH`) are synchronized.
+3. **Transport ladder and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_LADDER_EXHAUSTED`)**:
+   - `INVALID_TRANSPORT_LIST` (`-20`): `config.transport` (or
+     `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
+     comma-separated token, or mixes `"auto"` with other names (`"auto"` must
+     stand alone).
+   - `TRANSPORT_NOT_BUILT` (`-28`): a pinned transport (such as `"xdp"` or
+     `"io_uring"`) was not compiled into the binary (`docs/LINUX.md`).
+   - `TRANSPORT_FAMILIES_UNSUPPORTED` (`-26`): the selected transport cannot
+     serve the configured IPv4/IPv6 family combination.
+   - `TRANSPORT_LADDER_EXHAUSTED` (`-24`): every candidate in the resolved
+     transport ladder failed host preflight, socket bind, or the operator
+     memory budget (`ROCKETNET_*_MEMORY_BUDGET_BYTES`, which checks
+     `allocator_bytes + umem_bytes` per candidate).
+   - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
+     candidate during `start` or `connect`. When troubleshooting `xdp` on
+     Linux, preserve the existing 4,096-entry AF_XDP ring and frame constants
+     (`XDP_FRAME_SIZE = 2048`, `XDP_RING_FRAMES = 4096`, `XDP_UMEM_FRAMES = 98304`)
+     and supported runtime configuration (`num_xdp_queues`, `num_os_cpus`,
+     `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`); do not apply unapproved 4096-frame
+     tuning or a deferred fill-ring repair as a troubleshooting action. Verify
+     host privileges (`CAP_NET_ADMIN`, `CAP_BPF`, `RLIMIT_MEMLOCK`), NIC queue
+     count, and memory budget, or include `"io_uring,gso,portable"` / `"auto"`
+     so the server can fall back cleanly.
+4. **Handshake stage timeouts, denials, and protocol/config mismatches**:
+   - Observe `rocketnet_client_state(client)` on each frame after
+     `rocketnet_client_update(client, time)` and compare with
+     `rocketnet_server_stats(server, &s)`:
+     - `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`): the client sent
+       cookie requests (`REQUESTING_COOKIE`) and received no reply. Check:
+       (a) server is running (`rocketnet_server_running(server) == true`) and
+       reachable on the UDP port named in the token; (b) `packet_filter` bytes
+       match on client and server (a mismatch causes the server prefilter to
+       drop incoming packets silently); (c) `protocol_id` in the token matches
+       `server_config.protocol_id`; (d) the server public key sealed into the
+       token matches `rocketnet_server_public_key(server, ...)`; and (e) the
+       server's `backend_public_key` matches the backend key that signed the
+       token.
+     - `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
+       `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`): check
+       `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
+       increments when handshake replies are rate-limited) and check path MTU /
+       packet loss.
+     - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
+       rejected the connection. Check `s.connections_denied_full` in
+       `rocketnet_server_stats_t` (all `max_clients` slots are occupied) and
+       verify that the connect token was not already consumed by another
+       connection or a duplicate `client_id`.
+     - `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`) /
+       `ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH` (`1`): client and server
+       configurations disagree on protocol geometry (such as `num_channels`).
+       Align `rocketnet_client_config_t` and `rocketnet_server_config_t`.
+
+### 5.3 Refused Sends, `can_send_message` vs. Failed `start_message`, Full Queues, and Wire Budgets
+
+Understanding the difference between `rocketnet_*_can_send_message` and
+`rocketnet_*_start_message` is critical for avoiding self-inflicted
+disconnects under load:
+
+1. **Why calling `start_message` blindly on a full reliable queue or arena disconnects the session**:
+   - Each connection operates inside a fixed, pre-allocated connection region
+     (`connection_bytes`, [`docs/LOAD.md`](LOAD.md)).
+   - If a connected caller calls `rocketnet_client_start_message` or
+     `rocketnet_server_start_message` when the connection's send descriptor
+     pool (`send_queue_messages`), send store (`send_message_buffer_bytes`),
+     reliable sliding window (`reliable_messages_in_flight`), or sent-packet
+     ring (`packets_in_flight`) cannot accommodate the message (for example,
+     when reliable messages accumulate faster than ACKs arrive or `send_kbps` /
+     `per_client_send_kbps` paces them out), the message layer treats region
+     exhaustion on an attempted `start_message` as fatal to that connection
+     (`tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
+     returns `NULL` and **immediately disconnects that connection** with
+     `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (`4`) (transitioning
+     the client to `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`, `-12`).
+2. **How `can_send_message` prevents `MESSAGE_MEMORY_EXHAUSTED`**:
+   - `rocketnet_client_can_send_message(client, channel, reliability, max_bytes)`
+     and `rocketnet_server_can_send_message(server, client_index, channel, reliability, max_bytes)`
+     execute the exact same room, window, per-update cap, and wire-budget check
+     (`rn_message_object_send_room`) as `start_message`, but **purely (`O(1)`,
+     zero state mutation, zero drops, no disconnect)**.
+   - When `can_send_message` returns `true`, an immediate `start_message` with
+     the same `(channel, reliability, max_bytes)` arguments is guaranteed to
+     succeed.
+   - When `can_send_message` returns `false`, the connection remains healthy
+     and connected.
+3. **Other reasons `start_message` returns `NULL` (and how they are counted)**:
+   - **Endpoint or slot not connected**: calling `start_message` when the
+     client is not `ROCKETNET_CLIENT_STATE_CONNECTED`, when the server is
+     stopped, or when `client_index` (`0 .. max_clients - 1`) has no connected
+     client returns `NULL` quietly without logging or counting `api_misuses`,
+     and increments `messages_dropped_not_connected` in
+     `rocketnet_client_stats_t` / `rocketnet_server_stats_t`.
+   - **Unreliable send over wire budget**: calling `start_message` for an
+     unreliable or sequenced mode (`UNRELIABLE*`) when the connection's token
+     bucket (`send_kbps` / `per_client_send_kbps`) or per-update unreliable
+     cap (`unreliable_messages_per_update`) is full drops the message, returns
+     `NULL`, and increments `messages_dropped_over_budget` without
+     disconnecting the session.
+   - **API misuse**: passing `channel < 0` or `channel >= num_channels`, an
+     invalid `reliability` enum, `max_bytes < 1` or `max_bytes > max_message_bytes`,
+     a server `destination_id >= max_clients`, a `destination_id` with
+     `ROCKETNET_FLOW_ID_BIT` set (`ROCKETNET_STATUS_FLOW_ID_RESERVED`), or
+     calling `start_message` while a prior `start_message` is still open
+     (before `finish_message` or `abort_message`) logs an `ERROR`, increments
+     `api_misuses`, and returns `NULL`.
+4. **Safe action path for sends**:
+   - Gate discretionary or bursty sends with `can_send_message` before calling
+     `start_message`.
+   - Always check the `uint8_t *` pointer returned by `start_message`. If it is
+     `NULL`, do **not** write payload bytes and do **not** call
+     `finish_message` (an unmatched `finish_message` returns `0`; a
+     `finish_message` with `bytes_written < 1` or `bytes_written > max_bytes`
+     aborts the open start, logs an `ERROR`, increments `api_misuses`, and
+     returns `0`).
+   - If `can_send_message` returns `false` or `start_message` returns `NULL`,
+     **never retry in a tight same-frame loop**: queue space and send budgets
+     only replenish when a subsequent frame runs `update` (advancing monotonic
+     `time` and processing ACKs) and `send_packets`. Defer the message to a
+     later tick, coalesce state updates, or adjust `send_queue_messages`,
+     `send_message_buffer_bytes`, `reliable_messages_in_flight`, `packets_in_flight`,
+     `packets_per_update`, `unreliable_messages_per_update`, and
+     `send_kbps` / `per_client_send_kbps` ([`docs/LOAD.md`](LOAD.md)).
+
+### 5.4 Receive-Drain Misuse (`MESSAGE_NOT_RECEIVED`) and Batch Lifetime
+
+1. **Root cause of `MESSAGE_NOT_RECEIVED`**:
+   - During `rocketnet_client_update` / `rocketnet_server_update`, incoming
+     messages are placed into the endpoint-wide delivery queue.
+   - Each call to `rocketnet_client_receive_messages` or
+     `rocketnet_server_receive_messages` releases the message views held by the
+     previous batch and fills `rocketnet_message_batch_t` with up to
+     `ROCKETNET_RECEIVE_BATCH_MESSAGES` (`512`) messages, returning `NULL` when
+     the queue is empty.
+   - If the caller does not drain `receive_messages` until it returns `NULL`
+     before the next `update` call (for example, calling `receive_messages`
+     only once when `> 512` messages arrived across clients, or skipping the
+     receive step during a frame), the next `update` detects held undrained
+     messages (`tla/RNSlots.tla`), logs an `ERROR`, increments `api_misuses`,
+     and disconnects the offending connection with
+     `ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED` (`6`) (client state
+     `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`, `-13`).
+2. **Safe action path**:
+   - Follow the five-step frame order on every tick:
+     1. `update(endpoint, time)`
+     2. `while ((batch = receive_messages(endpoint)) != NULL) { ... }`
+     3. game simulation
+     4. `can_send_message` -> `start_message` -> write -> `finish_message` (or `abort_message`)
+     5. `send_packets(endpoint)`
+   - Never retain `batch`, `batch->messages[i].data`, or `batch->receipts`
+     pointers past the next `receive_messages`, `update`, `disconnect`, `stop`,
+     or `destroy` call; copy any payload bytes that must outlive the current
+     batch iteration.
+   - Check `receipts_dropped` in `rocketnet_client_stats_t` /
+     `rocketnet_server_stats_t`; if positive, increase `max_message_receipts`
+     so receipt events between frames do not overflow the receipt ring.
+
+### 5.5 Reconnect, Negative Client States, and Session Isolation
+
+1. **Observing negative terminal states (`rocketnet_client_state_t < 0`)**:
+   - When a client handshake fails or an established connection terminates
+     (`SERVER_DISCONNECTED`, `RELIABLE_TIMED_OUT`, `PROTOCOL_VIOLATION`,
+     `CONFIG_MISMATCH`, `MESSAGE_MEMORY_EXHAUSTED`, `MESSAGE_NOT_RECEIVED`,
+     `CONNECT_TOKEN_EXPIRED`, `INVALID_CONNECT_TOKEN`, `CONNECTION_TIMED_OUT`,
+     `CONNECTION_RESPONSE_TIMED_OUT`, `CONNECTION_REQUEST_TIMED_OUT`,
+     `COOKIE_REQUEST_TIMED_OUT`, `CONNECTION_DENIED`),
+     `rocketnet_client_state(client)` remains in that negative state across
+     subsequent `rocketnet_client_update` calls until the caller explicitly
+     calls `rocketnet_client_disconnect(client)` (which resets the state to
+     `ROCKETNET_CLIENT_STATE_DISCONNECTED`, `0`) or starts a new connection
+     with `rocketnet_client_connect(client, new_token)`.
+2. **Handling `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` (`-13`) during reconnect**:
+   - Calling `rocketnet_client_connect` while `rocketnet_client_state(client) > ROCKETNET_CLIENT_STATE_DISCONNECTED`
+     (an active handshake or `CONNECTED` session) is an API misuse: it logs an
+     `ERROR`, increments `api_misuses`, and returns
+     `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`.
+   - Calling `rocketnet_client_connect` from a **negative** terminal state (or
+     after `rocketnet_client_disconnect`) is valid, but if the previous
+     connection's background transport worker has not yet finished exiting
+     (`rocketnet_client_disconnected(client) == false`),
+     `rocketnet_client_connect` initiates retirement of the old worker, keeps
+     the negative public state visible, wipes the temporary token buffer, and
+     returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` without counting
+     `api_misuses` (`tla/ClientSession.tla` `RetryPending`).
+   - **Safe reconnect sequence**:
+     1. Obtain a **fresh** connect token from the backend (a connect token is
+        single-use once consumed by a server).
+     2. Call `rocketnet_client_disconnect(client)` and on each normal game
+        frame run `rocketnet_client_update(client, time)` until
+        `rocketnet_client_disconnected(client)` returns `true`.
+     3. Once `rocketnet_client_disconnected(client)` is `true`, call
+        `rocketnet_client_connect(client, fresh_token)`. Never spin in a
+        blocking same-frame retry loop on `CLIENT_NOT_DISCONNECTED`.
+3. **Generational isolation and lazy server slot reset**:
+   - **Client side**: when `rocketnet_client_disconnected(client)` becomes
+     `true` and the next `rocketnet_client_connect` runs, the retired
+     connection's counters are folded into the client's lifetime totals, the
+     old message/transport objects are destroyed, and the new session is
+     constructed fresh inside `client->block` with new keys, sequence numbers,
+     and reliability windows.
+   - **Server side**: when a client disconnects or is kicked via
+     `rocketnet_server_disconnect_client(server, client_index)`,
+     `rocketnet_server_client_connected(server, client_index)` immediately
+     reads `false` and `rocketnet_server_disconnect_reason(server, client_index)`
+     reports the terminal `rocketnet_disconnect_reason_t`. At the start of the
+     next `rocketnet_server_update`, before that slot index can be assigned to
+     any incoming connection (`tla/RNSlots.tla` `ResetFree`,
+     `tla/RNConnectionMemory.tla` `Reuse`), the server lazily resets the
+     slot's connection region and per-slot statistics
+     (`rocketnet_server_client_stats_t`), ensuring zero state or packet leakage
+     between sessions.
+
+### 5.6 Pending Disconnect/Stop and Safe Destroy, Allocator, and Context Lifetime
+
+1. **Asynchronous shutdown and completion polling (`rocketnet_client_disconnected`, `rocketnet_server_stopped`)**:
+   - `rocketnet_client_disconnect(client)` and `rocketnet_server_stop(server)`
+     request shutdown without blocking the game thread.
+   - While shutdown is in progress:
+     - `rocketnet_client_disconnected(client)` / `rocketnet_server_stopped(server)`
+       returns `false`;
+     - `rocketnet_server_start(server)` refuses to restart with
+       `ROCKETNET_STATUS_SERVER_NOT_STOPPED` (`-16`).
+   - Continue advancing the frame loop (`rocketnet_client_update(client, time)`
+     for retiring client transports) and poll
+     `rocketnet_client_disconnected(client)` or `rocketnet_server_stopped(server)`
+     until it returns `true` before calling `rocketnet_client_destroy(client)`,
+     `rocketnet_server_destroy(server)`, or `rocketnet_server_start(server)`.
+2. **Why early `destroy` is refused and retains memory if a worker is still live**:
+   - Calling `rocketnet_client_destroy` when `!rocketnet_client_disconnected(client)`
+     or `rocketnet_server_destroy` when `!rocketnet_server_stopped(server)`
+     triggers a debug `rocketnet_assert`, increments `api_misuses`, logs an
+     `ERROR`, and attempts at most `32` non-sleeping transport updates
+     (`RN_DESTROY_STOP_UPDATES`).
+   - If the transport worker thread has still not exited after those 32 bounded
+     updates, **`destroy` intentionally leaves the allocation alive and returns
+     without calling `rocketnet_free`** (`"the worker has not exited; the
+     client/server is kept, not freed"`). Freeing an arena while a background
+     worker thread still holds pointers into it would cause a use-after-free
+     or memory corruption.
+3. **Preserving endpoint, allocator, and callback context ownership through `destroy` and `rocketnet_term`**:
+   - Keep the endpoint handle, the `context` pointer passed to `create` /
+     `rocketnet_init_ex`, the custom allocator backing store, the
+     `state_change_callback` context, and the `rocketnet_log_function` context
+     valid and in scope until:
+     1. `rocketnet_client_disconnected(client)` / `rocketnet_server_stopped(server)`
+        returns `true`;
+     2. `rocketnet_client_destroy(client)` / `rocketnet_server_destroy(server)`
+        returns; and
+     3. `rocketnet_term()` returns `ROCKETNET_STATUS_OK`.
+   - If `rocketnet_term()` returns `ROCKETNET_STATUS_LIVE_ALLOCATIONS` (`-4`),
+     one or more endpoints were not destroyed (or an early `destroy` retained a
+     still-running worker). Do not tear down or unmap the custom allocator heap
+     when `LIVE_ALLOCATIONS` is returned; always complete the documented
+     `disconnect`/`stop` -> poll `disconnected`/`stopped` -> `destroy` ->
+     `rocketnet_term` sequence first.
