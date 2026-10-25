@@ -24,6 +24,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_frame_sync.h"
 
 #include <string.h>
 
@@ -321,6 +322,73 @@ static void test_thread_priority_off_frame_sync_takes_no_priority()
 }
 
 REGISTER_UNIT_TEST( test_thread_priority_off_frame_sync_takes_no_priority );
+
+// The time constraint policy values (rocketnet_frame_sync_time_constraint) for
+// the macOS and iOS priority step: a period that does not fit the uint32_t
+// policy fields, or whose period_ns * denom overflows uint64_t, is refused
+// with nothing written, never truncated. Pure: no thread, no clock, no policy
+// call.
+
+static void test_frame_sync_time_constraint_refuses_period_over_uint32()
+{
+    const uint32_t sentinel = 0xDEADBEEF;
+
+    // 5 s on a 1/1 timebase: 5e9 mach units is past UINT32_MAX
+
+    uint32_t period = sentinel;
+    uint32_t computation = sentinel;
+    uint32_t constraint = sentinel;
+    rocketnet_unit_check( rocketnet_frame_sync_time_constraint( 5000000000ULL, 1, 1, &period, &computation, &constraint ) == 0 );
+    rocketnet_unit_check( period == sentinel );
+    rocketnet_unit_check( computation == sentinel );
+    rocketnet_unit_check( constraint == sentinel );
+
+    // 1/60 s on 1/1: period, period / 4 and period / 2
+
+    const uint64_t period_ns = 16666666;
+    rocketnet_unit_check( rocketnet_frame_sync_time_constraint( period_ns, 1, 1, &period, &computation, &constraint ) == 1 );
+    rocketnet_unit_check( period == 16666666 );
+    rocketnet_unit_check( computation == 16666666 / 4 );
+    rocketnet_unit_check( constraint == 16666666 / 2 );
+
+    // 1/60 s on 125/3 (numer 125, denom 3)
+
+    const uint64_t period_mach = period_ns * 3 / 125;
+    rocketnet_unit_check( rocketnet_frame_sync_time_constraint( period_ns, 125, 3, &period, &computation, &constraint ) == 1 );
+    rocketnet_unit_check( period == (uint32_t) period_mach );
+    rocketnet_unit_check( computation == (uint32_t) ( period_mach / 4 ) );
+    rocketnet_unit_check( constraint == (uint32_t) ( period_mach / 2 ) );
+
+    // UINT64_MAX / 2 ns on 125/3: period_ns * 3 overflows uint64_t, refused
+
+    period = sentinel;
+    computation = sentinel;
+    constraint = sentinel;
+    rocketnet_unit_check( rocketnet_frame_sync_time_constraint( UINT64_MAX / 2, 125, 3, &period, &computation, &constraint ) == 0 );
+    rocketnet_unit_check( period == sentinel );
+    rocketnet_unit_check( computation == sentinel );
+    rocketnet_unit_check( constraint == sentinel );
+}
+
+// A wake 2^31 + 1 periods late (rocketnet_frame_sync_advance) reports 2^31 + 1
+// drops, not a wrapped int count. Pure: no thread, no clock.
+
+static void test_frame_sync_advance_counts_drops_past_int_max()
+{
+    const uint64_t period = 1000000;
+    const uint64_t late_periods = ( 1ULL << 31 ) + 1;
+    uint64_t deadline = 0;
+    uint64_t error = 0;
+    const uint64_t woke = late_periods * period + 1;
+    const uint64_t drops = (uint64_t) rocketnet_frame_sync_advance( &deadline, period, woke, &error );
+    rocketnet_unit_check( drops == late_periods );
+    rocketnet_unit_check( error == woke );
+    rocketnet_unit_check( deadline == ( late_periods + 1 ) * period );
+    rocketnet_unit_check( deadline > woke );
+}
+
+REGISTER_UNIT_TEST( test_frame_sync_time_constraint_refuses_period_over_uint32 );
+REGISTER_UNIT_TEST( test_frame_sync_advance_counts_drops_past_int_max );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 REGISTER_UNIT_TEST( test_thread_priority_windows_timer_period_at_init_and_term );

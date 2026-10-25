@@ -613,6 +613,8 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
 const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+/** @brief Makes the next `sends` link sends through an active simulator take the lock-miss path, for a unit test. */
+void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
 
 // a NULL client_transport is a counted no-op that returns 0.
 /** @brief Read the server-assigned index of the connected client.

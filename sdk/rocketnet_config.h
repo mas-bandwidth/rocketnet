@@ -228,6 +228,9 @@ struct rocketnet_transport_ladder_t
     int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
+// the ladder must hold every transport the registry can put in an auto order.
+static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "ROCKETNET_MAX_TRANSPORT_CANDIDATES is smaller than the transport registry" );
+
 // parse a candidate list against an explicit availability order --
 // explicit so tests can exercise any platform's table anywhere. value
 // NULL, empty, or "auto" expands to the availability order itself (which

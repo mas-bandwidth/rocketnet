@@ -58,6 +58,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
+// each queue's UMEM: the send half (ROCKETNET_XDP_NUM_FRAMES / 2 frames from
+// offset 0), then exactly the receive frames put on the fill ring at create
+#define ROCKETNET_XDP_UMEM_FRAMES     ( ROCKETNET_XDP_NUM_FRAMES / 2 + ROCKETNET_XDP_FILL_FRAMES )
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
@@ -93,6 +96,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FILL_FRAMES <= ROCKETNET_XDP_RECV_QUEUE_S
                          "every receive frame fits the RX ring and the worker's pending return at once" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FILL_FRAMES <= ROCKETNET_XDP_NUM_FRAMES / 2,
                          "the receive frames come from the receive half of the UMEM" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_UMEM_FRAMES <= ROCKETNET_XDP_NUM_FRAMES,
+                         "the UMEM holds the send half and only the receive frames the fill ring is given" );
+ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE <= 0x7fffffffLL,
+                         "a queue's UMEM size in bytes fits the int the transport allocates it with" );
 
 #endif // #if ROCKETNET_XDP
 
@@ -248,6 +255,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 
 #define ROCKETNET_SOCKET_SEND_BUFFER_SIZE                              1000000
 #define ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE                           1000000
+
+// A server socket's receive request holds one update's inbound packets at
+// max_clients (rocketnet_server_receive_buffer_bytes, USAGE.md "Receive
+// buffer sizing"): max_clients x the per-client receive rate x the longest
+// update interval x the margin, never below ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE
+// and capped at INT_MAX. The longest interval is the slowest supported update
+// rate; the margin covers the kernel's per-packet accounting, which charges
+// more than the packet bytes.
+#define ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ                              10
+#define ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN                               2
 
 #define ROCKETNET_VALUE_TRACKER_HISTORY                                   1024
 

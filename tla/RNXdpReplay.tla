@@ -10,11 +10,13 @@
 (* design's KernelWindow is W, the userspace replay window.  The kernel    *)
 (* never writes the map.  Userspace writes it once per server update: the  *)
 (* transport walks its client slots, FORGETs the address of every slot     *)
-(* that held a mark and is no longer connected, then MARKs every connected *)
+(* that was seen connected and is no longer connected, then MARKs every    *)
 (* slot whose session replay window's highest_opened is nonzero and        *)
 (* differs from what it last marked; the transport applies the forgets, then  *)
 (* the marks, in one commit.  The kernel may refuse a forget; the refused  *)
 (* forget stays pending and the next commit applies it first, again.       *)
+(* The same accepted forget drops the reply MAC learned for that address; *)
+(* slots are remembered as seen even before they acquire a replay mark.   *)
 (*                                                                         *)
 (* A client slot is identified with its address here: one live session    *)
 (* per address, a reconnect from the same address being a new session     *)
@@ -41,13 +43,15 @@ CONSTANTS
     MaxSeq,       \* the highest sequence a client sends or a forger names
     W,            \* the replay window depth: ROCKETNET_REPLAY_WINDOW_BITS
     Sessions,     \* the number of sessions over the whole run
-    MaxInFlight   \* the bound on packets in the network at once
+    MaxInFlight,  \* the bound on packets in the network at once
+    ForgetCapacity \* fixed pending-forget entries, deduplicated by address
 
 ASSUME /\ Addresses # {}
        /\ MaxSeq \in Nat \ {0}
        /\ W \in Nat \ {0}
        /\ Sessions \in Nat \ {0}
        /\ MaxInFlight \in Nat \ {0}
+       /\ ForgetCapacity \in Nat
 
 (***************************************************************************)
 (* Rule switches, definitions with the design's values, each overridden    *)
@@ -56,6 +60,8 @@ ASSUME /\ Addresses # {}
 (*     design: FALSE, the kernel only looks up).                           *)
 (*   WalkForgets: the walk forgets the old address of a slot that held a   *)
 (*     mark and is no longer connected (the design: TRUE).                 *)
+(*   WalkForgetsUnmarked: the walk also forgets a released slot that was   *)
+(*     seen connected before it acquired a mark (the design: TRUE).        *)
 (*   KernelWindow: the distance behind the mark the kernel drops at (the   *)
 (*     design: W, ROCKETNET_XDP_REPLAY_WINDOW, the userspace window).      *)
 (*   KeepFailedForgets: a forget the kernel refused stays pending for the  *)
@@ -65,6 +71,7 @@ ASSUME /\ Addresses # {}
 (***************************************************************************)
 KernelAdvances    == FALSE
 WalkForgets       == TRUE
+WalkForgetsUnmarked == TRUE
 KernelWindow      == W
 KeepFailedForgets == TRUE
 
@@ -89,17 +96,21 @@ VARIABLES
     opened,         \* opened[a]: highest_opened of the live session (userspace)
     reached,        \* ghost: reached[s], the highest_opened session s reached
     marked,         \* marked[a]: what the transport last marked, 0 for none
+    seen,           \* seen[a]: the walk saw the slot connected at a
+    seenBeforeRelease, \* ghost: the walk had seen it before Release
+    replyMac,       \* replyMac[a]: learned reply MAC, 0 for none
     kmap,           \* kmap[a]: the kernel entry, NoEntry for none
     net,            \* in-flight packets: on the wire, or past the kernel
     pendingForget,  \* the addresses the walk forgets, applied by Commit
     pendingMark,    \* the marks the walk takes, applied by Commit
+    pendingMacForget, \* accepted reply-MAC forgets, applied by Commit
     phase,          \* "run" (packet processing) or "flush" (walk done)
-    settle,         \* settle[a]: "clear", "released" or "walked" since Release(a)
     dropped,        \* ghost: genuine packets the kernel dropped
     forgetFailures  \* the forgets the kernel refused so far, at most the budget
 
-vars == <<session, nextSession, sent, opened, reached, marked, kmap, net,
-          pendingForget, pendingMark, phase, settle, dropped, forgetFailures>>
+vars == <<session, nextSession, sent, opened, reached, marked, seen,
+          seenBeforeRelease, replyMac, kmap, net, pendingForget,
+          pendingMark, pendingMacForget, phase, dropped, forgetFailures>>
 
 Drops == [addr : Addresses, seq : Seqs, session : 0..Sessions,
           against : 0..Sessions]
@@ -111,12 +122,16 @@ TypeOK ==
     /\ opened \in [Addresses -> 0..MaxSeq]
     /\ reached \in [SessionIds -> 0..MaxSeq]
     /\ marked \in [Addresses -> 0..MaxSeq]
+    /\ seen \in [Addresses -> BOOLEAN]
+    /\ seenBeforeRelease \in [Addresses -> BOOLEAN]
+    /\ replyMac \in [Addresses -> 0..Sessions]
     /\ kmap \in [Addresses -> Entries]
     /\ net \subseteq Packets
     /\ pendingForget \subseteq Addresses
+    /\ Cardinality(pendingForget) <= ForgetCapacity
     /\ pendingMark \subseteq [addr : Addresses, hw : Seqs, sess : SessionIds]
+    /\ pendingMacForget \subseteq Addresses
     /\ phase \in {"run", "flush"}
-    /\ settle \in [Addresses -> {"clear", "released", "walked"}]
     /\ dropped \subseteq Drops
     /\ forgetFailures \in 0..ForgetFailureBudget
 
@@ -127,12 +142,15 @@ Init ==
     /\ opened = [a \in Addresses |-> 0]
     /\ reached = [s \in SessionIds |-> 0]
     /\ marked = [a \in Addresses |-> 0]
+    /\ seen = [a \in Addresses |-> FALSE]
+    /\ seenBeforeRelease = [a \in Addresses |-> FALSE]
+    /\ replyMac = [a \in Addresses |-> NoSession]
     /\ kmap = [a \in Addresses |-> NoEntry]
     /\ net = {}
     /\ pendingForget = {}
     /\ pendingMark = {}
+    /\ pendingMacForget = {}
     /\ phase = "run"
-    /\ settle = [a \in Addresses |-> "clear"]
     /\ dropped = {}
     /\ forgetFailures = 0
 
@@ -141,24 +159,22 @@ Max(x, y) == IF x >= y THEN x ELSE y
 (***************************************************************************)
 (* Connect(a): a new session from a; its sequences restart at 1 and its    *)
 (* highest_opened is 0.  A userspace step, so only while packets are being *)
-(* processed.  Enabled only once a Walk, and a Commit that applied the     *)
-(* forget, have run since the last Release(a): the assumption              *)
-(* HandshakeSpansAnUpdate, true because a slot exists only after a         *)
-(* request, a challenge and a response round trip while the walk runs      *)
-(* every update; with a refused forget, the guarantee for a reconnect      *)
-(* starts at the commit where the kept forget lands.                       *)
+(* processed. A reconnect may arrive before a retained delete succeeds;   *)
+(* the model keeps that interleaving because the kernel map still sees the *)
+(* source address while the delete is owed.                                *)
 (***************************************************************************)
 Connect(a) ==
     /\ phase = "run"
     /\ session[a] = NoSession
-    /\ settle[a] = "clear"
     /\ nextSession <= Sessions
     /\ session' = [session EXCEPT ![a] = nextSession]
     /\ nextSession' = nextSession + 1
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
-    /\ UNCHANGED <<reached, marked, kmap, net, pendingForget, pendingMark,
-                   phase, settle, dropped, forgetFailures>>
+    /\ replyMac' = [replyMac EXCEPT ![a] = nextSession]
+    /\ UNCHANGED <<reached, marked, seen, seenBeforeRelease, kmap, net,
+                   pendingForget, pendingMark, pendingMacForget, phase,
+                   dropped, forgetFailures>>
 
 (* ClientSend(a): the live session sends its next genuine sequence.        *)
 ClientSend(a) ==
@@ -169,8 +185,9 @@ ClientSend(a) ==
     /\ net' = net \cup {[addr |-> a, seq |-> sent[a] + 1,
                          session |-> session[a], genuine |-> TRUE,
                          stage |-> "wire", copy |-> 1]}
-    /\ UNCHANGED <<session, nextSession, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped,
+    /\ UNCHANGED <<session, nextSession, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures>>
 
 (* Forge(a, s): an attacker spoofing a sends any sequence; it never opens. *)
@@ -178,8 +195,9 @@ Forge(a, s) ==
     /\ Cardinality(net) < MaxInFlight
     /\ net' = net \cup {[addr |-> a, seq |-> s, session |-> session[a],
                          genuine |-> FALSE, stage |-> "wire", copy |-> 1]}
-    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped,
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures>>
 
 (* Duplicate(p): the network delivers a second copy of a packet.           *)
@@ -188,8 +206,9 @@ Duplicate(p) ==
     /\ p.copy = 1
     /\ Cardinality(net) < MaxInFlight
     /\ net' = net \cup {[p EXCEPT !.copy = 2]}
-    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, kmap,
-                   pendingForget, pendingMark, phase, settle, dropped,
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
                    forgetFailures>>
 
 (***************************************************************************)
@@ -220,8 +239,9 @@ KernelFilter(p) ==
                                        [hw |-> p.seq, sess |-> p.session]]
                                ELSE kmap
                   /\ UNCHANGED dropped
-    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked,
-                   pendingForget, pendingMark, phase, settle, forgetFailures>>
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, replyMac, pendingForget, pendingMark,
+                   pendingMacForget, phase, forgetFailures>>
 
 (***************************************************************************)
 (* UserOpen(p): userspace receives a packet the kernel passed.  A genuine  *)
@@ -237,8 +257,10 @@ UserOpen(p) ==
          THEN /\ opened' = [opened EXCEPT ![p.addr] = Max(@, p.seq)]
               /\ reached' = [reached EXCEPT ![p.session] = Max(@, p.seq)]
          ELSE UNCHANGED <<opened, reached>>
-    /\ UNCHANGED <<session, nextSession, sent, marked, kmap, pendingForget,
-                   pendingMark, phase, settle, dropped, forgetFailures>>
+    /\ UNCHANGED <<session, nextSession, sent, marked, seen,
+                   seenBeforeRelease, replyMac, kmap, pendingForget,
+                   pendingMark, pendingMacForget, phase, dropped,
+                   forgetFailures>>
 
 (* Release(a): the session ends (timeout, disconnect).  Userspace.         *)
 Release(a) ==
@@ -247,9 +269,10 @@ Release(a) ==
     /\ session' = [session EXCEPT ![a] = NoSession]
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
-    /\ settle' = [settle EXCEPT ![a] = "released"]
-    /\ UNCHANGED <<nextSession, reached, marked, kmap, net, pendingForget,
-                   pendingMark, phase, dropped, forgetFailures>>
+    /\ seenBeforeRelease' = [seenBeforeRelease EXCEPT ![a] = seen[a]]
+    /\ UNCHANGED <<nextSession, reached, marked, seen, replyMac, kmap, net,
+                   pendingForget, pendingMark, pendingMacForget, phase,
+                   dropped, forgetFailures>>
 
 (***************************************************************************)
 (* Walk: once per update, after packet processing and before the flush.   *)
@@ -259,7 +282,9 @@ Release(a) ==
 (* WalkForgets = FALSE never forgets a released slot.                      *)
 (***************************************************************************)
 Forgets == IF WalkForgets
-             THEN {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
+             THEN IF WalkForgetsUnmarked
+                    THEN {a \in Addresses : seen[a] /\ session[a] = NoSession}
+                    ELSE {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
              ELSE {}
 
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
@@ -267,19 +292,29 @@ Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
                                      /\ opened[b] # 0
                                      /\ opened[b] # marked[b]}}
 
+AdmittedNewForgets == {accepted \in SUBSET (Forgets \ pendingForget) :
+    /\ Cardinality(pendingForget \cup accepted) <= ForgetCapacity
+    /\ \/ accepted = (Forgets \ pendingForget)
+       \/ Cardinality(pendingForget \cup accepted) = ForgetCapacity}
+
 Walk ==
     /\ phase = "run"
-    /\ pendingForget' = pendingForget \cup Forgets
-    /\ pendingMark' = Marks
-    /\ marked' = [a \in Addresses |->
-                    IF \E m \in Marks : m.addr = a THEN opened[a]
-                    ELSE IF a \in Forgets THEN 0
-                    ELSE marked[a]]
-    /\ settle' = [a \in Addresses |->
-                    IF settle[a] = "released" THEN "walked" ELSE settle[a]]
-    /\ phase' = "flush"
-    /\ UNCHANGED <<session, nextSession, sent, opened, reached, kmap, net,
-                   dropped, forgetFailures>>
+    /\ \E accepted \in AdmittedNewForgets :
+        /\ pendingForget' = pendingForget \cup accepted
+        /\ pendingMark' = Marks
+        /\ pendingMacForget' = accepted
+        /\ marked' = [a \in Addresses |->
+                        IF \E m \in Marks : m.addr = a THEN opened[a]
+                        ELSE IF a \in accepted THEN 0
+                        ELSE marked[a]]
+        /\ seen' = [a \in Addresses |->
+                      IF a \in accepted THEN FALSE
+                      ELSE IF session[a] # NoSession THEN TRUE
+                      ELSE seen[a]]
+        /\ phase' = "flush"
+        /\ UNCHANGED <<session, nextSession, sent, opened, reached,
+                       seenBeforeRelease, replyMac, kmap, net, dropped,
+                       forgetFailures>>
 
 (* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.  The kernel may refuse  *)
@@ -300,13 +335,14 @@ Commit ==
                             ELSE afterForget[a]]
         /\ forgetFailures' = forgetFailures + Cardinality(failed)
         /\ pendingForget' = IF KeepFailedForgets THEN failed ELSE {}
-        /\ settle' = [a \in Addresses |->
-                        IF settle[a] = "walked" /\ a \notin pendingForget'
-                          THEN "clear" ELSE settle[a]]
+        /\ replyMac' = [a \in Addresses |->
+                          IF a \in pendingMacForget
+                            THEN NoSession ELSE replyMac[a]]
     /\ pendingMark' = {}
+    /\ pendingMacForget' = {}
     /\ phase' = "run"
-    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, net,
-                   dropped>>
+    /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
+                   seenBeforeRelease, net, dropped>>
 
 Next ==
     \/ \E a \in Addresses : Connect(a) \/ ClientSend(a) \/ Release(a)
@@ -368,4 +404,14 @@ MarksTakenFromTheTruth ==
     \A a \in Addresses :
         kmap[a].hw = 0 \/ (kmap[a].sess \in SessionIds
                            /\ kmap[a].hw <= reached[kmap[a].sess])
+
+ReleasedSlotForgetsItsReplyMac ==
+    \A a \in Addresses :
+        /\ (seenBeforeRelease[a] /\ session[a] = NoSession /\ phase = "flush"
+            /\ replyMac[a] # NoSession)
+            => (a \in pendingMacForget
+                \/ Cardinality(pendingForget) = ForgetCapacity)
+        /\ (seenBeforeRelease[a] /\ session[a] = NoSession /\ phase = "run"
+            /\ ~seen[a])
+            => replyMac[a] = NoSession
 =============================================================================

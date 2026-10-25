@@ -54,3 +54,20 @@ passes the keypair rung, so `spent` holds when the slots rung refuses, and
 `CheapRefusalsFirst` fails exactly as the tally test fails at BASE with
 keypair 1. The fix moves the slots rung ahead of the keypair, and the same
 packet is refused with the tally at zero.
+
+## Response binding
+
+`MCReceiveOrder.ResponseBind` models an opened response for an unexpired
+mapped token: it records the address binding and releases that address's
+request claim. `BoundHasNoClaim` requires every bound token to have no claim
+once a request is done. The instance explores fresh unbound-token requests
+between bindings; token expiry, binding eviction and reconnect are outside
+this instance. Existing mapping-removal and request-order witnesses remain.
+
+`MCReceiveOrderBrokenClaimOutlivesBinding.cfg` overrides
+`ResponseBindReleasesClaim` with FALSE. Its accepted request leaves a claim;
+the following response writes the binding but retains that claim, violating
+`BoundHasNoClaim`. This is the missing claim release in
+`rocketnet_server_process_connection_response`, pinned by
+`test_claim_released_when_response_binds_token`: a second address passes the
+claim check after the response but remains refused by the token binding.

@@ -854,7 +854,8 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     for ( uint32_t i = 0; i < count; i++ )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
-        if ( descriptor->live && descriptor->number == number + i )
+        // Descriptors hold the 24-bit wire number, so compare every fragment across the 2^24 wrap the same way.
+        if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
             descriptor->live = 0;
             descriptor->block_count = 0;
@@ -1261,7 +1262,7 @@ struct rn_ordered_plan_t
 // (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
 // chunk's, a packet the transport refused); a sent one is due when its class's
 // delay has passed since its last send, the same delay every time
-// (RNResendTiming!Walk, no back-off). The walk stops at the first number not
+// (tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
 // yet due. Returns false when more is due than this update can write. On
 // return *last_unsent is the last never-sent number at the FIFO's head (where
 // new numbers of this class join), or RN_RESEND_NONE.
@@ -1421,17 +1422,11 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         return 0;
 
     // 3. Packets (9.3), under the send budget (R6)
-    const int written = rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
-
-    // 4. Each resend written is counted; the delay never backs off (6.4,
-    // RNResendTiming)
-    for ( int i = 0; i < plan.count; i++ )
-    {
-        if ( items[i].taken && items[i].resend )
-            rn_channels_count( region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
-    }
-
-    return written;
+    // 4. A resend is counted when the packet carrying it is sent, at
+    // rn_packet_builder_commit, never here: a refused packet's resends are
+    // counted by the packet that carries them out. The delay never backs off
+    // (6.4, RNResendTiming).
+    return rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
 }
 
 void rn_ordered_commit( struct rn_ordered_t * ordered, int packet_index, uint64_t packet_id, double now )

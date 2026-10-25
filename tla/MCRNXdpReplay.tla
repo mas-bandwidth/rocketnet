@@ -11,6 +11,9 @@
 (* sets KernelWindow <- KernelWindowBroken (the kernel window one short of *)
 (* the userspace window, the shape of the old 16 against 4096) and must    *)
 (* fail FreshGenuineNeverDropped;                                          *)
+(* MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg sets                        *)
+(* WalkForgetsUnmarked <- WalkForgetsUnmarkedBroken and must fail          *)
+(* ReleasedSlotForgetsItsReplyMac;                                         *)
 (* MCRNXdpReplayBrokenFailedForgetDropped.cfg sets                         *)
 (* KeepFailedForgets <- KeepFailedForgetsBroken (a forget the kernel       *)
 (* refused is dropped, not kept for the next commit) and must fail         *)
@@ -22,6 +25,7 @@ CONSTANTS A1
 
 KernelAdvancesBroken == TRUE
 WalkForgetsBroken    == FALSE
+WalkForgetsUnmarkedBroken == FALSE
 KernelWindowBroken   == W - 1
 KeepFailedForgetsBroken == FALSE
 =============================================================================

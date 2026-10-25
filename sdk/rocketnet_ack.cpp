@@ -927,9 +927,19 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
 
+    // refused: a sequence at least one received ring behind the high-water
+    // mark. Replay admits sequences that far back (its window is wider than
+    // this ring), but such a sequence is below the stats window base, so it
+    // is never counted, and its slot holds a newer sequence of [base,
+    // highest] that the write would erase (tla/RNServerStats.tla Write,
+    // invariant RetainedIsNewest)
+    if ( endpoint->highest_received_sequence >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE &&
+         sequence <= endpoint->highest_received_sequence - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
+        return;
+
     // the stats window moves first, then the counted record this write
-    // replaces (a duplicate, or a newer one a late arrival lands on) leaves,
-    // then the new record is counted if it lands in the window
+    // replaces (a duplicate inside the window) leaves, then the new record
+    // is counted if it lands in the window
     const uint64_t highest = sequence > endpoint->highest_received_sequence ? sequence : endpoint->highest_received_sequence;
     rocketnet_ack_stats_received_advance( endpoint, highest );
     const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );

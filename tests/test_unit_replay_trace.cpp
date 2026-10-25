@@ -12,13 +12,14 @@
 // every action sequence of length up to five on a small sequence alphabet,
 // comparing after each step which sequences each side accepts as new.
 //
-// The reference carries the model's two fix constants (tla/ReplayWindow.tla
-// :50-57) at the values the code implements today -- ClearedWords = 4 (the
-// long-skip branch clears window[0..3], sdk/rocketnet_replay.cpp:56-59) and
-// GateBeforeAdvance = FALSE (the server advances at :962 before it checks the
-// slot at :967) -- so the trace confirms the code and the model agree as the
-// code stands. The two named witness tests below assert the rule instead and
-// are red at BASE until their fix cards land, which flips these constants.
+// The reference carries the model's two fix constants (the CONSTANTS of
+// tla/ReplayWindow.tla) at the rule values the code now implements --
+// ClearedWords = Words
+// (a long skip clears the whole ring) and GateBeforeAdvance = TRUE (the server
+// checks the slot before it advances the window). The trace drives the raw
+// advance with the reference's gate disabled; the two named witness tests
+// below assert the two rules against the code itself and are registered as
+// ordinary tests that pass.
 
 #include "test_unit_registry.h"
 
@@ -50,11 +51,11 @@ static const int k_model_words = ROCKETNET_REPLAY_WINDOW_BITS / 64;
 
 struct replay_window_ref_t
 {
-    // model constants (tla/ReplayWindow.tla:50-57)
+    // model constants (the CONSTANTS of tla/ReplayWindow.tla)
     int cleared_words;          // ClearedWords: words the long-skip branch clears
     int gate_before_advance;    // GateBeforeAdvance: check the slot before advancing
 
-    // model state (tla/ReplayWindow.tla:67-72)
+    // model state (the VARIABLES of tla/ReplayWindow.tla)
     uint64_t highest;                       // highest_opened
     uint64_t window[k_model_words];         // the ring, the code's exact bit layout
     std::set<uint64_t> received;            // ghost: in-range sequences that opened
@@ -72,7 +73,7 @@ struct replay_window_ref_t
         connected = 0;
     }
 
-    // Floor (tla/ReplayWindow.tla:91)
+    // Floor (tla/ReplayWindow.tla:108)
     uint64_t floor() const
     {
         return highest >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS ? highest - ROCKETNET_REPLAY_WINDOW_BITS + 1 : 1;
@@ -83,9 +84,9 @@ struct replay_window_ref_t
         return (int) ( s % ROCKETNET_REPLAY_WINDOW_BITS );
     }
 
-    // AlreadyReceived (tla/ReplayWindow.tla:100-103); the code's
-    // rocketnet_replay_already_received, sdk/rocketnet_replay.cpp:27-40.
-    // STANDARD.md:1539-1541 (Replay Protection).
+    // AlreadyReceived (tla/ReplayWindow.tla); the code's
+    // rocketnet_replay_already_received.
+    // TRANSPORT.md t14 Replay protection.
     int already_received( uint64_t s ) const
     {
         if ( s > highest )
@@ -110,15 +111,16 @@ struct replay_window_ref_t
 
     void prune( std::set<uint64_t> & set_ )
     {
-        // received' = { t in received : t + W > highest } (tla:140); ascending,
+        // received' = { t in received : t + W > highest } (tla/ReplayWindow.tla,
+        // Advance); ascending,
         // so the dropped entries are the smallest.
         std::set<uint64_t>::iterator it = set_.begin();
         while ( it != set_.end() && *it + (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS <= highest )
             it = set_.erase( it );
     }
 
-    // Advance (tla/ReplayWindow.tla:133-140); the code's rocketnet_replay_advance,
-    // sdk/rocketnet_replay.cpp:42-70. STANDARD.md:1498-1501 (Reading packets).
+    // Advance (tla/ReplayWindow.tla); the code's rocketnet_replay_advance.
+    // TRANSPORT.md t14 Replay protection.
     void advance( uint64_t s )
     {
         if ( s > highest )
@@ -126,8 +128,8 @@ struct replay_window_ref_t
             uint64_t skipped = s - highest;
             if ( skipped >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS )
             {
-                // Cleared (tla:126-131), the long-skip branch: clear words
-                // 0..cleared_words-1, as sdk/rocketnet_replay.cpp:56-59.
+                // Cleared (tla/ReplayWindow.tla), the long-skip branch: clear every
+                // word, ClearedWords = Words.
                 for ( int w = 0; w < cleared_words; w++ )
                     window[w] = 0;
             }
@@ -143,9 +145,9 @@ struct replay_window_ref_t
         prune( received );
     }
 
-    // Receive (tla/ReplayWindow.tla:162-170); the session receive gate,
-    // sdk/rocketnet_server_protocol.cpp:962-972. STANDARD.md:1486-1494
-    // (Reading packets: a slotless mapping is ignored before the mark).
+    // Receive (tla/ReplayWindow.tla); the session receive gate.
+    // TRANSPORT.md t10 step 12 (a slotless mapping is ignored before the
+    // mark), the rule GateBeforeAdvance = TRUE.
     void receive( uint64_t s )
     {
         if ( connected || !gate_before_advance )
@@ -159,7 +161,7 @@ struct replay_window_ref_t
         }
     }
 
-    // Connect (tla/ReplayWindow.tla:175-178); sdk/rocketnet_server_protocol.cpp:710-713.
+    // Connect (tla/ReplayWindow.tla); the server's response path.
     void connect_()
     {
         connected = 1;
@@ -199,7 +201,7 @@ static void replay_trace_compare( const replay_window_ref_t & model, const struc
     dynamic[dn++] = f;
     dynamic[dn++] = f + 1;
     // sequence 0 is out of the ring and the real code asserts it away
-    // (rocketnet_replay_already_received, sdk/rocketnet_replay.cpp:29-30);
+    // (rocketnet_replay_already_received, sdk/rocketnet_replay.cpp);
     // the model's already_received is likewise undefined at 0, so a probe
     // set built from highest == 0 must never emit it.
     if ( h != 0 )
@@ -239,8 +241,10 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
         replay_window_ref_t saved_model = model;
         struct rocketnet_replay_protection_t saved_real = real;
 
-        // GateBeforeAdvance = FALSE today, so Receive always advances; the
-        // real code does the same at sdk/rocketnet_server_protocol.cpp:962.
+        // The trace drives the raw advance: the reference's gate is disabled
+        // so its Receive always advances, and rocketnet_replay_advance is the
+        // code's advance. The server's gate before the advance (the rule,
+        // GateBeforeAdvance = TRUE) is asserted by the witness below.
         model.receive( s );
         rocketnet_replay_advance( &real, s );
 
@@ -270,17 +274,18 @@ static void test_replay_window_model_trace()
 }
 
 // ---------------------------------------------------------------------------
-// The two reversed witnesses, by name. Each asserts the correct behaviour and
-// is red at BASE while its defect card is still open, so each is registered
-// with the expected-fail marker naming the card.
+// The two witnesses, by name. Each asserts a rule the code now implements:
+// ClearedWords = Words for the long skip and GateBeforeAdvance = TRUE for the
+// slot gate. Both are registered as ordinary tests and pass.
 // ---------------------------------------------------------------------------
 
 // F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189): the
-// ClearedWords = Words rule (tla/ReplayWindow.tla:53-54) -- an advance of at
+// ClearedWords = Words rule (the CONSTANTS of tla/ReplayWindow.tla) -- an
+// advance of at
 // least the window width forgets everything, so a genuine in-range packet is
-// never refused as already received. STANDARD.md:1539-1541. At BASE
-// sdk/rocketnet_replay.cpp:56-59 clears only window[0..3] and the stale bit
-// for 300 reads as received (README-ReplayWindow.md "What TLC found" 1).
+// never refused as already received. TRANSPORT.md t14 Replay protection. The
+// long skip now clears the whole ring, ClearedWords = Words
+// (README-ReplayWindow.md "What TLC found" 1).
 static void test_replay_long_skip_clears_the_whole_window()
 {
     struct rocketnet_replay_protection_t replay;
@@ -308,10 +313,10 @@ static void test_replay_long_skip_clears_the_whole_window()
 }
 
 // OV-34 (rnfix-replay-advanced-after-connect-check-r2): the GateBeforeAdvance
-// rule (tla/ReplayWindow.tla:56-57, 162-170) -- a mapping without a slot never
+// rule (the CONSTANTS and Receive of tla/ReplayWindow.tla) -- a mapping without a slot never
 // moves its session window, so the server checks the slot before the mark.
-// STANDARD.md:1486-1494. At BASE sdk/rocketnet_server_protocol.cpp:962
-// advances before :967 checks client_index, so the window moves.
+// TRANSPORT.md t10 step 12. The server now gates before the advance,
+// GateBeforeAdvance = TRUE.
 static void test_slotless_packet_never_moves_the_session_window()
 {
     struct rocketnet_server_protocol_t server;

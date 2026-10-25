@@ -1,5 +1,63 @@
 # Native transports
 
+## Choosing a transport
+
+Most games never name a transport: leave `transport` `NULL` and each endpoint
+takes `auto`, the platform's order below, and the first transport that starts
+wins. Read the result with `rocketnet_server_transport_name` or
+`rocketnet_client_transport_name`. The ranks are the registry's
+(`sdk/rocketnet_drivers.inc`); a lower rank is tried first, "pin only" means
+`auto` never picks it and only a name selects it, and "-" means that endpoint
+does not have the transport.
+
+| Transport | Platform | Server rank | Client rank | What it needs from the host |
+| --- | --- | --- | --- | --- |
+| `xdp` | Linux | 10 | - | root, a NIC driver with AF_XDP, a real port (not 0), and a build with XDP compiled in; see [docs/LINUX.md](docs/LINUX.md), section 6 |
+| `gso` | Linux | 20 | pin only | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_xdp_queues` at most 32 |
+| `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_xdp_queues` at most 32 |
+| `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](docs/MACOS.md) |
+| `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
+| `iocp` | Windows | 40 | - | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](docs/WINDOWS.md) |
+| `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region; see [docs/WINDOWS.md](docs/WINDOWS.md) |
+| `loopback` | every platform | pin only | pin only | nothing: both ends in one process, no socket; for tests and tools |
+
+So `auto` resolves to:
+
+| Platform | Server, development build | Server, production build | Client |
+| --- | --- | --- | --- |
+| Linux | `xdp`, `gso`, `io_uring`, `portable` | `xdp`, `gso`, `io_uring`, `portable` | `portable` |
+| macOS | `msgx`, `portable` | `msgx`, `portable` | `msgx`, `portable` |
+| Windows | `portable`, `iocp`, `rio` | `iocp`, `rio`, `portable` | `portable` |
+
+A Linux build without liburing has no `io_uring` row. `rio` ranks after
+`iocp`, so `auto` reaches it only when `iocp` refuses; pin it to run it.
+
+**Pinning.** Set `transport` in `rocketnet_server_config_t` or
+`rocketnet_client_config_t`, or set `ROCKETNET_SERVER_TRANSPORT` or
+`ROCKETNET_CLIENT_TRANSPORT`, which overrides the config and is read once, at
+create. The value is `auto`, one name, or a comma list such as `gso,portable`,
+tried in that order with nothing appended.
+
+**What a pin that cannot be met returns:**
+
+| Case | Result |
+| --- | --- |
+| An unknown name, an empty element, or `auto` inside a list | `rocketnet_server_create` or `rocketnet_client_create` fails with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`; the log lists the valid names |
+| A known name this platform or endpoint does not have (`iocp` on Linux, `gso` on macOS, any server-only transport for a client) | skipped with an info line; the rest of the list is the pin |
+| Every name in the list skipped | the endpoint uses its own `auto`, with a warning, so one setting can be deployed to mixed hosts |
+| `xdp` named in a build that compiled XDP out | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` |
+| Every listed transport refused to start (no privilege, no RIO, memory budget) | `rocketnet_server_start` or `rocketnet_client_connect` fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`; the log names each refusal |
+| A public address with port 0 and only transports that cannot report the port they were given (`xdp`) | `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED` |
+| A transport that cannot serve both requested address families | `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` |
+
+A pin never falls back silently: a list with at least one name this endpoint
+has is tried exactly as written, or the call fails. The per-platform guides
+show the pins in use: [docs/LINUX.md](docs/LINUX.md),
+[docs/MACOS.md](docs/MACOS.md) and [docs/WINDOWS.md](docs/WINDOWS.md). The
+rest of this page is the engineering detail behind the table.
+
+## The registry and the backend interface
+
 The public transport API in `rocketnet.h` is independent of the backend.
 Native transports implement the internal transport interface in
 `sdk/rocketnet_driver.h`; they do not add binding or wire-format rules. For
@@ -671,8 +729,10 @@ behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
 GCC or Clang on a little-endian, non-Windows host, and its cases are in the
 unit suite on Linux only. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
-the helper's kernel source cited. `test_xdp_transport_host_every_counter_has_a_case` fails
-when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
+the helper's kernel source cited. the counter-row check `test_xdp_transport_host_every_counter_has_a_case`
+runs in the static source-audit binary `./bin/source_audit` (which CI runs on
+a Linux leg) and fails when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row
+that moves it. To reproduce
 the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
