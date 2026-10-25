@@ -193,8 +193,8 @@ of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 profile is 22,896,245 bytes (Linux x86-64, development build, io_uring and
 XDP built; each is the lifecycle peak the caller's allocator sees, for the
 largest transport the ladder can grant). On Windows x64 with MSVC, the
-server/client figures are 1,523,705,813 / 22,968,879 bytes in development builds
-and 1,517,309,449 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`.
+server/client figures are 1,591,206,044 / 22,968,879 bytes in development builds
+and 1,584,809,680 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`.
 These are configuration calculations and planned allocator peaks, not
 measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` figure. Those figures exclude the memory the
