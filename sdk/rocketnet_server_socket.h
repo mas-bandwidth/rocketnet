@@ -81,8 +81,14 @@ void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_s
 // that commit superseded it: the entry is then the newer session's, and the
 // stale forget is dropped (tla/RNXdpReplay.tla, RetryNeverDeletesNewerMark).
 // A failed syscall adds to the commit failure
-// count and logs one debug line naming the call, never a key. Forget returns
-// false when the pending buffer is full, so the walk keeps its slot record.
+// count and logs one debug line naming the call, never a key. A mark the
+// kernel refuses is kept too and applied again in the next commit, unless a
+// newer mark of its key replaces it or a queued forget of its key drops it
+// (MarkOwedUntilApplied). Until a new session's first mark (a zero) is
+// applied, send_packets holds that session's keep-alives, so it is not
+// greeted over an older session's entry (HoldGreetingUntilMarked). Forget and
+// mark return false when the pending buffer is full, so the walk keeps its
+// slot record and asks again.
 
 bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
 
@@ -92,7 +98,7 @@ bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index );
 
-void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
+bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
 
 void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket );
 

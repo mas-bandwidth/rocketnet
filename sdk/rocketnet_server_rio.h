@@ -120,6 +120,10 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 // receive slices whose re-post was refused and that wait for the worker's
 // next pass to re-post them
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
+// Hold worker send pickup and stop processing until released.
+void rocketnet_server_rio_test_hold_send( rocketnet_server_rio_t * rio, bool hold );
+// Observe the FIFO under the mutex while the test holds send pickup.
+int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio );
 // nothing is staged in the fill phase, no handed phase waits for the I/O
 // worker and no posted phase has a send outstanding (takes the transport
 // mutex: the main test thread only)
