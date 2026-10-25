@@ -622,10 +622,11 @@ staging per client; the asserts check that the most queues can. The XDP
 replay window (16 packets per client) is unchanged.
 
 Memory grows with the clients a server asks for, at the per-client depth the
-config sets: `rocketnet_server_required_memory` gives the block before create.
-The default per-client config needs about 18.3 GB at 1000 clients and 183 GB at
-10000, so a 10000-client server sets lighter per-client limits (send and
-receive buffers, queues, windows, receipts and reassembly slots) for its game.
+config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
+peak before create, including the largest planned built-in transport in the
+configured ladder. Query the exact build and configuration for its requirement;
+a 10000-client server can set lighter per-client limits (send and receive
+buffers, queues, windows, receipts and reassembly slots) for its game.
 A build for more clients also carries larger fixed per-server tables (the
 receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
 the server's `max_clients`.
@@ -655,9 +656,12 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_required_memory(config)` returns the bytes of the one block
-`rocketnet_server_create` allocates through the allocator for `config` at its
-`max_clients`. It works before
+`rocketnet_server_required_memory(config)` returns the peak bytes held by the
+allocator over create, start, stop, restart and destroy for `config` at its
+`max_clients`, including planned built-in transport allocations and the
+development link simulator in development builds. The bound assumes unchanged
+configuration and environment overrides; OS-owned memory and custom-transport
+allocations are excluded. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
 applies environment overrides (matching create), but does not check keys, probe

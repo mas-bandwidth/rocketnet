@@ -68,6 +68,7 @@ struct create_status_allocator_t
     int calls;
     int fail_at;
     size_t last_bytes;
+    size_t max_bytes;
 };
 
 static void * create_status_allocate( void * context, size_t bytes )
@@ -75,6 +76,8 @@ static void * create_status_allocate( void * context, size_t bytes )
     create_status_allocator_t * state = (create_status_allocator_t *) context;
     const int call = ++state->calls;
     state->last_bytes = bytes;
+    if ( bytes > state->max_bytes )
+        state->max_bytes = bytes;
     if ( state->fail_at == call )
         return NULL;
     void * base = malloc( bytes + 128 );
@@ -574,11 +577,27 @@ static void test_create_out_of_memory_logs_one_error()
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
-    const size_t overhead = (size_t) rocketnet_allocation_overhead();
-    const size_t client_block = rocketnet_client_required_memory( &client_config ) + overhead;
-    const size_t server_block = rocketnet_server_required_memory( &server_config ) + overhead;
-    check( client_block != 0 );
-    check( server_block != 0 );
+    // required_memory is the lifecycle peak (create plus the transport connect
+    // or start takes), so create's one block is read off a clean create: the
+    // largest single allocation it makes, never above that peak
+    state.max_bytes = 0;
+    enum rocketnet_status_t sized_status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * sized_client = rocketnet_client_create( &state, &client_config, &sized_status );
+    check( sized_client != NULL );
+    check( sized_status == ROCKETNET_STATUS_OK );
+    const size_t client_block = state.max_bytes;
+    rn_test_client_stop_and_destroy( sized_client );
+    check( state.live == 0 );
+    state.max_bytes = 0;
+    sized_status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_server_t * sized_server = rocketnet_server_create( &state, "127.0.0.1:0", NULL, &server_config, &sized_status );
+    check( sized_server != NULL );
+    check( sized_status == ROCKETNET_STATUS_OK );
+    const size_t server_block = state.max_bytes;
+    rn_test_server_stop_and_destroy( sized_server );
+    check( state.live == 0 );
+    check( client_block != 0 && client_block <= rocketnet_client_required_memory( &client_config ) );
+    check( server_block != 0 && server_block <= rocketnet_server_required_memory( &server_config ) );
 
     create_oom_log_one_side( &state, &log, false, &client_config, &server_config, client_block, "client create refused" );
     create_oom_log_one_side( &state, &log, true, &client_config, &server_config, server_block, "server create refused" );
