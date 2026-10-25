@@ -895,7 +895,7 @@ jobs:
       # as the card lands; any other skip fails. xdp is Linux only; its cell
       # is in the Linux matrix.
       # A client of auto sets no client pin, so that cell runs the client's
-      # automatic order on the wire (gso on Linux, msgx on macOS, portable on
+      # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
       # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: matrix.leg == 'b'
