@@ -98,6 +98,6 @@ and the smallest fix.
 
 ## Already filed
 
-None of the findings in `docs/audits/2026-10-24-code-quality-aurora.md` or
-`docs/audits/2026-10-24-code-quality-johnny.md` falls in this area, so none is
+None of the findings in `docs/audits/2026-10-24-code-quality-1.md` or
+`docs/audits/2026-10-24-code-quality-2.md` falls in this area, so none is
 repeated here.

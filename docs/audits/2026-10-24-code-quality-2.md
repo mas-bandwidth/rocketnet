@@ -1,4 +1,4 @@
-# Code-quality audit — rocketnet at 3550a6f3 (2026-10-24, johnny)
+# Code-quality audit 2 — rocketnet at 3550a6f3 (2026-10-24)
 
 Independent cold audit of `sdk/` (read whole), `sdk/rocketnet.h` (the brief's
 `include/rocketnet.h`; no `include/` directory exists at this head), and
@@ -9,7 +9,7 @@ first (bugs, then risks, then quality). Each finding gives the severity, the
 defect in one sentence, the concrete failure or cost in one sentence, and the
 smallest fix.
 
-Cite check (rowan, 2026-10-24, on amd-2): every `file:line` below was
+Cite check (2026-10-24, Linux x64): every `file:line` below was
 re-read at 3550a6f3 and points at the line the finding names. `sdk/` and
 `tests/` are byte-identical between 3550a6f3 and main at 73e1ab51, so the
 same lines hold on main. Two findings were re-graded on that check: the

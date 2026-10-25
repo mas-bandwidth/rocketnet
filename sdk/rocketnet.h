@@ -44,7 +44,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
+    #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-3"
 
     /// The major component of the SDK version.
 

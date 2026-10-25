@@ -1308,5 +1308,5 @@ and 224 of `sdk/rocketnet_frame_sync.cpp` belong to finding 1; lines 925, 1115, 
 
 ## Already filed
 
-- `sdk/rocketnet_base64.cpp:63` — the encoded length returned as `int`: `docs/audits/2026-10-24-code-quality-aurora.md` finding 5, and `docs/audits/2026-10-24-code-quality-johnny.md` finding 4.
-- `sdk/rocketnet_base64.cpp:153` — the decoded length returned as `int`: `docs/audits/2026-10-24-code-quality-johnny.md` finding 4.
+- `sdk/rocketnet_base64.cpp:63` — the encoded length returned as `int`: `docs/audits/2026-10-24-code-quality-1.md` finding 5, and `docs/audits/2026-10-24-code-quality-2.md` finding 4.
+- `sdk/rocketnet_base64.cpp:153` — the decoded length returned as `int`: `docs/audits/2026-10-24-code-quality-2.md` finding 4.

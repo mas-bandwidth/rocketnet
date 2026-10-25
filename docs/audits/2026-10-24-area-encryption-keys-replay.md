@@ -73,4 +73,4 @@ concrete failure or cost, and the smallest fix.
 
 ## Already filed
 
-- `sdk/rocketnet_protocol.cpp:421`, the dead `best_distance` store in `rocketnet_reconstruct_near`, which the sequence reconstruction ahead of every open calls: `docs/audits/2026-10-24-code-quality-aurora.md` finding 15.
+- `sdk/rocketnet_protocol.cpp:421`, the dead `best_distance` store in `rocketnet_reconstruct_near`, which the sequence reconstruction ahead of every open calls: `docs/audits/2026-10-24-code-quality-1.md` finding 15.

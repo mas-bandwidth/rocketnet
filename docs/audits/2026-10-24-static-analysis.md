@@ -102,4 +102,4 @@ cppcheck).
 
 ## Already filed
 
-- `sdk/rocketnet_address.cpp` 131, 142, 154, 175, 186 — clang-tidy `cert-err33-c` (five ignored `snprintf` results in `rocketnet_address_to_string` and `rocketnet_address_to_string_without_port`): `docs/audits/2026-10-24-code-quality-aurora.md`, finding 10.
+- `sdk/rocketnet_address.cpp` 131, 142, 154, 175, 186 — clang-tidy `cert-err33-c` (five ignored `snprintf` results in `rocketnet_address_to_string` and `rocketnet_address_to_string_without_port`): `docs/audits/2026-10-24-code-quality-1.md`, finding 10.
