@@ -556,6 +556,57 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
     fflush( stdout );
 }
 
+// The client send path, per report interval, from what the library already
+// keeps: the payloads soak staged into the client's fill ring since the last
+// hand-off that was not deferred (staged; the fill ring holds 256 packets),
+// the longest run of consecutive iterations whose update hand-off was
+// deferred (CLIENT_SEND_DEFERRED moved: the I/O thread still held the other
+// rings), the client's unacknowledged span (its highest sent session sequence
+// less the largest the server acknowledged, from the delivery capture), the
+// packet ids the client's updates reported acknowledged, the sends the
+// transport refused (start_packet or finish_packet; soak retries the same
+// payload on a later iteration, never drops it), the longest gap between two
+// iteration starts, and the client's CLIENT_SEND_DEFERRED and SEND_RING_FULL
+// counters. Printed and reset every report interval as one "soak send:" line.
+
+struct soak_send_interval_t
+{
+    uint64_t staged;                    // now, carried across intervals
+    uint64_t staged_max;
+    uint64_t deferred_run;              // now, carried across intervals
+    uint64_t deferred_run_max;
+    uint64_t deferred_iterations;
+    uint64_t unacked_span_max;
+    uint64_t acked_packets;
+    uint64_t refused_sends;
+    double iteration_gap_max;
+};
+
+static void soak_send_interval_reset( struct soak_send_interval_t * send )
+{
+    send->staged_max = send->staged;
+    send->deferred_run_max = send->deferred_run;
+    send->deferred_iterations = 0;
+    send->unacked_span_max = 0;
+    send->acked_packets = 0;
+    send->refused_sends = 0;
+    send->iteration_gap_max = 0.0;
+}
+
+static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
+{
+    const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+    printf( "soak send: t=%.0f staged_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_send_deferred=%llu client_send_ring_full=%llu library_bytes=%lld\n",
+            seconds, (unsigned long long) send->staged_max, (unsigned long long) send->deferred_run_max,
+            (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
+            (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
+            (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
+            (unsigned long long) ( counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( counters, counter_send_ring_full ) : 0 ),
+            (long long) soak_library_bytes_read() );
+    fflush( stdout );
+}
+
 int main( int argc, char ** argv )
 {
     // before anything is created: the allocator keeps the pages the warm-up
@@ -782,7 +833,11 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+    const int counter_send_ring_full = soak_counter_index( "SEND_RING_FULL" );
+    struct soak_send_interval_t send_interval;
+    memset( &send_interval, 0, sizeof( send_interval ) );
     const double start_time = rocketnet_time();
+    double last_iteration_time = start_time;
     double last_report_time = start_time;
     double last_assert_time = start_time;
     double reconnect_time = start_time;
@@ -797,6 +852,12 @@ int main( int argc, char ** argv )
         }
 
         iteration++;
+        {
+            const double now = rocketnet_time();
+            if ( now - last_iteration_time > send_interval.iteration_gap_max )
+                send_interval.iteration_gap_max = now - last_iteration_time;
+            last_iteration_time = now;
+        }
 
         // reconnect on a cycle: the connect path is never a rare path
 
@@ -904,6 +965,8 @@ int main( int argc, char ** argv )
             }
             reconnect_time = rocketnet_time();
             connected = 0;
+            send_interval.staged = 0;
+            send_interval.deferred_run = 0;
         }
 
         // a deferred hand-off in update means the I/O thread still holds the
@@ -912,6 +975,22 @@ int main( int argc, char ** argv )
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
         const int client_ring_held = counter_send_deferred >= 0 && rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) != deferred_before_update;
+        {
+            const uint64_t * acked_packet_ids = NULL;
+            send_interval.acked_packets += (uint64_t) rocketnet_client_transport_acked_packets( client, &acked_packet_ids );
+        }
+        if ( client_ring_held )
+        {
+            send_interval.deferred_iterations++;
+            send_interval.deferred_run++;
+            if ( send_interval.deferred_run > send_interval.deferred_run_max )
+                send_interval.deferred_run_max = send_interval.deferred_run;
+        }
+        else
+        {
+            send_interval.deferred_run = 0;
+            send_interval.staged = 0;
+        }
 
         // flush what the update staged (the handshake's replies, the
         // disconnects): a buffered transport, xdp, sends only at a flush
@@ -976,13 +1055,32 @@ int main( int argc, char ** argv )
             for ( uint64_t n = 0; n < client_send_count; n++ )
             {
                 if ( !soak_client_send( client, client_payload_size ) )
+                {
+                    send_interval.refused_sends++;
                     break;
+                }
                 client_sent++;
                 connection_client_sent++;
+                send_interval.staged++;
+                if ( send_interval.staged > send_interval.staged_max )
+                    send_interval.staged_max = send_interval.staged;
                 client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
             }
             if ( client_send_count )
+            {
+                const uint64_t deferred_before_send = counter_send_deferred >= 0 ? rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) : 0;
                 rocketnet_client_transport_send_packets( client );
+                if ( counter_send_deferred < 0 || rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) == deferred_before_send )
+                    send_interval.staged = 0;
+            }
+            {
+                struct rocketnet_delivery_capture_t client_capture;
+                memset( &client_capture, 0, sizeof( client_capture ) );
+                rocketnet_client_transport_delivery_capture( client, &client_capture );
+                const uint64_t unacked_span = soak_unacked_span( &client_capture, client_sent_sequence_at_connect );
+                if ( unacked_span > send_interval.unacked_span_max )
+                    send_interval.unacked_span_max = unacked_span;
+            }
             for ( uint64_t n = 0; n < server_send_count; n++ )
             {
                 if ( !soak_server_send( server, client_index, server_payload_size ) )
@@ -1096,6 +1194,8 @@ int main( int argc, char ** argv )
                     soak_print_memory( client ? "live" : "between", rocketnet_time() - start_time, &sample );
                 }
             }
+            soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
+            soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
                     (unsigned long long) payloads_verified, (unsigned long long) failures );
