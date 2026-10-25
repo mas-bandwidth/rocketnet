@@ -11,14 +11,14 @@ and the environment pin (`test_transport_env_pin_is_honoured`).
 
 - Date (`date -u`): Sat Oct 24 04:23:50 UTC 2026
 - Head: 13b7b291 (main at 8eb03874 plus the nightly job)
-- Machine: `hostname` mini-m5-1.local; `uname -r` 27.2.0; macOS 27.2 (26B118), Apple silicon
+- Machine: `hostname` <macOS bench>; `uname -r` 27.2.0; macOS 27.2 (26B118), Apple silicon
 - NIC: none; every cell runs over the loopback interface, so no `ethtool` line applies
 
 ## Commands
 
 ```
 git log --oneline -1
-13b7b291 rn-macos-transport-cells-50x: nightly macOS job runs every transport cell fifty times
+13b7b291 nightly macOS job runs every transport cell fifty times
 make -j8
 [100%] Built target test
 scripts/transport-cells-repeat --runs 50
@@ -48,7 +48,7 @@ CELL loopback/loopback test_loopback_transport_udp runs=50 pass=50 fail=0
 CELL loopback/loopback test_loopback_transport_ipv6 runs=50 pass=50 fail=0
 CELL loopback/loopback test_transport_dual_stack_ipv4_client runs=50 pass=50 fail=0
 CELL loopback/loopback test_transport_env_pin_is_honoured runs=50 pass=50 fail=0
-TRANSPORT-CELLS-REPEAT os=macos runs=50 asan=0 logs=/Users/glenn/rowan-card/rn-macos-transport-cells-50x/rocketnet/build/transport-cells-repeat/run.RkFEZL result=pass
+TRANSPORT-CELLS-REPEAT os=macos runs=50 asan=0 logs=<job dir>/rocketnet/build/transport-cells-repeat/run.RkFEZL result=pass
 
 real	0m41.755s
 user	0m8.562s
@@ -65,5 +65,5 @@ same build: exit 0, `*** ALL TESTS PASSED ***`.
 ## Verdict
 
 Pass: every macOS transport cell fifty times in a row, zero flakes, at
-13b7b291 on mini-m5-1. The nightly job has not yet run on the runner; its
+13b7b291 on the macOS bench. The nightly job has not yet run on the runner; its
 first night is not made yet.
