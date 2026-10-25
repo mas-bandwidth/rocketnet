@@ -68,6 +68,8 @@ struct portable_server_t
     std::atomic<bool> exited{false};
     std::atomic<bool> rx_exited{false};
     std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> measure_drop_stopping{0}, measure_drop_lock_busy{0}, measure_drop_no_free_bank{0}, measure_drop_invalid{0}, measure_publish_lock_busy{0}, measure_publish_no_free_bank{0}, measure_banks_sent{0}, measure_packets_sent{0}, measure_full_banks{0};
+    int measure_last_publish_failure = 0; // main only: 1 lock busy, 2 no free bank
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
@@ -138,10 +140,11 @@ static bool portable_tx_publish( portable_server_t * server )
         server->stop_publish_saw_quit = true;
     if ( server->force_publish_busy ) return false;
 #endif
-    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) ) return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) ) { server->measure_last_publish_failure = 1; server->measure_publish_lock_busy.fetch_add( 1, std::memory_order_relaxed ); return false; }
     if ( server->free_count == 0 )
     {
         rocketnet_platform_mutex_release( &server->mutex );
+        server->measure_last_publish_failure = 2; server->measure_publish_no_free_bank.fetch_add( 1, std::memory_order_relaxed );
         return false;
     }
     const int old = server->producer;
@@ -195,6 +198,9 @@ static void portable_tx_worker( void * arg )
             for ( int i = 0; i < bank->count; ++i )
                 bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
             rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
+            server->measure_banks_sent.fetch_add( 1, std::memory_order_relaxed );
+            server->measure_packets_sent.fetch_add( (uint64_t) bank->count, std::memory_order_relaxed );
+            if ( bank->count == PORTABLE_TX_CAPACITY ) server->measure_full_banks.fetch_add( 1, std::memory_order_relaxed );
         }
         bank->count = 0;
         rocketnet_platform_mutex_acquire( &server->mutex );
@@ -334,6 +340,10 @@ static void portable_rx_worker( void * arg )
 static void portable_server_cleanup( portable_server_t * server )
 {
     // Also handles RX creation failure after TX has already started.
+    rocketnet_info( "measure tx drops: stopping=%llu lock_busy=%llu no_free_bank=%llu invalid=%llu publish_lock_busy=%llu publish_no_free_bank=%llu banks_sent=%llu packets_sent=%llu full_banks=%llu",
+        (unsigned long long) server->measure_drop_stopping.load(), (unsigned long long) server->measure_drop_lock_busy.load(), (unsigned long long) server->measure_drop_no_free_bank.load(),
+        (unsigned long long) server->measure_drop_invalid.load(), (unsigned long long) server->measure_publish_lock_busy.load(), (unsigned long long) server->measure_publish_no_free_bank.load(),
+        (unsigned long long) server->measure_banks_sent.load(), (unsigned long long) server->measure_packets_sent.load(), (unsigned long long) server->measure_full_banks.load() );
     server->quit.store( true, std::memory_order_release );
     if ( server->wake ) rocketnet_platform_wake_set( server->wake );
     if ( server->rx_wake ) rocketnet_platform_wake_set( server->rx_wake );
@@ -454,12 +464,14 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
         if ( server->stopping.load( std::memory_order_acquire ) )
         {
             server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
+            server->measure_drop_stopping.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
             return;
         }
         portable_tx_bank_t * bank = &server->bank[server->producer];
         if ( bank->count == PORTABLE_TX_CAPACITY && !portable_tx_publish( server ) )
         {
             server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
+            ( server->measure_last_publish_failure == 1 ? server->measure_drop_lock_busy : server->measure_drop_no_free_bank ).fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
             return;
         }
         bank = &server->bank[server->producer];
@@ -467,6 +479,7 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
         if ( !packet->to || !packet->packet_data || packet->packet_bytes <= 0 || packet->packet_bytes > ROCKETNET_RECEIVE_CEILING )
         {
             server->dropped.fetch_add( 1, std::memory_order_relaxed );
+            server->measure_drop_invalid.fetch_add( 1, std::memory_order_relaxed );
             continue;
         }
         const int slot = bank->count;
