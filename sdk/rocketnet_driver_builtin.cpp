@@ -2,6 +2,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_driver_loopback.h"
 #include <new>
 #include <atomic>
 #include <string.h>
@@ -1510,7 +1511,15 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     const char * transport, rocketnet_server_memory_plan_t & plan)
 {
     (void) config; // max_clients sizes the portable RX and TX banks; also read by the Linux and Windows transports below
-    if (strcmp(transport, "portable") == 0
+    if (strcmp(transport, "loopback") == 0)
+    {
+        // one endpoint's queue; the endpoint record is in the process-wide
+        // table, and loopback starts no worker and opens no socket
+        plan.transport_io_bytes = rocketnet_memory_allocations({rocketnet_loopback_queue_bytes(ROCKETNET_LOOPBACK_QUEUE_PACKETS)});
+        plan.worker_threads = 0;
+        plan.sockets = 0;
+    }
+    else if (strcmp(transport, "portable") == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         || strcmp(transport, "msgx") == 0
 #endif
@@ -1542,6 +1551,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     {
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes(queues);
+        plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes(queues);
         plan.worker_threads = 0; plan.sockets = queues;
     }
 #if ROCKETNET_XDP
@@ -1564,7 +1574,10 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     else if (strcmp(transport, "rio") == 0)
     {
         plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes();
-        plan.registered_region_bytes = rocketnet_server_rio_registered_region_bytes();
+        // the registered region is one rocketnet_malloc (rocketnet_server_rio_create)
+        const uint64_t region = rocketnet_server_rio_registered_region_bytes();
+        if ( !region ) return false;
+        plan.registered_region_bytes = rocketnet_memory_allocations({region});
         if ( !plan.registered_region_bytes ) return false;
         plan.worker_threads = 1; plan.sockets = 1;
     }

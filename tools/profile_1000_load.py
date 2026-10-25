@@ -222,7 +222,7 @@ def parse_memory_plan(stdout, expected_clients, expected_profile):
     if len(fields) != len(pairs):
         raise ValueError("duplicate fields in memory plan summary")
     if (fields.get("verdict") != "PASS" or fields.get("profile") != expected_profile or
-            fields.get("public_memory_scope") != "create_only" or
+            fields.get("public_memory_scope") != "lifecycle_allocator_peak" or
             fields.get("transport_selection") != "unresolved_before_start" or
             fields.get("term_status_code") != "0" or fields.get("reason") != "none"):
         raise ValueError("memory plan profile or verdict mismatch")
@@ -261,7 +261,7 @@ def validate_transport_overhead_reserve(reserve_bytes, evidence, transport, clie
             source_head.casefold() not in normalized or system.casefold() not in normalized):
         raise ValueError("transport overhead evidence must identify source head, OS, transport and population")
     return dict(bytes=reserve_bytes, evidence=evidence,
-                scope="measured transport/native overhead outside exact create-only SDK plan")
+                scope="measured OS/process/custom-transport overhead outside the lifecycle allocator plan")
 
 
 def parse_load(stdout, server_transport, client_transport, expected_clients=CLIENTS,
@@ -383,7 +383,7 @@ def main():
     p.add_argument("--profile", choices=("default", "light"), default="light")
     p.add_argument("--messages-per-client-second", type=positive_finite_rate)
     p.add_argument("--transport-overhead-reserve-bytes", type=positive_integer,
-                   help="measured transport/native bytes beyond the create-only SDK plan; required for default profile")
+                   help="measured OS/process/custom-transport bytes beyond the lifecycle allocator plan; required for default profile")
     p.add_argument("--transport-overhead-evidence",
                    help="receipt/path naming this source HEAD, OS, transport and client population; required with reserve")
     args = p.parse_args()

@@ -17,8 +17,8 @@
 
     The case process reports its bound as one line, PLAN_RSS_LINE then the
     bound in MiB, after the case passed and only while the counter is still the
-    installed allocator; the suite runner (tests/suite_runner.h) reads that line
-    from the captured output and holds the process's peak resident set (wait4
+    installed allocator; the functional suite runner (tests/suite_runner.h)
+    reads that line from the captured output and holds the process's peak resident set (wait4
     ru_maxrss, PeakWorkingSetSize) to it. A case that re-initialises rocketnet
     with an allocator of its own leaves the counter, reports nothing, and keeps
     the suite-wide bound, ROCKETNET_TEST_MAX_CASE_RSS_MB; so does every process

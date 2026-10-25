@@ -408,7 +408,11 @@ cmd_start_server()
     local commit=$1 dir=$2 transport=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
     local bin
     bin=$( load_split_bin "$commit" ) || fail "start-server: no built load_split for $commit"
+    # A Windows server is started from its Linux subsystem shell, and that
+    # shell hands a variable to a Windows program only when WSLENV names it.
+    # Other hosts ignore WSLENV, and any names already in it are kept.
     start_recorded "$dir" server env ROCKETNET_SERVER_TRANSPORT="$transport" \
+        WSLENV="ROCKETNET_SERVER_TRANSPORT${WSLENV:+:$WSLENV}" \
         "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
 }
 

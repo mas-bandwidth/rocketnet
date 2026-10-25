@@ -319,7 +319,7 @@ static int split_plan( const char * role, int total, int local )
     const int pass = valid && resources && term_status == ROCKETNET_STATUS_OK;
     printf("split_plan: role=%s total=%d local=%d server_public_required_bytes=%zu "
            "client_public_required_bytes=%zu total_public_required_bytes=%zu "
-           "scope=create_only transport_memory=excluded native_resources=excluded "
+           "scope=lifecycle_allocator_peak transport_memory=planned_builtin_allocator os_owned_resources=excluded "
            "fds_pre_init=%ld fds_post_init=%ld fds_pre_term=%ld fds_post_term=%ld "
            "threads_pre_init=%ld threads_post_init=%ld threads_pre_term=%ld threads_post_term=%ld "
            "resource_baseline_schema=%s warm_cycle=1 survivor_threads=%ld survivor_handles=%ld "
