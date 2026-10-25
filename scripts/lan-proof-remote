@@ -194,7 +194,8 @@ cmd_build_windows()
         "cmake -B build -G \"$VS_GENERATOR\" -A x64 > lan-proof-configure.log 2>&1 || exit /b 1" \
         "cmake --build build --config Release --parallel 4 --target load_split > lan-proof-build.log 2>&1 || exit /b 1" \
         > "$bat" || fail "build: cannot write the build batch file"
-    "$cmd_exe" /c "$( wslpath -w "$bat" )" || fail "build: the Windows Release build failed"
+    # start cmd.exe from a Windows drive, not a Linux path it cannot use
+    ( cd "${dir%/*}" && "$cmd_exe" /c "$( wslpath -w "$bat" )" ) || fail "build: the Windows Release build failed"
 }
 
 is_decimal()
