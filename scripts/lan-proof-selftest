@@ -3,7 +3,7 @@
 
 set -u
 
-here=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+here=$( cd "$( dirname "$0" )" && pwd )
 proof="$here/lan-proof"
 fail=0
 
