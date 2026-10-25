@@ -44,8 +44,8 @@ every RIO call after create.
   non-empty queue sets the event at once, per the documented rule.
 - **Stop.**
   1. Stop sets `stopping` and signals the wake.
-  2. The worker drops the handed phases and commits deferred sends, retrying
-     a refused commit.
+  2. The worker posts handed phases in order and the finished fill phase,
+     commits deferred sends, and retries a refused commit.
   3. It closes the socket, which completes every posted request, and drains
      both queues.
   4. Only then does it set `exited`, which `stopped` reports.
@@ -101,6 +101,8 @@ every RIO call after create.
 - `SlicesAccounted`: until close, every slice is posted, queued or waiting
   for a re-post.
 - `NoSendDuplicated`.
+- `StopSendsHanded`: at worker exit no handed phase was silently dropped.
+- `StopSendsFinished`: every staged send, including the finished fill phase, has retired at exit.
 - `FreedOnlyWhenDrained`: the region is freed only when the kernel owns no
   request.
 - `EveryDatagramConsumed`, `EveryStagedSent` and `StopCompletes` (`stopping`
@@ -120,6 +122,7 @@ every RIO call after create.
 | `MCRNRioWorkerBrokenSwitchBeforeIdle.cfg` | `FillPhaseOwnedByMain` | `SwitchOnIdle = FALSE` |
 | `MCRNRioWorkerBrokenUnboundedDequeue.cfg` | `ExactDelivery` | `BoundedDequeue = FALSE` |
 | `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | `DrainBeforeExit = FALSE` |
+| `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | `DropHanded = TRUE` keeps the old stop discard. |
 | `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | `WakeOnReturn = FALSE` |
 
 The liveness controls are split by direction so each run fits the 110 s
