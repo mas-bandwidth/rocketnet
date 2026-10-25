@@ -107,20 +107,33 @@
     Windows "threads=<n> os_threads=<n>"; phase is
     between (no client alive) or live (a client alive), and only between
     samples are compared.
+    Every 10 s report also prints one "soak send: t=<s> staged_max=<n>
+    deferred_run_max=<n> deferred_iterations=<n> unacked_span_max=<n>
+    acked_packets=<n> refused_sends=<n> iteration_gap_max_ms=<ms>
+    client_send_deferred=<n> client_send_ring_full=<n> library_bytes=<n>"
+    line, the client send path over the interval read from what the library
+    already keeps (soak_print_send): what tells a stalled I/O thread
+    (deferred_run_max and staged_max climb toward the 256-packet fill ring)
+    from a retire leak (unacked_span_max and library_bytes climb) and from
+    memory the OS holds (library_bytes flat while resident_bytes moves).
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
     (fds, threads, resident_bytes; handles, threads, private_bytes,
     os_threads on Windows, where every thread proven the OS's by its start
     address also prints at the post-warmup and end samples as
     "soak resources: <sample> os_thread id=<n> start=ntdll+0x<offset>");
-    library_bytes prints the same way on every platform as a per-source
-    figure and is not compared; a run that ends inside the warm cycle, as every run under 30 s
+    library_bytes prints the same way on every platform; a run that ends inside the warm cycle, as every run under 30 s
     does, has no post-warmup sample and prints
     "soak resources: none (the run ended inside the warm cycle)".
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
-    and the memory count grows by at most one page per ten minutes of run
-    since the post-warmup sample (at least one page); on Windows os_threads
+    and library_bytes, the library's own allocator bytes, grows by at most
+    one page per ten minutes of run since the post-warmup sample (at least
+    one page). The process's memory count (resident_bytes, or private_bytes
+    on Windows) is printed and never asserted: it counts what the OS and the
+    C runtime hold (socket buffers, first touch of preallocated pages, the
+    runtime's own heaps) beside the library, and the library answers only for
+    its own; on Windows os_threads
     may fall and never rise, so the full thread count never grows. A resource
     read that fails (a thread walk that ends on an error among them) fails
     the run. A count that is not
@@ -1301,18 +1314,27 @@ int main( int argc, char ** argv )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
+            // the process's memory count is the OS's and the C runtime's as
+            // much as the library's: printed, never asserted; the memory
+            // flat rule holds the library's own bytes below
+            if ( i == PROCESS_RESOURCES_MEMORY )
+                continue;
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
-                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
+                printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld\n", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
-                if ( i == PROCESS_RESOURCES_MEMORY )
-                    printf( " (allowed growth %lld bytes over %.0f s)", (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
-                printf( "\n" );
                 failures++;
             }
         }
         printf( "soak resources: library_bytes start=%lld end=%lld peak=%lld\n",
                 (long long) library_bytes_start, (long long) library_bytes_end, (long long) library_bytes_peak );
+        if ( assert_flat && !process_resources_flat( PROCESS_RESOURCES_MEMORY, library_bytes_start, library_bytes_end, seconds_since_start ) )
+        {
+            printf( "soak: --assert-flat FAILED: library_bytes start=%lld end=%lld (allowed growth %lld bytes over %.0f s)\n",
+                    (long long) library_bytes_start, (long long) library_bytes_end,
+                    (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+            failures++;
+        }
     }
     else
     {
