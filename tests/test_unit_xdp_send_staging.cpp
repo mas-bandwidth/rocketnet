@@ -151,10 +151,10 @@ static void test_send_handoff_retire_empty_changes_nothing()
 }
 REGISTER_UNIT_TEST(test_send_handoff_retire_empty_changes_nothing);
 
-// A start past the send queue size is refused and counted, so the flush
-// names the queue and the count once per flush instead of the start path
-// logging a line for every refused packet. No clock, socket or thread.
-static void test_xdp_transport_send_overflow_counted_once_per_flush()
+// The helper returns each in-range packet index and refuses and counts every
+// claim beyond the queue limit. Resetting the counters restores those results;
+// this checks claim accounting only, without invoking send or flush code.
+static void test_xdp_transport_send_claim_counts_each_refusal()
 {
     const int limit = 1024;
     std::atomic<int> num_packets( 0 );
@@ -185,6 +185,6 @@ static void test_xdp_transport_send_overflow_counted_once_per_flush()
     }
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
 }
-REGISTER_UNIT_TEST(test_xdp_transport_send_overflow_counted_once_per_flush);
+REGISTER_UNIT_TEST(test_xdp_transport_send_claim_counts_each_refusal);
 
 #endif // #if defined(__linux__)
