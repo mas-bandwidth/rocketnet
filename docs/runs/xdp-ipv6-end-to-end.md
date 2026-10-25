@@ -10,9 +10,9 @@ was bound on any host interface.
 ## Run
 
 - Date (`date -u`): Sat Oct 24 02:20:17 AM UTC 2026
-- Head: 3a04ed7a224b4567fc729b575b662fa275372dec (`3a04ed7a land rn-api-connect-both-families (sprint stream rocketnet-final)`)
-- Machine: `hostname` hulk, the dedicated XDP machine; `uname -r` 6.8.0-142-generic
-- Guest kernel: /home/gaffer/vm-kernels/vmlinuz-6.8.0-142-generic (readable), the guest printed `uname -r` 6.8.0-142-generic
+- Head: 3a04ed7a224b4567fc729b575b662fa275372dec (`3a04ed7a`, the land commit)
+- Machine: `hostname` <XDP bench>, the dedicated XDP machine; `uname -r` 6.8.0-142-generic
+- Guest kernel: <home>/vm-kernels/vmlinuz-6.8.0-142-generic (readable), the guest printed `uname -r` 6.8.0-142-generic
 - /dev/kvm: writable (user in group kvm)
 - virtme-ng: 1.40
 - No NIC run was made, so no `ethtool -i` is recorded: the cases use a veth pair inside the guest.
@@ -56,9 +56,9 @@ test_xdp_transport_max_size_both_ways_ipv6 (vng exit 0):
 
 | Case | Where | Result |
 |---|---|---|
-| test_xdp_transport_max_size_both_ways_ipv4 | root in a virtme-ng guest on hulk, 6.8.0-142-generic | PASS, exit 0 |
-| test_xdp_transport_max_size_both_ways_ipv6 | root in a virtme-ng guest on hulk, 6.8.0-142-generic | PASS, exit 0 |
-| ./bin/test (host, no root) | hulk | PASS, `*** ALL TESTS PASSED ***`, exit 0 |
+| test_xdp_transport_max_size_both_ways_ipv4 | root in a virtme-ng guest on the XDP bench, 6.8.0-142-generic | PASS, exit 0 |
+| test_xdp_transport_max_size_both_ways_ipv6 | root in a virtme-ng guest on the XDP bench, 6.8.0-142-generic | PASS, exit 0 |
+| ./bin/test (host, no root) | the XDP bench | PASS, `*** ALL TESTS PASSED ***`, exit 0 |
 
 ## ci.yml
 
@@ -69,4 +69,4 @@ unauthenticated request) and no coordinator record names such a run.
 
 ## Verdict
 
-Both XDP max-size cases, IPv4 and IPv6, pass end to end at 3a04ed7a on hulk.
+Both XDP max-size cases, IPv4 and IPv6, pass end to end at 3a04ed7a on the XDP bench.
