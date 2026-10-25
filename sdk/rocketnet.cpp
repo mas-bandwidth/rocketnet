@@ -548,11 +548,25 @@ double rocketnet_sleep_clamp( double seconds )
     return seconds;
 }
 
+#if ROCKETNET_DEV
+static thread_local uint64_t rocketnet_sleep_platform_dispatch_count = 0;
+
+uint64_t rocketnet_sleep_platform_dispatch_count_for_test()
+{
+    return rocketnet_sleep_platform_dispatch_count;
+}
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_sleep( double seconds )
 {
     const double clamped = rocketnet_sleep_clamp( seconds );
     if ( clamped > 0.0 )
+    {
+#if ROCKETNET_DEV
+        ++rocketnet_sleep_platform_dispatch_count;
+#endif // #if ROCKETNET_DEV
         rocketnet_platform_sleep( clamped );
+    }
 }
 
 // -------------------------------------------------------------

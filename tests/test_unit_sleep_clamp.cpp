@@ -38,10 +38,21 @@ static void test_sleep_clamp_bounds_negative_nan_and_huge()
     // the longest clamped request still fits the platform's int microseconds
     check( ROCKETNET_SLEEP_MAX_SECONDS * 1000000.0 < 2147483647.0 );
 
-    // a refused request returns at once rather than reaching the platform
+    // A DEV-only dispatch counter proves each refused request stays out of
+    // the platform sleep call; this has no wall-clock or OS timing assertion.
+#if ROCKETNET_DEV
+    const uint64_t before = rocketnet_sleep_platform_dispatch_count_for_test();
+    rocketnet_sleep( -1.0 );
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    rocketnet_sleep( (double) NAN );
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+    rocketnet_sleep( -(double) INFINITY );
+    check( rocketnet_sleep_platform_dispatch_count_for_test() == before );
+#else
     rocketnet_sleep( -1.0 );
     rocketnet_sleep( (double) NAN );
     rocketnet_sleep( -(double) INFINITY );
+#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_sleep_clamp_bounds_negative_nan_and_huge );
