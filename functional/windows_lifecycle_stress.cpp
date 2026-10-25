@@ -322,84 +322,6 @@ struct windows_counted_string_t
     wchar_t * buffer;
 };
 
-
-// RUN-ONLY DIAGNOSTIC: kernel handle tracing, the open stack of every added handle
-#pragma warning( push )
-#pragma warning( disable : 4091 4201 4365 4668 5039 )
-#include <dbghelp.h>
-#pragma warning( pop )
-struct diag_trace_entry_t { HANDLE handle; HANDLE process_id; HANDLE thread_id; ULONG type; void * stacks[16]; };
-struct diag_trace_query_t { HANDLE handle; ULONG total; diag_trace_entry_t entries[1]; };
-typedef LONG ( WINAPI * diag_set_info_t )( HANDLE, int, void *, ULONG );
-typedef LONG ( WINAPI * diag_query_info_t )( HANDLE, int, void *, ULONG, ULONG * );
-typedef BOOL ( WINAPI * diag_sym_init_t )( HANDLE, PCSTR, BOOL );
-typedef BOOL ( WINAPI * diag_sym_from_t )( HANDLE, DWORD64, DWORD64 *, SYMBOL_INFO * );
-typedef DWORD ( WINAPI * diag_sym_opt_t )( DWORD );
-static uint8_t diag_trace_buffer[4 << 20];
-static diag_sym_from_t diag_sym_from = NULL;
-static void diag_trace_enable()
-{
-    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
-    diag_set_info_t set = (diag_set_info_t) (void *) GetProcAddress( ntdll, "NtSetInformationProcess" );
-    struct { ULONG flags; ULONG slots; } ex = { 0, 262144 };
-    LONG status = set( GetCurrentProcess(), 32, &ex, sizeof( ex ) );
-    printf( "DIAG handle tracing enable_ex status 0x%lx\n", (unsigned long) status );
-    if ( status < 0 )
-    {
-        ULONG flags = 0;
-        status = set( GetCurrentProcess(), 32, &flags, sizeof( flags ) );
-        printf( "DIAG handle tracing enable status 0x%lx\n", (unsigned long) status );
-    }
-    if ( !diag_sym_from )
-    {
-        HMODULE dbghelp = LoadLibraryW( L"dbghelp.dll" );
-        diag_sym_opt_t opt = (diag_sym_opt_t) (void *) GetProcAddress( dbghelp, "SymSetOptions" );
-        diag_sym_init_t init = (diag_sym_init_t) (void *) GetProcAddress( dbghelp, "SymInitialize" );
-        diag_sym_from = (diag_sym_from_t) (void *) GetProcAddress( dbghelp, "SymFromAddr" );
-        opt( SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS );
-        init( GetCurrentProcess(), NULL, TRUE );
-    }
-}
-static void diag_frame( void * address )
-{
-    HMODULE module = NULL;
-    wchar_t path[MAX_PATH] = L"?";
-    if ( GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) address, &module ) )
-        GetModuleFileNameW( module, path, MAX_PATH );
-    const wchar_t * base = wcsrchr( path, L'\\' );
-    base = base ? base + 1 : path;
-    union { SYMBOL_INFO info; uint8_t bytes[sizeof( SYMBOL_INFO ) + 256]; } symbol;
-    memset( &symbol, 0, sizeof( symbol ) );
-    symbol.info.SizeOfStruct = sizeof( SYMBOL_INFO );
-    symbol.info.MaxNameLen = 255;
-    DWORD64 displacement = 0;
-    if ( diag_sym_from && diag_sym_from( GetCurrentProcess(), (DWORD64) (uintptr_t) address, &displacement, &symbol.info ) )
-        printf( "    %ls!%s+0x%llx\n", base, symbol.info.Name, (unsigned long long) displacement );
-    else
-        printf( "    %ls+0x%llx\n", base, (unsigned long long) ( (uintptr_t) address - (uintptr_t) module ) );
-}
-static void diag_trace_print( uint32_t value )
-{
-    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
-    diag_query_info_t query = (diag_query_info_t) (void *) GetProcAddress( ntdll, "NtQueryInformationProcess" );
-    diag_trace_query_t * q = (diag_trace_query_t *) diag_trace_buffer;
-    memset( q, 0, sizeof( diag_trace_query_t ) );
-    q->handle = (HANDLE) (uintptr_t) value;
-    ULONG returned = 0;
-    const LONG status = query( GetCurrentProcess(), 32, q, (ULONG) sizeof( diag_trace_buffer ), &returned );
-    if ( status < 0 ) { printf( "  DIAG trace 0x%x query status 0x%lx\n", value, (unsigned long) status ); return; }
-    // newest first: print the newest open of this value, and say whether a close follows it
-    for ( ULONG i = 0; i < q->total; i++ )
-    {
-        if ( q->entries[i].type != 1 ) continue;
-        printf( "  DIAG 0x%x opened by thread %llu (%lu traces of this value, newest entry type %lu):\n", value,
-                (unsigned long long) (uintptr_t) q->entries[i].thread_id, (unsigned long) q->total, (unsigned long) q->entries[0].type );
-        for ( int f = 0; f < 16 && q->entries[i].stacks[f]; f++ ) diag_frame( q->entries[i].stacks[f] );
-        return;
-    }
-    printf( "  DIAG 0x%x: no open trace (%lu traces)\n", value, (unsigned long) q->total );
-}
-
 static windows_handle_table_t windows_handles_before;
 static windows_handle_table_t windows_handles_after;
 
@@ -420,32 +342,27 @@ static void windows_handle_type( windows_query_object_t query, HANDLE handle, wc
         wcsncpy_s( type, type_chars, information.name.buffer, chars < type_chars - 1 ? chars : type_chars - 1 );
 }
 
-struct diag_sys_entry_t { void * object; ULONG_PTR process_id; ULONG_PTR value; ULONG access; USHORT trace_index; USHORT type_index; ULONG attributes; ULONG reserved; };
-struct diag_sys_info_t { ULONG_PTR count; ULONG_PTR reserved; diag_sys_entry_t entries[1]; };
-typedef LONG ( WINAPI * diag_query_system_t )( int, void *, ULONG, ULONG * );
-// RUN-ONLY: enumerate this process's handles from the system list, so no invalid value is referenced
 static void windows_handle_table_read( windows_handle_table_t * table )
 {
     HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
     const windows_query_object_t query = ntdll ? (windows_query_object_t) (void *) GetProcAddress( ntdll, "NtQueryObject" ) : NULL;
-    const diag_query_system_t system = (diag_query_system_t) (void *) GetProcAddress( ntdll, "NtQuerySystemInformation" );
     table->count = 0;
     table->overflow = false;
-    SIZE_T bytes = 64u << 20;
-    diag_sys_info_t * info = (diag_sys_info_t *) VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-    ULONG returned = 0;
-    const LONG status = info ? system( 64, info, (ULONG) bytes, &returned ) : -1;
-    if ( status < 0 ) { printf( "DIAG system handle list status 0x%lx\n", (unsigned long) status ); table->overflow = true; }
-    const ULONG_PTR self = (ULONG_PTR) GetCurrentProcessId();
-    for ( ULONG_PTR i = 0; status >= 0 && i < info->count; i++ )
+    for ( uint32_t value = 4; value < WINDOWS_HANDLE_VALUE_LIMIT; value += 4 )
     {
-        if ( info->entries[i].process_id != self ) continue;
-        if ( table->count == WINDOWS_HANDLE_TABLE_ENTRIES ) { table->overflow = true; break; }
+        const HANDLE handle = (HANDLE) (uintptr_t) value;
+        DWORD flags = 0;
+        if ( !GetHandleInformation( handle, &flags ) )
+            continue;
+        if ( table->count == WINDOWS_HANDLE_TABLE_ENTRIES )
+        {
+            table->overflow = true;
+            return;
+        }
         windows_handle_entry_t * entry = &table->entries[table->count++];
-        entry->value = (uint32_t) info->entries[i].value;
-        windows_handle_type( query, (HANDLE) info->entries[i].value, entry->type, sizeof( entry->type ) / sizeof( entry->type[0] ) );
+        entry->value = value;
+        windows_handle_type( query, handle, entry->type, sizeof( entry->type ) / sizeof( entry->type[0] ) );
     }
-    if ( info ) VirtualFree( info, 0, MEM_RELEASE );
 }
 
 static bool windows_handle_table_has( const windows_handle_table_t * table, const windows_handle_entry_t * entry )
@@ -501,8 +418,6 @@ static void windows_handle_table_print( const char * case_name, const windows_ha
             continue;
         windows_handle_describe( &after->entries[i] );
         added++;
-        printf( "\n" );
-        diag_trace_print( after->entries[i].value );
     }
     if ( added == 0 )
         printf( " none" );
@@ -562,7 +477,6 @@ static void windows_handle_high_print( const char * case_name )
 // the before table, read with the before counts
 static void windows_handle_before( const windows_resource_counts_t * before )
 {
-    diag_trace_enable();
     windows_handle_table_read( &windows_handles_before );
     windows_handle_high_begin( before->handles );
 }
