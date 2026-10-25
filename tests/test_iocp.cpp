@@ -1528,10 +1528,62 @@ static void test_windows_send_failures_counted()
     printf("test_windows_send_failures_counted\n");
 }
 
+static void test_iocp_transport_socket_sets_dont_fragment()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    bool enabled_for_both = true;
+    for ( int family = 0; family < 2; ++family )
+    {
+        rocketnet_address_t bind = address(binds[family]);
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1);
+        CHECK(transport && bind.port != 0);
+        const SOCKET socket = (SOCKET) rocketnet_server_iocp_test_socket(transport);
+        int enabled = 0;
+        int bytes = (int) sizeof(enabled);
+        CHECK(getsockopt(socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
+            family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char*) &enabled, &bytes) == 0);
+        CHECK(bytes == (int) sizeof(enabled));
+        printf("test_iocp_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled);
+        enabled_for_both = enabled_for_both && enabled == 1;
+        rn_native_backend_stop_and_destroy(transport, rocketnet_server_iocp_stop,
+            rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy);
+        CHECK(live_allocations.load() == baseline);
+    }
+    CHECK(enabled_for_both);
+}
+
+static void test_rio_transport_socket_sets_dont_fragment()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    bool enabled_for_both = true;
+    for ( int family = 0; family < 2; ++family )
+    {
+        rocketnet_address_t bind = address(binds[family]);
+        rocketnet_server_rio_t * transport = rocketnet_server_rio_create(NULL, &bind);
+        CHECK(transport && bind.port != 0);
+        const SOCKET socket = (SOCKET) rocketnet_server_rio_test_socket(transport);
+        int enabled = 0;
+        int bytes = (int) sizeof(enabled);
+        CHECK(getsockopt(socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
+            family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char*) &enabled, &bytes) == 0);
+        CHECK(bytes == (int) sizeof(enabled));
+        printf("test_rio_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled);
+        enabled_for_both = enabled_for_both && enabled == 1;
+        rn_native_backend_stop_and_destroy(transport, rocketnet_server_rio_stop,
+            rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
+        CHECK(live_allocations.load() == baseline);
+    }
+    CHECK(enabled_for_both);
+}
+
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
+    { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
+    { "test_rio_transport_socket_sets_dont_fragment", test_rio_transport_socket_sets_dont_fragment },
     { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
