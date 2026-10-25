@@ -35,7 +35,7 @@ transport (the client ranking's native pick on every shard).
 
 | label | role | OS, kernel | NIC | driver | speed, duplex |
 |---|---|---|---|---|---|
-| linux-server-1 | xdp server, bare metal | Linux 6.8.0-142-generic, 17 cpus, nosmt, isolcpus 1-15 | Intel X540-AT2 port 1 | ixgbe 6.2.5 | 10000 Mb/s, full |
+| linux-server-1 | xdp server, bare metal | Linux 6.8.0-142-generic, 17 cpus, nosmt, isolcpus 1-15 | X540-AT2 port 1 | ixgbe 6.2.5 | 10000 Mb/s, full |
 | linux-client-1 | 2 shards of 250 | Linux 7.0.0-38-generic, 16 threads | Aquantia AQC113 | atlantic | 1000 Mb/s, full |
 | linux-client-2 | 1 shard of 250 | Linux 7.0.0-38-generic, 16 threads | Aquantia AQC113 | atlantic | 1000 Mb/s, full |
 | linux-client-3 | 1 shard of 250 | Linux 7.0.0-38-generic, 16 threads | Aquantia AQC113 | atlantic | 1000 Mb/s, full |
