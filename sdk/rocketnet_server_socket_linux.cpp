@@ -2315,7 +2315,9 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
     // in one commit; this is the only writer of the kernel map. A forget the
     // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
-    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark).
+    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark);
+    // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
+    // reconnect's refused zero mark is retried rather than lost.
 
     bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
 
@@ -2368,7 +2370,8 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     }
 
     // a full buffer's refusals land in the commit failure count; a refused
-    // forget is kept unless an applied mark of its key superseded it
+    // forget is kept unless an applied mark of its key superseded it, and a
+    // refused mark is kept for the next commit
     server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
 }
 
@@ -2637,13 +2640,14 @@ bool rocketnet_server_socket_test_replay_marks()
 
     rocketnet_server_socket_replay_commit(server);
 
-    // the refused forget stays pending for the next commit; the marks clear
+    // the refused forget and both refused marks stay pending for the next commit
     valid &= server->replay_marks->forget_count == 1;
-    valid &= server->replay_marks->mark_count == 0;
+    valid &= server->replay_marks->mark_count == 2;
     valid &= rocketnet_server_socket_replay_commit_failures(server) > failures_before;
 
     // fill the forgets past the buffer: the refusal reaches the commit
-    // failure count beside one failure per refused forget
+    // failure count beside one failure per refused forget and per kept mark
+    // retried and refused again (b's forget was not queued, so its mark stays)
     for (uint32_t i = 1; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++)
     {
         rocketnet_address_t c = a;
@@ -2655,8 +2659,9 @@ bool rocketnet_server_socket_test_replay_marks()
     valid &= server->replay_marks->refused == 1;
     const uint64_t failures_full = rocketnet_server_socket_replay_commit_failures(server);
     rocketnet_server_socket_replay_commit(server);
-    valid &= rocketnet_server_socket_replay_commit_failures(server) == failures_full + ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 1;
+    valid &= rocketnet_server_socket_replay_commit_failures(server) == failures_full + ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 2 + 1;
     valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+    valid &= server->replay_marks->mark_count == 2;
     valid &= server->replay_marks->refused == 0;
 
     rocketnet_server_socket_destroy(server);
