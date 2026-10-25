@@ -11,7 +11,15 @@
 #               -fno-omit-frame-pointer). Apple silicon ASan has no
 #               detect_leaks, so ASAN_OPTIONS=detect_leaks=0 and the leaks leg
 #               is the leak check here.
-#   tsan        Debug, -fsanitize=thread.
+#   tsan        Debug, -fsanitize=thread. The full functional suite runs here
+#               with a one-hour case limit (ROCKETNET_TEST_CASE_TIME_SCALE=30
+#               on the two functional steps of this leg only; owner ruling
+#               2026-10-25): under TSAN the live message matrix measured 106 to
+#               116 s against the 120 s limit that per-PR CI keeps. The leg's
+#               functional step timeout (80 min) covers one case running to its
+#               hour plus the rest of the suite (about 6 min measured), and the
+#               job timeout (200 min) covers the build, both unit runs and both
+#               functional runs.
 #   leaks       an unsanitized Debug build. The suites run each case in a child
 #               process, and `leaks --atExit` inspects only the process it
 #               launched and does not pass its exit status through, so the
@@ -44,7 +52,7 @@ jobs:
   sanitizers-macos:
     name: macOS ${{ matrix.leg }}
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: ${{ matrix.leg == 'leaks' && 260 || 90 }}
+    timeout-minutes: ${{ matrix.leg == 'leaks' && 260 || (matrix.leg == 'tsan' && 200 || 90) }}
     strategy:
       fail-fast: false
       matrix:
@@ -169,25 +177,29 @@ jobs:
 
       - name: Functional suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 30 || 25) }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 80 || 25) }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: msgx
           ROCKETNET_CLIENT_TRANSPORT: msgx
         run: |
           set -o pipefail
+          # the tsan leg's functional cases have a one-hour case limit (120 s times 30)
+          if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-msgx 2>&1 | tee functional-msgx.log
           else ./bin/functional 2>&1 | tee functional-msgx.log; fi
 
       - name: Functional suite, portable
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 30 || 25) }}
+        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 80 || 25) }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
+          # the tsan leg's functional cases have a one-hour case limit (120 s times 30)
+          if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-portable 2>&1 | tee functional-portable.log
           else ./bin/functional 2>&1 | tee functional-portable.log; fi
 
