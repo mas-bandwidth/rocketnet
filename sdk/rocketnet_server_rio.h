@@ -84,6 +84,8 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that kept the fill phase open: the next phase not yet idle
     ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds
+    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT,        // datagrams below the wire's minimum size
+    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE,        // datagrams past the receive ceiling
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
     ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
     ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls

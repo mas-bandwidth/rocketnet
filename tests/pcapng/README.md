@@ -1,6 +1,6 @@
 # tests/pcapng: the pcapng corpus
 
-Real rocketnet traffic, captured in the functional tier and replayed into the packet readers in the unit tier. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server. Nothing of console sockets or web support is captured.
+Real rocketnet traffic, captured in the functional tier and replayed into the packet readers by the functional suite's corpus-consistency cases (`functional/corpus_consistency.cpp`). The replay reads this directory at run time and the directory grows as regressions land, so it is a functional case, never a unit one: `./bin/test` reads no file. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server. Nothing of console sockets or web support is captured.
 
 ## Files
 
@@ -11,7 +11,7 @@ Real rocketnet traffic, captured in the functional tier and replayed into the pa
 | `tests/pcapng.h` | the header-only C++ reader and writer |
 | `tools/pcapng.py` | the python reader and writer (`read_packets`, `write_packets`, `udp_payload`, `--selftest`) |
 | `functional/channel_harness.h` | the capture tee |
-| `test_unit_prefilter_counters.cpp` | the replay (`test_pcapng_corpus_replay`) and its witness (`test_pcapng_corpus_witness_unread_packet_goes_red`) |
+| `functional/corpus_consistency.cpp` | the replay (`test_pcapng_corpus_replay`), its witness (`test_pcapng_corpus_witness_unread_packet_goes_red`) and the control-type coverage (`test_pcapng_corpus_covers_control_packet_types`), rows of `rocketnet_functional_tests[]` run by `./bin/functional` |
 
 ## The format
 
@@ -80,7 +80,7 @@ done
 python3 tools/pcapng.py hostile fuzz/corpus tests/pcapng/hostile_prefilter.pcapng
 python3 tools/pcapng.py fragments fuzz/corpus tests/pcapng/fragment_seeds.pcapng
 python3 tools/pcapng.py summary tests/pcapng/*.pcapng
-./bin/test test_pcapng_corpus_replay
+./bin/functional --run test_pcapng_corpus_replay
 ```
 
 `./bin/functional --run <name>` runs one test in-process (a bare name runs the whole suite).
@@ -111,7 +111,7 @@ Each file at most 128 KiB, `tests/pcapng/` (with `regress/`) at most 512 KiB in 
 
 ## What is stable
 
-Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `test_pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `test_unit_prefilter_counters.cpp` is updated with the reason.
+Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `test_pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `functional/corpus_consistency.cpp` is updated with the reason.
 
 ## The replay
 
