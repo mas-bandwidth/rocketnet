@@ -11,6 +11,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_packet_builder.h"
@@ -1122,13 +1123,8 @@ REGISTER_UNIT_TEST( test_server_client_index_round_trips_as_int );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
-#if defined(_WIN32)
-static int lifecycle_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
-static int lifecycle_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-#else
-static int lifecycle_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
-static int lifecycle_unsetenv( const char * name ) { return unsetenv( name ); }
-#endif
+static int lifecycle_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+static int lifecycle_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
 
 static void test_config_packets_per_update_range()
 {

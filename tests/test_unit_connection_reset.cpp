@@ -5,6 +5,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -40,23 +41,15 @@ struct reset_env_pin_t
 static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 {
     pin->name = name;
-    pin->was_set = rocketnet_test_getenv( name, pin->value, sizeof(pin->value) ) != 0;
-#if defined(_WIN32)
-    _putenv_s( name, "" );
-#else
-    unsetenv( name );
-#endif
+    pin->was_set = rocketnet_test_env_getenv( name, pin->value, sizeof(pin->value) ) != 0;
+    rocketnet_test_env_unsetenv( name );
 }
 
 static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 {
     if ( !pin->was_set )
         return;
-#if defined(_WIN32)
-    _putenv_s( pin->name, pin->value );
-#else
-    setenv( pin->name, pin->value, 1 );
-#endif
+    rocketnet_test_env_setenv( pin->name, pin->value, 1 );
 }
 
 #define check rocketnet_unit_check
@@ -1060,7 +1053,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.send_sequence_handshake = 7;
         client.send_sequence_session = 9;
         client.next_fragment_payload_id = 12;
-        memset( &client.replay_handshake, 0xA5, sizeof(client.replay_handshake) );
+        client.handshake_highest_opened = 0xA5A5A5A5A5A5A5A5ULL;
         memset( &client.replay_session, 0xA5, sizeof(client.replay_session) );
         memset( &client.accepted_session, 0xA5, sizeof(client.accepted_session) );
         client.received_session_sequence = 99;
@@ -1092,7 +1085,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.client_index == -1 );
         rocketnet_replay_protection_t no_replay;
         memset( &no_replay, 0, sizeof(no_replay) );
-        check( memcmp( &client.replay_handshake, &no_replay, sizeof(no_replay) ) == 0 );
+        check( client.handshake_highest_opened == 0 );
         check( memcmp( &client.replay_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( memcmp( &client.accepted_session, &no_replay, sizeof(no_replay) ) == 0 );
         check( client.received_session_sequence == 0 );

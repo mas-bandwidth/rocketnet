@@ -48,7 +48,4 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 // acks return zero; a newly marked number returns one.
 int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number );
 
-// The scheduler can continue to write unreliable records during a stall.
-int rn_window_send_can_write_unreliable( const rn_window_send_t * send );
-
 #endif

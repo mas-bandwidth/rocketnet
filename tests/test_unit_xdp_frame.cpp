@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
@@ -720,12 +721,9 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 
     // the env pin wins over the struct's list: set it aside for the case
 
-    const char * pinned = getenv( "ROCKETNET_SERVER_TRANSPORT" );
     char saved[256];
-    saved[0] = '\0';
-    if ( pinned )
-        snprintf( saved, sizeof(saved), "%s", pinned );
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    const bool pinned = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved, sizeof( saved ) ) != 0;
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
@@ -747,7 +745,7 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( level );
     if ( pinned )
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
+        rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
 
     rocketnet_unit_check( server == NULL );
     rocketnet_unit_check( status != ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );

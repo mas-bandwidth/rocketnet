@@ -388,9 +388,9 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 955,710,336 bytes (about 0.96 GB, 955,710 bytes per slot on average).
+reports 956,510,400 bytes (about 0.96 GB, 956,510 bytes per slot on average).
 The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 3,063,168 bytes.
+`rocketnet_client_required_memory` report 3,064,000 bytes.
 
 Both figures are the SDK's create block only. They exclude the transport
 allocations made at connect and start, native resources, and process
@@ -456,6 +456,50 @@ wipes/frees resources synchronously; if the worker has not exited it logs a
 second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy
 returns. A completion query does not free the object or promise receipt by the other side of the connection.
+
+### Receive buffer sizing
+
+Between two updates the server's socket holds every packet that arrives.
+The portable transport's receive worker reads the socket into one of three
+banks and publishes a bank after every read. While main holds the other
+banks the worker has no free bank, stops reading the socket and waits
+(`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
+the kernel's receive buffer, and a buffer too small for it drops datagrams
+before the server sees them. Each server socket therefore asks for:
+
+```
+receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
+                       at least 1,000,000, at most INT_MAX
+```
+
+that is, `max_clients` at the default client send budget
+(`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, 125,000 bytes/s per client), over
+the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
+kernel's per-packet accounting, which charges more than the packet bytes. At
+1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
+updating faster than 10 Hz need proportionally less; the request stays sized
+for 10 Hz. The io_uring and iocp transports size for `ROCKETNET_MAX_CLIENTS`.
+The request is an upper bound: the kernel charges only for what it holds.
+
+The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
+(about 208 KB by default) without an error; macOS and the BSDs refuse a
+request above `kern.ipc.maxsockbuf` and the server walks down by halves. The
+server reads the grant back after create and logs one line with what it
+granted and what it asked for; when the grant is below the request that line
+is a warning naming the limit to raise. On Linux, for 1000 clients:
+
+```
+sudo sysctl -w net.core.rmem_max=25000000
+```
+
+A grant below one update's inbound traffic drops packets in the kernel
+before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
+update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
+1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp:
+3.46 MB, 1.83 MB and 1.30 MB of wire bytes per update, with 0 kernel
+receive drops). The portable server is a portable implementation with no
+performance guarantee: that case reports the kernel's receive drop count and
+never fails on it, and runs when `ROCKETNET_LOW_TICK_MEASURE=1` names it.
 
 ## Frame loop
 

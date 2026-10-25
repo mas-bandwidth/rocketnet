@@ -77,14 +77,14 @@ Factories, resources and platform decisions stay in the transport layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
 The `transport` config value is an ordered candidate list
-(`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp:858-998`).
+(`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp`).
 A known name absent from this build's availability list for the endpoint on
 this platform (`gso` or `io_uring` on macOS, `io_uring` on a client or built without
-liburing) is skipped with one info line (`:947-961`). A list with at least
+liburing) is skipped with one info line. A list with at least
 one name left after skipping is a strict pin: only those candidates are tried,
 in order, and if every one refuses, the ladder is exhausted and connect or
 start fails. A list whose every name is skipped falls back to the endpoint's
-`auto` order with a warning (`:969-995`): ruled on the #110 review, so one
+`auto` order with a warning: one
 fleet-wide line such as `ROCKETNET_SERVER_TRANSPORT=gso` deploys unchanged to
 mixed machines. A row that is compiled out but kept as a refusing rung (`xdp`
 in a build without XDP) is not skipped: its pin refuses at start with
@@ -98,9 +98,9 @@ one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other: the `gso` client is pin-only
 (`ROCKETNET_CLIENT_TRANSPORT=gso`) while the `gso` server ranks 20 in the Linux
-server order; rn-client-transport-ranking sets the client order. The loopback transport is in-process, carries datagrams through memory with no
+server order. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
-by name. auto never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
+by name; `auto` never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
 records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
 allocates its full `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue at create, so
 runtime sends never allocate or grow it. A process using loopback must budget
@@ -126,6 +126,21 @@ the socket's, chosen at create from the transport name: `msgx` the Darwin
 the portable client batches with `sendmmsg`/`recvmmsg`. The msgx client, its
 pins and its degrade path are in [docs/MACOS.md](docs/MACOS.md), "The msgx
 client".
+
+On Windows the `iocp` client (`sdk/rocketnet_client_iocp_windows.cpp`,
+pin-only: `ROCKETNET_CLIENT_TRANSPORT=iocp`) associates its one connected
+socket with a completion port of its own, never the iocp server's, and posts
+`ROCKETNET_CLIENT_IOCP_RECEIVES` (64) overlapped `WSARecvFrom` receives at
+create into buffers allocated at create. The I/O thread's wait is
+`GetQueuedCompletionStatusEx` with the timeout and its wake one
+`PostQueuedCompletionStatus` with a wake key, so the portable client's
+event wait is replaced by the port; receive_batch copies each completed
+receive and re-posts it after the copy; sends are synchronous `WSASendTo`
+(overlapped send is rn-win-client-overlapped-send). Destroy closes the
+socket and dequeues until every posted receive has completed before it frees
+(`tla/RNClientIocp.tla`, FreedOnlyWhenDrained); a drain that does not finish
+within `ROCKETNET_CLIENT_IOCP_DRAIN_WAITS` dequeues of one second leaks the
+transport rather than free memory the kernel may still write.
 
 ## Server capabilities and ownership
 
@@ -181,14 +196,14 @@ The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
-| msgx | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 16000 per update (`sdk/rocketnet_constants.h:81`) |
-| loopback | portable batch256–1000 (`sdk/rocketnet_constants.h:87`) | 2048 per endpoint (`sdk/rocketnet_driver_loopback.h:26`) |
-| gso | 4096 (`sdk/rocketnet_server_gso.h:49`) | 8192 per queue (`sdk/rocketnet_server_gso.h:57`) |
-| io_uring | 2048 staged;10240 completion reap (`sdk/rocketnet_server_uring.h:54`,`sdk/rocketnet_server_uring.h:79`) | 4096 receive buffers of 66 KiB per queue;16000 bank (`sdk/rocketnet_server_uring.h:64`,`sdk/rocketnet_server_uring.h:78`) |
-| xdp | 4096 (`sdk/rocketnet_constants.h:57`) | 16384 staging (`sdk/rocketnet_constants.h:58`) |
-| iocp | 2048 (`sdk/rocketnet_server_iocp.h:22`) | 4096 queue (`sdk/rocketnet_server_iocp.h:24`) |
-| rio | 2048 per phase (`sdk/rocketnet_server_rio.h:34`) | 4096 posted receives (`sdk/rocketnet_server_rio.h:35`) |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`) |
+| msgx | portable batch, 256–1000 | 16000 per update |
+| loopback | portable batch, 256–1000 | 2048 per endpoint (`ROCKETNET_LOOPBACK_QUEUE_PACKETS`, `sdk/rocketnet_driver_loopback.h`) |
+| gso | 4096 (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
+| io_uring | 2048 staged;10240 completion reap (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue;16000 bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_RECEIVE_BUDGET`) |
+| xdp | 4096 (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
+| iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
+| rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
 
 ## UDP coalescing
 
@@ -254,23 +269,23 @@ commit barrier remain in its adapter/backend.
 
 A factory reports why it failed through `config->status`
 (`rocketnet_server_transport_io_config_t.status` and
-`rocketnet_client_transport_io_config_t.status`, sdk/rocketnet_driver.h:52 and :115),
+`rocketnet_client_transport_io_config_t.status`, `sdk/rocketnet_driver.h`),
 one form for every transport. `rocketnet_server_transport_io_open` and
 `rocketnet_client_transport_io_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
 when the create returned NULL after an allocation on the calling thread was
-refused (sdk/rocketnet_driver.cpp:126, :148 and :182, reading the per-thread
-count kept at sdk/rocketnet.cpp:369); any other NULL leaves it OK and is a
+refused (`sdk/rocketnet_driver.cpp`, reading the per-thread
+count kept in `sdk/rocketnet.cpp`); any other NULL leaves it OK and is a
 refusal. The count rises on every `rocketnet_malloc` refusal
-(sdk/rocketnet.cpp:461 and :475) and on the two page buffers a transport
-allocates outside it, the xdp umem (sdk/rocketnet_server_socket_linux.cpp:1720)
-and the rio region (sdk/rocketnet_server_rio_windows.cpp:508), through
-`rocketnet_allocation_refused` (sdk/rocketnet.cpp:378). So every built-in
+(`sdk/rocketnet.cpp`) and on the two page buffers a transport
+allocates outside it, the xdp umem (`sdk/rocketnet_server_socket_linux.cpp`)
+and the rio region (`sdk/rocketnet_server_rio_windows.cpp`), through
+`rocketnet_allocation_refused` (`sdk/rocketnet.cpp`). So every built-in
 transport (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
 through the open. The transport ladder falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
-`rocketnet_server_transport_create_ex` (sdk/rocketnet_server_transport.cpp:1299)
+`rocketnet_server_transport_create_ex` (`sdk/rocketnet_server_transport.cpp`)
 and `rocketnet_client_transport_create_ex`
-(sdk/rocketnet_client_transport.cpp:882) destroy what they built and return
+(`sdk/rocketnet_client_transport.cpp`) destroy what they built and return
 NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
 
 Server shutdown uses separate idempotent `stop` and `stopped` callbacks.
@@ -337,15 +352,14 @@ as root inside a virtme-ng guest.
 
 The library sets the server thread priority on each network thread a server
 transport creates, from the creating thread right after the create
-(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp:1434`, `:3142`
-and `:3573`):
+(`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp`):
 `SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and macOS,
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
 | Transport | Network threads it creates | What the library sets |
 |---|---|---|
 | GSO (Linux) | one receive worker per queue plus one transmit worker | `SCHED_RR`, minimum priority, after each create |
-| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp:2568-2577`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
+| XDP (Linux) | one thread per queue (`sdk/rocketnet_server_socket_linux.cpp`) | on itself at thread start: pinned to cpu `num_os_cpus + queue` with `pthread_setaffinity_np`, then `SCHED_RR` at the minimum priority on `pthread_self()` |
 | IOCP (Windows) | one completion worker plus one transmit worker; ignores `num_xdp_queues` | `THREAD_PRIORITY_TIME_CRITICAL`, after each create |
 | RIO (Windows) | one I/O worker | `THREAD_PRIORITY_TIME_CRITICAL`, after create |
 | portable/msgx socket | one receive worker and one transmit worker | nothing |
@@ -605,49 +619,49 @@ started). `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides both.
 
 A NULL `ipv4_address` or `ipv6_address` leaves that family unserved. An
 address not of its family, on another port, or that does not parse is one
-log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp:1396-1424`).
+log line and `INVALID_ADDRESS` (`sdk/rocketnet_server_transport.cpp`).
 The two addresses share the IPv6 wildcard on the one port, with `IPV6_V6ONLY`
-off (`sdk/rocketnet_server_transport.cpp:1426-1433`). `portable`
-(`sdk/rocketnet_platform.cpp:797-805`), `msgx` through that same socket, `gso`
-(`sdk/rocketnet_server_gso_linux.cpp:491`), `io_uring`
-(`sdk/rocketnet_server_uring_linux.cpp:400`), `iocp`
-(`sdk/rocketnet_server_iocp_windows.cpp:678`) and `rio`
-(`sdk/rocketnet_server_rio_windows.cpp:623`) serve both from that bind. Port 0
+off. `portable`
+(`sdk/rocketnet_platform.cpp`), `msgx` through that same socket, `gso`
+(`sdk/rocketnet_server_gso_linux.cpp`), `io_uring`
+(`sdk/rocketnet_server_uring_linux.cpp`), `iocp`
+(`sdk/rocketnet_server_iocp_windows.cpp`) and `rio`
+(`sdk/rocketnet_server_rio_windows.cpp`) serve both from that bind. Port 0
 writes the granted port onto both addresses
-(`sdk/rocketnet_server_transport.cpp:1758-1761`). The protocol advertises the named
-IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp:1816-1850`).
+(`sdk/rocketnet_server_transport.cpp`). The protocol advertises the named
+IPv4 and the named IPv6 (`sdk/rocketnet_server_transport.cpp`).
 `TokenAddressAdvertised` accepts a request when the token's address of the
-arrival family is one of those (`sdk/rocketnet_server_protocol.cpp:206`). A
+arrival family is one of those (`TokenAddressAdvertised`, `sdk/rocketnet_server_protocol.cpp`). A
 v4-mapped source is canonicalised to IPv4 first. The token's other-family
 address is not consulted.
 
 The given addresses are advertised addresses, not bind restrictions. With one
 address, the server binds that family's wildcard (`0.0.0.0` or `[::]`) on the
 given port, even when the address names a specific IP
-(`sdk/rocketnet_server_transport.cpp:1435-1441`), and every transport except
+(`sdk/rocketnet_server_transport.cpp`), and every transport except
 `xdp` opens its sockets on that wildcard: `xdp` alone carries
 `ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS` and attaches to the interface that
 carries the given address. The `server transport started on` log line names
 the wildcard for a socket transport and the given address for `xdp`
-(`sdk/rocketnet_server_transport.cpp:1749`). Connect tokens must name the
+(`sdk/rocketnet_server_transport.cpp`). Connect tokens must name the
 given address, the one clients reach; a socket transport still receives the
 server's port on every local address of the family.
 
 `portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
-with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp:20`).
+with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp`).
 The ladder falls through. Start returns that status when every candidate that
-opened refused for that reason (`sdk/rocketnet_server_transport.cpp:1375`).
+opened refused for that reason (`sdk/rocketnet_server_transport.cpp`).
 
 `xdp` serves both from one program when both addresses are on one interface.
 The config map carries both destinations and no loopback placeholder
-(`sdk/rocketnet_server_socket_linux.cpp:1848`). Each family keeps its own
-gateway MAC (`sdk/rocketnet_server_socket_linux.cpp:1524`,
-`sdk/rocketnet_xdp_frame.h:524`). The receive loop accepts either family
-(`sdk/rocketnet_server_socket_linux.cpp:2858`, `sdk/rocketnet_xdp_frame.h:359`).
+(`sdk/rocketnet_server_socket_linux.cpp`). Each family keeps its own
+gateway MAC (`sdk/rocketnet_server_socket_linux.cpp`,
+`sdk/rocketnet_xdp_frame.h`). The receive loop accepts either family
+(`sdk/rocketnet_server_socket_linux.cpp`, `sdk/rocketnet_xdp_frame.h`).
 Each reply's source is the server address of the destination's family
-(`sdk/rocketnet_server_socket_linux.cpp:2975`). Addresses on two interfaces
+(`sdk/rocketnet_server_socket_linux.cpp`). Addresses on two interfaces
 refuse with `TRANSPORT_FAMILIES_UNSUPPORTED`
-(`sdk/rocketnet_server_socket_linux.cpp:1479`).
+(`sdk/rocketnet_server_socket_linux.cpp`).
 
 The kernel filter's counters surface on the transport counter surface as
 `ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
@@ -674,10 +688,10 @@ virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
 verifies, and with room for the server's UMEM and queues (the default guest
 memory runs out and the server is killed). The case starts the server with
 `--max-clients 4`, so its message object is sized for the one client it
-connects rather than the example's default 1000 (test_xdp_filter.cpp:1280,
-server.c:872), and it gives the server and client a pipe it holds open as
+connects rather than the example's default 1000 (`tests/test_xdp_filter.cpp`, the
+`--max-clients` option of `server.c`), and it gives the server and client a pipe it holds open as
 stdin, because the server stops when its stdin reaches end of file
-(server.c:150-165) and a guest run without a terminal starts there:
+(`check_stdin_closed` in `server.c`) and a guest run without a terminal starts there:
 
 ```sh
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
@@ -729,8 +743,10 @@ behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
 GCC or Clang on a little-endian, non-Windows host, and its cases are in the
 unit suite on Linux only. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
-the helper's kernel source cited. `test_xdp_transport_host_every_counter_has_a_case` fails
-when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
+the helper's kernel source cited. the counter-row check `test_xdp_transport_host_every_counter_has_a_case`
+runs in the static source-audit binary `./bin/source_audit` (which CI runs on
+a Linux leg) and fails when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row
+that moves it. To reproduce
 the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 

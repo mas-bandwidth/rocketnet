@@ -346,13 +346,17 @@ DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
 // UDP_COALESCED_INFO stride except a shorter last one, split by the shared
 // coalescing rule and each checked against the bounds a single datagram is.
 static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketnet_iocp_receive_buffer_t * buffer,
-    rocketnet_iocp_operation_t * op, bool success, DWORD bytes )
+    rocketnet_iocp_operation_t * op, bool success, int receive_error, DWORD bytes )
 {
     rocketnet_address_t from;
     if ( !success || bytes == 0 || ( op->message.dwFlags & MSG_TRUNC ) ||
          !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
     {
         iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+        if ( success && bytes == 0 )
+            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+        else if ( receive_error == WSAEMSGSIZE || ( success && ( op->message.dwFlags & MSG_TRUNC ) ) )
+            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     const DWORD stride = rocketnet_iocp_coalesced_stride( &op->message );
@@ -382,7 +386,13 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
             }
             else
+            {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                if ( length <= 0 )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                else if ( length > ROCKETNET_RECEIVE_CEILING )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            }
         }
         base += window;
     }
@@ -418,19 +428,18 @@ static void rocketnet_iocp_worker( void * argument )
     rocketnet_server_iocp_t * iocp = worker->owner;
     for ( ;; )
     {
-        if ( iocp->stopping.load( std::memory_order_acquire ) )
+        // RNBufferHandoff WorkerExit sends every bank before receive cancellation.
+        if ( iocp->stopping.load( std::memory_order_acquire ) &&
+             iocp->send_exited.load( std::memory_order_acquire ) )
         {
-            // Every worker cancels after its last potential repost. A sibling worker
-            // may have read stopping=false before another worker's cancel;
-            // its next pass cancels that late post as well.
-            if ( iocp->socket != INVALID_SOCKET &&
-                 !CancelIoEx( (HANDLE) iocp->socket, NULL ) && GetLastError() != ERROR_NOT_FOUND )
-                rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
-            // TX may have observed running before the stop request. It must
-            // finish that posting pass before a zero pending count can prove
-            // there will never be a later overlapped submission.
-            if ( iocp->send_exited.load( std::memory_order_acquire ) &&
-                 iocp->pending.load( std::memory_order_acquire ) == 0 ) break;
+            // Every worker repeats cancellation after its last possible repost.
+            // Cancel only receives, so the final posted sends can complete.
+            if ( iocp->socket != INVALID_SOCKET )
+                for ( int i = 0; i < iocp->num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+                    if ( !CancelIoEx( (HANDLE) iocp->socket, &iocp->receives[i].overlapped ) &&
+                         GetLastError() != ERROR_NOT_FOUND )
+                        rocketnet_error( "IOCP cancellation failed: %lu", GetLastError() );
+            if ( iocp->pending.load( std::memory_order_acquire ) == 0 ) break;
         }
 
         OVERLAPPED_ENTRY entries[64];
@@ -483,6 +492,7 @@ static void rocketnet_iocp_worker( void * argument )
 
             rocketnet_address_t from;
             const bool running = !iocp->stopping.load( std::memory_order_acquire );
+            int receive_error = 0;
             if ( !success && running && entries[i].Internal != 0 )
             {
                 // a receive completed with an ICMP report of an earlier send
@@ -491,14 +501,17 @@ static void rocketnet_iocp_worker( void * argument )
                 // the worker (windows-udp-connreset audit, iocp and URO completion)
                 DWORD transferred = 0;
                 DWORD completion_flags = 0;
-                if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) &&
-                     rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
-                    rocketnet_platform_count_receive_reset();
+                if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) )
+                {
+                    receive_error = WSAGetLastError();
+                    if ( rocketnet_platform_receive_status_is_reset( receive_error ) )
+                        rocketnet_platform_count_receive_reset();
+                }
             }
             if ( op->uro_data )
             {
                 if ( running )
-                    rocketnet_iocp_publish_uro( iocp, buffer, op, success, bytes );
+                    rocketnet_iocp_publish_uro( iocp, buffer, op, success, receive_error, bytes );
             }
             else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
                  buffer->num_packets < ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE &&
@@ -511,7 +524,13 @@ static void rocketnet_iocp_worker( void * argument )
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
             }
             else if ( running )
+            {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                if ( success && bytes == 0 )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
+                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            }
 
             iocp->pending.fetch_sub( 1, std::memory_order_release );
             rocketnet_iocp_post_receive( iocp, op );
@@ -539,6 +558,7 @@ static void rocketnet_iocp_worker( void * argument )
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
 {
     if ( !iocp || iocp->stopping.load( std::memory_order_acquire ) ) return;
+    // tla/RNBufferHandoff.tla MainStop transfers the final producer with quit.
     // Fill threads have joined before stop. The release transfers the final
     // unpublished producer to TX, without scanning it or acquiring a mutex.
     uint64_t count = iocp->num_staged.load( std::memory_order_relaxed );
@@ -645,7 +665,13 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 
     sockaddr_storage address;
     int address_bytes = rocketnet_iocp_address_write( bind_address, iocp->ipv6, &address );
-    int buffer_bytes = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    // one update's inbound packets at the full client count: the iocp create
+    // does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS (a
+    // request; the stack charges only what it holds)
+    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    int buffer_bytes = receive_buffer_bytes;
+    int granted_receive_bytes = 0;
+    int granted_length = sizeof( granted_receive_bytes );
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
@@ -677,6 +703,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &enabled, sizeof(enabled) ) == SOCKET_ERROR ) goto failed;
     if ( iocp->ipv6 && setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &v6_only, sizeof(v6_only) ) == SOCKET_ERROR ) goto failed;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
+    if ( getsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (char*) &granted_receive_bytes, &granted_length ) == SOCKET_ERROR ) granted_receive_bytes = 0;
+    rocketnet_server_receive_buffer_granted( "iocp", receive_buffer_bytes, granted_receive_bytes );
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
     // Match the portable socket's don't-fragment rule, tolerating option refusal.
@@ -937,6 +965,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
 static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_iocp_send_bank_t * bank )
 {
+    // tla/RNBufferHandoff.tla Consume and WorkerExit keep sending after quit.
     const uint64_t count = (uint64_t) bank->count;
     if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
     {
@@ -949,10 +978,8 @@ static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_
     for ( uint64_t i = 0; i < count; ++i )
     {
         rocketnet_iocp_operation_t * op = &iocp->sends[bank->staged[i]];
-        if ( op->packet_bytes == 0 || iocp->stopping.load( std::memory_order_acquire ) )
+        if ( op->packet_bytes == 0 )
         {
-            if ( op->packet_bytes != 0 )
-                iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
             InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
             continue;
         }
@@ -1001,6 +1028,7 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
 
 static void rocketnet_iocp_send_worker( void * argument )
 {
+    // tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
     rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t*) argument;
     for ( ;; )
     {
@@ -1039,7 +1067,7 @@ static void rocketnet_iocp_send_worker( void * argument )
         else if ( finish )
         {
             // Stop's release transferred the last unpublished producer. It
-            // contains no kernel-owned sends; retire those frames outside the
+            // contains no kernel-owned sends; post those frames outside the
             // mutex before advertising that no later post is possible.
             rocketnet_iocp_send_bank( iocp, &iocp->send_banks[iocp->send_producer] );
         }

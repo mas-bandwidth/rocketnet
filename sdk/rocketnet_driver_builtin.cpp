@@ -8,11 +8,13 @@
 
 // Adapters preserve the existing native backend entry points. New backends
 // can define their operations directly in their own implementation file.
-static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind )
+// A client socket asks for ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE; a server
+// socket asks for rocketnet_server_receive_buffer_request at its max_clients.
+static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes )
 {
     return rocketnet_platform_socket_create_with_pump( context, bind,
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
-        ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, name );
+        receive_buffer_bytes, name );
 }
 // The buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
@@ -386,12 +388,19 @@ static void * portable_create( void * context, const rocketnet_server_transport_
         portable_server_cleanup( server );
         return NULL;
     }
-    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    // one update's inbound packets at max_clients: the RX worker stops
+    // reading while every bank waits for main (RNPortableRx HoldOnFull), so
+    // the kernel holds whatever arrives until the next update
+    const int max_clients = config->transport && config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
+    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( max_clients );
+    server->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, receive_buffer_bytes );
     if ( !server->socket )
     {
         portable_server_cleanup( server );
         return NULL;
     }
+    rocketnet_server_receive_buffer_granted( config->name, receive_buffer_bytes,
+        rocketnet_platform_socket_receive_buffer_bytes( server->socket ) );
     if ( !rocketnet_platform_mutex_create( &server->mutex ) ||
          !rocketnet_platform_mutex_create( &server->rx_mutex ) )
     {
@@ -847,7 +856,7 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
     struct portable_io_client_t * client = (struct portable_io_client_t*) rocketnet_malloc( context, sizeof( *client ) );
     if ( !client )
         return NULL;
-    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
     if ( !client->socket )
     {
         rocketnet_free( context, client );
@@ -922,7 +931,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
-{ return portable_socket_create( context, config->name, bind ); }
+{ return portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ); }
 static void portable_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 { rocketnet_platform_socket_send_packet( (rocketnet_platform_socket_t*) transport, to, data, bytes ); }
 static int portable_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
@@ -1127,6 +1136,7 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_client_iocp.h"
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
 {
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker.
@@ -1150,6 +1160,13 @@ static uint64_t iocp_send_failures( void * transport )
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) transport, counters );
     return counters[ROCKETNET_IOCP_SEND_FAILED];
 }
+static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+{
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) transport, counters );
+    *too_short = counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+}
 static const rocketnet_server_transport_io_operations_t iocp_operations =
 {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
@@ -1157,7 +1174,9 @@ static const rocketnet_server_transport_io_operations_t iocp_operations =
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL
 };
-extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_operations, NULL };
+// the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
+// its own completion port, never this server's
+extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_operations, &rocketnet_client_iocp_operations };
 
 #include "rocketnet_server_rio.h"
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
@@ -1179,6 +1198,13 @@ static uint64_t rio_send_failures( void * transport )
     uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t*) transport, counters );
     return counters[ROCKETNET_RIO_COUNTER_SEND_FAILED];
+}
+static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+{
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( (rocketnet_server_rio_t*) transport, counters );
+    *too_short = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE];
 }
 static const rocketnet_server_transport_io_operations_t rio_operations =
 {
@@ -1280,11 +1306,17 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
     else
         return false;
     return true;
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    // Match the transport-counter promise in rocketnet_server_transport.cpp.
+    if ( operations == &iocp_operations )
+        iocp_receive_drops( transport, too_short, too_large );
+    else if ( operations == &rio_operations )
+        rio_receive_drops( transport, too_short, too_large );
+    else
+        return false;
+    return true;
 #else
-    (void) operations;
-    (void) transport;
-    (void) too_short;
-    (void) too_large;
+    (void) operations; (void) transport; (void) too_short; (void) too_large;
     return false;
 #endif
 }

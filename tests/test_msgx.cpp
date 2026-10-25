@@ -112,6 +112,8 @@ int main()
 
     // A persistently interrupted batch must make one attempt and finish via
     // the per-packet path; this assertion does not wait for packet delivery.
+    // The refused batch counts once in send_failures (its delivered prefix
+    // is indeterminate); its replay, which sends everything, counts nothing.
     interrupt_send = true;
     const int calls_before_interrupt = send_calls;
     const uint64_t failures_before_interrupt = rocketnet_platform_socket_send_failures(socket);
@@ -120,7 +122,7 @@ int main()
     CHECK(strcmp(rocketnet_platform_socket_pump(socket), "msgx") == 0);
     interrupt_send = false;
     drain(socket, address, 4);
-    CHECK(rocketnet_platform_socket_send_failures(socket) == failures_before_interrupt);
+    CHECK(rocketnet_platform_socket_send_failures(socket) == failures_before_interrupt + 1);
     printf("test_msgx_transport_send_eintr_bounded\n");
 
     rocketnet_sendmsg_x = real_send; rocketnet_recvmsg_x = real_receive;

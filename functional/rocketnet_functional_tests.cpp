@@ -8874,6 +8874,13 @@ struct rocketnet_functional_test_t
     bool ( *runs_here )(); // NULL: every host; else the case is in the suite only where it returns true
 };
 
+extern void rocketnet_test_real_environment_dev_session_sequence_start();
+extern void rocketnet_test_real_environment_log_level_before_init();
+extern void rocketnet_test_real_environment_config_precedence_and_invalid();
+extern void rocketnet_test_real_environment_client_step_driven();
+extern void rocketnet_test_real_environment_dev_simulator_number();
+extern void rocketnet_test_real_environment_server_ipv4_address();
+
 // POSIX lifecycle stress: real sockets, counted file descriptors and threads
 // (and on Linux locked memory), in functional/posix_lifecycle_stress.cpp.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -8962,6 +8969,17 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
+// the receive buffer sizing cases (functional/server_receive_low_tick.cpp):
+// the server socket's request is the formula's value at its max_clients, the
+// grant is read back and a short grant names the limit to raise. The
+// low-tick measurement (1000 clients at 256 kbps against a server updating at
+// 10 Hz) reads the kernel drop count from procfs, so it is a Linux case; it
+// reports the counts and never gates on them.
+extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
+#endif
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (functional/windows_socket_errors.cpp)
 extern void windows_server_drops_oversize_datagram_portable_ipv4();
@@ -8976,6 +8994,9 @@ extern void windows_server_drops_runt_and_garbage_iocp_ipv4();
 extern void windows_server_drops_runt_and_garbage_iocp_ipv6();
 extern void windows_server_drops_runt_and_garbage_rio_ipv4();
 extern void windows_server_drops_runt_and_garbage_rio_ipv6();
+extern void windows_server_counts_oversize_as_prefilter_too_large_iocp();
+extern void windows_server_counts_oversize_as_prefilter_too_large_rio();
+extern void windows_server_counts_runt_as_prefilter_too_short_rio();
 extern void windows_client_drops_oversize_and_garbage_ipv4();
 extern void windows_client_drops_oversize_and_garbage_ipv6();
 extern void windows_per_packet_receive_counts_empty_datagram_ipv4();
@@ -9520,7 +9541,8 @@ void rocketnet_test_portable_client_pin_selects_portable_pump()
 // the first sendmsg_x with ENOTSUP (not weather), which pauses the pump
 // (ROCKETNET_MSGX_RETRY_SECONDS); the refused chunk finishes per-packet and
 // the second chunk goes the portable loop, so every datagram of the batch is
-// sent and none is counted as a failed send.
+// sent. the refused chunk counts once as a failed send (its delivered prefix
+// is indeterminate) and its replay, which sent everything, counts nothing.
 void rocketnet_test_msgx_client_degrades_without_loss()
 {
     struct msgx_client_env_t env;
@@ -9537,13 +9559,18 @@ void rocketnet_test_msgx_client_degrades_without_loss()
     msgx_client_send_and_collect( &pair, 48 );
     rocketnet_platform_socket_fail_next_sends( pair.client_socket, 0, 0 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before );
+    rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before + 1 );
 
     // the paused socket keeps carrying both ways on the portable loop
     msgx_client_send_and_collect( &pair, 48 );
     msgx_client_receive_from_server( &pair, 48 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
-    msgx_client_pair_destroy( &pair );
+
+    // the refused chunk's one count is the client's only refusal
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( pair.client, ROCKETNET_COUNTER_SEND_FAILED );
+    rocketnet_server_transport_stop( pair.server );
+    rocketnet_server_transport_update( pair.server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair.server );
     msgx_client_env_restore( &env );
 }
 
@@ -9574,6 +9601,183 @@ void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( 
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
 
+// ---------------------------------------------------
+// The Windows iocp client (sdk/rocketnet_client_iocp_windows.cpp,
+// tla/RNClientIocp.tla): the iocp client pinned, against the portable
+// server, carries payloads both ways per family, the granted client
+// transport is iocp, and the client runs the I/O thread design of
+// docs/CLIENT-IO.md on the completion port's wait and wake.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+struct iocp_client_pair_t
+{
+    struct rocketnet_server_transport_t * server;
+    struct rocketnet_client_transport_t * client;
+};
+
+static const int IOCP_CLIENT_PAYLOAD_BYTES = 100;
+
+static void iocp_client_fill_payload( uint8_t * payload, int tag )
+{
+    payload[0] = (uint8_t) tag;
+    for ( int j = 1; j < IOCP_CLIENT_PAYLOAD_BYTES; j++ )
+        payload[j] = (uint8_t) ( tag * 31 + j );
+}
+
+static int iocp_client_payload_tag( const uint8_t * payload, int bytes )
+{
+    rocketnet_check( bytes == IOCP_CLIENT_PAYLOAD_BYTES );
+    for ( int j = 1; j < IOCP_CLIENT_PAYLOAD_BYTES; j++ )
+        rocketnet_check( payload[j] == (uint8_t) ( payload[0] * 31 + j ) );
+    return payload[0];
+}
+
+static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const char * server_bind, const char * token_host )
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.transport, sizeof(server_config.transport), "%s", "portable" );
+    pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
+    rocketnet_check( pair->server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) == 0 );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "%s:%d", token_host, rocketnet_server_transport_port( pair->server ) );
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.transport, sizeof(client_config.transport), "%s", "iocp" );
+    pair->client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( pair->client );
+    rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair->client ), "iocp" ) == 0 );
+    // the client I/O thread runs the transport (docs/CLIENT-IO.md, RNClientIo)
+    rocketnet_check( rocketnet_client_transport_client_io( pair->client ) != NULL );
+
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( pair->server ) == 1 );
+}
+
+static void iocp_client_pair_destroy( struct iocp_client_pair_t * pair )
+{
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( pair->client );
+    rocketnet_server_transport_stop( pair->server );
+    rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair->server );
+}
+
+// one hand-off of num_packets client payloads; the server collects every tag once
+static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        struct rocketnet_packet_context_t context = {};
+        uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
+        rocketnet_check( payload );
+        iocp_client_fill_payload( payload + context.payload_index, tag );
+        rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, IOCP_CLIENT_PAYLOAD_BYTES ) > IOCP_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_client_transport_send_packets( pair->client );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        const int num_payloads = rocketnet_server_transport_num_payloads( pair->server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( pair->server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            const int tag = iocp_client_payload_tag( payload, payload_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        uint8_t drain[ROCKETNET_RECEIVE_CEILING];
+        while ( rocketnet_client_transport_receive_packet( pair->client, drain, (int) sizeof(drain) ) > 0 ) {}
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+// num_packets server payloads, every one received by the iocp client once
+static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, int num_packets )
+{
+    rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
+    uint8_t payload[IOCP_CLIENT_PAYLOAD_BYTES];
+    for ( int tag = 0; tag < num_packets; tag++ )
+    {
+        iocp_client_fill_payload( payload, tag );
+        rocketnet_server_transport_send_packet( pair->server, 0, payload, IOCP_CLIENT_PAYLOAD_BYTES );
+    }
+    rocketnet_server_transport_send_packets( pair->server );
+
+    bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( pair->server );
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            const int tag = iocp_client_payload_tag( packet, packet_bytes );
+            rocketnet_check( tag < num_packets && !seen[tag] );
+            seen[tag] = true;
+            received++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+}
+
+static void iocp_client_wire( const char * server_bind, const char * token_host )
+{
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+    struct iocp_client_pair_t pair;
+    iocp_client_pair_create( &pair, server_bind, token_host );
+    iocp_client_send_and_collect( &pair, 64 );
+    iocp_client_receive_from_server( &pair, 64 );
+    // and again: every buffer the first round completed was re-posted
+    iocp_client_send_and_collect( &pair, 64 );
+    iocp_client_receive_from_server( &pair, 64 );
+    iocp_client_pair_destroy( &pair );
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+}
+
+void rocketnet_test_iocp_client_transport_wire_ipv4() { iocp_client_wire( "127.0.0.1", "127.0.0.1" ); }
+void rocketnet_test_iocp_client_transport_wire_ipv6() { iocp_client_wire( "[::1]", "[::1]" ); }
+// a server on the IPv6 wildcard serving an IPv4 client
+void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 // getaddrinfo can open a socket (the nscd lookup on glibc), so name
 // resolution is a functional case, never a unit one.
 
@@ -9591,6 +9795,16 @@ extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void test_api_polish_dev_token_string();
+extern void test_dev_connect_token_timeout_is_the_named_constant();
+extern void test_dev_token_minting_absent_in_release();
+
+// the corpus-consistency cases (functional/corpus_consistency.cpp): each walks a
+// directory of committed inputs that grows, so none is a unit case
+extern void test_pcapng_corpus_replay();
+extern void test_pcapng_corpus_witness_unread_packet_goes_red();
+extern void test_pcapng_corpus_covers_control_packet_types();
+extern void test_fuzz_prefilter_seed_names_match_outcomes();
 
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
@@ -9618,15 +9832,35 @@ static bool rocketnet_test_server_pin_allows_io_uring()
 static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "msgx" ); }
 #endif
 
+extern void rocketnet_test_server_stats_creates_no_thread();
+extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+    { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
+    { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
+    { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
+    { "test_real_environment_client_step_driven", rocketnet_test_real_environment_client_step_driven, NULL },
+    { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
+    { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+    { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
+    { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
+    { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
+    { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
+    { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
+    { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
+    { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
+    { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, NULL },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
@@ -9823,6 +10057,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_msgx_client_transport_wire_ipv6", rocketnet_test_msgx_client_transport_wire_ipv6, NULL },
     { "test_msgx_client_transport_wire_dual_stack", rocketnet_test_msgx_client_transport_wire_dual_stack, NULL },
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_iocp_client_transport_wire_ipv4", rocketnet_test_iocp_client_transport_wire_ipv4, NULL },
+    { "test_iocp_client_transport_wire_ipv6", rocketnet_test_iocp_client_transport_wire_ipv6, NULL },
+    { "test_iocp_client_transport_wire_dual_stack", rocketnet_test_iocp_client_transport_wire_dual_stack, NULL },
+#endif
     { "test_transport_all_skipped_uses_auto", rocketnet_test_transport_all_skipped_uses_auto, rocketnet_test_server_pin_allows_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases, NULL },
     { "test_client_transport_io", rocketnet_test_client_transport_io, rocketnet_test_client_pin_allows_auto },
@@ -9882,6 +10121,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_iocp_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_iocp_ipv6, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv4", windows_server_drops_runt_and_garbage_rio_ipv4, NULL },
     { "test_rio_transport_windows_server_drops_runt_and_garbage_ipv6", windows_server_drops_runt_and_garbage_rio_ipv6, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_iocp", windows_server_counts_oversize_as_prefilter_too_large_iocp, NULL },
+    { "test_windows_server_counts_oversize_as_prefilter_too_large_rio", windows_server_counts_oversize_as_prefilter_too_large_rio, NULL },
+    { "test_windows_server_counts_runt_as_prefilter_too_short_rio", windows_server_counts_runt_as_prefilter_too_short_rio, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv4", windows_client_drops_oversize_and_garbage_ipv4, NULL },
     { "test_windows_client_drops_oversize_and_garbage_ipv6", windows_client_drops_oversize_and_garbage_ipv6, NULL },
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv4", windows_per_packet_receive_counts_empty_datagram_ipv4, NULL },
@@ -9908,9 +10150,16 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
+    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
+
+void rocketnet_functional_restore_log_function()
+{
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+}
 
 void rocketnet_functional_prepare()
 {

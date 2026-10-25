@@ -163,8 +163,9 @@ static void test_server_stats_current_after_window_slides()
         }
 
         // received sequences with a gap every thirteenth, a late arrival
-        // every 97th, a very late one every 211th (it lands on a newer
-        // record's slot) and a duplicate every 89th
+        // every 97th, a very late one every 211th (more than a ring behind,
+        // it is refused and leaves the newer record in its slot counted) and
+        // a duplicate every 89th
         received++;
         if ( received % 13 == 0 )
             received++;
