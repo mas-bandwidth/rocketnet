@@ -166,11 +166,30 @@ mac=$( fakes env LAN_PROOF_OS=macos "$remote" load ) || say "macos load exited $
 [ "$mac" = "load1=6.20 nproc=18" ] || say "macos load printed '$mac'"
 fakes env LAN_PROOF_OS=macos FAKE_NCPU=many "$remote" load >/dev/null 2>&1 && say "macos load accepted a non-numeric core count"
 
+[ -f "$tmp/log/winlock.args" ] && say "a macOS command took a Windows lock"
+
 win=$( fakes env LAN_PROOF_OS=windows "$remote" hostinfo Ethernet_4 ) || say "windows hostinfo exited $?"
+grep -q -- '--slots 3 --card lan-proof -- .*lan-proof-remote hostinfo Ethernet_4' "$tmp/log/winlock.args" ||
+    say "windows hostinfo did not run inside a shared slot"
 [ "$win" = "os=Windows kernel=10.0.26200 iface=Ethernet_4 model=Example 10G Adapter driver=example.sys speed_mbps=10000 duplex=Full address=192.0.2.46 load1=1.92 nproc=64" ] ||
     say "windows hostinfo printed '$win'"
 win=$( fakes env LAN_PROOF_OS=windows "$remote" load ) || say "windows load exited $?"
 [ "$win" = "load1=1.92 nproc=64" ] || say "windows load printed '$win'"
+grep -q -- '--slots 3 .*lan-proof-remote load' "$tmp/log/winlock.args" || say "windows load did not run inside a shared slot"
+for step in "alive $tmp/none.pid" "stop $tmp/none.pid" "collect $tmp/inventory"; do
+    rm -f "$tmp/log/winlock.args"
+    fakes env LAN_PROOF_OS=windows "$remote" $step >/dev/null 2>&1
+    grep -q -- "--slots 3 .*lan-proof-remote ${step%% *}" "$tmp/log/winlock.args" 2>/dev/null ||
+        say "windows ${step%% *} did not run inside a shared slot"
+done
+# inside a held cell a command runs within that lock instead of queueing
+mkdir -p "$tmp/base"
+echo $$ > "$tmp/base/cell.holder"
+rm -f "$tmp/log/winlock.args"
+win=$( fakes env LAN_PROOF_OS=windows "$remote" load ) || say "windows load in a held cell exited $?"
+[ "$win" = "load1=1.92 nproc=64" ] || say "windows load in a held cell printed '$win'"
+[ -f "$tmp/log/winlock.args" ] && say "a command inside the held cell queued for another lock"
+rm -f "$tmp/base/cell.holder"
 fakes env LAN_PROOF_OS=windows FAKE_NPROC=x "$remote" hostinfo Ethernet_4 >/dev/null 2>&1 &&
     say "windows hostinfo accepted a non-numeric core count"
 fakes env LAN_PROOF_OS=windows "$remote" hostinfo "Ethernet 4;x" >/dev/null 2>&1 &&
@@ -191,7 +210,7 @@ grep -q 'cmake -B build -G "Visual Studio 18 2026" -A x64' "$tmp/log/build.bat" 
 grep -q 'cmake --build build --config Release --parallel 4' "$tmp/log/build.bat" ||
     say "windows build did not build Release with 4 jobs"
 grep -q -- '--slots 3' "$tmp/log/winlock.args" || say "windows build did not take a shared slot"
-grep -q -- '-- .*lan-proof-remote build-windows' "$tmp/log/winlock.args" ||
+grep -q -- '--slots 3 --card lan-proof -- .*lan-proof-remote build '"$fake_commit" "$tmp/log/winlock.args" ||
     say "windows checkout and build did not run inside the shared slot"
 grep -q -- '--exclusive' "$tmp/log/winlock.args" && say "windows build took the exclusive lock"
 
@@ -199,13 +218,20 @@ grep -q -- '--exclusive' "$tmp/log/winlock.args" && say "windows build took the 
 mkdir -p "$tmp/winbase/$fake_commit/bin/Release"
 cat > "$tmp/winbase/$fake_commit/bin/Release/load_split.exe" <<'EOF'
 #!/bin/sh
+echo 'split_ready: role=server address=192.0.2.46:40000 key=00'
 sleep 1
 : > "$FAKE_LOG/server-exited"
 EOF
 chmod +x "$tmp/winbase/$fake_commit/bin/Release/load_split.exe"
-fakes env LAN_PROOF_OS=windows "$remote" hold-server $fake_commit "$tmp/run" iocp 4 1 0123456789abcdef 192.0.2.46 40000 600000 >/dev/null ||
+rm -f "$tmp/log/winlock.args"
+held=$( fakes env LAN_PROOF_OS=windows "$remote" hold-server $fake_commit "$tmp/run" iocp 4 1 0123456789abcdef 192.0.2.46 40000 600000 ) ||
     say "hold-server exited $?"
 [ -f "$tmp/log/server-exited" ] || say "hold-server returned while its server was running"
+printf '%s\n' "$held" | grep -q '^split_ready: ' || say "hold-server did not report the ready line"
+[ -f "$tmp/base/cell.holder" ] && say "hold-server left its cell mark"
+[ -f "$tmp/log/winlock.args" ] && say "hold-server queued for a lock inside its own cell"
+grep -q 'winlock --slots 3 --card "lan-proof-$run_id" -- "$install_cmd"' "$proof" ||
+    say "the Windows copy step does not run inside a shared slot"
 grep -q 'winlock --exclusive --card "lan-proof-$run_id" --' "$proof" &&
     grep -q '"$remote_path" hold-server' "$proof" ||
     say "the Windows server is not started by hold-server under the exclusive lock"

@@ -52,9 +52,13 @@ is admitted, and a host whose facts do not parse refuses the run.
 The Windows build uses the multi-config Visual Studio generator,
 `cmake -B build -G "Visual Studio 18 2026" -A x64` then
 `cmake --build build --config Release --parallel 4`, in a shared build slot,
-and runs `bin/Release/load_split.exe`. A Windows server runs under an
-exclusive lock that is held until the server has exited, so no other timed
-work shares the machine during the cell.
+and runs `bin/Release/load_split.exe`. Every command the script runs on a
+Windows machine is inside its bench lock: the copy of the remote step script,
+the checkout, the build, the facts and load samples, log reads and process
+checks take a shared slot, and the server cell holds the exclusive lock until
+the server has exited, so no other timed work shares the machine during the
+cell. A command of the cell itself runs inside that held lock, and the
+server's ready line comes back on the lock holder's own output.
 
 A result row is eleven fields separated by `|`: cell, server label, server
 NIC speed in megabits, clients, duration, connected throughout, timeouts

@@ -126,6 +126,7 @@ server_iface=""
 client_labels=""
 client_sshs=""
 client_ifaces=""
+client_oses=""
 uplink=0
 while read -r label ssh_name role os iface mark extra; do
     case "$label" in
@@ -151,6 +152,7 @@ while read -r label ssh_name role os iface mark extra; do
     else
         client_labels="$client_labels $label"
         client_sshs="$client_sshs $ssh_name"
+        client_oses="$client_oses $os"
         client_ifaces="$client_ifaces $iface"
     fi
 done < "$inventory"
@@ -223,9 +225,12 @@ server_hold_pid=""
 remote_path="~/lan-proof-live/lan-proof-remote"
 remote_run="~/lan-proof-live/runs/$run_id"
 
+# A Windows host runs every command inside winlock, which may queue first.
 ssh_run()
 {
-    timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"
+    local bound=60
+    [ "$( host_os_of "$1" )" = "windows" ] && bound=$(( lock_wait + 60 ))
+    timeout "$bound" ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"
 }
 
 fail()
@@ -257,17 +262,48 @@ teardown()
 }
 trap 'teardown' EXIT INT TERM HUP
 
-# copy the remote script to every host, then build the same head everywhere
+# The OS the inventory names for an ssh host.
+host_os_of()
+{
+    local want=$1 h i=0 j os
+    [ "$want" = "$server_ssh" ] && { echo "$server_os"; return 0; }
+    for h in $client_sshs; do
+        i=$(( i + 1 ))
+        [ "$h" = "$want" ] || continue
+        j=0
+        for os in $client_oses; do
+            j=$(( j + 1 ))
+            [ "$j" -eq "$i" ] && { echo "$os"; return 0; }
+        done
+    done
+    echo unknown
+}
+
+# copy the remote script to every host, then build the same head everywhere.
+# Every command on a Windows host runs inside winlock, so its copy is one
+# shared-slot call that writes the script from base64 text.
+remote_text=$( base64 < "$remote" | tr -d '\n' ) || fail "cannot encode the remote script"
 for host in $server_ssh $client_sshs; do
+    if [ "$( host_os_of "$host" )" = "windows" ]; then
+        install_cmd=$( printf '%q ' bash -c 'mkdir -p "$HOME/lan-proof-live" && printf %s "$1" | base64 -d > "$HOME/lan-proof-live/lan-proof-remote" && chmod +x "$HOME/lan-proof-live/lan-proof-remote"' bash "$remote_text" )
+        timeout "$hold_bound" ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
+            winlock --slots 3 --card "lan-proof-$run_id" -- "$install_cmd" ||
+            fail "cannot copy the remote script to $host"
+        continue
+    fi
     ssh_run "$host" mkdir -p lan-proof-live || fail "cannot prepare $host"
     timeout 60 scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:lan-proof-live/lan-proof-remote" ||
         fail "cannot copy the remote script to $host"
     ssh_run "$host" chmod +x lan-proof-live/lan-proof-remote || fail "cannot mark the remote script on $host"
 done
 
+# A Windows host's commands may queue for their lock, so their bound
+# allows the queue on top of the build.
 build_one()
 {
-    timeout 900 ssh -o BatchMode=yes -o ConnectTimeout=10 "$1" "$remote_path" build "$commit"
+    local bound=900
+    [ "$( host_os_of "$1" )" = "windows" ] && bound=$(( lock_wait + 900 ))
+    timeout "$bound" ssh -o BatchMode=yes -o ConnectTimeout=10 "$1" "$remote_path" build "$commit"
 }
 build_one "$server_ssh" > "$run_dir/server.build" 2>&1 &
 server_build_pid=$!
@@ -383,7 +419,12 @@ for _ in $( seq 1 "$ready_wait" ); do
     if [ -n "$server_hold_pid" ] && ! kill -0 "$server_hold_pid" 2>/dev/null; then
         fail "the locked Windows server ended before it was ready; see $run_dir/server.start"
     fi
-    if ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null; then
+    if [ -n "$server_hold_pid" ]; then
+        # the locked Windows server reports its ready line on the lock
+        # holder's own output; no read queues behind the held lock
+        ready=$( grep '^split_ready: ' "$run_dir/server.start" 2>/dev/null | tail -n 1 )
+        [ -n "$ready" ] && break
+    elif ssh_run "$server_ssh" "$remote_path" collect "~/lan-proof-live/runs/$run_id/server.log" > "$run_dir/server.log" 2>/dev/null; then
         ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
         [ -n "$ready" ] && break
     fi
@@ -432,7 +473,9 @@ deadline=$(( duration + 300 ))
 elapsed=0
 while [ "$elapsed" -lt "$deadline" ]; do
     running=0
-    if ssh_run "$server_ssh" "$remote_path" alive "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1; then
+    if [ -n "$server_hold_pid" ]; then
+        kill -0 "$server_hold_pid" 2>/dev/null && running=1
+    elif ssh_run "$server_ssh" "$remote_path" alive "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1; then
         running=1
     fi
     s=0
