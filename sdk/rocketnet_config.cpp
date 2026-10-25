@@ -251,6 +251,19 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
+    // The sent-packet map holds one entry per packet. W numbers can be in
+    // flight one to a packet, all sent inside one round trip, so a map
+    // smaller than W evicts entries whose acks are still on the way and the
+    // numbers they carried are resent (6.4, standard/MESSAGES.md m9.1;
+    // tla/RNSentMap.tla NoLiveEviction).
+    if ( config->packets_in_flight < W )
+    {
+        rocketnet_error( "message config packets_in_flight %d is below reliable_messages_in_flight %d", config->packets_in_flight, W );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return 0;
+    }
+
     // the store's large class must hold one maximal block whole (4, 14)
     const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, RN_STORE_LARGE );
     if ( large < (uint32_t) fragments )
@@ -312,19 +325,13 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
-// the public name of a config field's env var: every row is its own name.
-
-static const char * rocketnet_config_env_field_name( const char * field_name )
-{
-    return field_name;
-}
+// the public name of a config field's env var: ROCKETNET_<FIELD>, the row's
+// own name uppercased.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
 {
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
-
-    field_name = rocketnet_config_env_field_name( field_name );
 
     const char * prefix = "ROCKETNET_";
     const int prefix_length = (int) strlen( prefix );
@@ -350,8 +357,6 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     rocketnet_assert( transport_name );
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
-
-    field_name = rocketnet_config_env_field_name( field_name );
 
     char prefix[64];
     const int written = snprintf( prefix, sizeof(prefix), "ROCKETNET_%s_", transport_name );
@@ -494,14 +499,30 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
         rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof(value) - 1 );
         return false;
     }
-    if ( found == 0 || value[0] == '\0' )
+    if ( found == 0 )
         return true;
 
-    if ( !rocketnet_config_parse_uint64( value, out ) )
+    if ( value[0] == '\0' )
+    {
+        rocketnet_info( "%s config ignores empty %s (set a value, or unset the variable)", transport_name, env_name );
+        return true;
+    }
+
+    // the value the override displaces, kept before the parse so the
+    // override line names what it replaced: the same audit trail the
+    // table pass writes (rocketnet_config_apply_env_value)
+
+    const uint64_t displaced = *out;
+
+    uint64_t parsed = 0;
+    if ( !rocketnet_config_parse_uint64( value, &parsed ) )
     {
         rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
         return false;
     }
+    *out = parsed;
+
+    rocketnet_info( "%s config override %s=%s (displaces %" PRIu64 ")", transport_name, env_name, value, displaced );
 
     return true;
 }
@@ -693,7 +714,7 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a row whose max is above its min has that range (the
-                // step_driven row's 0 .. 1 at :88); a 0 .. 0 row takes any value
+                // step_driven row's 0 .. 1); a 0 .. 0 row takes any value
                 if ( field->max_value > field->min_value )
                 {
                     uint64_t value;
@@ -885,8 +906,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     {
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value ? value : "auto", ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
         return true;
     }
 
@@ -990,8 +1019,16 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         // Pin-only transports are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            if ( !rocketnet_transport_pin_only( available[i], server ) )
-                ladder->candidates[ladder->num_candidates++] = available[i];
+        {
+            if ( rocketnet_transport_pin_only( available[i], server ) )
+                continue;
+            if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
+            {
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+                return false;
+            }
+            ladder->candidates[ladder->num_candidates++] = available[i];
+        }
     }
 
     return true;

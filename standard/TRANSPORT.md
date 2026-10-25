@@ -2115,7 +2115,10 @@ a row marked server or client applies only at that end.
     associated data of [t9 Packet protection](#t9). A packet that does not
     open, or whose expected handshake plaintext size is not exact, is
     `DID_NOT_OPEN`; this check alone increments the integrity-failure count
-    that [t14 Replay protection](#t14) bounds.
+    that [t14 Replay protection](#t14) bounds. A connection response that
+    opens and whose padding is not all zero is
+    `CONNECTION_RESPONSE_PADDING_NOT_ZERO`; it opened, so it does not
+    increment the integrity-failure count.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
 15. For session types, a receiver MUST read and validate the ack block at
@@ -2676,7 +2679,13 @@ The server turns a connection request into an encryption mapping, and a connecti
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
 8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
-9. A server MUST refuse, unanswered, a request whose token identifier is bound to a different source address, and a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A server MUST also refuse, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`. Once the failed-signature budget of the current window is spent, a server MUST refuse a request from a source with a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
+9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
+    1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
+    2. Ignore, unanswered, a request when the failed-signature budget of the current window is spent and the source has a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
+    3. Ignore, unanswered, a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
+    4. Ignore, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`.
+    5. Ignore, unanswered, a request whose token identifier finds no free or expired slot in the request-claim table, counting `CONNECTION_REQUEST_CLAIM_TABLE_FULL`.
+The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
@@ -3159,9 +3168,9 @@ The block is encoded in the fields below. Range entry index i starts at zero.
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---:|---:|---|---|---|
-| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero denotes no acknowledgement-eligible session packet only after reconstruction |
+| largest received | 0 | 4 | u32 | Low 32 bits of the highest session sequence accepted for acknowledgement | Any u32; zero with a zero first range length and a zero range count is the empty block, which denotes no acknowledgement-eligible session packet at any highest sent session sequence |
 | range count | 4 | 1 | u8 | Number of gap-and-received-range entries following the first range | Zero through [t15.2 Block limit](#t15.2) (range count maximum) |
-| first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero exactly when reconstructed largest received is zero; otherwise nonzero and no greater than largest received |
+| first range length | 5 | 2 | u16 | Length of the contiguous received run ending at largest received | Zero only in the empty block (all three fixed fields zero); otherwise nonzero and no greater than reconstructed largest received |
 | gap | 7 + 4i | 2 | u16 | Number of unreceived sequences below the preceding received run, for entry i | Nonzero |
 | range length | 9 + 4i | 2 | u16 | Length of the received run below entry i's gap | Nonzero |
 
@@ -3174,19 +3183,27 @@ Each later entry, in order from newest to oldest, describes a nonzero gap and
 then a nonzero received run below the preceding run. The block is silent below
 its last received run. A sender MUST NOT name a sequence that it did not open.
 
-The largest received field is the low 32 bits of the highest acknowledgement-eligible 64-bit
-session sequence. A receiver MUST reconstruct it as the nonnegative 64-bit value
-with those low 32 bits that is nearest to its own highest sent session sequence;
-the higher value wins an equidistant tie. The receiver MUST evaluate every
-validity rule on that reconstructed value.
+The empty block is the block whose largest received, range count and first
+range length fields are all zero on the wire. A receiver MUST recognise it by
+those wire fields, whatever its own highest sent session sequence, and MUST NOT
+reconstruct its largest received. A block that names a sequence always has a
+first range length of at least one, so the empty block is unambiguous: a
+genuine largest received whose low 32 bits are zero is not the empty block.
+
+In every other block, the largest received field is the low 32 bits of the
+highest acknowledgement-eligible 64-bit session sequence. A receiver MUST
+reconstruct it as the nonnegative 64-bit value with those low 32 bits that is
+nearest to its own highest sent session sequence; the higher value wins an
+equidistant tie. The receiver MUST evaluate every remaining validity rule on
+that reconstructed value.
 
 A receiver MUST reject the block when any of these conditions holds:
 
 1. The opened plaintext does not contain the minimum block, or its declared
    range entries do not fit before the packet type's data.
-2. Reconstructed largest received is zero and either first range length or
-   range count is nonzero; or reconstructed largest received is nonzero and
-   first range length is zero.
+2. First range length is zero and either the largest received field or the
+   range count is nonzero on the wire (the block is neither the empty block
+   nor a block naming a sequence).
 3. First range length exceeds reconstructed largest received.
 4. Any gap or range length is zero.
 5. The sum of first range length and every gap and range length exceeds
@@ -3270,7 +3287,8 @@ the reported RTT MUST be zero.
 <a id="t15.6"></a>
 ### t15.6. Vectors
 
-The all-zero block represents a fresh connection:
+The all-zero block is the empty block of a fresh connection, at any highest
+sent session sequence of the receiver, including one past 2^32:
 
 ```vector t15.fresh
 input: largest received = 0; range count = 0; first range length = 0
@@ -3941,6 +3959,8 @@ The registry of counters, in index order, is:
 | `CLIENT_RECEIVE_FOREIGN_SOURCE` | `refusal` | `none` |
 | `XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION` | `refusal` | `none` |
 | `MESSAGE_NOT_RECEIVED` | `refusal` | `none` |
+| `CONNECTION_RESPONSE_PADDING_NOT_ZERO` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
+| `CONNECTION_REQUEST_CLAIM_TABLE_FULL` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4063,7 +4083,8 @@ b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
 f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
 00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
 7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00 a4 58 a7 b3 00 00 00
+f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa
+00 21 00 49 b0 ba 62 00 08 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

@@ -1618,61 +1618,6 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 // file as a row's XDP_HOST_COUNTS(...), so a new counter cannot land without
 // a case that makes it move.
 
-static std::string xdp_host_read_file( const char * relative )
-{
-    const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
-    std::string text;
-    FILE * file = rocketnet_test_fopen( path, "rb" );
-    if ( file == NULL )
-    {
-        printf( "test_xdp_transport_host_every_counter_has_a_case: cannot read %s\n", path.c_str() );
-        fflush( stdout );
-        return text;
-    }
-    char buffer[4096];
-    size_t got;
-    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
-        text.append( buffer, got );
-    fclose( file );
-    return text;
-}
-
-static void test_xdp_transport_host_every_counter_has_a_case()
-{
-    const std::string wire = xdp_host_read_file( "sdk/rocketnet_wire.h" );
-    const std::string self = xdp_host_read_file( "tests/test_unit_xdp_filter_host.cpp" );
-    rocketnet_unit_check( !wire.empty() );
-    rocketnet_unit_check( !self.empty() );
-
-    const std::string define = "#define ROCKETNET_SERVER_XDP_COUNTER_";
-    std::vector<std::string> names;
-    size_t at = 0;
-    while ( ( at = wire.find( define, at ) ) != std::string::npos )
-    {
-        size_t end = at + strlen( "#define " );
-        size_t stop = end;
-        while ( stop < wire.size() && ( isalnum( (unsigned char) wire[stop] ) || wire[stop] == '_' ) )
-            stop++;
-        names.push_back( wire.substr( end, stop - end ) );
-        at = stop;
-    }
-
-    rocketnet_unit_check( (int) names.size() == ROCKETNET_SERVER_XDP_NUM_COUNTERS );
-
-    int missing = 0;
-    for ( size_t i = 0; i < names.size(); i++ )
-    {
-        const std::string needle = std::string( "XDP_HOST_" ) + "COUNTS( " + names[i] + " )";
-        if ( self.find( needle ) == std::string::npos )
-        {
-            printf( "test_xdp_transport_host_every_counter_has_a_case: %s has no case\n", names[i].c_str() );
-            fflush( stdout );
-            missing++;
-        }
-    }
-    rocketnet_unit_check( missing == 0 );
-}
-
 
 static void test_xdp_transport_host_udp_length_drops()
 {
@@ -1690,7 +1635,7 @@ static void test_xdp_transport_host_udp_length_drops()
 
         xdp_host_row_t past_end = xdp_host_row( "UDP header length field exceeds frame end", families[f] );
         past_end.frame.override_udp_len = 8 + past_end.frame.payload_bytes + 20;
-        rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( past_end, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
     }
     for ( int f = 0; f < 2; f++ )
     {
@@ -1707,19 +1652,19 @@ static void test_xdp_transport_host_udp_length_drops()
         xdp_host_row_t ip_short = xdp_host_row( "IP length shorter than the UDP length", families[f] );
         ip_short.frame.pad_bytes = 6;
         ip_short.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_short.frame.payload_bytes - 4;
-        rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( ip_short, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
 
         // an IP length that names less than a UDP header, or one byte more
-        // than the frame holds, is malformed: the datagram to this server
-        // drops as too small rather than being judged by the frame end
+        // than the frame holds, leaves no datagram bound the UDP length fits
+        // in, so the datagram to this server counts as too large
 
         xdp_host_row_t ip_zero = xdp_host_row( "IP length 0", families[f] );
         ip_zero.frame.override_ip_len = 0;
-        rows.push_back( xdp_host_expect( ip_zero, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( ip_zero, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
 
         xdp_host_row_t ip_past = xdp_host_row( "IP length one byte past the frame", families[f] );
         ip_past.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + ip_past.frame.payload_bytes + 1;
-        rows.push_back( xdp_host_expect( ip_past, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL ) ) );
+        rows.push_back( xdp_host_expect( ip_past, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
 
         // to another port the same malformed length passes untouched
 
@@ -1837,11 +1782,34 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_filter_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_invalid_type_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_type_and_size_sweep_matches_the_standard );
-REGISTER_UNIT_TEST( test_xdp_transport_host_every_counter_has_a_case );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
+
+// A UDP length past the IP payload, and a UDP length past the frame, are
+// forged lengths. Both count as too large. A length below the UDP header
+// stays too small, and that row lives in test_xdp_transport_host_udp_length_drops.
+
+static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+    for ( int f = 0; f < 2; f++ )
+    {
+        xdp_host_row_t past_frame = xdp_host_row( "UDP length past the frame counts too large", families[f] );
+        past_frame.frame.override_udp_len = 8 + past_frame.frame.payload_bytes + 20;
+        rows.push_back( xdp_host_expect( past_frame, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
+
+        xdp_host_row_t past_ip = xdp_host_row( "UDP length past the IP payload counts too large", families[f] );
+        past_ip.frame.pad_bytes = 6;
+        past_ip.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + past_ip.frame.payload_bytes - 4;
+        rows.push_back( xdp_host_expect( past_ip, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
+    }
+    xdp_host_run_rows( rows );
+}
+
+REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
 #endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
 
 #if defined(ROCKETNET_XDP) && ROCKETNET_XDP

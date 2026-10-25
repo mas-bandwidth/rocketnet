@@ -60,9 +60,13 @@
 
 #else // !ROCKETNET_DEV
 
+    /// The SDK version as text: "dev" in a development build.
     #define ROCKETNET_VERSION_FULL                                 "dev"
+    /// The major component of the SDK version: 255 in a development build.
     #define ROCKETNET_VERSION_MAJOR                                  255
+    /// The minor component of the SDK version: 255 in a development build.
     #define ROCKETNET_VERSION_MINOR                                  255
+    /// The patch component of the SDK version: 255 in a development build.
     #define ROCKETNET_VERSION_PATCH                                  255
 
 #endif // !ROCKETNET_DEV
@@ -84,17 +88,18 @@
 #elif ( defined( ROCKETNET_SHARED ) || defined( ROCKETNET_BUILDING_DLL ) ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
     #define ROCKETNET_EXPORT __attribute__((visibility("default")))
 #else
+    /// Marks each library function for export or import. Empty in a static
+    /// build.
     #define ROCKETNET_EXPORT
 #endif
 
 
-/// Maximum clients per server. 1000 unless the build defines another value
-/// (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of the same name); the
-/// limits that serve every client derive from it (BUILDING.md, "Maximum
-/// clients"). The library and every file that includes this header must be
-/// built with the same value.
-
 #ifndef ROCKETNET_MAX_CLIENTS
+/// Maximum clients per server: 1000 unless the build defines another value
+/// from 512 .. 32768 (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of
+/// the same name). The limits that serve every client derive from it
+/// (BUILDING.md, "Maximum clients"). Build the library and every file that
+/// includes this header with the same value.
 #define ROCKETNET_MAX_CLIENTS                                       1000
 #endif
 
@@ -167,11 +172,10 @@
 
 #define ROCKETNET_ALLOCATION_ALIGNMENT                     64
 
-/// Maximum channels.
-/// Define it before including rocketnet.h.
-/// Build the library with the same value.
-
 #ifndef ROCKETNET_MAX_CHANNELS
+/// Maximum channels: 32 unless the build defines another value from
+/// 1 .. 65536 before it includes this header. Build the library and every
+/// file that includes this header with the same value.
 #define ROCKETNET_MAX_CHANNELS                             32
 #endif
 
@@ -201,71 +205,85 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_OK                                 =  0,
 
     /// rocketnet_init came after the library was initialized, or while it is
-    /// initializing or terminating.
+    /// initializing or terminating. Nothing changed; call rocketnet_term
+    /// first to initialize again.
 
     ROCKETNET_STATUS_ALREADY_INITIALIZED                = -1,
 
     /// A call that needs rocketnet_init came before it, or a term found nothing
-    /// to terminate.
+    /// to terminate. Call rocketnet_init first.
 
     ROCKETNET_STATUS_NOT_INITIALIZED                    = -2,
 
     /// Term, or init with a new allocator, refused. The library still holds
-    /// allocations.
+    /// allocations. Destroy every client and server, then retry.
 
     ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = -3,
 
-    /// The platform's socket layer did not start. Correct the platform setup
-    /// before retrying.
+    /// Init refused: the platform's socket layer did not start. The library
+    /// stays uninitialized. Correct the platform setup before retrying.
 
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = -4,
 
-    /// The crypto library did not start. Initialization does not complete.
+    /// The crypto library failed. Init returns it when the library did not
+    /// start, and the library stays uninitialized. Server create and
+    /// rocketnet_create_dev_connect_token return it when a key or token could
+    /// not be made; nothing is created. Retrying will not help unless the
+    /// cause is corrected.
 
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = -5,
 
     /// An argument, or a combination of arguments, is NULL, out of range, or
-    /// inconsistent with another.
+    /// inconsistent with another. Nothing changed. Correct the argument.
 
     ROCKETNET_STATUS_INVALID_ARGUMENT                   = -6,
 
-    /// An environment override did not parse.
+    /// Create refused: an environment override did not parse. The log names
+    /// the variable. Correct or unset it.
 
     ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = -7,
 
-    /// A config field, from the struct or the environment, is out of its
-    /// supported range.
+    /// Create refused: a config field, from the struct or the environment, is
+    /// out of its supported range or inconsistent with another field. The log
+    /// names the field and the rule it broke. Correct the value.
 
     ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = -8,
 
-    /// The memory the config needs is past the operator's memory budget.
+    /// Create refused: the reassembly memory the config asks for is past this
+    /// build's limit. Lower max_fragmented_messages, or on a server
+    /// max_clients.
 
     ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = -9,
 
     /// Start refused. The server config's backend_public_key is all zeros.
+    /// Set it, or set ROCKETNET_SERVER_BACKEND_PUBLIC_KEY.
 
     ROCKETNET_STATUS_MISSING_KEYS                       = -10,
 
-    /// The protocol id is 0, or not the expected value.
+    /// The protocol id is 0. Server start refuses a server config with
+    /// protocol_id 0. Set the title's nonzero protocol id.
 
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
 
     /// Start refused. A production build (ROCKETNET_DEV=0) was given the
-    /// published development backend or server key.
+    /// published development backend or server key. Supply production keys.
 
     ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION             = -12,
 
-    /// An address string did not parse or cannot be used.
+    /// An address string did not parse or cannot be used. Pass "a.b.c.d:port"
+    /// for IPv4 or "[v6]:port" for IPv6, within
+    /// ROCKETNET_MAX_ADDRESS_STRING_BYTES.
 
     ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
 
-    /// The transport candidate list did not parse, or holds no usable
-    /// candidate.
+    /// Create refused: the transport candidate list did not parse, or holds
+    /// no usable candidate. The log names the problem, and an unknown name is
+    /// logged with the valid names.
 
     ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
 
     /// The connect token fails the client's pre-send checks. It did not parse,
-    /// or is not for this protocol.
+    /// or is not for this protocol. Obtain a new token from the backend.
 
     ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = -15,
 
@@ -274,44 +292,60 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = -16,
 
-    /// A pinned transport cannot take port 0, an ephemeral port.
+    /// Start refused: the server address has port 0, an ephemeral port, and no
+    /// listed transport can report the port it was granted. Give the server a
+    /// real port, or list a transport that can.
 
     ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = -17,
 
-    /// Every transport in the candidate list refused to start.
+    /// Every transport in the candidate list refused to start, including any
+    /// over the ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. Set the log level to
+    /// ROCKETNET_LOG_LEVEL_WARN to see why each one refused.
 
     ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = -18,
 
-    /// An allocation the operation needs failed.
+    /// An allocation the operation needs failed. Nothing it allocated stays
+    /// live. Free memory or lower the config's sizes, then retry.
 
     ROCKETNET_STATUS_OUT_OF_MEMORY                      = -19,
 
-    /// The platform refused a mutex.
+    /// Connect or start refused: the platform refused a mutex. Retry after
+    /// freeing system resources.
 
     ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = -20,
 
-    /// The platform refused a thread.
+    /// Connect or start refused: the platform refused a thread. Retry after
+    /// freeing system resources.
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = -21,
 
-    /// The platform refused a timer.
+    /// Connect or start refused: the platform refused a timer. Retry after
+    /// freeing system resources.
 
     ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
 
     /// Connect refused: an attempt is active, or an earlier attempt's worker
-    /// still owns its storage.
+    /// still owns its storage. Call rocketnet_client_disconnect, then connect
+    /// again once rocketnet_client_disconnected returns true.
 
     ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
 
-    /// Start refused, nothing changed. The server is already running.
+    /// Start refused, nothing changed. The server is running, or a stop has
+    /// not finished. Call rocketnet_server_stop, then start again once
+    /// rocketnet_server_stopped returns true.
 
     ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
 
-    /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set.
+    /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set. No call
+    /// returns it: rocketnet_server_start_message returns NULL and logs this
+    /// name. Use a client index.
 
     ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
 
-    /// A transport cannot serve both named families on this machine.
+    /// Start refused: every transport that opened cannot serve both named
+    /// address families on this machine. Serve one family, or list a
+    /// transport that serves both.
 
     ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
 
@@ -323,7 +357,7 @@ enum rocketnet_status_t
     /// A transport the candidate list names is compiled out of this build:
     /// the xdp server transport in a Linux build configured with
     /// ROCKETNET_XDP=OFF, or without a clang that has the BPF target, libbpf
-    /// or libxdp.
+    /// or libxdp. List a transport this build has, or rebuild with it.
 
     ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28,
 
@@ -333,7 +367,8 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -29,
 
     /// Connect refused. A production build (ROCKETNET_DEV=0) was given a
-    /// connect token sealed to the published development server key.
+    /// connect token sealed to the published development server key. Use a
+    /// token from the production backend.
 
     ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
 
@@ -852,7 +887,13 @@ _Static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( en
 #endif
 
 
+/// An opaque client. rocketnet_client_create makes one and
+/// rocketnet_client_destroy frees it. Use each client from one thread at a
+/// time.
 struct rocketnet_client_t;
+/// An opaque server. rocketnet_server_create makes one and
+/// rocketnet_server_destroy frees it. Use each server from one thread at a
+/// time.
 struct rocketnet_server_t;
 
 /// Lifecycle and logging
@@ -888,6 +929,13 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// ROCKETNET_LOG_LEVEL sets the maximum level before init logs. Values are
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
 /// values are ignored with a warning.
+///
+/// @param context Passed to malloc_function and free_function for init's own
+/// allocations. May be NULL.
+/// @param malloc_function Allocates bytes, or NULL for the system allocator.
+/// @param free_function Frees a pointer malloc_function returned, or NULL for
+/// the system allocator.
+/// @return ROCKETNET_STATUS_OK, or one of the failures above.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_init( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
@@ -903,6 +951,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_term( void );
 /// Returns a status name without the ROCKETNET_STATUS_ prefix. Returns
 /// "UNKNOWN" for other values and never returns NULL. It allocates nothing.
 /// It works before init, and its strings last for the process.
+///
+/// @param status The status to name.
 
 ROCKETNET_EXPORT const char * rocketnet_status_name( enum rocketnet_status_t status );
 
@@ -916,17 +966,25 @@ typedef void (*rocketnet_assert_function_t)( const char * condition, const char 
 /// default, which logs and traps. The callback runs only in debug builds with
 /// asserts enabled. Install before concurrent library calls because reads are
 /// not synchronized.
+///
+/// @param function The callback for failed asserts, or NULL for the default.
 
 ROCKETNET_EXPORT void rocketnet_assert_function( rocketnet_assert_function_t function );
 
 /// Suppresses all logs when true. When false, logs follow the current level.
-/// This process-wide setting does not change the log level.
+/// This process-wide setting does not change the log level. Safe to call from
+/// any thread, and before init.
+///
+/// @param flag true to suppress every log line, false to resume them.
 
 ROCKETNET_EXPORT void rocketnet_quiet( bool flag );
 
 /// Sets the process-wide maximum log level. Values must be from
 /// ROCKETNET_LOG_LEVEL_NONE through ROCKETNET_LOG_LEVEL_SPAM. Other values are
-/// ignored.
+/// ignored. The default is ROCKETNET_LOG_LEVEL_INFO. Safe to call from any
+/// thread, and before init.
+///
+/// @param level The most verbose level to emit.
 
 ROCKETNET_EXPORT void rocketnet_log_level( enum rocketnet_log_level_t level );
 
@@ -937,13 +995,19 @@ ROCKETNET_EXPORT void rocketnet_log_level( enum rocketnet_log_level_t level );
 /// Set before init to skip the timer request. New threads use the current
 /// setting. Running threads keep their existing priority. OS refusal never
 /// fails create or init. The thread keeps its default priority. The first
-/// refusal of each kind logs one warning. Stats count the refusals.
+/// refusal of each kind logs one warning. Stats count the refusals. Safe to
+/// call from any thread.
+///
+/// @param enabled true to let the library raise its network threads'
+/// priority, false to leave every thread at its default.
 
 ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 
 /// Returns the log level name, such as "ERROR" or "SPAM". Returns "UNKNOWN"
 /// for other values and never returns NULL. The strings last for the process.
 /// Use this to format a level like the default log sink.
+///
+/// @param level The level to name.
 
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
@@ -958,6 +1022,12 @@ typedef void (*rocketnet_log_function_t)( void * context, enum rocketnet_log_lev
 /// Installs the log callback and its context. NULL restores the default sink,
 /// which prints to stdout, and clears the context. An in-flight call may still
 /// use the old callback, so keep its context valid until that call returns.
+/// Safe to call from any thread.
+///
+/// @param function The callback for every log line, or NULL for the default
+/// sink.
+/// @param context Passed to every call of function. Ignored when function is
+/// NULL.
 
 ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function, void * context );
 
@@ -1005,6 +1075,8 @@ ROCKETNET_EXPORT double rocketnet_time( void );
 
 /// Sleeps for seconds. Negative, zero or NaN returns immediately. Values
 /// above 2000 sleep for 2000 seconds.
+///
+/// @param seconds How long to sleep, in seconds.
 
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
@@ -1065,30 +1137,33 @@ struct rocketnet_client_config_t
     size_t config_bytes;
 
     /// ROCKETNET_CLIENT_TRANSPORT sets the candidate list. NULL means "auto".
+    /// Default is NULL.
 
     const char * transport;
 
     /// Called when the handshake state changes. NULL disables the callback. It
     /// runs on the caller thread during update, disconnect and destroy. Do not
-    /// call client functions from it.
+    /// call client functions from it. Default is NULL.
 
     void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
     /// ROCKETNET_CLIENT_PACKET_FILTER is the title packet filter. It must match
-    /// the server's value.
+    /// the server's value. Default is the published test packet filter, which
+    /// a production build refuses at create.
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
-    /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets the limit. Range is 1 ..
-    /// 256. Zero selects the default, 8.
+    /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets how many fragmented
+    /// messages are reassembled at once. Range is 1 .. 256. Zero, the
+    /// default, selects 8.
 
     int max_fragmented_messages;
 
     /// ROCKETNET_CLIENT_SEND_KBPS sets the starting send budget per
     /// connection, in kbps. Range is 1 .. ROCKETNET_SEND_KBPS_UNLIMITED - 1.
     /// The unlimited value means no send budget. Zero selects
-    /// ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS. Negative values return
-    /// ROCKETNET_STATUS_INVALID_ARGUMENT.
+    /// ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, which is also the default.
+    /// Negative values return ROCKETNET_STATUS_INVALID_ARGUMENT.
 
     int send_kbps;
 
@@ -1130,8 +1205,11 @@ struct rocketnet_client_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1200,40 +1278,54 @@ struct rocketnet_server_config_t
     size_t config_bytes;
 
     /// ROCKETNET_SERVER_PROTOCOL_ID is the title's protocol id. Connect
-    /// tokens must use it. Zero is refused.
+    /// tokens must use it. Default is 0, which start refuses with
+    /// ROCKETNET_STATUS_INVALID_PROTOCOL_ID.
 
     uint64_t protocol_id;
 
     /// ROCKETNET_SERVER_MAX_CLIENTS sets the client limit. Range is 1 ..
     /// ROCKETNET_MAX_CLIENTS. Default is 1000.
+    ///
+    /// It also sizes the server socket's receive buffer request to hold one
+    /// update's inbound traffic: ceil( max_clients x 1000 kbps x 125 x 2 /
+    /// 10 Hz ) bytes, at least 1,000,000 and at most INT_MAX (25,000,000 at
+    /// 1000 clients). Linux silently clamps it to net.core.rmem_max (about
+    /// 208 KB by default) and macOS to kern.ipc.maxsockbuf; the server reads
+    /// the grant back and logs one line with it, a warning naming the limit
+    /// to raise when the grant is below the request (USAGE.md, "Receive
+    /// buffer sizing").
 
     int max_clients;
 
     /// ROCKETNET_SERVER_PACKET_FILTER is the title packet filter. It must
-    /// match the clients' value.
+    /// match the clients' value. Default is the published test packet filter,
+    /// which a production build refuses at create.
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
     /// ROCKETNET_SERVER_BACKEND_PUBLIC_KEY is the backend's public key. Start
     /// requires a nonzero value or returns ROCKETNET_STATUS_MISSING_KEYS.
+    /// Default is all zeros.
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
-    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp and gso. Zero selects
-    /// the transport default. Range is 1 .. 1024. The Windows iocp transport
-    /// ignores it and always runs one completion worker plus one send worker;
-    /// the Windows rio transport ignores it and runs one I/O worker.
+    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso and io_uring.
+    /// Zero, the default, selects the transport's own. Range is 1 .. 1024.
+    /// The Windows iocp transport ignores it and always runs one completion
+    /// worker plus one send worker; the Windows rio transport ignores it and
+    /// runs one I/O worker.
 
     int num_xdp_queues;
 
     /// ROCKETNET_SERVER_NUM_OS_CPUS applies to xdp. It sets cores left for
-    /// the operating system. Zero selects the transport default. Range is 1
-    /// .. 256.
+    /// the operating system. Zero, the default, selects the transport's own.
+    /// Range is 1 .. 256.
 
     int num_os_cpus;
 
-    /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets the limit per client.
-    /// Range is 1 .. 256. Zero selects the default, 8.
+    /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets how many fragmented
+    /// messages are reassembled at once per client. Range is 1 .. 256. Zero,
+    /// the default, selects 8.
 
     int max_fragmented_messages;
 
@@ -1248,15 +1340,15 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;
 
     /// ROCKETNET_SERVER_TRANSPORT sets the candidate list. NULL means "auto".
-    /// Every transport serves IPv4, IPv6, or both.
+    /// Every transport serves IPv4, IPv6, or both. Default is NULL.
 
     const char * transport;
 
     /// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS sets each connection's starting
     /// send budget, in kbps. Range is 1 .. ROCKETNET_SEND_KBPS_UNLIMITED - 1.
     /// The unlimited value means no send budget. Zero selects
-    /// ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS. Negative values return
-    /// ROCKETNET_STATUS_INVALID_ARGUMENT.
+    /// ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, which is also the default.
+    /// Negative values return ROCKETNET_STATUS_INVALID_ARGUMENT.
 
     int per_client_send_kbps;
 
@@ -1298,8 +1390,11 @@ struct rocketnet_server_config_t
 
     int send_queue_messages;
 
-    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the unacknowledged packet
-    /// limit per client. Range is 16 .. 65536. Default is 256.
+    /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
+    /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
+    /// and at least reliable_messages_in_flight, so a window sent
+    /// one number to a packet never evicts an entry before its ack lands.
+    /// Default is 1024.
 
     int packets_in_flight;
 
@@ -1406,11 +1501,26 @@ struct rocketnet_receipt_t
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
 /// Use rocketnet_client_default_config to initialize a config.
+///
+/// Needs no client and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketnet_client_config_t * config );
 
 /// Initializes every config field to its default and sets config_bytes.
 /// Returns ROCKETNET_STATUS_OK on success.
+///
+/// Needs no client and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to initialize.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL config.
 
 static inline enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config )
 {
@@ -1419,16 +1529,41 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
     return rocketnet_client_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_client_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
 /// send budget. Use it in place of rocketnet_client_default_config. It changes
 /// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+///
+/// Needs no client and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to initialize. Its config_bytes is set here.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL config.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config );
+static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_client_light_config_internal( config );
+}
 
 /// Returns the memory needed by create for this config.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
+///
+/// Needs no client. Thread: any thread; it reads only config and the
+/// environment.
+///
+/// @param config The config to size, or NULL for the defaults.
+/// @return The bytes create allocates for the client, or 0 when the config,
+/// its config_bytes or an environment override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
 
@@ -1466,6 +1601,27 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 /// returns ROCKETNET_STATUS_INVALID_ADDRESS. Invalid arguments return
 /// ROCKETNET_STATUS_INVALID_ARGUMENT. A crypto failure returns
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Failure leaves the output unchanged.
+///
+/// Needs no client or server. Thread: any thread; it touches only its
+/// arguments.
+///
+/// @param server_address_ipv4 The server's IPv4 address as "a.b.c.d:port", or
+/// NULL.
+/// @param server_address_ipv6 The server's IPv6 address as "[v6]:port", or
+/// NULL.
+/// @param server_public_key ROCKETNET_SERVER_PUBLIC_KEY_BYTES from
+/// rocketnet_server_public_key.
+/// @param expire_seconds The token lifetime in seconds. Must be positive.
+/// @param timeout_seconds The longest silence the connection allows, in
+/// seconds. Must be positive.
+/// @param client_id The client's id, carried to the server.
+/// @param protocol_id The title's protocol id. Must be nonzero.
+/// @param unix_timestamp The creation time in Unix seconds.
+/// @param user_data ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES carried to the
+/// server, or NULL for zeros.
+/// @param connect_token Receives the NUL-terminated token string. Holds
+/// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+/// @return ROCKETNET_STATUS_OK, or one of the failures above.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
                                                                             const char * server_address_ipv6,
@@ -1483,23 +1639,49 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( con
 /// packet_loss_percent and duplicate_percent range from 0 to 100.
 /// Set all values to zero to disable the simulator.
 ///
-/// Changes apply at the next connect. An active simulator updates immediately.
-/// Out-of-range values count as API misuse and leave the settings unchanged.
+/// In a development build the settings apply at once to a live connection, on
+/// and off, in either direction. Every development connection owns a
+/// simulator from the start, so a zero setting costs the memory of one and
+/// neither latency nor a copy. Out-of-range values count as API misuse and
+/// leave the settings unchanged.
 ///
 /// These environment variables set the values at create.
 /// ROCKETNET_DEV_CLIENT_LATENCY_MS
 /// ROCKETNET_DEV_CLIENT_JITTER_MS
 /// ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
 /// ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
+///
+/// Callable in every client state. While DISCONNECTED the settings are kept
+/// for the next connect. Thread: not thread-safe; the caller owns the client
+/// one thread at a time.
+///
+/// @param client The client whose outgoing traffic is simulated.
+/// @param latency_ms Added delay in milliseconds, 0 .. 60000.
+/// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
+/// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
+/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
 ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
 /// Simulates outgoing server packets with the same ranges as the client call.
-/// Changes apply at the next start. An active simulator updates immediately.
-/// Invalid values count as API misuse and leave the settings unchanged.
+/// In a development build the settings apply at once to a running server, on
+/// and off, in either direction. Every development server owns a simulator
+/// from the start, so a zero setting costs the memory of one and neither
+/// latency nor a copy. Invalid values count as API misuse and leave the
+/// settings unchanged.
 /// Use the ROCKETNET_DEV_SERVER_LATENCY_MS, ROCKETNET_DEV_SERVER_JITTER_MS,
 /// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
 /// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.
+///
+/// Callable running or stopped. While stopped the settings are kept for the
+/// next start. Thread: not thread-safe; the caller owns the server one thread
+/// at a time.
+///
+/// @param server The server whose outgoing traffic is simulated.
+/// @param latency_ms Added delay in milliseconds, 0 .. 60000.
+/// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
+/// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
+/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
 ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
@@ -1514,6 +1696,22 @@ ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_serve
 /// Returns NULL on failure. If status is supplied, it receives
 /// ROCKETNET_STATUS_OK on success or the failure code.
 /// Call rocketnet_init before create.
+///
+/// Thread: any thread. The caller then owns the returned client and uses it
+/// from one thread at a time.
+///
+/// @param context Passed to the allocator and state_change_callback. May be
+/// NULL.
+/// @param config The config, filled by rocketnet_client_default_config or
+/// rocketnet_client_light_config, or NULL for the defaults.
+/// @param status Receives the result, or NULL.
+/// @return The client, or NULL on failure. The status is
+/// ROCKETNET_STATUS_OK, ROCKETNET_STATUS_NOT_INITIALIZED before rocketnet_init,
+/// ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, ROCKETNET_STATUS_CONFIG_ENV_INVALID,
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_ARGUMENT for
+/// a negative send_kbps, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
+/// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
+/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
 
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status );
 
@@ -1540,6 +1738,22 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// A socket or thread failure leaves the client DISCONNECTED.
 /// The connection clock starts at the next update.
 /// Returns ROCKETNET_STATUS_OK on success or a failure status.
+///
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client.
+/// @param connect_token The NUL-terminated base64 connect token string.
+/// @return ROCKETNET_STATUS_OK once the attempt has started, or
+/// ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL argument,
+/// ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED during a handshake, while
+/// CONNECTED or while an old attempt still stops,
+/// ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED,
+/// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO,
+/// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION for a development token in a
+/// production build, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// transport can open,
+/// ROCKETNET_STATUS_OUT_OF_MEMORY, ROCKETNET_STATUS_MUTEX_CREATE_FAILED or
+/// ROCKETNET_STATUS_THREAD_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token );
 
@@ -1550,6 +1764,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 /// the worker has not exited it logs a second error and keeps the client, which
 /// stays owned by that worker. Client pointers become invalid only when destroy frees
 /// the client; on the keep path the client and its pointers stay valid.
+///
+/// Call it once rocketnet_client_disconnected is true, in any client state.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client, or NULL to do nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * client );
 
@@ -1561,10 +1780,25 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// next update. A message still in the receive queue at update is API
 /// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
 /// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+///
+/// Callable in every client state. Before the first connect it does
+/// nothing; after disconnect it steps the old attempt's shutdown. Thread: not
+/// thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and does nothing.
+/// @param time The game clock in seconds, the same clock on every call. A
+/// time that is not finite or goes backwards is clamped to the last good time
+/// and counted as API misuse.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
 /// Sends queued messages in packets, subject to the send budget.
+///
+/// Callable in every client state. Before the first connect and after
+/// disconnect it does nothing. Thread: not thread-safe; the caller owns the
+/// client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_send_packets( struct rocketnet_client_t * client );
 
@@ -1572,30 +1806,72 @@ ROCKETNET_EXPORT void rocketnet_client_send_packets( struct rocketnet_client_t *
 /// Sends disconnect packets when the connection has session keys.
 /// Requests worker shutdown without waiting. Poll rocketnet_client_disconnected
 /// before reconnecting or destroying.
+///
+/// Callable in every client state. From a negative state it clears that
+/// state to DISCONNECTED. Thread: not thread-safe; the caller owns the client
+/// one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_disconnect( struct rocketnet_client_t * client );
 
 /// Returns true after disconnection has completed and workers no longer access
 /// client storage. Never waits, joins or frees. Caller-stepped clients progress
 /// via update.
+///
+/// Callable in every client state. It stays false from a connect that
+/// returns ROCKETNET_STATUS_OK until disconnect, a negative state included,
+/// and then until the workers stop. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return True once the client is disconnected and its workers have
+/// stopped. False otherwise, and for a NULL client, which counts as API
+/// misuse.
 ROCKETNET_EXPORT bool rocketnet_client_disconnected( const struct rocketnet_client_t * client );
 
 /// The client's state.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The current state. A NULL client logs an error, counts as API
+/// misuse and returns ROCKETNET_CLIENT_STATE_DISCONNECTED.
 
 ROCKETNET_EXPORT enum rocketnet_client_state_t rocketnet_client_state( const struct rocketnet_client_t * client );
 
 /// Returns a state name such as "CONNECTED" or "DISCONNECTED".
 /// Returns "UNKNOWN" for an invalid value.
+///
+/// Needs no client. Thread: any thread.
+///
+/// @param state The state to name.
+/// @return A static string, valid for the process lifetime.
 
 ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client_state_t state );
 
 /// Returns the client's server slot index while CONNECTED.
 /// The index ranges from 0 to max_clients - 1. Otherwise returns -1.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The slot index while CONNECTED, or -1 in every other state and
+/// for a NULL client, which counts as API misuse.
 
 ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * client );
 
 /// Returns the selected transport name or NULL while DISCONNECTED.
 /// The string remains valid for the process lifetime.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The transport name, or NULL while DISCONNECTED and for a NULL
+/// client, which counts as API misuse.
 
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
@@ -1616,6 +1892,20 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// Sends outside CONNECTED are dropped. Start returns NULL without logging
 /// and increments messages_dropped_not_connected. Finish then returns 0.
 /// Dropped messages are not queued for a later connection.
+///
+/// Needs CONNECTED. A message already open or a bad argument is refused with
+/// NULL. A reliable message that finds no message memory ends the connection
+/// with MESSAGE_MEMORY_EXHAUSTED and returns NULL. Thread: not thread-safe;
+/// the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns NULL.
+/// @param channel The channel, below the config's num_channels. The ordered
+/// and sequenced modes use it; the others ignore it.
+/// @param reliability The reliability mode.
+/// @param max_bytes The most bytes the message may hold, from 1 to the
+/// config's max_message_bytes.
+/// @return Memory for max_bytes of message, or NULL when the message is
+/// dropped or refused.
 
 ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
@@ -1623,11 +1913,25 @@ ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_clie
 /// bytes_written must be between 1 and the reserved size.
 /// An invalid size logs an error, aborts the message and returns 0.
 /// Returns 0 if no message is open.
+///
+/// Needs a message opened by rocketnet_client_start_message; in every other
+/// state it returns 0. Thread: not thread-safe; the caller owns the client
+/// one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns 0.
+/// @param bytes_written The bytes written into the open message.
+/// @return The message's nonzero receipt serial, or 0 when nothing was
+/// queued.
 
 ROCKETNET_EXPORT uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written );
 
 /// Cancels the open message and releases its memory.
 /// Does nothing if no message is open.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t * client );
 
@@ -1643,12 +1947,28 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// Changes no state, counts nothing and allocates nothing. Constant time.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
+///
+/// Callable in every client state; false in every state but CONNECTED.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns false.
+/// @param channel The channel the start would use.
+/// @param reliability The reliability mode the start would use.
+/// @param max_bytes The max_bytes the start would reserve.
+/// @return True if the start would be given room now.
 
 ROCKETNET_EXPORT bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Returns the next batch of messages from the server, or NULL when the
 /// queue is empty. Each message has client_index 0. Call until NULL before the
 /// next update (see rocketnet_client_update).
+///
+/// Callable in every client state; with no connect attempt it returns NULL.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns NULL.
+/// @return The client's batch, valid until the next receive or update, or
+/// NULL when no message is waiting.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client );
 
@@ -1669,6 +1989,14 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 /// before the next update to get every available receipt.
 /// The queue holds max_message_receipts entries; when full it drops its
 /// oldest receipt.
+///
+/// Callable in every client state; with no connect attempt it returns 0.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns 0.
+/// @param out The array to fill, or NULL with zero capacity.
+/// @param capacity The entries out holds.
+/// @return The number of receipts available, which may exceed capacity.
 
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
@@ -1676,10 +2004,31 @@ ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * clie
 /// Takes the values the config's send_kbps takes, which sets each
 /// connection's starting rate; a negative value returns
 /// ROCKETNET_STATUS_INVALID_ARGUMENT and changes nothing.
+///
+/// Takes effect while CONNECTED. In every other state it returns
+/// ROCKETNET_STATUS_OK and changes nothing; each new connection starts at the
+/// config's rate. Thread: not thread-safe; the caller owns the client one
+/// thread at a time.
+///
+/// @param client The client.
+/// @param kbps The budget in kbps, 0 for the default rate, or
+/// ROCKETNET_SEND_KBPS_UNLIMITED for no budget.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL client, a negative kbps or a rate the config's send_kbps refuses.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
 /// Fills stats with the client's current stats.
+///
+/// Callable in every client state. Counts cover the client's whole life,
+/// across connections. Rates, round trip time, jitter and loss are zero
+/// before the first connect and after disconnect. Thread: not thread-safe; the caller owns the client one thread at
+/// a time.
+///
+/// @param client The client. NULL counts as API misuse and fills only
+/// api_misuses and thread_priority_refusals.
+/// @param stats The stats to fill. NULL counts as API misuse and does
+/// nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * client, struct rocketnet_client_stats_t * stats );
 
@@ -1693,11 +2042,26 @@ ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * 
 /// Fills defaults within config_bytes and leaves config_bytes unchanged.
 /// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
 /// Use rocketnet_server_default_config to initialize a config.
+///
+/// Needs no server and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketnet_server_config_t * config );
 
 /// Initializes every config field to its default and sets config_bytes.
 /// Leaves backend_public_key empty. Returns ROCKETNET_STATUS_OK on success.
+///
+/// Needs no server and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to initialize.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL config.
 
 static inline enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config )
 {
@@ -1706,18 +2070,43 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
     return rocketnet_server_default_config_internal( config );
 }
 
+/// Fills the light profile within config_bytes and leaves config_bytes
+/// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
+/// is too small. Use rocketnet_server_light_config to initialize a config.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
+
 /// Initializes every config field to its default, then sets the light-client
 /// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
 /// send budget per client. Use it in place of rocketnet_server_default_config.
 /// The caller still sets its protocol id and backend key. It changes no
 /// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+///
+/// Needs no server and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to initialize. Its config_bytes is set here.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL config.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config );
+static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+    return rocketnet_server_light_config_internal( config );
+}
 
 /// As rocketnet_client_required_memory, for this config and max_clients.
 /// The defaults' test filter in a production build is an invalid config. A
 /// named transport memory estimate is diagnostic and does not grant that
 /// transport at create or start.
+///
+/// Needs no server. Thread: any thread; it reads only config and the
+/// environment.
+///
+/// @param config The config to size, or NULL for the defaults.
+/// @return The bytes create allocates for the server, or 0 when the config,
+/// its config_bytes or an environment override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
 
@@ -1740,6 +2129,25 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 ///
 /// context is passed to allocator callbacks. Returns, status and lifetime
 /// follow rocketnet_client_create.
+///
+/// Thread: any thread. The caller then owns the returned server and uses it
+/// from one thread at a time.
+///
+/// @param context Passed to the allocator callbacks. May be NULL.
+/// @param ipv4_address The IPv4 address to serve, as "a.b.c.d:port", or NULL.
+/// @param ipv6_address The IPv6 address to serve, as "[v6]:port", or NULL.
+/// @param config The config, filled by rocketnet_server_default_config or
+/// rocketnet_server_light_config, or NULL for the defaults.
+/// @param status Receives the result, or NULL.
+/// @return The server, or NULL on failure. The status is ROCKETNET_STATUS_OK,
+/// ROCKETNET_STATUS_NOT_INITIALIZED before rocketnet_init,
+/// ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, ROCKETNET_STATUS_CONFIG_ENV_INVALID,
+/// ROCKETNET_STATUS_INVALID_ARGUMENT for no address or a negative
+/// per_client_send_kbps, ROCKETNET_STATUS_INVALID_ADDRESS,
+/// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
+/// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
+/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
+/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
@@ -1748,24 +2156,65 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// A running or still-stopping server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED.
 /// Once stopped is true, start synchronously finalizes the old run before binding.
 /// Other failures return their status and leave the server stopped.
+///
+/// Needs a stopped server. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL server, ROCKETNET_STATUS_SERVER_NOT_STOPPED,
+/// ROCKETNET_STATUS_MISSING_KEYS without a backend key,
+/// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION,
+/// ROCKETNET_STATUS_INVALID_ADDRESS, ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED,
+/// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
+/// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
+/// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
+/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can bind,
+/// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
 
 /// Requests shutdown and queues best-effort disconnect packets to all clients.
 /// Does not wait for workers. Poll rocketnet_server_stopped before restart or
 /// destroy. Repeated requests do nothing.
+///
+/// Needs a running server; stopped or stopping it does nothing. Running is
+/// false as soon as it returns. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
 
 /// Returns true once the stop request has completed. Never waits or joins.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return True when the server is stopped and its workers have exited,
+/// including a server never started. False while running or stopping, and
+/// for a NULL server, which counts as API misuse.
 ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t * server );
 
 /// true while running, false while stopped.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return True between a successful start and the next stop. False
+/// otherwise, and for a NULL server, which counts as API misuse.
 
 ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t * server );
 
 /// As rocketnet_client_destroy, with rocketnet_server_stopped and stop in place
 /// of disconnected and disconnect. Freeing also wipes the server's keys.
+///
+/// Call it once rocketnet_server_stopped is true. Thread: not thread-safe;
+/// the caller owns the server one thread at a time.
+///
+/// @param server The server, or NULL to do nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * server );
 
@@ -1778,15 +2227,35 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
 /// sending client's slot is disconnected with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
+///
+/// Needs a running server; stopped or stopping it does nothing. Thread: not
+/// thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param time The game clock in seconds, the same clock on every call. A
+/// time that is not finite or goes backwards is clamped to the last good time
+/// and counted as API misuse.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
 /// Sends each client's queued messages in packets under its send budget.
+///
+/// Needs a running server; stopped or stopping it does nothing. Thread: not
+/// thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_send_packets( struct rocketnet_server_t * server );
 
 /// Returns the bound port or 0 while stopped.
 /// Use this to read the assigned port when the address requested port 0.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return The bound port, or 0 while stopped and for a NULL server, which
+/// counts as API misuse.
 
 ROCKETNET_EXPORT uint16_t rocketnet_server_port( const struct rocketnet_server_t * server );
 
@@ -1794,6 +2263,13 @@ ROCKETNET_EXPORT uint16_t rocketnet_server_port( const struct rocketnet_server_t
 /// Create generates this key for the server object.
 /// Register it with your backend before issuing connect tokens.
 /// The key is available while running or stopped.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and writes nothing.
+/// @param public_key The output buffer of ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
+/// NULL counts as API misuse and writes nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_public_key( const struct rocketnet_server_t * server, uint8_t * public_key );
 
@@ -1804,50 +2280,133 @@ ROCKETNET_EXPORT void rocketnet_server_public_key( const struct rocketnet_server
 /// Returns false while stopped, without IPv4, or if address_bytes is too small.
 /// Failure writes an empty string if address_bytes is positive.
 /// A short buffer logs an error. A zero-sized buffer is left untouched.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param address The output buffer. NULL counts as API misuse and returns
+/// false.
+/// @param address_bytes The size of address in bytes.
+/// @return True if the address was written.
 
 ROCKETNET_EXPORT bool rocketnet_server_ipv4_address( const struct rocketnet_server_t * server, char * address, size_t address_bytes );
 
 /// Like rocketnet_server_ipv4_address, but writes IPv6 as "[v6]:port".
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param address The output buffer. NULL counts as API misuse and returns
+/// false.
+/// @param address_bytes The size of address in bytes.
+/// @return True if the address was written.
 
 ROCKETNET_EXPORT bool rocketnet_server_ipv6_address( const struct rocketnet_server_t * server, char * address, size_t address_bytes );
 
 /// Returns the selected transport name or NULL while stopped.
 /// The string remains valid for the process lifetime.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return The transport name, or NULL while stopped and for a NULL server,
+/// which counts as API misuse.
 
 ROCKETNET_EXPORT const char * rocketnet_server_transport_name( const struct rocketnet_server_t * server );
 
 /// The config's max_clients, running or stopped.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return max_clients, or 0 for a NULL server, which counts as API misuse.
 
 ROCKETNET_EXPORT int rocketnet_server_max_clients( const struct rocketnet_server_t * server );
 
 /// Returns the number of connected clients. Returns 0 while stopped.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @return The connected client count, or 0 while stopped and for a NULL
+/// server, which counts as API misuse.
 
 ROCKETNET_EXPORT int rocketnet_server_num_connected_clients( const struct rocketnet_server_t * server );
 
 /// Returns true if the slot has a connected client.
+///
+/// Callable running or stopped; false while stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return True if a client is connected in the slot.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index );
 
 /// Returns the client ID from the slot's connect token.
 /// Zero is also a valid ID. Check rocketnet_server_client_connected first.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The client ID, or 0.
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
 
 /// Disconnects a client and frees its slot.
+///
+/// Needs a running server and a connected slot; otherwise it does nothing.
+/// The slot reads not connected at once. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
 
 ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int client_index );
 
 /// Disconnects all clients. The server keeps running.
+///
+/// Needs a running server; stopped it does nothing. A client still in the
+/// handshake is left as it is. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server );
 
 /// Returns why the slot's last connection ended.
 /// The reason remains until the slot's next connection.
+///
+/// Callable running or stopped; ROCKETNET_DISCONNECT_REASON_NONE while
+/// stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns
+/// ROCKETNET_DISCONNECT_REASON_NONE.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The slot's last disconnect reason.
 
 ROCKETNET_EXPORT enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index );
 
 /// Returns a reason name such as "NONE" or "RELIABLE_TIMED_OUT".
 /// Returns "UNKNOWN" for an invalid value.
+///
+/// Needs no server. Thread: any thread.
+///
+/// @param reason The reason to name.
+/// @return A static string, valid for the process lifetime.
 
 ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_t reason );
 
@@ -1863,17 +2422,49 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// ROCKETNET_STATUS_FLOW_ID_RESERVED.
 /// Sends to a slot without a connected client are dropped as on the client,
 /// including while stopped.
+///
+/// Needs a running server and a connected client in the slot. A message
+/// already open or a bad argument is refused with NULL. A reliable message
+/// that finds no message memory disconnects that client with
+/// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED and returns NULL.
+/// Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns NULL.
+/// @param destination_id The client's slot index, 0 to max_clients - 1. Any
+/// other value counts as API misuse and returns NULL.
+/// @param channel The channel, below the config's num_channels. The ordered
+/// and sequenced modes use it; the others ignore it.
+/// @param reliability The reliability mode.
+/// @param max_bytes The most bytes the message may hold, from 1 to the
+/// config's max_message_bytes.
+/// @return Memory for max_bytes of message, or NULL when the message is
+/// dropped or refused.
 
 ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
 /// Finishes the server's open message.
 /// Uses the same size, return and abort rules as
 /// rocketnet_client_finish_message.
+///
+/// Needs a message opened by rocketnet_server_start_message on a running
+/// server; otherwise it returns 0. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param bytes_written The bytes written into the open message.
+/// @return The message's nonzero receipt serial, or 0 when nothing was
+/// queued.
 
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int bytes_written );
 
 /// Cancels the open message and releases its memory.
 /// Does nothing if no message is open.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
 
@@ -1881,6 +2472,18 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// same channel, reliability and max_bytes would be given room now.
 /// Use it like rocketnet_client_can_send_message. Each client has its own
 /// message memory.
+///
+/// Callable running or stopped; false while stopped and for a slot without a
+/// connected client. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index counts
+/// as API misuse and returns false.
+/// @param channel The channel the start would use.
+/// @param reliability The reliability mode the start would use.
+/// @param max_bytes The max_bytes the start would reserve.
+/// @return True if the start would be given room now.
 
 ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, enum rocketnet_reliability_t reliability, int max_bytes );
 
@@ -1888,24 +2491,75 @@ ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_
 /// queue is empty. Each message names its sender in client_index. Call until
 /// NULL before the next update (see rocketnet_server_update). Returns NULL
 /// while stopped.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns NULL.
+/// @return The server's batch, valid until the next receive or update, or
+/// NULL when no message is waiting.
 
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// Copies receipts for the client in this slot.
 /// Uses the same rules as rocketnet_client_receipts.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @param out The array to fill, or NULL with zero capacity.
+/// @param capacity The entries out holds.
+/// @return The number of receipts available for the slot, which may exceed
+/// capacity.
 
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
 /// As rocketnet_client_set_send_kbps, for this client, with the values the
 /// config's per_client_send_kbps takes.
+///
+/// Takes effect for a connected client of a running server. Stopped, or for
+/// a slot without a connected client, it returns ROCKETNET_STATUS_OK and
+/// changes nothing; each new connection starts at the config's rate.
+/// Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server.
+/// @param client_index The slot, 0 to max_clients - 1.
+/// @param kbps The budget in kbps, 0 for the default rate, or
+/// ROCKETNET_SEND_KBPS_UNLIMITED for no budget.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL server, a negative kbps, an index outside 0 to max_clients - 1 or a
+/// rate the config's per_client_send_kbps refuses.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
 
 /// Fills stats with the server's current stats.
+///
+/// Callable running or stopped. Counts cover the server's whole life, across
+/// starts. Rates are zero while stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and fills only
+/// api_misuses and thread_priority_refusals.
+/// @param stats The stats to fill. NULL counts as API misuse and does
+/// nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_stats( const struct rocketnet_server_t * server, struct rocketnet_server_stats_t * stats );
 
 /// Copies the current stats for this client slot.
+///
+/// Callable running or stopped. The stats are zero while stopped and for a
+/// slot without a connected client. Thread: not thread-safe; the caller owns the
+/// server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and zeroes stats.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @param stats The stats to fill. NULL counts as API misuse and does
+/// nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats );
 

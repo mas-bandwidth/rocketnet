@@ -20,10 +20,13 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_layers.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_connect_token.h"
 
 #include <stdint.h>
@@ -45,19 +48,14 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
 
-#if defined( _WIN32 )
-static int create_status_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
-static int create_status_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-#else
-static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
-static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
-#endif
+static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
 
 // Whether the variable is set; its value, or empty, in value.
 static bool create_status_getenv( const char * name, std::string & value )
 {
     char buffer[4096];
-    const bool present = rocketnet_test_getenv( name, buffer, sizeof( buffer ) ) != 0;
+    const bool present = rocketnet_test_env_getenv( name, buffer, sizeof( buffer ) ) != 0;
     value = buffer;
     return present;
 }
@@ -69,12 +67,14 @@ struct create_status_allocator_t
     int live;
     int calls;
     int fail_at;
+    size_t last_bytes;
 };
 
 static void * create_status_allocate( void * context, size_t bytes )
 {
     create_status_allocator_t * state = (create_status_allocator_t *) context;
     const int call = ++state->calls;
+    state->last_bytes = bytes;
     if ( state->fail_at == call )
         return NULL;
     void * base = malloc( bytes + 128 );
@@ -254,6 +254,42 @@ static void test_create_reports_status_invalid_address()
     check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
+
+// ---- the sent-packet map against the window ---------------------------------
+
+// A packets_in_flight below reliable_messages_in_flight is refused at create
+// with CONFIG_OUT_OF_RANGE, client and server (docs/CHANNELS.md 14,
+// standard/MESSAGES.md m9.1; tla/RNSentMap.tla, the reversed witness
+// MCRNSentMapBrokenSmallMap.cfg): one entry short of the window is refused,
+// and a map equal to the window creates. Red before the rule: both create.
+static void test_create_refuses_sent_map_below_window()
+{
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.reliable_messages_in_flight = 1024;
+    client_config.packets_in_flight = 1023;
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    struct rocketnet_server_config_t server_config;
+    create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+    server_config.reliable_messages_in_flight = 1024;
+    server_config.packets_in_flight = 1023;
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    // the map equal to the window creates
+    client_config.packets_in_flight = 1024;
+    status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+}
+REGISTER_UNIT_TEST( test_create_refuses_sent_map_below_window );
 
 // ---- config refusals --------------------------------------------------------
 
@@ -452,6 +488,109 @@ static void test_create_reports_status_out_of_memory()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_out_of_memory );
+
+// ---- the block allocation's refusal is one error line -----------------------
+
+struct create_status_log_t
+{
+    int errors;
+    char last[256];
+};
+
+static void create_status_count_errors( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) length;
+    create_status_log_t * log = (create_status_log_t *) context;
+    if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+        return;
+    log->errors++;
+    snprintf( log->last, sizeof( log->last ), "%s", message );
+}
+
+static void create_oom_log_one_side( create_status_allocator_t * state, create_status_log_t * log, bool server,
+                                     const struct rocketnet_client_config_t * client_config, const struct rocketnet_server_config_t * server_config,
+                                     size_t block_bytes, const char * side )
+{
+    int block_fail = 0;
+    for ( int fail_at = 1; fail_at < 64; fail_at++ )
+    {
+        state->calls = 0;
+        state->fail_at = fail_at;
+        state->last_bytes = 0;
+        log->errors = 0;
+        log->last[0] = '\0';
+        enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+        if ( !server )
+        {
+            struct rocketnet_client_t * client = rocketnet_client_create( state, client_config, &status );
+            if ( client )
+            {
+                check( status == ROCKETNET_STATUS_OK );
+                rn_test_client_stop_and_destroy( client );
+                check( state->live == 0 );
+                break;
+            }
+        }
+        else
+        {
+            struct rocketnet_server_t * created = rocketnet_server_create( state, "127.0.0.1:0", NULL, server_config, &status );
+            if ( created )
+            {
+                check( status == ROCKETNET_STATUS_OK );
+                rn_test_server_stop_and_destroy( created );
+                check( state->live == 0 );
+                break;
+            }
+        }
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        check( state->live == 0 );
+        if ( state->last_bytes == block_bytes )
+        {
+            block_fail = fail_at;
+            check( log->errors == 1 );
+            check( strstr( log->last, side ) != NULL );
+        }
+    }
+    check( block_fail != 0 );
+}
+
+static void test_create_out_of_memory_logs_one_error()
+{
+    create_status_allocator_t state;
+    memset( &state, 0, sizeof( state ) );
+    create_status_log_t log;
+    memset( &log, 0, sizeof( log ) );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( create_status_count_errors, &log );
+
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    int init_status = -1;
+    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
+    check( init_status == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_server_config_t server_config;
+    create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+    const size_t overhead = (size_t) rocketnet_allocation_overhead();
+    const size_t client_block = rocketnet_client_required_memory( &client_config ) + overhead;
+    const size_t server_block = rocketnet_server_required_memory( &server_config ) + overhead;
+    check( client_block != 0 );
+    check( server_block != 0 );
+
+    create_oom_log_one_side( &state, &log, false, &client_config, &server_config, client_block, "client create refused" );
+    create_oom_log_one_side( &state, &log, true, &client_config, &server_config, server_block, "server create refused" );
+
+    state.fail_at = 0;
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( state.live == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_create_out_of_memory_logs_one_error );
 
 // ---- a NULL status, on a refusal and on a success ---------------------------
 

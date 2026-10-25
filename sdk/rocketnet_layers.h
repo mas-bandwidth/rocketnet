@@ -613,6 +613,8 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
 const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+/** @brief Makes the next `sends` link sends through an active simulator take the lock-miss path, for a unit test. */
+void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
 
 // a NULL client_transport is a counted no-op that returns 0.
 /** @brief Read the server-assigned index of the connected client.
@@ -1502,8 +1504,8 @@ struct rocketnet_message_config_t
     int send_message_buffer_bytes;              // 12288 .. 1 << 28; default 4194304
     /** @brief Queued message count; 16 through 1<<20, default 1024. */
     int send_queue_messages;            // 16 .. 1 << 20; default 1024
-    /** @brief Tracked unacknowledged packets; 16 through 1<<16, default 256. */
-    int packets_in_flight;              // 16 .. 1 << 16; default 256
+    /** @brief Tracked unacknowledged packets; 64 through 1<<20 and at least reliable_messages_in_flight, default 1024. */
+    int packets_in_flight;              // 64 .. 1 << 20, >= reliable_messages_in_flight; default 1024
     /** @brief Packets sent per connection per update, in-place unreliable messages and the send pass together; 1 through 1024, default 256. */
     int packets_per_update;         // 1 .. 1024; default 256
     /** @brief Unreliable deliveries per connection per update; 1 through 1<<16, default 256. */
@@ -1744,10 +1746,6 @@ int rocketnet_message_client_receive( struct rocketnet_message_client_t * client
 // or messages is a counted no-op that returns 0.
 int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client, struct rocketnet_message_batch_t * messages );
 
-// The per-channel cursor over the same deliveries, for the unit cases that
-// predate the one queue; not part of the public API.
-int rocketnet_message_client_receive_channel( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
-
 // Copies this update's receipt list into out, up to capacity entries; returns
 // the available count. NULL out with zero capacity queries without copying.
 // Repeated calls see the same list until the next update. Negative capacity
@@ -1863,10 +1861,6 @@ int rocketnet_message_server_receive( struct rocketnet_message_server_t * server
 // The pumped batch form of the same queue, each entry naming its sender's
 // slot. a NULL server or messages is a counted no-op that returns 0.
 int rocketnet_message_server_receive_messages( struct rocketnet_message_server_t * server, struct rocketnet_message_batch_t * messages );
-
-// The per-channel cursor over the same deliveries, for the unit cases that
-// predate the one queue; not part of the public API.
-int rocketnet_message_server_receive_channel( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
 
 // As rocketnet_message_client_receipts for one connected client slot. Invalid inputs return zero.
 int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );

@@ -263,6 +263,13 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
 {
     rocketnet_assert( set );
     rocketnet_assert( connection_index >= 0 && connection_index < set->num_connections );
+
+    // the assert compiles out under NDEBUG, so the range check is real: an
+    // index outside the set touches nothing
+
+    if ( connection_index < 0 || connection_index >= set->num_connections )
+        return;
+
     memset( set->slots + connection_index * set->num_slots, 0, (size_t) set->num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
     set->newest_completed[connection_index] = 0;
 }
@@ -316,6 +323,18 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
     set->completed_payload = NULL;
     set->completed_bytes = 0;
+
+    // the assert above compiles out under NDEBUG, so the range check is real
+    // and comes before anything is read or mutated. An index outside the set
+    // is a caller's size disagreeing with the set's, so it counts under
+    // size_mismatch, the existing refusal field, and needs no new counter.
+
+    if ( connection_index < 0 || connection_index >= set->num_connections )
+    {
+        rocketnet_spam( "reassembly refused fragment. connection index out of range" );
+        counters[table->size_mismatch]++;
+        return 0;
+    }
 
     if ( type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ||
          type_data_bytes > ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES )

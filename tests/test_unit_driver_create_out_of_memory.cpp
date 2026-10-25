@@ -36,6 +36,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -48,19 +49,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// Windows has no setenv or unsetenv: the same shim as functional/harness.inc
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static int setenv( const char * name, const char * value, int overwrite )
-{
-    size_t length = 0;
-    if ( !overwrite && getenv_s( &length, NULL, 0, name ) == 0 && length != 0 )
-        return 0;
-    return _putenv_s( name, value );
-}
-
-static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-#endif
 
 #define check rocketnet_unit_check
 
@@ -75,14 +63,14 @@ struct transport_oom_env_pin_t
 
 static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
 {
-    saved->was_set = rocketnet_test_getenv( name, saved->value, sizeof(saved->value) ) != 0;
-    unsetenv( name );
+    saved->was_set = rocketnet_test_env_getenv( name, saved->value, sizeof(saved->value) ) != 0;
+    rocketnet_test_env_unsetenv( name );
 }
 
 static void transport_oom_env_put_back( const char * name, const transport_oom_env_pin_t * saved )
 {
     if ( saved->was_set )
-        setenv( name, saved->value, 1 );
+        rocketnet_test_env_setenv( name, saved->value, 1 );
 }
 
 struct transport_oom_allocator_t

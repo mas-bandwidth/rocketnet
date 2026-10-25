@@ -4,6 +4,8 @@
 */
 
 #include "rocketnet_window_ack.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 
 #include <math.h>
@@ -455,6 +457,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
 }
 
 // tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
+// tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -468,7 +471,8 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t W = region->window;
     const uint32_t P = region->packets;
     const uint32_t max_refs = region->sent_ref_entries;
-    rocketnet_assert( count + receipt_count <= 16 ); // one packet holds at most sixteen records
+    static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX == ROCKETNET_PACKET_BUILDER_MAX_RECORDS, "the receipt bound is the sent map's record limit" );
+    rocketnet_assert( count + receipt_count <= RN_MESSAGE_RECEIPT_SERIALS_MAX ); // one record table holds at most this many records
     const uint32_t total = count + receipt_count;
 
     // 1. Update each referenced number's last_send (and first_send on its
@@ -494,7 +498,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    then evict the oldest live entries while either the P-entry packet ring
     //    or the 16P-entry reference ring needs room (docs/CHANNELS.md 6.4
     //    "Eviction": numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
-    //    is incremented once per evicted packet entry).
+    //    is incremented once per evicted packet entry). The config keeps
+    //    P >= W (rocketnet_message_validate_config_ex), so with the resend
+    //    delay above the round trip the evicted entry is never one whose ack
+    //    is still on its way (tla/RNSentMap.tla NoLiveEviction).
     rn_window_ack_reclaim_head( ack );
     while ( ack->pkt_tail - ack->pkt_head >= P || ( ack->ref_tail - ack->ref_head ) + total > max_refs )
     {
@@ -554,6 +561,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // tla/RNResendTiming.tla Sample).
 // tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
 // tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
+// tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -779,68 +787,6 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
         return 1;
     }
     return 0;
-}
-
-// Walks the small-record FIFO and then the chunk FIFO, each from its head
-// while due at its own delay (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla
-// WriteOldest, tla/RNResendTiming.tla Walk with OneFifo = FALSE and
-// SmallNeverHeldByChunk: the same delay every pass, no back-off, and a chunk
-// not yet due never holds a due small record behind it).
-static uint32_t rn_window_ack_resend_fifo( rn_window_ack_t * ack, bool chunk, double now, uint64_t * io_next_packet_id,
-                                           uint64_t * out_numbers, uint32_t max_numbers )
-{
-    rn_region_t * region = ack->region;
-    const double delay = rn_window_ack_class_delay( ack, chunk );
-    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
-
-    // each due number moves to its FIFO's tail with last_send = now, which is
-    // not due again while delay > 0; the count bounds the walk regardless
-    uint32_t remaining = ack->resend_count;
-
-    uint32_t resent = 0;
-    while ( *head != RN_RESEND_NONE && remaining > 0 && resent < max_numbers )
-    {
-        const uint32_t cur = *head;
-        const rn_send_number_t * slot = &region->send_numbers[cur];
-        ack->walk_visits++;
-        remaining--;
-        if ( slot->acked )
-        {
-            rn_resend_fifo_unlink( ack, cur );
-            continue;
-        }
-
-        // Stop at the first entry not yet due: the FIFO is ordered by last_send
-        // (with due-now failed sends at the head), so the walk is O(due).
-        if ( !( now >= slot->last_send + delay ) )
-            break;
-
-        const uint64_t number = slot->number;
-        const uint64_t packet_id = ( *io_next_packet_id )++;
-
-        rn_window_ack_commit_packet( ack, packet_id, &number, 1, now );
-        rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_RESENT );
-
-        out_numbers[resent++] = number;
-    }
-    return resent;
-}
-
-uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers )
-{
-    rocketnet_assert( ack );
-    rocketnet_assert( io_next_packet_id );
-    ack->walk_visits = 0;
-    if ( rn_window_ack_check_timeout( ack, now ) )
-        return 0;
-    if ( max_numbers == 0 || !out_numbers || ack->resend_count == 0 )
-        return 0;
-
-    // small records first, then chunks: retransmits in this order (R6)
-    uint32_t resent = rn_window_ack_resend_fifo( ack, false, now, io_next_packet_id, out_numbers, max_numbers );
-    if ( resent < max_numbers )
-        resent += rn_window_ack_resend_fifo( ack, true, now, io_next_packet_id, out_numbers + resent, max_numbers - resent );
-    return resent;
 }
 
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack )

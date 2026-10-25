@@ -39,6 +39,15 @@
 #                           ci.yml's tsan job on 2026-10-22 step for step:
 #                           345-454s on the fleet's 16-core runner hosts.
 #
+#   macos / Release         the macOS functional suite's nightly tier
+#   functional nightly      (ROCKETNET_TEST_NIGHTLY=1, functional/main.cpp):
+#   tier                    the four hard-killed client cells on the portable
+#                           server, each of which waits out the real 10 s
+#                           token timeout, and three of the four transport
+#                           pairs of connect/disconnect x1000 and of
+#                           destroy-under-traffic. ci.yml's macOS rows keep the
+#                           msgx cells of each on every commit (docs/MACOS.md).
+#
 #   linux / transport       every cell of ci.yml's Linux transport family
 #   cells x50 and ASan      matrix fifty times in a row, then the same cells
 #                           and the whole functional suite once per cell on
@@ -48,6 +57,11 @@
 #   macos / transport       every cell of ci.yml's macOS transport family
 #   cells x50               matrix fifty times in a row on the fleet's
 #                           Apple-silicon runner, for the same reason.
+#
+#   windows / transport     every cell of ci.yml's Windows transport family
+#   cells x50               matrix (the portable, iocp and rio servers and
+#                           loopback) fifty times in a row on the native
+#                           Windows runner, for the same one-in-fifty reason.
 
 name: nightly
 
@@ -104,6 +118,40 @@ jobs:
 
       - name: Functional suite (clang)
         timeout-minutes: 20
+        run: ./bin/functional
+
+  # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole Release functional suite with
+  # ROCKETNET_TEST_NIGHTLY=1 on the fleet's darwin runner (the same host
+  # ci.yml's macOS rows use), which adds the cases moved off the per-commit
+  # path (functional/main.cpp, rocketnet_functional_test_group). Every case
+  # keeps every assertion; the tier exists because those cells wait out real
+  # protocol timeouts or repeat a transport pair a per-commit case keeps.
+  # Measured times: docs/MACOS.md.
+
+  macos-functional-nightly:
+    name: macos / Release functional nightly tier
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-macos-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, through the Makefile)
+        run: make -j8
+
+      - name: Functional suite, nightly tier
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_REPORT: "1"
         run: ./bin/functional
 
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
@@ -268,6 +316,53 @@ jobs:
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
+  # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW.
+  # scripts/transport-cells-repeat reads the cells and cases from ci.yml's
+  # TRANSPORT_MATRIX_WINDOWS step (never a copy) and runs each named cell's
+  # cases (IPv4, IPv6, an IPv4 client of a dual-stack server, and the pin
+  # check) fifty times in a row with the matrix's pins and pass rule, printing
+  # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
+  # keeping the first failing log. A failure is reported with its log, never
+  # retried. The cells named here are the portable, iocp and rio servers and
+  # loopback: every cell of the Windows matrix, each named so a cell added to
+  # ci.yml is added here on purpose.
+
+  windows-transport-cells-repeat:
+    name: windows / transport cells x50
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-transport-cells-repeat-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel 4
+
+      - name: The Windows transport cells, fifty times in a row
+        timeout-minutes: 60
+        shell: bash
+        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-transport-cells-repeat-${{ matrix.ref }}
+          path: build/transport-cells-repeat
+          if-no-files-found: ignore
+
+
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
   # portable transport built with MSVC and the full test suite run on the runner.
@@ -399,8 +494,6 @@ jobs:
 
   windows-transport-extension:
     name: external transport backend / windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       fail-fast: false

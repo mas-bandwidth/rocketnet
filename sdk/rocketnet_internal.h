@@ -355,6 +355,28 @@ void rocketnet_default_free_function( void * context, void * p );
 /** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
+/**
+ * @brief Advances one owner's update clock by the caller's raw step, beside
+ * rocketnet_clamp_update_time. The owner keeps the caller's raw time and the
+ * clamped time it hands out; this helper keeps them in step: a forward raw
+ * step of d advances the clamped time by exactly d, a backwards raw step
+ * returns the last good time and records the new raw time, and a non-finite
+ * sample changes neither value. While no backwards step has happened the
+ * returned time is the caller's time, bit for bit, so every caller that reads
+ * an exact time still reads it.
+ * @param last_good The clamped time the owner keeps.
+ * @param raw_time The owner's last raw caller time, read and written.
+ * @param time_offset The owner's backwards offset, read and written: exactly
+ * 0.0 until the first backwards step, and the distance the caller's clock
+ * fell behind after one.
+ * @param time The caller's new raw time.
+ * @param clamped Optional output set true when the sample was rejected; NULL
+ * is allowed.
+ * @return The owner's new clamped time. A non-finite or backwards sample
+ * records one misuse and fires the configured assertion.
+ */
+double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
+
 #ifdef __cplusplus
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
@@ -568,10 +590,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
 // Validation applies the ranges here and the cross rules of section 14, and
 // refuses, never clamps. The public env pass reads every row but the two
-// budget rows under the endpoint's prefix (sdk/rocketnet_api.cpp:119
-// and :125); the budget's one variable is the
-// endpoint's budget field, ROCKETNET_CLIENT_SEND_KBPS or
-// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
+// budget rows under the endpoint's prefix (rn_apply_message_and_budget_env);
+// the budget's one variable is the endpoint's budget field,
+// ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
@@ -580,7 +601,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
     INT_FIELD( send_message_buffer_bytes,     4194304,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
-    INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
+    INT_FIELD( packets_in_flight,        1024,     64, 1 << 20,                0 )   /* >= reliable_messages_in_flight */  \
     INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_messages_per_update,    1024,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_messages_held,            16,      0, 4096,                   0 )                                         \
@@ -597,15 +618,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
 // The platform's network lookups, for unit tests only. On Linux,
-// rocketnet_platform_init (sdk/rocketnet_platform.cpp:391) classifies the
-// connection with get_connection_type (sdk/rocketnet_platform.cpp:1763):
-// getifaddrs (:1774), an AF_INET ioctl socket (:1782) and a netlink route
-// dump (:1851). rocketnet_platform_client_ipv6_available
-// (sdk/rocketnet_platform.cpp:4345) opens and closes an AF_INET6 socket
-// (:4361). With a table set, each reads its entry instead and opens nothing
-// (:391, :4352); NULL, the default, runs the real lookups. The unit suite sets
-// a fake before rocketnet_init (test.cpp:106) so ./bin/test opens no socket.
-// Not exported.
+// rocketnet_platform_init classifies the connection with get_connection_type:
+// getifaddrs, an AF_INET ioctl socket and a netlink route dump.
+// rocketnet_platform_client_ipv6_available opens and closes an AF_INET6 socket.
+// With a table set, each reads its entry instead and opens nothing; NULL, the
+// default, runs the real lookups. The unit suite sets a fake before
+// rocketnet_init (tests/test.cpp) so ./bin/test opens no socket. Not exported.
 
 struct rocketnet_platform_network_lookups_t
 {
@@ -628,6 +646,29 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+
+// Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
+// buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
+// ceil( max_clients x receive_kbps_per_client x 125 x
+// ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN / update_hz ) bytes, at least
+// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE and at most INT_MAX; arguments below 1
+// count as 1. rocketnet_server_receive_buffer_request is the request every
+// server socket makes: max_clients at the default client send budget
+// (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS) and the slowest supported update
+// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ).
+int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
+int rocketnet_server_receive_buffer_request( int max_clients );
+
+// Logs one line per server socket with what the kernel granted and what was
+// requested. A grant below the request is a warning naming the limit to
+// raise (net.core.rmem_max on Linux, kern.ipc.maxsockbuf on macOS and BSD);
+// a grant at or above the request is an information line.
+void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
+
+// The receive buffer the kernel granted a socket, in the bytes requested
+// (Linux reports double its grant; this halves it); 0 when unreadable.
+struct rocketnet_platform_socket_t;
+int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_socket_t * socket );
 
 // Internal final-burst operations for public server_stop. They preserve the
 // normal transport API while selecting a nonwaiting backend send on shutdown.

@@ -22,10 +22,6 @@
 // create's config, so no socket opens. No thread, no real time: the clock
 // starts at 1000.0.
 //
-// Windows: the iocp client (rn-client-iocp-windows) has no client operations
-// yet, so its row has no client rank and the Windows order is portable alone;
-// when that card lands, the iocp row ranks 10 and the WINDOWS entry of
-// ranking_native_client below names iocp.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -56,7 +52,7 @@ static const char * ranking_native_client( int platform )
     {
         case ROCKETNET_PLATFORM_LINUX:   return "gso";
         case ROCKETNET_PLATFORM_MAC:     return "msgx";
-        case ROCKETNET_PLATFORM_WINDOWS: return NULL;      // iocp: rn-client-iocp-windows
+        case ROCKETNET_PLATFORM_WINDOWS: return "iocp";
         default:                         return NULL;
     }
 }

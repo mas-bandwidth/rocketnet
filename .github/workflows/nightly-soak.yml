@@ -213,6 +213,72 @@ jobs:
           [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
           check_cell xdp xdp "$line"
 
+  # Thirty minutes per Linux server cell under impairment, with flat fds,
+  # threads and resident memory: scripts/soak-per-transport runs bin/soak
+  # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
+  # io_uring, and xdp inside a virtme-ng guest of the runner's own kernel),
+  # with loss, latency, jitter and duplication at both ends through the link
+  # simulator's env overlay, and prints one PASS or FAIL line per cell. Five
+  # cells of 30 minutes are about 152 minutes, past the two-minute rule as
+  # every nightly is. A runner with no VM tier fails the xdp cell by name.
+  soak-per-transport:
+    name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build
+        run: make
+
+      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
+        timeout-minutes: 170
+        shell: bash
+        run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
+
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the per-transport soak logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-per-transport-logs-${{ steps.refslug.outputs.slug }}
+          path: build/soak-per-transport
+          if-no-files-found: ignore
+
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
@@ -346,6 +412,7 @@ jobs:
     name: soak_sim (asan + ubsan + lsan, bounded)
     runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
