@@ -707,6 +707,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_server_receive_buffer_granted( "iocp", receive_buffer_bytes, granted_receive_bytes );
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
+    // Match the portable socket's don't-fragment rule, tolerating option refusal.
+    setsockopt( iocp->socket, iocp->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                iocp->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char*) &enabled, sizeof(enabled) );
     // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;
     // a refusal is logged once and the receive paths skip the statuses
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
@@ -1152,6 +1155,11 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
 }
 
 #if defined(ROCKETNET_IOCP_TESTS)
+uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp )
+{
+    return (uintptr_t) iocp->socket;
+}
+
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold )
 {
     iocp->test_hold_tx.store( hold, std::memory_order_release );

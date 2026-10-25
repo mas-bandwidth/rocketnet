@@ -36,6 +36,23 @@ do                                                                              
 
 #define check rocketnet_check
 
+static std::string process_thread_environment_value( const char * name, bool * was_set )
+{
+#if defined( _WIN32 )
+    char * value = NULL;
+    size_t value_bytes = 0;
+    check( _dupenv_s( &value, &value_bytes, name ) == 0 );
+    *was_set = value != NULL;
+    const std::string result = value ? value : "";
+    free( value );
+    return result;
+#else
+    const char * value = getenv( name );
+    *was_set = value != NULL;
+    return value ? value : "";
+#endif
+}
+
 // These cases require the in-memory transport even when the suite pins sockets.
 struct process_thread_transport_guard_t
 {
@@ -46,14 +63,8 @@ struct process_thread_transport_guard_t
 
     process_thread_transport_guard_t()
     {
-        const char * server = getenv( "ROCKETNET_SERVER_TRANSPORT" );
-        const char * client = getenv( "ROCKETNET_CLIENT_TRANSPORT" );
-        server_was_set = server != NULL;
-        client_was_set = client != NULL;
-        if ( server_was_set )
-            server_value = server;
-        if ( client_was_set )
-            client_value = client;
+        server_value = process_thread_environment_value( "ROCKETNET_SERVER_TRANSPORT", &server_was_set );
+        client_value = process_thread_environment_value( "ROCKETNET_CLIENT_TRANSPORT", &client_was_set );
 #if defined( _WIN32 )
         check( _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "loopback" ) == 0 );
         check( _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "loopback" ) == 0 );
