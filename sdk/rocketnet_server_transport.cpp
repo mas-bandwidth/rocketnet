@@ -212,7 +212,6 @@ struct rocketnet_server_disconnect_burst_t
 {
     rocketnet_address_t to;
     uint64_t first_sequence;
-    int client_index;
     int plaintext_bytes;
     int sealed;
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
@@ -307,6 +306,7 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_TEST_SEAMS
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    int disconnect_drain_paused_for_test;
 #endif // #if ROCKETNET_TEST_SEAMS
 
     // The disconnect bursts waiting to leave (tla/ServerSession.tla
@@ -3341,7 +3341,6 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     burst->plaintext_bytes = rocketnet_ack_block_build( burst->plaintext, block_capacity, &mapping->accepted_session );
     burst->to = *client_address;
     burst->first_sequence = mapping->send_sequence_session;
-    burst->client_index = client_index;
     burst->sealed = 0;
     memcpy( burst->connection_salt, mapping->connection_salt, sizeof( burst->connection_salt ) );
     memcpy( server_transport->disconnect_burst_keys[index], mapping->keys.session_server_to_client, ROCKETNET_KEY_BYTES );
@@ -3361,6 +3360,10 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // waits for the next update.
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown )
 {
+#if ROCKETNET_TEST_SEAMS
+    if ( server_transport->disconnect_drain_paused_for_test && !shutdown )
+        return;
+#endif // #if ROCKETNET_TEST_SEAMS
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     int committed = 0;
     while ( server_transport->disconnect_burst_count > 0 && committed < max_seals )
@@ -3374,7 +3377,10 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
         if ( !frame_data )
             break;
-        frame.client_index = burst->client_index;
+        // The slot ended before this deferred frame was sealed and may
+        // already identify another connection. Charge the server lifetime
+        // totals, but no current per-client totals.
+        frame.client_index = -1;
         const int bytes = rocketnet_write_sealed_packet( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                          protocol->packet_filter, burst->first_sequence + (uint64_t) burst->sealed,
                                                          NULL, burst->plaintext, burst->plaintext_bytes,
@@ -3413,6 +3419,21 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
+}
+
+void rocketnet_server_transport_pause_disconnect_drain_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    server_transport->disconnect_drain_paused_for_test = 1;
+    server_transport->disconnect_seals_left = 0;
+}
+
+void rocketnet_server_transport_resume_and_drain_disconnects_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    server_transport->disconnect_drain_paused_for_test = 0;
+    rocketnet_server_transport_drain_disconnect_bursts( server_transport,
+        ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_MAX_CLIENTS, false );
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
@@ -3812,4 +3833,3 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     return result;
 }
 #endif
-

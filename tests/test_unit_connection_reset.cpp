@@ -54,6 +54,9 @@ static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 
 #define check rocketnet_unit_check
 
+void rocketnet_server_transport_pause_disconnect_drain_for_test( rocketnet_server_transport_t * server_transport );
+void rocketnet_server_transport_resume_and_drain_disconnects_for_test( rocketnet_server_transport_t * server_transport );
+
 #define CLIENT_PROTOCOL_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_protocol_t, field, #decision[0] == 'R' ),
 static const rocketnet_reset_member_t client_protocol_fields[] =
 {
@@ -637,6 +640,46 @@ static void reset_loopback_slot_reuse_scenario()
     check( got_c2s && got_s2c && got_receipt );
     reset_loopback_destroy( &f );
 }
+
+// A deferred disconnect belongs to the ended connection, not to whichever
+// connection later receives the same slot. Hold the old burst across exact
+// slot reuse, then drain it without an update that could create unrelated
+// traffic: the server lifetime totals include the wire packets once, while
+// the replacement connection's totals do not move.
+static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slot()
+{
+    reset_loopback_t f = {};
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    const int old_slot = reset_loopback_connect( &f, 0, 0xA021 );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
+
+    rocketnet_server_transport_pause_disconnect_drain_for_test( transport );
+    rocketnet_server_transport_disconnect_client( transport, old_slot );
+    check( !rocketnet_message_server_client_connected( f.server, old_slot ) );
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
+    f.clients[0] = NULL;
+
+    const int new_slot = reset_loopback_connect( &f, 1, 0xB021 );
+    check( new_slot == old_slot );
+    rocketnet_server_transport_client_stats_t slot_before = {};
+    rocketnet_server_transport_client_stats( transport, new_slot, &slot_before );
+    rocketnet_server_transport_stats_t whole_before = {};
+    rocketnet_server_transport_stats( transport, &whole_before );
+    rocketnet_server_transport_resume_and_drain_disconnects_for_test( transport );
+    rocketnet_server_transport_stats_t whole_after = {};
+    rocketnet_server_transport_stats( transport, &whole_after );
+    rocketnet_server_transport_client_stats_t slot_after = {};
+    rocketnet_server_transport_client_stats( transport, new_slot, &slot_after );
+
+    check( whole_after.packets_sent == whole_before.packets_sent + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( whole_after.bytes_sent > whole_before.bytes_sent );
+    check( slot_after.packets_sent == slot_before.packets_sent );
+    check( slot_after.bytes_sent == slot_before.bytes_sent );
+    reset_loopback_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_deferred_disconnect_does_not_charge_reused_slot );
 
 static void reset_loopback_other_slot_scenario()
 {
