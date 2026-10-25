@@ -78,9 +78,17 @@ mismatch fails the leg; the log holds the replay line.
 
 The Linux and macOS ranges were refreshed in Release at executable source
 968673ea: Linux 51-11000 PASS in 1442.42 s and macOS 51-14000 PASS in
-1153.10 s. Windows 51-6000 remains unverified at this source because the
-exclusive host was concurrently busy; its configured range remains sized from
-the earlier f80a15cb PASS in 1348 s. Each leg's `timeout-minutes: 50` is about
+1153.10 s. Windows (x64, MSVC, Release) was run at executable source
+809ad504 (current main 6fa04f88 merged into the same carry), holding the
+Windows host exclusively: the build had 0 warnings, the fifteen cases passed,
+`--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 51-6000 passed
+in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
+
+    PASS seeds=51-2050 runs=2000 trace=3398a85cc19ce52f    432.65 s
+    PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
+    PASS seeds=4051-6000 runs=1950 trace=b9551ab88eec7cbd  418.88 s
+
+Each leg's `timeout-minutes: 50` is about
 twice the sweep plus the build.
 
 ## Fault kinds

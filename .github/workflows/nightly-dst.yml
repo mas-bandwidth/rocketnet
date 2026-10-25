@@ -22,7 +22,7 @@
 # at the commit that set DST_REFERENCE_TRACE:
 #   Linux   51-11000 PASS in 1384 s (0.13 s/seed)
 #   macOS   51-14000 PASS in 1218 s (0.087 s/seed)
-#   Windows 51-6000  PASS in 1348 s (0.23 s/seed)
+#   Windows 51-6000  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
 # timeout-minutes 50 is about twice the sweep plus the build.
 
 name: nightly-dst
