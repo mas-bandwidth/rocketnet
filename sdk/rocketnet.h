@@ -911,7 +911,9 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// system must own: AF_XDP UMEM (page-aligned and registered with the kernel),
 /// io_uring rings (mapped by the kernel and liburing) and thread stacks
 /// (created at the platform's default size). The RIO registered region comes
-/// from this allocator.
+/// from this allocator: RIO registration takes committed memory at the
+/// allocator's ROCKETNET_ALLOCATION_ALIGNMENT (64-byte) alignment and locks
+/// the pages it spans, so it needs no page alignment of its own.
 /// NULL for both selects the system allocator. Passing only one
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT. Both must be thread-safe.
 /// malloc_function returns memory aligned for any fundamental type, or NULL.
