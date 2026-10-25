@@ -159,3 +159,59 @@ split_proof: role=client-shard run_id=ac0200006add9f39 transport=portable transp
 2. Run id `ac0200006add9f39`, cell traffic 06:23 to 06:33 UTC: made, FAIL as
    recorded above. This was the one retry the card allows. It is recorded
    as it ran, and was not rerun.
+
+## Diagnosis of the failed cell (measured after the run, no new run made)
+
+Measured on 2026-10-25 from the run's own logs, the source at the head above
+and read-only counters on the machines. No system setting was changed and
+the cell was not rerun.
+
+Send failures. `SEND_FAILED` is the server socket's `send_failures`
+(`sdk/rocketnet_platform.cpp`): one per refused `sendmsg_x` chunk of up to
+32 datagrams, plus one per refused per-packet send; the chunk's per-packet
+replay refusals go to `send_replay_failures`, which no counter prints. The
+errno is written only by `rocketnet_debug`, and the run logs at info, so
+**the run does not record the errno**. What is recorded bounds it: an errno
+outside the weather set (`EINTR EAGAIN EWOULDBLOCK ENOBUFS ECONNREFUSED
+EHOSTUNREACH ENETUNREACH EMSGSIZE EADDRNOTAVAIL EPERM EACCES EHOSTDOWN
+ENETDOWN`) pauses the msgx pump with a `warn` line, and the server log has
+no such line, so every refusal carried a weather errno. On the server
+machine, after the run: the test NIC's output queue (FQ_CODEL, limit 3888)
+shows 1 dropped packet since boot and no flow control; IP output shows 0
+packets dropped for lack of buffers. A full interface queue (`ENOBUFS`) is
+therefore not what refused the sends. The server asks for a fixed
+`SO_SNDBUF` of 1,000,000 bytes (`ROCKETNET_SOCKET_SEND_BUFFER_SIZE`), not
+sized by client count; a full send buffer (`EAGAIN`) is the remaining
+candidate and is not measured.
+
+Socket limits on the server machine (`sysctl`):
+
+| name | value |
+| --- | --- |
+| kern.ipc.maxsockbuf | 8388608 (8 MiB) |
+| net.inet.udp.maxdgram | 9216 |
+| net.inet.udp.recvspace | 786896 |
+| net.link.generic.system.sndq_maxlen | 128 |
+
+The server asked for a 25,000,000-byte receive buffer and was granted
+8,388,608 (its own warn line: "raise kern.ipc.maxsockbuf"). The send buffer
+request (1,000,000) is under the limit.
+
+The two disconnects. Reason -3 is `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT`
+(`sdk/rocketnet.h`): a reliable message went unacknowledged past
+reliable_message_timeout_ms. It was the server's messages to the client that
+timed out. The server's captures at the kick: about 4,870 packets sent to
+each client in 12.3 s, 261 reliable messages unacknowledged, the oldest
+9.8 s old, 260 queued for resend. The clients' captures: 228 and 239 packets
+received against a highest received sequence of 4,180 and 4,215, so about
+95% of the server's packets to those two clients never arrived, while the
+server received every packet the clients sent. The client machine was not
+the cause on its own: its load1 was 0.21 at start and 1.15 at 60 s of 16
+cores, and the other shard on the same machine kept every client at 256.79
+kbps or more. The receive-side drop counters on the client machine are
+cumulative over days of runs and cannot be attributed to this window.
+
+Not established: the errno, and whether the lost packets were refused by
+the server's kernel or dropped at the client sockets. Settling it needs a
+run that records the send errno (a library change) or the per-socket drop
+counts over the run window.
