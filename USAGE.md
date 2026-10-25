@@ -411,8 +411,8 @@ rings, kernel socket buffers) and process overhead. In a production build
 (`ROCKETNET_DEV=OFF`) they are 3,225,111,302 and 22,110,441 bytes. Other
 platforms report their own figures (macOS has no io_uring or XDP, so its
 server figure is about half). On Windows x64 with MSVC, the server/client
-figures are 1,523,705,813 / 22,745,949 bytes in development builds and
-1,517,309,449 / 21,960,145 bytes with `ROCKETNET_DEV=OFF`. The default profile
+figures are 1,523,705,813 / 22,968,879 bytes in development builds and
+1,517,309,449 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`. The default profile
 remains the stock acceptance.
 
 ```c

@@ -29,10 +29,10 @@
 #if defined(_WIN32)
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1523705813 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22745949 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22968879 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1517309449 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960145 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22183075 )
 #endif
 #elif defined(__APPLE__)
 #if ROCKETNET_DEV
