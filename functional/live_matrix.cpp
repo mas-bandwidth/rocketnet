@@ -24,7 +24,8 @@
 
     Time is an argument: the clock the objects see is 1000.0 plus the wall
     time elapsed. The case prints its finish time as wall-clock duration;
-    the target is 60 s and the hard completion bound is 120 s. Timing is
+    the target is 60 s and the hard completion bound is 120 s (times
+    ROCKETNET_TEST_CASE_TIME_SCALE when the environment sets it). Timing is
     reported separately from message correctness; this is not a load test.
 */
 
@@ -64,7 +65,8 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
 #define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
-// Fixed functional-case budget, independent of build mode.
+// Fixed functional-case budget, independent of build mode; the case multiplies
+// it by the environment's case time scale (tests/time_scale.h), 1 when unset.
 #define LIVE_MATRIX_WALL_BOUND              ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS
 #define LIVE_MATRIX_TARGET_SECONDS          ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS
 #define LIVE_MATRIX_MAX_FAIL_LINES          24
@@ -1104,6 +1106,9 @@ static void live_matrix_print_table()
 void live_message_matrix_loopback()
 {
     const double case_start = rocketnet_platform_time();
+    double case_time_scale = 1.0;
+    live_matrix_check( rocketnet_test_case_env_time_scale( &case_time_scale ) );
+    const double wall_bound_seconds = LIVE_MATRIX_WALL_BOUND * case_time_scale;
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
@@ -1139,7 +1144,7 @@ void live_message_matrix_loopback()
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 
     m->wall_start = rocketnet_platform_time();
-    const double deadline = case_start + LIVE_MATRIX_WALL_BOUND;
+    const double deadline = case_start + wall_bound_seconds;
 
     // the matrix window, ending in a clean disconnect the server sees
     m->cycle = 0;
@@ -1180,10 +1185,10 @@ void live_message_matrix_loopback()
         live_matrix_print_table();
         printf( "test_loopback_transport_live_message_matrix: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (target %.0f s, max %.0f s)\n",
                 (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
-                (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_TARGET_SECONDS, LIVE_MATRIX_WALL_BOUND );
+                (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_TARGET_SECONDS, wall_bound_seconds );
         fflush( stdout );
     }
 
     live_matrix_check( m->edge_failures == 0 );
-    live_matrix_check( elapsed < LIVE_MATRIX_WALL_BOUND );
+    live_matrix_check( elapsed < wall_bound_seconds );
 }
