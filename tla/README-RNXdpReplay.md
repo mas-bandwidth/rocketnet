@@ -18,7 +18,7 @@ module; the `xdp-replay-*` rows of `tla/COVERAGE.tsv` are `current`.
 `tla/MCRNXdpReplayBrokenNarrowWindow.cfg`,
 `tla/MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg`,
 `tla/MCRNXdpReplayBrokenFailedForgetDropped.cfg`,
-`tla/MCRNXdpReplayBrokenStaleForgetRetried.cfg` and
+`tla/MCRNXdpReplayBrokenSupersededForget.cfg` and
 `tla/MCRNXdpReplayBrokenReconnectFreshness.cfg` are the reversed witnesses. The cases
 are rows of `tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
 `tla/RUNS.tsv`.
@@ -248,7 +248,7 @@ reconnect-freshness gap of the witness above, owned by the separate remedy;
 | `MCRNXdpReplayBrokenNarrowWindow.cfg` | the kernel window is the userspace window: `KernelWindow <- KernelWindowBroken` (`W - 1`) | `FreshGenuineNeverDropped`, exit 12, depth 9 |
 | `MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg` | forgetting only marked slots | `ReleasedSlotForgetsItsReplyMac`, exit 12, depth 6 |
 | `MCRNXdpReplayBrokenFailedForgetDropped.cfg` | a refused forget stays pending: `KeepFailedForgets <- KeepFailedForgetsBroken` | `ForgetOwedUntilApplied`, exit 12, depth 10 |
-| `MCRNXdpReplayBrokenStaleForgetRetried.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, depth 13 |
+| `MCRNXdpReplayBrokenSupersededForget.cfg` | a superseded forget is dropped: `SupersedeStaleForgets <- SupersedeStaleForgetsBroken` | `RetryNeverDeletesNewerMark`, exit 12, depth 13 |
 | `MCRNXdpReplayBrokenReconnectFreshness.cfg` | reconnect while a delete remains owed | `NewSessionNeverDroppedByOldMark`, exit 12, depth 15 |
 
 Each witness configuration leaves out the properties that restate the rule it
@@ -323,7 +323,7 @@ the walk having already cleared the slot's mark record, so a reconnect from
 the same address and port had its session packets dropped in the kernel as
 replayed until it timed out.
 
-### StaleForgetRetried, checked by hand against the design
+### SupersededForget, checked by hand against the design
 
 The TLC trace, depth 13:
 

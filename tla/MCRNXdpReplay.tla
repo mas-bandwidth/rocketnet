@@ -18,7 +18,7 @@
 (* KeepFailedForgets <- KeepFailedForgetsBroken (a forget the kernel       *)
 (* refused is dropped, not kept for the next commit) and must fail         *)
 (* ForgetOwedUntilApplied;                                                 *)
-(* MCRNXdpReplayBrokenStaleForgetRetried.cfg sets                          *)
+(* MCRNXdpReplayBrokenSupersededForget.cfg sets                          *)
 (* SupersedeStaleForgets <- SupersedeStaleForgetsBroken (a refused forget  *)
 (* is kept over a newer session's applied mark of the same address) and    *)
 (* must fail RetryNeverDeletesNewerMark.  The control and that witness set *)
