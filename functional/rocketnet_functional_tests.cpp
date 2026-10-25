@@ -9615,6 +9615,13 @@ extern void test_api_polish_dev_token_string();
 extern void test_dev_connect_token_timeout_is_the_named_constant();
 extern void test_dev_token_minting_absent_in_release();
 
+// the corpus-consistency cases (functional/corpus_consistency.cpp): each walks a
+// directory of committed inputs that grows, so none is a unit case
+extern void test_pcapng_corpus_replay();
+extern void test_pcapng_corpus_witness_unread_packet_goes_red();
+extern void test_pcapng_corpus_covers_control_packet_types();
+extern void test_fuzz_prefilter_seed_names_match_outcomes();
+
 // the transport-selection cases check what a create selects, so a whole-suite
 // pin that names another transport takes them out of the suite
 
@@ -9649,6 +9656,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+    { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
+    { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
+    { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
+    { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
     { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
     { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
