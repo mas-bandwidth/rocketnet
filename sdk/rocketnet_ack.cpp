@@ -293,11 +293,21 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
     return true;
 }
 
+#define ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS 32
+#define ROCKETNET_ACK_RECEIVED_STATS_BLOCKS \
+    ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS )
+#define ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK 8
+#define ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS \
+    ( ROCKETNET_ACK_RECEIVED_STATS_BLOCKS * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK )
+
+static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
+               "received block summaries fit in reclaimed record words" );
+
 // tla/RNWrittenRing.tla Reset. Every field but the three record rings, which
 // a written bit guards (Write sets it, every Read checks it first): the
-// rings' 262 KB are never zeroed, so a reset writes about 9 KB (the bits,
-// the counters and the rtt history's empty marks) and the rings' pages are
-// touched only by records.
+// rings' payloads are never zeroed. Reset also clears the compact summaries
+// in the first 512 records' reclaimed stats words (2 KB across 12 KB of ring),
+// without touching sequence/time/bytes.
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 {
     rocketnet_assert( endpoint );
@@ -310,6 +320,8 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         endpoint->stats_rtt_min_tree[i] = 1e9f;                 // ROCKETNET_ACK_RTT_NONE: no positive sample
+    for ( int i = 0; i < ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS; ++i )
+        endpoint->received[i].stats_word = 0;
 }
 
 // -----------------------------------------
@@ -323,13 +335,12 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 // within floating-point rounding: rocketnet_ack_stats_publish_rtt takes
 // ( sum - count * min ) / count from a double sum, while the recompute sums
 // sample - min in float.
-// Every window is a function of its high-water mark; when the mark rises the
-// window moves: the records below the new base leave (they are still in the
-// ring, read before anything overwrites them), the records between the old
-// and the new top enter, and the records crossing into the loss-eligible
-// part are counted there. Each sequence enters and leaves once, so the work
-// is O(1) per sequence amortized, bounded by half a ring per call, and a
-// jump past the whole window empties it without visiting it.
+// Every window is a function of its high-water mark. Sent counters move their
+// edges incrementally. Received records use fixed 32-slot physical blocks:
+// advancing retention clears whole summaries and rescans at most two edge
+// blocks, a receive rebuilds its one block, and the older-half query reads
+// summaries plus at most two edges. The fixed worst case is at most 256
+// record/block visits and cannot grow into the old quadratic insertion walk.
 
 #define ROCKETNET_ACK_STATS_SENT_HALF ( (uint64_t) ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
 #define ROCKETNET_ACK_STATS_RECEIVED_HALF ( (uint64_t) ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 )
@@ -357,12 +368,6 @@ static inline bool rocketnet_ack_stats_sent_present( const struct rocketnet_ack_
 {
     const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     return rocketnet_ack_bit( endpoint->sent_written, slot ) && endpoint->sent[slot].sequence == sequence;
-}
-
-static inline bool rocketnet_ack_stats_received_present( const struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
-{
-    const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
-    return rocketnet_ack_bit( endpoint->received_written, slot ) && endpoint->received[slot].sequence == sequence;
 }
 
 // the window edges move one record per send or receive, each endpoint in
@@ -581,129 +586,278 @@ static void rocketnet_ack_stats_sent_advance( struct rocketnet_ack_endpoint_t * 
     rocketnet_ack_stats_prefetch( &endpoint->sent[( top + 2 ) % ring] );
 }
 
-static void rocketnet_ack_stats_received_clear( struct rocketnet_ack_endpoint_t * endpoint )
+static inline void rocketnet_ack_stats_received_visit( struct rocketnet_ack_endpoint_t * endpoint )
 {
-    endpoint->stats_received_bytes = 0;
-    endpoint->stats_received_low_time = 0.0;
-    endpoint->stats_received_high_time = 0.0;
-    endpoint->stats_received_count = 0;
-    endpoint->stats_received_head = 0;
-    endpoint->stats_received_tail = 0;
+#if ROCKETNET_DEV
+    endpoint->stats_received_operations++;
+#else
+    (void) endpoint;
+#endif
 }
 
-// links a counted record into the receive-time list: walk back from the
-// tail past every record received later. receive times come from one clock
-// in call order, so a new record lands at the tail; only a record entering
-// at the window's top edge can be older than the tail.
-static void rocketnet_ack_stats_received_link( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+struct rocketnet_ack_stats_received_block_t
 {
-    const uint16_t slot = (uint16_t) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const struct rocketnet_received_packet_record_t * record = &endpoint->received[slot];
-    const double time = record->receive_time;
+    uint64_t bytes;
+    double low_time;
+    double high_time;
+    uint32_t count;
+    uint8_t first_is_nan;
+    uint8_t pad[3];
+};
 
-    endpoint->stats_received_bytes += record->wire_bytes;
-    if ( endpoint->stats_received_count++ == 0 )
-    {
-        endpoint->stats_received_head = slot;
-        endpoint->stats_received_tail = slot;
-        endpoint->stats_received_low_time = time;
-        endpoint->stats_received_high_time = time;
-        return;
-    }
+static_assert( sizeof(rocketnet_ack_stats_received_block_t) == 32,
+               "received block aggregate size" );
 
-    int after = endpoint->stats_received_tail;
-    while ( after >= 0 && endpoint->received[after].receive_time > time )
-        after = after == endpoint->stats_received_head ? -1 : (int) endpoint->received[after].stats_prev;
-
-    if ( after < 0 )
-    {
-        endpoint->received[slot].stats_next = endpoint->stats_received_head;
-        endpoint->received[endpoint->stats_received_head].stats_prev = slot;
-        endpoint->stats_received_head = slot;
-        endpoint->stats_received_low_time = time;
-        return;
-    }
-
-    endpoint->received[slot].stats_prev = (uint16_t) after;
-    if ( after == endpoint->stats_received_tail )
-    {
-        endpoint->stats_received_tail = slot;
-        endpoint->stats_received_high_time = time;
-    }
-    else
-    {
-        const uint16_t next = endpoint->received[after].stats_next;
-        endpoint->received[slot].stats_next = next;
-        endpoint->received[next].stats_prev = slot;
-    }
-    endpoint->received[after].stats_next = slot;
+static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_empty()
+{
+    rocketnet_ack_stats_received_block_t result = {};
+    return result;
 }
 
-// the record must be counted and still in the ring
-static void rocketnet_ack_stats_received_unlink( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+static inline double rocketnet_ack_stats_received_min( double a, double b )
 {
-    const uint16_t slot = (uint16_t) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    rocketnet_assert( endpoint->stats_received_count > 0 );
-    if ( --endpoint->stats_received_count == 0 )
+    if ( isnan(a) ) return b;
+    if ( isnan(b) ) return a;
+    return b < a ? b : a;
+}
+
+static inline double rocketnet_ack_stats_received_max( double a, double b )
+{
+    if ( isnan(a) ) return b;
+    if ( isnan(b) ) return a;
+    return b > a ? b : a;
+}
+
+// Merge in physical-slot order, which is sequence order inside each
+// non-wrapping query piece. first_is_nan keeps the scan oracle's first
+// present value; low/high ignore later NaNs exactly as its comparisons do.
+static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_merge(
+    const rocketnet_ack_stats_received_block_t & left,
+    const rocketnet_ack_stats_received_block_t & right )
+{
+    if ( !left.count ) return right;
+    if ( !right.count ) return left;
+    rocketnet_ack_stats_received_block_t result;
+    result.bytes = left.bytes + right.bytes;
+    result.low_time = rocketnet_ack_stats_received_min( left.low_time, right.low_time );
+    result.high_time = rocketnet_ack_stats_received_max( left.high_time, right.high_time );
+    result.count = left.count + right.count;
+    result.first_is_nan = left.first_is_nan;
+    memset( result.pad, 0, sizeof(result.pad) );
+    return result;
+}
+
+static inline uint32_t rocketnet_ack_stats_received_word( const struct rocketnet_ack_endpoint_t * endpoint,
+                                                          int block, int word )
+{
+    return endpoint->received[block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK + word].stats_word;
+}
+
+static inline void rocketnet_ack_stats_received_set_word( struct rocketnet_ack_endpoint_t * endpoint,
+                                                          int block, int word, uint32_t value )
+{
+    endpoint->received[block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK + word].stats_word = value;
+}
+
+static uint64_t rocketnet_ack_stats_received_u64( const struct rocketnet_ack_endpoint_t * endpoint,
+                                                  int block, int word )
+{
+    return (uint64_t) rocketnet_ack_stats_received_word( endpoint, block, word ) |
+           ( (uint64_t) rocketnet_ack_stats_received_word( endpoint, block, word + 1 ) << 32 );
+}
+
+static void rocketnet_ack_stats_received_set_u64( struct rocketnet_ack_endpoint_t * endpoint,
+                                                  int block, int word, uint64_t value )
+{
+    rocketnet_ack_stats_received_set_word( endpoint, block, word, (uint32_t) value );
+    rocketnet_ack_stats_received_set_word( endpoint, block, word + 1, (uint32_t) ( value >> 32 ) );
+}
+
+static double rocketnet_ack_stats_received_double( const struct rocketnet_ack_endpoint_t * endpoint,
+                                                   int block, int word )
+{
+    const uint64_t bits = rocketnet_ack_stats_received_u64( endpoint, block, word );
+    double value;
+    memcpy( &value, &bits, sizeof(value) );
+    return value;
+}
+
+static void rocketnet_ack_stats_received_set_double( struct rocketnet_ack_endpoint_t * endpoint,
+                                                     int block, int word, double value )
+{
+    uint64_t bits;
+    memcpy( &bits, &value, sizeof(bits) );
+    rocketnet_ack_stats_received_set_u64( endpoint, block, word, bits );
+}
+
+static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_read_block(
+    const struct rocketnet_ack_endpoint_t * endpoint, int block )
+{
+    rocketnet_ack_stats_received_block_t result;
+    result.bytes = rocketnet_ack_stats_received_u64( endpoint, block, 0 );
+    result.low_time = rocketnet_ack_stats_received_double( endpoint, block, 2 );
+    result.high_time = rocketnet_ack_stats_received_double( endpoint, block, 4 );
+    result.count = rocketnet_ack_stats_received_word( endpoint, block, 6 );
+    result.first_is_nan = (uint8_t) rocketnet_ack_stats_received_word( endpoint, block, 7 );
+    memset( result.pad, 0, sizeof(result.pad) );
+    return result;
+}
+
+static void rocketnet_ack_stats_received_write_block( struct rocketnet_ack_endpoint_t * endpoint, int block,
+                                                      const rocketnet_ack_stats_received_block_t & value )
+{
+    rocketnet_ack_stats_received_set_u64( endpoint, block, 0, value.bytes );
+    rocketnet_ack_stats_received_set_double( endpoint, block, 2, value.low_time );
+    rocketnet_ack_stats_received_set_double( endpoint, block, 4, value.high_time );
+    rocketnet_ack_stats_received_set_word( endpoint, block, 6, value.count );
+    rocketnet_ack_stats_received_set_word( endpoint, block, 7, value.first_is_nan );
+}
+
+static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_record(
+    const struct rocketnet_received_packet_record_t * record )
+{
+    rocketnet_ack_stats_received_block_t result;
+    result.bytes = record->wire_bytes;
+    result.low_time = record->receive_time;
+    result.high_time = record->receive_time;
+    result.count = 1;
+    result.first_is_nan = isnan(record->receive_time) ? 1 : 0;
+    memset( result.pad, 0, sizeof(result.pad) );
+    return result;
+}
+
+static void rocketnet_ack_stats_received_rebuild_block( struct rocketnet_ack_endpoint_t * endpoint,
+                                                        int block, uint64_t highest )
+{
+    rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
+    const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int first = block * ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    for ( int slot = first; slot < first + ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS; ++slot )
     {
-        rocketnet_ack_stats_received_clear( endpoint );
-        return;
+        rocketnet_ack_stats_received_visit( endpoint );
+        const struct rocketnet_received_packet_record_t * record = &endpoint->received[slot];
+        if ( rocketnet_ack_bit( endpoint->received_written, (uint64_t) slot ) &&
+             record->sequence >= base && record->sequence <= highest )
+            aggregate = rocketnet_ack_stats_received_merge( aggregate, rocketnet_ack_stats_received_record( record ) );
     }
-    endpoint->stats_received_bytes -= endpoint->received[slot].wire_bytes;
-    if ( slot == endpoint->stats_received_head )
+    rocketnet_ack_stats_received_write_block( endpoint, block, aggregate );
+}
+
+static void rocketnet_ack_stats_received_clear_blocks( struct rocketnet_ack_endpoint_t * endpoint )
+{
+    const rocketnet_ack_stats_received_block_t empty = rocketnet_ack_stats_received_empty();
+    for ( int block = 0; block < ROCKETNET_ACK_RECEIVED_STATS_BLOCKS; ++block )
     {
-        endpoint->stats_received_head = endpoint->received[slot].stats_next;
-        endpoint->stats_received_low_time = endpoint->received[endpoint->stats_received_head].receive_time;
-    }
-    else if ( slot == endpoint->stats_received_tail )
-    {
-        endpoint->stats_received_tail = endpoint->received[slot].stats_prev;
-        endpoint->stats_received_high_time = endpoint->received[endpoint->stats_received_tail].receive_time;
-    }
-    else
-    {
-        const uint16_t prev = endpoint->received[slot].stats_prev;
-        const uint16_t next = endpoint->received[slot].stats_next;
-        endpoint->received[prev].stats_next = next;
-        endpoint->received[next].stats_prev = prev;
+        rocketnet_ack_stats_received_visit( endpoint );
+        rocketnet_ack_stats_received_write_block( endpoint, block, empty );
     }
 }
 
-// the received counterpart of rocketnet_ack_stats_sent_advance. the
-// received sequence is the remote end's choice: a jump past the window
-// empties it in O(1), and a step is bounded by half the received ring
-// tla/RNServerStats.tla Slide: moves the received window to the new high-water mark, unlinking and linking records
+static void rocketnet_ack_stats_received_clear_physical_range( struct rocketnet_ack_endpoint_t * endpoint,
+                                                               int from, int to, uint64_t highest )
+{
+    if ( from >= to )
+        return;
+    const rocketnet_ack_stats_received_block_t empty = rocketnet_ack_stats_received_empty();
+    const int first_block = from / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    const int last_block = ( to - 1 ) / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    for ( int block = first_block; block <= last_block; ++block )
+    {
+        rocketnet_ack_stats_received_visit( endpoint );
+        const int block_from = block * ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+        const int block_to = block_from + ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+        if ( from <= block_from && block_to <= to )
+            rocketnet_ack_stats_received_write_block( endpoint, block, empty );
+        else
+            rocketnet_ack_stats_received_rebuild_block( endpoint, block, highest );
+    }
+}
+
+// Clears the physical slots leaving the full retained window. Whole blocks
+// cost one visit and at most two edge blocks are rescanned.
+// tla/RNServerStats.tla Slide: fixed-block retention update.
 static void rocketnet_ack_stats_received_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
 {
-    const uint64_t ring = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
     const uint64_t old_highest = endpoint->highest_received_sequence;
-    if ( highest <= old_highest )
+    if ( highest <= old_highest || old_highest == 0 )
         return;
-
-    const uint64_t old_base = rocketnet_ack_stats_window_base( old_highest, ring );
-    const uint64_t old_top = rocketnet_ack_stats_window_top( old_highest, ring );
-    const uint64_t base = rocketnet_ack_stats_window_base( highest, ring );
-    const uint64_t top = rocketnet_ack_stats_window_top( highest, ring );
-
-    if ( base > old_top )
+    const uint64_t old_base = rocketnet_ack_stats_window_base( old_highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const uint64_t count = base - old_base;
+    if ( !count )
+        return;
+    if ( count >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
     {
-        rocketnet_ack_stats_received_clear( endpoint );
+        rocketnet_ack_stats_received_clear_blocks( endpoint );
+        return;
+    }
+    const int start = (int) ( old_base % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int end = start + (int) count;
+    rocketnet_ack_stats_received_clear_physical_range(
+        endpoint, start, end < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ? end : ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE, highest );
+    if ( end > ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
+        rocketnet_ack_stats_received_clear_physical_range(
+            endpoint, 0, end - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE, highest );
+}
+
+static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_query(
+    struct rocketnet_ack_endpoint_t * endpoint, uint64_t first, uint64_t last )
+{
+    rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
+    uint64_t sequence = first;
+    uint64_t remaining = last - first + 1;
+    while ( remaining )
+    {
+        const int slot = (int) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+        const int offset = slot % ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+        uint64_t take = (uint64_t) ( ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS - offset );
+        if ( take > remaining ) take = remaining;
+        if ( offset == 0 && take == ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS )
+        {
+            rocketnet_ack_stats_received_visit( endpoint );
+            aggregate = rocketnet_ack_stats_received_merge(
+                aggregate, rocketnet_ack_stats_received_read_block(
+                    endpoint, slot / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS ) );
+        }
+        else
+        {
+            for ( uint64_t i = 0; i < take; ++i )
+            {
+                rocketnet_ack_stats_received_visit( endpoint );
+                const int record_slot = slot + (int) i;
+                const struct rocketnet_received_packet_record_t * record = &endpoint->received[record_slot];
+                if ( rocketnet_ack_bit( endpoint->received_written, (uint64_t) record_slot ) &&
+                     record->sequence == sequence + i )
+                    aggregate = rocketnet_ack_stats_received_merge(
+                        aggregate, rocketnet_ack_stats_received_record( record ) );
+            }
+        }
+        remaining -= take;
+        if ( remaining ) sequence += take;
+    }
+    return aggregate;
+}
+
+static void rocketnet_ack_stats_received_refresh( struct rocketnet_ack_endpoint_t * endpoint )
+{
+    const uint64_t base = rocketnet_ack_stats_window_base(
+        endpoint->highest_received_sequence, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const uint64_t top = rocketnet_ack_stats_window_top(
+        endpoint->highest_received_sequence, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const rocketnet_ack_stats_received_block_t aggregate =
+        rocketnet_ack_stats_received_query( endpoint, base, top );
+    endpoint->stats_received_count = aggregate.count;
+    endpoint->stats_received_bytes = aggregate.bytes;
+    if ( aggregate.count )
+    {
+        endpoint->stats_received_low_time = aggregate.first_is_nan ? nan("") : aggregate.low_time;
+        endpoint->stats_received_high_time = aggregate.first_is_nan ? nan("") : aggregate.high_time;
     }
     else
     {
-        for ( uint64_t sequence = old_base; sequence < base && endpoint->stats_received_count > 0; sequence++ )
-            if ( rocketnet_ack_stats_received_present( endpoint, sequence ) )
-                rocketnet_ack_stats_received_unlink( endpoint, sequence );
+        endpoint->stats_received_low_time = 0.0;
+        endpoint->stats_received_high_time = 0.0;
     }
-
-    uint64_t enter_low = old_top + 1 > base ? old_top + 1 : base;
-    const uint64_t enter_high = top < old_highest ? top : old_highest;
-    for ( uint64_t sequence = enter_low; sequence <= enter_high; sequence++ )
-        if ( rocketnet_ack_stats_received_present( endpoint, sequence ) )
-            rocketnet_ack_stats_received_link( endpoint, sequence );
-
-    rocketnet_ack_stats_prefetch( &endpoint->received[( base + 2 ) % ring] );
-    rocketnet_ack_stats_prefetch( &endpoint->received[( top + 2 ) % ring] );
 }
 
 static inline float rocketnet_ack_stats_rtt_node( const struct rocketnet_ack_endpoint_t * endpoint, int node )
@@ -920,12 +1074,15 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
 }
 
 // tla/RNServerStats.tla Send: takes any received sequence the remote end chose
-// tla/RNServerStats.tla Write: unlinks the overwritten received record, writes the ring slot and links it
+// tla/RNServerStats.tla Write: writes the exact-tagged ring slot and rebuilds its block
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time )
 {
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
+#if ROCKETNET_DEV
+    endpoint->stats_received_operations = 0;
+#endif
 
     // refused: a sequence at least one received ring behind the high-water
     // mark. Replay admits sequences that far back (its window is wider than
@@ -937,26 +1094,23 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
          sequence <= endpoint->highest_received_sequence - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
         return;
 
-    // the stats window moves first, then the counted record this write
-    // replaces (a duplicate inside the window) leaves, then the new record
-    // is counted if it lands in the window
+    // Retention moves first, lazily clearing physical slots that have fallen
+    // out. The point write then replaces this exact slot generation and one
+    // range query publishes the older-half cohort.
     const uint64_t highest = sequence > endpoint->highest_received_sequence ? sequence : endpoint->highest_received_sequence;
     rocketnet_ack_stats_received_advance( endpoint, highest );
-    const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const uint64_t top = rocketnet_ack_stats_window_top( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
 
     struct rocketnet_received_packet_record_t * record = &endpoint->received[sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
-    if ( rocketnet_ack_bit( endpoint->received_written, sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ) &&
-         record->sequence >= base && record->sequence <= top )
-        rocketnet_ack_stats_received_unlink( endpoint, record->sequence );
     rocketnet_ack_set_bit( endpoint->received_written, sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
     record->sequence = sequence;
     record->receive_time = time;
     record->wire_bytes = (uint32_t) wire_bytes;
 
     endpoint->highest_received_sequence = highest;
-    if ( sequence >= base && sequence <= top )
-        rocketnet_ack_stats_received_link( endpoint, sequence );
+    rocketnet_ack_stats_received_rebuild_block(
+        endpoint, (int) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ) /
+                  ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS, highest );
+    rocketnet_ack_stats_received_refresh( endpoint );
     rocketnet_ack_stats_publish_received( endpoint );
 }
 
