@@ -286,6 +286,9 @@ struct rocketnet_server_socket_t
     int replay_map_fd = -1;
     struct rocketnet_xdp_replay_marks_t * replay_marks;     // pending forgets and marks, this socket owns it
     uint64_t replay_commit_failures;
+    bool replay_zero_mark_refused;                          // a zero mark the buffer refused since the last commit
+    bool replay_hold_all_greetings;                         // the last commit had one: hold every keep-alive
+    uint64_t replay_greetings_held;                         // keep-alives held for a mark not yet applied
 
     std::atomic<uint64_t> packet_id{0};
 
@@ -2235,6 +2238,36 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
+// tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: before a producer
+// buffer is published, drop each keep-alive to a session whose first mark
+// (a zero) the kernel refused, or that the buffer could not queue: the first
+// keep-alive is how a client learns it is connected, so until the mark lands
+// the client sends no session packet and the old session's entry drops
+// nothing of the new session. Only keep-alives: the client refuses payloads
+// before it is connected, and a disconnect still leaves. The keep-alive is
+// sent again when next due. Main thread, like the commit; nothing is held in
+// steady state, and the check is then one load per publish.
+
+static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_socket_t * server_socket, rocketnet_server_socket_send_buffer_t * send_buffer )
+{
+    const bool hold_all = server_socket->replay_hold_all_greetings;
+    if ( !hold_all && !( server_socket->replay_marks && rocketnet_xdp_replay_marks_holding_greetings( server_socket->replay_marks ) ) )
+        return;
+    const int num_packets = send_buffer->num_packets.load( std::memory_order_relaxed );
+    for ( int i = 0; i < num_packets && i < ROCKETNET_XDP_SEND_QUEUE_SIZE; i++ )
+    {
+        rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[i];
+        // the wire bytes start at the frame's wire offset, the type first
+        if ( info->packet_bytes == 0 || send_buffer->packet_data[i][ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
+            continue;
+        if ( hold_all || rocketnet_xdp_replay_marks_holds_greeting( server_socket->replay_marks, &info->to ) )
+        {
+            info->packet_bytes = 0;
+            server_socket->replay_greetings_held++;
+        }
+    }
+}
+
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket )
 {
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
@@ -2243,6 +2276,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
         if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
             continue;
+        rocketnet_server_socket_hold_greetings( server_socket, &socket->send_buffer[index] );
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) ) continue;
         // tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
         // producer): with no free replacement, keep
@@ -2270,16 +2304,17 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 
 // The replay high-water writer. Main thread only, like the rest of the server
 // update path. Forget and mark append to the socket's pending buffer; commit
-// applies them to the pinned map and resets the buffer, failures counted and
-// named by call, never by key.
+// applies them to the pinned map and resets the buffer keeping every forget
+// the kernel refused, failures counted and named by call, never by key.
 
-void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
+bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address )
 {
     rocketnet_assert( server_socket );
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
-    rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
+    const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
     rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
+    return queued;
 }
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
@@ -2290,12 +2325,18 @@ void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t *
     rocketnet_xdp_reply_macs_learn( &server_socket->reply_macs, &server_socket->process_packets.from[view_index], server_socket->process_eth[view_index] );
 }
 
-void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water )
+bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water )
 {
     rocketnet_assert( server_socket );
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
-    rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
+    const bool queued = rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
+    // a new session's zero mark the buffer refused: its key is not held
+    // anywhere, so the next publish holds every keep-alive (tla/RNXdpReplay.tla
+    // HoldGreetingUntilMarked, markOwed); the walk owes the mark and asks again
+    if ( !queued && high_water == 0 )
+        server_socket->replay_zero_mark_refused = true;
+    return queued;
 }
 
 static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_server_socket_t * server_socket, const char * call )
@@ -2312,7 +2353,13 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
 
     // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
-    // in one commit; this is the only writer of the kernel map.
+    // in one commit; this is the only writer of the kernel map. A forget the
+    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
+    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark);
+    // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
+    // reconnect's refused zero mark is retried rather than lost.
+
+    bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
 
     if ( marks->forget_count > 0 )
     {
@@ -2320,25 +2367,23 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         memset( &opts, 0, sizeof(opts) );
         opts.sz = sizeof(opts);
         __u32 count = marks->forget_count;
-        if ( bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) != 0 )
+        const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
+        for ( uint32_t i = 0; i < marks->forget_count; i++ )
         {
-            // a missing key is not a failure; an older kernel refuses the
-            // batch call, so walk the forgets one syscall at a time
+            // a missing key is not a failure; a refused batch (an older kernel,
+            // a missing key, or any other error) is walked one syscall at a
+            // time so each forget's outcome is known
 
-            if ( errno == ENOENT || errno == EINVAL || errno == ENOTSUPP )
+            forget_failed[i] = false;
+            if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
             {
-                for ( uint32_t i = 0; i < marks->forget_count; i++ )
-                {
-                    if ( bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-                }
-            }
-            else
-            {
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_batch" );
+                forget_failed[i] = true;
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
             }
         }
     }
+
+    bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
 
     if ( marks->mark_count > 0 )
     {
@@ -2347,24 +2392,32 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
         opts.sz = sizeof(opts);
         opts.elem_flags = BPF_ANY;
         __u32 count = marks->mark_count;
-        if ( bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) != 0 )
+        const bool batch_updated = bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) == 0;
+        for ( uint32_t i = 0; i < marks->mark_count; i++ )
         {
-            if ( errno == EINVAL || errno == ENOTSUPP )
+            // a refused batch (an older kernel, or any other error) is walked
+            // one syscall at a time, so each mark's outcome is known: an
+            // applied mark supersedes a refused forget of the same key
+            // (RetryNeverDeletesNewerMark); BPF_ANY makes a repeat harmless
+
+            mark_applied[i] = true;
+            if ( !batch_updated && bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
             {
-                for ( uint32_t i = 0; i < marks->mark_count; i++ )
-                {
-                    if ( bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
-                        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
-                }
-            }
-            else
-            {
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_batch" );
+                mark_applied[i] = false;
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
             }
         }
     }
 
-    rocketnet_xdp_replay_marks_reset( marks );
+    // a full buffer's refusals land in the commit failure count; a refused
+    // forget is kept unless an applied mark of its key superseded it, and a
+    // refused mark is kept for the next commit
+    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
+
+    // the publish after this commit holds the greeting of every session whose
+    // zero mark is kept or was not queued (rocketnet_server_socket_hold_greetings)
+    server_socket->replay_hold_all_greetings = server_socket->replay_zero_mark_refused;
+    server_socket->replay_zero_mark_refused = false;
 }
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
@@ -2632,9 +2685,98 @@ bool rocketnet_server_socket_test_replay_marks()
 
     rocketnet_server_socket_replay_commit(server);
 
-    valid &= server->replay_marks->forget_count == 0;
-    valid &= server->replay_marks->mark_count == 0;
+    // the refused forget and both refused marks stay pending for the next commit
+    valid &= server->replay_marks->forget_count == 1;
+    valid &= server->replay_marks->mark_count == 2;
     valid &= rocketnet_server_socket_replay_commit_failures(server) > failures_before;
+
+    // fill the forgets past the buffer: the refusal reaches the commit
+    // failure count beside one failure per refused forget and per kept mark
+    // retried and refused again (b's forget was not queued, so its mark stays)
+    for (uint32_t i = 1; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++)
+    {
+        rocketnet_address_t c = a;
+        c.port = (uint16_t) (2000 + i);
+        rocketnet_server_socket_replay_forget(server, &c);
+    }
+    rocketnet_server_socket_replay_forget(server, &b);
+    valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+    valid &= server->replay_marks->refused == 1;
+    const uint64_t failures_full = rocketnet_server_socket_replay_commit_failures(server);
+    rocketnet_server_socket_replay_commit(server);
+    valid &= rocketnet_server_socket_replay_commit_failures(server) == failures_full + ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 2 + 1;
+    valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+    valid &= server->replay_marks->mark_count == 2;
+    valid &= server->replay_marks->refused == 0;
+
+    // tla/RNXdpReplay.tla HoldGreetingUntilMarked against a staged producer
+    // buffer: a keep-alive to a session whose zero mark the kernel refused is
+    // held at publish; its other packets, and a keep-alive to another
+    // session, leave
+    void * socket_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_xdp_socket_t));
+    if (socket_storage)
+    {
+        auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
+        server->num_queues = 1;
+        server->socket = socket;
+        socket->send_flow_index.store(socket->send_handoff.producer);
+        static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+        rocketnet_xdp_reply_macs_reset(&server->reply_macs, gateway_mac);
+        rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load()];
+
+        rocketnet_xdp_replay_marks_reset(server->replay_marks);
+        valid &= rocketnet_server_socket_replay_mark(server, &a, 0);
+        rocketnet_server_socket_replay_commit(server);
+        valid &= rocketnet_xdp_replay_marks_holds_greeting(server->replay_marks, &a);
+        valid &= !rocketnet_xdp_replay_marks_holds_greeting(server->replay_marks, &b);
+
+        const uint8_t types[3] = { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET };
+        const rocketnet_address_t * destinations[3] = { &a, &a, &b };
+        for (int i = 0; i < 3; i++)
+        {
+            uint64_t id = 0;
+            uint8_t * frame = rocketnet_server_socket_start_packet(server, destinations[i], &id);
+            valid &= frame != NULL;
+            if (!frame)
+                continue;
+            frame[ROCKETNET_FRAME_WIRE_OFFSET] = types[i];
+            rocketnet_server_socket_finish_packet(server, id, frame, 20);
+        }
+        const uint64_t held_before = server->replay_greetings_held;
+        rocketnet_server_socket_hold_greetings(server, send_buffer);
+        valid &= send_buffer->packet_info[0].packet_bytes == 0;
+        valid &= send_buffer->packet_info[1].packet_bytes == 20;
+        valid &= send_buffer->packet_info[2].packet_bytes == 20;
+        valid &= server->replay_greetings_held == held_before + 1;
+
+        // a zero mark the full buffer refused names no key: the next publish
+        // holds every keep-alive, until a commit with no such refusal
+        rocketnet_xdp_replay_marks_reset(server->replay_marks);
+        for (uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++)
+        {
+            rocketnet_address_t c = a;
+            c.port = (uint16_t) (3000 + i);
+            rocketnet_xdp_replay_marks_mark(server->replay_marks, &c, 7);
+        }
+        valid &= !rocketnet_server_socket_replay_mark(server, &a, 0);
+        rocketnet_server_socket_replay_commit(server);
+        valid &= server->replay_hold_all_greetings;
+        rocketnet_server_socket_hold_greetings(server, send_buffer);
+        valid &= send_buffer->packet_info[2].packet_bytes == 0;
+        valid &= send_buffer->packet_info[1].packet_bytes == 20;
+        rocketnet_xdp_replay_marks_reset(server->replay_marks);
+        rocketnet_server_socket_replay_commit(server);
+        valid &= !server->replay_hold_all_greetings;
+
+        server->num_queues = 0;
+        server->socket = NULL;
+        socket->~rocketnet_server_xdp_socket_t();
+        rocketnet_free(NULL, socket_storage);
+    }
+    else
+    {
+        valid = false;
+    }
 
     rocketnet_server_socket_destroy(server);
     return valid;

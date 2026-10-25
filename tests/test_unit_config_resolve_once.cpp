@@ -25,6 +25,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
@@ -38,13 +39,8 @@
 #define check rocketnet_unit_check
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
 
-#if defined( _WIN32 )
-static void resolve_once_setenv( const char * name, const char * value ) { check( _putenv_s( name, value ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( _putenv_s( name, "" ) == 0 ); }
-#else
-static void resolve_once_setenv( const char * name, const char * value ) { check( setenv( name, value, 1 ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( unsetenv( name ) == 0 ); }
-#endif
+static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
+static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
 static const uint8_t resolve_once_filter_a[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
 static const uint8_t resolve_once_filter_b[ROCKETNET_PACKET_FILTER_BYTES] = { 0x6B, 0x6B, 0x6B, 0x6B };
@@ -334,7 +330,15 @@ REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
 // ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more
 // auto-eligible transports than that must be refused loudly in a release
 // build, not written past candidates: the count is bounded by a real check,
-// not by an assert that NDEBUG removes.
+// not by an assert that NDEBUG removes. Capture the assert where it is
+// compiled in, and check the refusal in every build.
+static int config_ladder_max_assertions;
+
+static void config_ladder_max_assert_hook( const char *, const char *, const char *, int )
+{
+    config_ladder_max_assertions++;
+}
+
 static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
@@ -353,12 +357,20 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
         uint8_t canary[32];
     } guarded;
     const char * const values[2] = { "auto", NULL };
+    config_ladder_max_assertions = 0;
+    rocketnet_assert_function( config_ladder_max_assert_hook );
     for ( int v = 0; v < 2; v++ )
     {
         for ( int server = 0; server < 2; server++ )
         {
             memset( &guarded, 0xA5, sizeof(guarded) );
+#if ROCKETNET_ASSERTS
+            const int assertions_before_parse = config_ladder_max_assertions;
+#endif
             check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+#if ROCKETNET_ASSERTS
+            check( config_ladder_max_assertions == assertions_before_parse + 1 );
+#endif
             check( guarded.ladder.num_candidates >= 0 );
             check( guarded.ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
             for ( int i = 0; i < guarded.ladder.num_candidates; i++ )
@@ -367,6 +379,11 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
                 check( guarded.canary[i] == 0xA5 );
         }
     }
+    rocketnet_assert_function( NULL );
+#if ROCKETNET_ASSERTS
+    // Two values times two roles; each parse checks the same refusal once.
+    check( config_ladder_max_assertions == 4 );
+#endif
     rocketnet_quiet( 0 );
 }
 REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );

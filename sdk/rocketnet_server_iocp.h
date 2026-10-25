@@ -81,6 +81,8 @@ enum rocketnet_server_iocp_counter_t
     ROCKETNET_IOCP_SEND_FAILED,
     ROCKETNET_IOCP_RECEIVE_COMPLETED,
     ROCKETNET_IOCP_RECEIVE_DROPPED,
+    ROCKETNET_IOCP_RECEIVE_TOO_SHORT,
+    ROCKETNET_IOCP_RECEIVE_TOO_LARGE,
     ROCKETNET_IOCP_RECEIVE_REPOST_FAILED,
     ROCKETNET_IOCP_COMPLETION_BATCHES,
     ROCKETNET_IOCP_USO_SENDS,               // posts that carried more than one frame
@@ -101,6 +103,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
+uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
 void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * iocp, bool hold );
@@ -115,6 +118,7 @@ void rocketnet_server_iocp_test_hold_publication( rocketnet_server_iocp_t * iocp
 int rocketnet_server_iocp_test_ready_banks( rocketnet_server_iocp_t * iocp, int worker_index );
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
+int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id );
 
 // The fault seam. The next count events at a fault point fail with status, as
 // the host fails them: a send or receive completion reports status as its

@@ -469,7 +469,7 @@ static int split_proof_offer( struct split_proof_t * proof, struct rocketnet_ser
 static void split_proof_receive( struct split_result_t * result, struct split_proof_t * proof, uint32_t client,
                                  uint32_t direction, uint64_t run_id, const uint8_t * data, int bytes )
 {
-    struct split_verify_payload_t payload;
+    struct split_verify_payload_t payload = {0};
     const enum split_verify_read_t read = bytes < 0 ? SPLIT_VERIFY_READ_SHORT :
         split_verify_read_payload(data, (uint32_t) bytes, run_id, &payload);
     if ( read == SPLIT_VERIFY_READ_CHECKSUM ) { result->proof_checksum_errors++; return; }

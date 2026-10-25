@@ -16,6 +16,7 @@
 // the loopback transport opens no socket, with no clock or network.
 
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -40,14 +41,14 @@ struct xdp_compiled_out_env_pin
 
 static void xdp_compiled_out_pin_set_aside( xdp_compiled_out_env_pin * saved )
 {
-    saved->was_set = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
+    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
 }
 
 static void xdp_compiled_out_pin_put_back( const xdp_compiled_out_env_pin * saved )
 {
     if ( saved->was_set )
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
+        rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
 }
 
 // production-like keys: non-zero and not the published development keys

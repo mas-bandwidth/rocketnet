@@ -45,12 +45,30 @@ runs under this I/O thread: create opens the socket and its wake and
 allocates everything, connect connects the socket to the one server, and the
 I/O thread alone calls send_batch, receive_batch and wait. On Linux, `portable`
 batches with plain `sendmmsg` and `recvmmsg`, and `gso`
-(`sdk/rocketnet_client_gso_linux.cpp`, pin-only) sends each run of
+(`sdk/rocketnet_client_gso_linux.cpp`, the Linux `auto` choice) sends each run of
 equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP
 coalescing). Its send batch is one synchronous call that returns with every
 datagram sent or counted dropped, so it adds no state to `tla/RNClientIo.tla`.
-On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`.
+On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`. On Windows, `iocp`
+(`sdk/rocketnet_client_iocp_windows.cpp`, the Windows `auto` choice) waits on a completion
+port of its own: wait is `GetQueuedCompletionStatusEx`, wake posts one wake
+completion (at most one is outstanding, and a wake that receive_batch
+dequeues is owed to the next wait, so the wake stays level-triggered), and
+receive_batch copies completed overlapped receives and re-posts each after
+its copy. The kernel owns a posted receive's buffer until its completion is
+dequeued, a state RNClientIo does not have; `tla/RNClientIocp.tla` models it
+(Post, Complete, Dequeue, Drain, Wake, Close, Free): a buffer is never copied
+while posted, destroy frees only when every posted receive is drained, and
+after Close every posted receive completes and drains. Its sends are
+synchronous, as `gso`'s are, and add nothing to RNClientIo.
+
+The client's `auto` order is the native client first and `portable` last:
+`gso` then `portable` on Linux, `msgx` then `portable` on macOS, and `iocp`
+then `portable` on Windows.
+`portable` is the fallback everywhere: a native client whose create refuses
+is logged once and the ladder opens `portable` (TRANSPORTS.md, "Client
+transports").
 
 Receive authentication, replay checks, packet opening and message admission
 must preserve these invariants:
@@ -77,8 +95,7 @@ consistent across calls.
 
 The executable invariants live in `tla/RNBufferHandoff.tla`,
 `tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
-functional transport matrix. Performance profiling and longer saturation campaigns are planned
-hardening work.
+functional transport matrix.
 
 A step-driven test advances shutdown explicitly with update (or its I/O-step
 seam), then checks completion. Checking alone never drives the backend. A game
@@ -92,5 +109,5 @@ the worker drains surviving packets, including delayed disconnect copies,
 before publishing stopped. Stop itself does not send. Explicit step-driven
 transports perform this drain in their shutdown step. Simulator reconfiguration
 is refused after stop. `test_client_simulator_stop_defers_backend_send` and
-`test_client_legacy_receive_defers_contended_handoffs` exercise these boundaries
+`test_client_legacy_receive_handoff_and_backpressure` exercise these boundaries
 without threads, sleeps, or wall-clock deadlines.

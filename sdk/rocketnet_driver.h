@@ -103,9 +103,12 @@ struct rocketnet_server_transport_io_operations_t
     // since its filter was loaded; called on the main thread only.
     void (*prefilter_counters)( void * transport, uint64_t * values );
     // optional, all three or none; main thread only. A transport with a kernel
-    // replay map writes it from these and nothing else does.
-    void (*replay_forget)( void * transport, const rocketnet_address_t * address );
-    void (*replay_mark)( void * transport, const rocketnet_address_t * address, uint32_t high_water );
+    // replay map writes it from these and nothing else does. replay_forget
+    // returns false when it cannot queue the forget, so the walk keeps its
+    // slot record and tries again; replay_mark returns false the same way,
+    // and the walk owes that mark and takes it again.
+    bool (*replay_forget)( void * transport, const rocketnet_address_t * address );
+    bool (*replay_mark)( void * transport, const rocketnet_address_t * address, uint32_t high_water );
     void (*replay_commit)( void * transport );
     // optional; main thread only, while the receive view is current. The
     // transport accepted the view's packet view_index for a connection (it
