@@ -122,6 +122,7 @@ struct rocketnet_server_rio_t
 
     // send, worker only: deferred sends posted and not yet committed
     bool uncommitted = false;
+    uint64_t uncommitted_packets = 0;
 
     // receive, under the mutex: the model's free and ready
     int free_banks[ROCKETNET_RIO_RECEIVE_BANKS];
@@ -145,6 +146,7 @@ struct rocketnet_server_rio_t
     std::atomic<uint64_t> counters[ROCKETNET_RIO_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
 #if defined(ROCKETNET_RIO_TESTS)
+    bool test_hold_send = false;
     std::atomic<int> test_faults[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
 #endif
@@ -309,10 +311,12 @@ static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, &injected ) ||
          !rocketnet_rio_send_call( rio, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
     {
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED, rio->uncommitted_packets );
         rocketnet_warn( "rio transport: send commit refused (Winsock %d); retried", WSAGetLastError() );
         return;
     }
     rio->uncommitted = false;
+    rio->uncommitted_packets = 0;
     rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_COMMITS );
 }
 
@@ -446,8 +450,10 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
     return true;
 }
 
-// tla/RNRioWorker.tla WStop, WClose and WDrain, one pass: drop the phases handed
-// and not yet taken, commit deferred sends, close the socket (which
+static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count );
+
+// tla/RNRioWorker.tla WStop, WClose and WDrain: post handed and finished fill
+// phases, commit deferred sends, close the socket (which
 // completes every posted request), then dequeue one available batch of each
 // queue. True when nothing is kernel owned. Runs on the worker, or inline on
 // create's failure path before the worker exists; never waits.
@@ -455,12 +461,44 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 // is re-posted.
 static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
 {
+    int phases[ROCKETNET_RIO_SEND_PHASES];
+    int counts[ROCKETNET_RIO_SEND_PHASES];
+    int num_phases = 0;
     if ( rio->mutex.ok )
     {
         rocketnet_platform_mutex_acquire( &rio->mutex );
-        rio->send_ready_count = 0;
+#if defined(ROCKETNET_RIO_TESTS)
+        if ( rio->test_hold_send )
+        {
+            rocketnet_platform_mutex_release( &rio->mutex );
+            return false;
+        }
+#endif
+        while ( rio->send_ready_count > 0 )
+        {
+            const int phase = rio->send_ready[rio->send_ready_head];
+            rio->send_ready_head = ( rio->send_ready_head + 1 ) % ROCKETNET_RIO_SEND_PHASES;
+            rio->send_ready_count--;
+            phases[num_phases] = phase;
+            counts[num_phases++] = rio->phase_count[phase];
+            rio->phase_state[phase] = ROCKETNET_RIO_PHASE_POSTED;
+        }
+        const int fill = rio->fill.load( std::memory_order_relaxed );
+        if ( rio->phase_state[fill] == ROCKETNET_RIO_PHASE_FILL )
+        {
+            int count = rio->next[fill].load( std::memory_order_relaxed );
+            if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
+            if ( count > 0 )
+            {
+                phases[num_phases] = fill;
+                counts[num_phases++] = count;
+                rio->phase_state[fill] = ROCKETNET_RIO_PHASE_POSTED;
+            }
+        }
         rocketnet_platform_mutex_release( &rio->mutex );
     }
+    for ( int i = 0; i < num_phases; ++i )
+        rocketnet_rio_post_phase( rio, phases[i], counts[i] );
     // Closing a UDP socket cancels pending RIO requests. Keep its registered
     // region and queues until their completions have all been observed.
     if ( !rocketnet_rio_close_socket( rio ) ) return false;
@@ -814,7 +852,10 @@ static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, i
     }
     rio->outstanding[phase].fetch_add( posted, std::memory_order_relaxed );
     if ( posted > 0 )
+    {
         rio->uncommitted = true;
+        rio->uncommitted_packets += (uint64_t) posted;
+    }
     rocketnet_rio_commit( rio );
 }
 
@@ -944,7 +985,11 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
     int phase = -1;
     int count = 0;
     rocketnet_platform_mutex_acquire( &rio->mutex );
-    if ( rio->send_ready_count > 0 )
+    if ( rio->send_ready_count > 0
+#if defined(ROCKETNET_RIO_TESTS)
+         && !rio->test_hold_send
+#endif
+       )
     {
         phase = rio->send_ready[rio->send_ready_head];
         rio->send_ready_head = ( rio->send_ready_head + 1 ) % ROCKETNET_RIO_SEND_PHASES;
@@ -1428,6 +1473,22 @@ void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int faul
 int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault )
 {
     return rio->test_faults[fault].load( std::memory_order_acquire );
+}
+
+void rocketnet_server_rio_test_hold_send( rocketnet_server_rio_t * rio, bool hold )
+{
+    rocketnet_platform_mutex_acquire( &rio->mutex );
+    rio->test_hold_send = hold;
+    rocketnet_platform_mutex_release( &rio->mutex );
+    if ( !hold ) SetEvent( rio->wake );
+}
+
+int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio )
+{
+    rocketnet_platform_mutex_acquire( &rio->mutex );
+    const int count = rio->send_ready_count;
+    rocketnet_platform_mutex_release( &rio->mutex );
+    return count;
 }
 
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio )

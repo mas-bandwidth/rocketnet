@@ -349,6 +349,9 @@ jobs:
       # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
       # never on the host; a runner with no VM tier fails the cell.
+      # A client of auto sets no client pin, so that cell runs the client's
+      # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
+      # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: contains(matrix.leg, 'b')
         timeout-minutes: 3
@@ -356,6 +359,7 @@ jobs:
         env:
           TRANSPORT_MATRIX_LINUX: |
             portable portable
+            portable auto
             gso portable
             gso gso
             portable gso
@@ -364,6 +368,7 @@ jobs:
             xdp portable
           TRANSPORT_MATRIX_MACOS: |
             portable portable
+            portable auto
             portable msgx
             msgx portable
             msgx msgx
@@ -413,7 +418,7 @@ jobs:
             fi
             (
               for case in $socket_cases; do
-                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=${client#auto} "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
                 echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
               done
             ) &
@@ -891,6 +896,9 @@ jobs:
       # expected failure that passes fails the step, so the mark is removed
       # as the card lands; any other skip fails. xdp is Linux only; its cell
       # is in the Linux matrix.
+      # A client of auto sets no client pin, so that cell runs the client's
+      # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
+      # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: matrix.leg == 'b'
         timeout-minutes: 3
@@ -898,6 +906,7 @@ jobs:
         env:
           TRANSPORT_MATRIX_WINDOWS: |
             portable portable
+            portable auto
             iocp portable
             portable iocp
             rio portable
@@ -924,7 +933,7 @@ jobs:
             fi
             (
               for case in $cases; do
-                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
+                ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=${client#auto} "$functional" --run "$case" 2>&1 | tr -d '\r' > "$logs/$server.$client.$case.log"
                 echo "${PIPESTATUS[0]}" > "$logs/$server.$client.$case.rc"
               done
             ) &
