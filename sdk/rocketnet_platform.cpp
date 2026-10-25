@@ -26,6 +26,27 @@
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// the direct allocation count (rocketnet_memory.h). relaxed: it is a total,
+// read by a memory check, and orders against nothing
+static std::atomic<uint64_t> rocketnet_direct_allocation_total{ 0 };
+
+void rocketnet_direct_allocation_add( uint64_t bytes )
+{
+    rocketnet_direct_allocation_total.fetch_add( bytes, std::memory_order_relaxed );
+}
+
+void rocketnet_direct_allocation_remove( uint64_t bytes )
+{
+    const uint64_t before = rocketnet_direct_allocation_total.fetch_sub( bytes, std::memory_order_relaxed );
+    rocketnet_assert( before >= bytes );
+    (void) before;
+}
+
+extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
+{
+    return rocketnet_direct_allocation_total.load( std::memory_order_relaxed );
+}
+
 #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 // The unit suite installs this table before main. Reads then stop at the
