@@ -53,8 +53,10 @@
     populate call and its count is read as it is.
 
     THE FLAT RULE (process_resources_flat). Taken after a warm cycle, so every
-    path the run repeats has run once, and after the warm-up above: the fd or handle count and the thread
-    count at the end must equal their post-warmup counts exactly (on Windows
+    path the run repeats has run once, and after the warm-up above: the fd or
+    handle count at the end must not exceed its post-warmup count (a fall is
+    not a leak: on Windows the handles of the OS's pool workers close as they
+    retire), the thread count at the end must equal its post-warmup count exactly (on Windows
     os_threads may fall, as the OS retires its pool workers on its own timers,
     and never rise, so the full thread count never grows), and the
     memory count at the end may exceed its post-warmup count by at most one
@@ -376,6 +378,10 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
         return 0;
     if ( index == PROCESS_RESOURCES_MEMORY )
         return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
+    // the handle (fd) count fails on growth only: a fall is not a leak (on
+    // Windows the handles of the OS's retiring pool workers close with them)
+    if ( index == PROCESS_RESOURCES_HANDLES )
+        return end <= start;
 #if defined(_WIN32)
     if ( index == PROCESS_RESOURCES_OS_THREADS )
         return end <= start;

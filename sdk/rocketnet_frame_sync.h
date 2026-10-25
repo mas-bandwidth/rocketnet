@@ -47,6 +47,9 @@ struct rocketnet_frame_sync_t
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     HANDLE waitable_timer;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    uint64_t lifecycle_timer_generation;
+#endif
     DWORD waiter_thread_id;
     int waiter_previous_priority;
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

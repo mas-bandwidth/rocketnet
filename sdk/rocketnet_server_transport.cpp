@@ -981,6 +981,27 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
+// The stack a transport thread is created with. rocketnet_platform_thread_create
+// passes no stack size (pthread_create with NULL attributes, CreateThread with
+// zero), so the size is the platform default: on POSIX the default attribute's
+// stack size, read without creating a thread; on Windows the executable's
+// default reserve, 1 MiB unless the binary is linked with another /STACK.
+uint64_t rocketnet_thread_stack_bytes()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return 1024 * 1024;
+#else
+    pthread_attr_t attributes;
+    if ( pthread_attr_init( &attributes ) != 0 )
+        return 0;
+    size_t bytes = 0;
+    if ( pthread_attr_getstacksize( &attributes, &bytes ) != 0 )
+        bytes = 0;
+    pthread_attr_destroy( &attributes );
+    return (uint64_t) bytes;
+#endif
+}
+
 // The link simulator's capacity: the packets a server holds while the setting
 // delays them.  A development build creates the simulator for every server
 // start, so the plan carries its bytes.
@@ -1018,43 +1039,51 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     if (!rocketnet_builtin_server_memory_plan(config, transport, plan)) return false;
     if (!plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes) return false;
     for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
-        plan.send_arena_bytes, plan.transport_io_bytes, plan.umem_bytes, plan.registered_region_bytes})
-        if (!rocketnet_memory_add(plan.total_bytes, 1, bytes)) return false;
+        plan.send_arena_bytes, plan.transport_io_bytes, plan.registered_region_bytes})
+        if (!rocketnet_memory_add(plan.allocator_bytes, 1, bytes)) return false;
     if (rocketnet_public_link_simulator_development())
     {
         // the link simulator every development server owns, created with it
         const uint64_t simulator_bytes = rocketnet_network_simulator_memory_bytes(ROCKETNET_SERVER_LINK_SIMULATOR_SLOTS,
             config->simulated_reverse_window);
-        if (!simulator_bytes || !rocketnet_memory_add(plan.total_bytes, 1, simulator_bytes)) return false;
+        if (!simulator_bytes || !rocketnet_memory_add(plan.allocator_bytes, 1, simulator_bytes)) return false;
     }
+    // the RIO registered region comes from the allocator; UMEM is page-aligned
+    // memory the AF_XDP socket registers with the kernel, outside it
+    plan.total_bytes = plan.allocator_bytes;
+    if (!rocketnet_memory_add(plan.total_bytes, 1, plan.umem_bytes)) return false;
+    if (plan.worker_threads > 0)
+    {
+        const uint64_t stack = rocketnet_thread_stack_bytes();
+        if (!stack || !rocketnet_memory_add(plan.thread_stack_bytes, (uint64_t)plan.worker_threads, stack)) return false;
+    }
+    for (uint64_t bytes : {plan.umem_bytes, plan.thread_stack_bytes, plan.mapped_ring_bytes})
+        if (!rocketnet_memory_add(plan.os_bytes, 1, bytes)) return false;
     return plan.total_bytes <= SIZE_MAX;
+}
+
+uint64_t rocketnet_server_transport_ladder_allocator_bytes(const rocketnet_server_transport_config_t * config)
+{
+    rocketnet_server_transport_config_t defaults;
+    if (!config) { rocketnet_server_transport_default_config(&defaults); config = &defaults; }
+    int num_available = 0;
+    const int * available = rocketnet_server_transport_io_availability(&num_available);
+    struct rocketnet_transport_ladder_t ladder;
+    if (!rocketnet_transport_ladder_parse(config->transport, available, num_available, &ladder)) return 0;
+    uint64_t most = 0;
+    for (int i = 0; i < ladder.num_candidates; ++i)
+    {
+        rocketnet_server_memory_plan_t plan;
+        if (rocketnet_server_transport_memory_plan(config, rocketnet_transport_name(ladder.candidates[i]), plan) && plan.allocator_bytes > most)
+            most = plan.allocator_bytes;
+    }
+    return most;
 }
 
 uint64_t rocketnet_server_transport_required_memory(const rocketnet_server_transport_config_t * config, const char * transport)
 {
     rocketnet_server_memory_plan_t plan;
     return rocketnet_server_transport_memory_plan(config, transport, plan) ? plan.total_bytes : 0;
-}
-
-// The stack a transport thread is created with. rocketnet_platform_thread_create
-// passes no stack size (pthread_create with NULL attributes, CreateThread with
-// zero), so the size is the platform default: on POSIX the default attribute's
-// stack size, read without creating a thread; on Windows the executable's
-// default reserve, 1 MiB unless the binary is linked with another /STACK.
-static uint64_t rocketnet_server_thread_stack_bytes()
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    return 1024 * 1024;
-#else
-    pthread_attr_t attributes;
-    if ( pthread_attr_init( &attributes ) != 0 )
-        return 0;
-    size_t bytes = 0;
-    if ( pthread_attr_getstacksize( &attributes, &bytes ) != 0 )
-        bytes = 0;
-    pthread_attr_destroy( &attributes );
-    return (uint64_t) bytes;
-#endif
 }
 
 // Whole-host estimate (TRANSPORT_READINESS.md #155): the plan plus what each
@@ -1107,7 +1136,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
 
     if ( plan.worker_threads > 0 )
     {
-        e.thread_stack_bytes_per_thread = rocketnet_server_thread_stack_bytes();
+        e.thread_stack_bytes_per_thread = rocketnet_thread_stack_bytes();
         if ( !e.thread_stack_bytes_per_thread ||
              !rocketnet_memory_add( e.thread_stack_bytes, (uint64_t) plan.worker_threads, e.thread_stack_bytes_per_thread ) )
             return false;

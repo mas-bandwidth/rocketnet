@@ -11,6 +11,7 @@
 #include <atomic>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -1837,6 +1838,17 @@ struct thread_shim_data_t
     rocketnet_platform_thread_t * thread;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 // the platform thread the calling thread runs as, for thread_wait; NULL on a
 // thread that thread_create did not start
 static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
@@ -1845,11 +1857,9 @@ static void* thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
     rocketnet_platform_thread_self = shim_data->thread;
-    rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
 }
@@ -1880,19 +1890,15 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -1902,7 +1908,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -1911,7 +1916,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         pthread_cond_destroy( &thread->wake_cond );
         pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -3906,6 +3910,17 @@ struct thread_shim_data_t
     rocketnet_platform_thread_t * thread;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 // the platform thread the calling thread runs as, for thread_wait; NULL on a
 // thread that thread_create did not start
 static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
@@ -3914,11 +3929,9 @@ static void * thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
     rocketnet_platform_thread_self = shim_data->thread;
-    rocketnet_free( context, data );
 
     real_thread_function( real_thread_data );
     return NULL;
@@ -3935,19 +3948,15 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -3957,7 +3966,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -3965,7 +3973,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     {
         semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -4225,6 +4232,163 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #include <iphlpapi.h>
 #include <qos2.h>
 #include <mswsock.h>
+#include <stdlib.h>
+
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+static_assert( sizeof(uintptr_t) == 8 && ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2 &&
+               ATOMIC_INT_LOCK_FREE == 2, "Windows lifecycle ledger needs lock-free x64 atomics" );
+
+// Test-only resource identities. State packs the generation so a recycled
+// slot cannot make a stale close retire a different handle with the same raw
+// value. Every scan is bounded by the fixed table; there is no wait or heap.
+struct rocketnet_lifecycle_slot_t
+{
+    std::atomic<uint64_t> state{0};
+    std::atomic<uintptr_t> raw{0};
+    std::atomic<const char*> site{NULL};
+    std::atomic<unsigned> kind{0};
+};
+
+static rocketnet_lifecycle_slot_t rocketnet_lifecycle_slots[ROCKETNET_LIFECYCLE_MAX_LIVE];
+static std::atomic<uint64_t> rocketnet_lifecycle_next_generation{1};
+static std::atomic<uint64_t> rocketnet_lifecycle_created[ROCKETNET_LIFECYCLE_RESOURCE_KINDS]{};
+static std::atomic<uint64_t> rocketnet_lifecycle_closed[ROCKETNET_LIFECYCLE_RESOURCE_KINDS]{};
+static std::atomic<unsigned> rocketnet_lifecycle_errors{0};
+static std::atomic<bool> rocketnet_lifecycle_enabled{false};
+
+static uint64_t rocketnet_lifecycle_state( uint64_t generation, uint64_t state )
+{
+    return ( generation << 2 ) | state;
+}
+
+static void rocketnet_lifecycle_invariant_failure( const char * message )
+{
+    rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
+    fprintf( stderr, "SDK lifecycle ledger invariant failed: %s\n", message );
+    fflush( stderr );
+    TerminateProcess( GetCurrentProcess(), 86 );
+    abort();
+}
+
+void rocketnet_lifecycle_track_begin()
+{
+    rocketnet_lifecycle_enabled.store( true, std::memory_order_release );
+}
+
+void rocketnet_lifecycle_track_end()
+{
+    rocketnet_lifecycle_enabled.store( false, std::memory_order_release );
+}
+
+uint64_t rocketnet_lifecycle_track_open( unsigned kind, uintptr_t raw, const char * site )
+{
+    if ( !rocketnet_lifecycle_enabled.load( std::memory_order_acquire ) ) return 0;
+    if ( kind >= ROCKETNET_LIFECYCLE_RESOURCE_KINDS || !raw )
+    {
+        rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
+        return 0;
+    }
+    const uint64_t generation = rocketnet_lifecycle_next_generation.fetch_add( 1, std::memory_order_relaxed );
+    if ( generation == 0 || generation > ( UINT64_MAX >> 2 ) )
+    {
+        rocketnet_lifecycle_invariant_failure( "generation space exhausted" );
+        return 0;
+    }
+    for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
+    {
+        uint64_t empty = 0;
+        if ( rocketnet_lifecycle_slots[i].state.compare_exchange_strong( empty, rocketnet_lifecycle_state( generation, 1 ),
+                                                                          std::memory_order_acq_rel ) )
+        {
+            rocketnet_lifecycle_slots[i].raw.store( raw, std::memory_order_relaxed );
+            rocketnet_lifecycle_slots[i].kind.store( kind, std::memory_order_relaxed );
+            rocketnet_lifecycle_slots[i].site.store( site, std::memory_order_relaxed );
+            rocketnet_lifecycle_slots[i].state.store( rocketnet_lifecycle_state( generation, 2 ), std::memory_order_release );
+            rocketnet_lifecycle_created[kind].fetch_add( 1, std::memory_order_relaxed );
+            return generation;
+        }
+    }
+    rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
+    return 0;
+}
+
+bool rocketnet_lifecycle_track_close_begin( unsigned kind, uintptr_t raw, uint64_t generation )
+{
+    if ( generation == 0 ) return true; // created before this case was armed
+    for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
+    {
+        uint64_t live = rocketnet_lifecycle_state( generation, 2 );
+        if ( rocketnet_lifecycle_slots[i].state.compare_exchange_strong( live, rocketnet_lifecycle_state( generation, 3 ),
+                                                                          std::memory_order_acq_rel ) )
+        {
+            if ( rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed ) == kind &&
+                 rocketnet_lifecycle_slots[i].raw.load( std::memory_order_relaxed ) == raw )
+                return true;
+            rocketnet_lifecycle_slots[i].state.store( live, std::memory_order_release );
+            break;
+        }
+    }
+    rocketnet_lifecycle_invariant_failure( "unknown or mismatched close" );
+    return false;
+}
+
+void rocketnet_lifecycle_track_close_end( uint64_t generation, bool success )
+{
+    if ( generation == 0 ) return;
+    for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
+    {
+        uint64_t closing = rocketnet_lifecycle_state( generation, 3 );
+        if ( rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire ) != closing ) continue;
+        const unsigned kind = rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed );
+        if ( rocketnet_lifecycle_slots[i].state.compare_exchange_strong( closing,
+                 success ? 0 : rocketnet_lifecycle_state( generation, 2 ), std::memory_order_acq_rel ) )
+        {
+            if ( success )
+                rocketnet_lifecycle_closed[kind].fetch_add( 1, std::memory_order_relaxed );
+            else
+                rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
+            return;
+        }
+    }
+    rocketnet_lifecycle_invariant_failure( "missing closing generation" );
+}
+
+bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
+{
+    if ( !result ) return false;
+    memset( result, 0, sizeof(*result) );
+    result->latest_generation = rocketnet_lifecycle_next_generation.load( std::memory_order_acquire ) - 1;
+    result->errors = rocketnet_lifecycle_errors.load( std::memory_order_acquire );
+    for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+    {
+        result->created[kind] = rocketnet_lifecycle_created[kind].load( std::memory_order_acquire );
+        result->closed[kind] = rocketnet_lifecycle_closed[kind].load( std::memory_order_acquire );
+    }
+    for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
+    {
+        const uint64_t state = rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire );
+        if ( !state ) continue;
+        if ( ( state & 3 ) != 2 ) { result->errors++; continue; }
+        rocketnet_lifecycle_resource_t & resource = result->live[result->live_count++];
+        resource.generation = state >> 2;
+        resource.raw = rocketnet_lifecycle_slots[i].raw.load( std::memory_order_relaxed );
+        resource.kind = rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed );
+        resource.site = rocketnet_lifecycle_slots[i].site.load( std::memory_order_relaxed );
+        if ( rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire ) != state ) result->errors++;
+    }
+    for ( unsigned i = 0; i < result->live_count; ++i )
+        for ( unsigned j = i + 1; j < result->live_count; ++j )
+            if ( result->live[i].kind == result->live[j].kind && result->live[i].raw == result->live[j].raw ) result->errors++;
+    for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+    {
+        unsigned live = 0;
+        for ( unsigned i = 0; i < result->live_count; ++i )
+            if ( result->live[i].kind == kind ) live++;
+        if ( result->created[kind] < result->closed[kind] || result->created[kind] - result->closed[kind] != live ) result->errors++;
+    }
+    return result->errors == 0;
+}
+#endif
 
 #pragma comment( lib, "WS2_32.lib" )
 #pragma comment( lib, "IPHLPAPI.lib" )
@@ -4423,33 +4587,38 @@ struct thread_shim_data_t
     rocketnet_platform_thread_func_t real_thread_function;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 static DWORD WINAPI thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
-    rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return 0;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t ) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -4459,9 +4628,11 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( thread->handle == NULL )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    thread->lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_THREAD, (uintptr_t) thread->handle, "platform thread" );
+#endif
 
     return thread;
 }
@@ -4475,7 +4646,15 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_THREAD, (uintptr_t) thread->handle, thread->lifecycle_generation ) ) return;
+#endif
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    const BOOL closed = CloseHandle( thread->handle );
+    rocketnet_lifecycle_track_close_end( thread->lifecycle_generation, closed != 0 );
+#else
     CloseHandle( thread->handle );
+#endif
     rocketnet_free( thread->context, thread );
 }
 
@@ -4562,10 +4741,23 @@ struct rocketnet_platform_sleep_timer_t
 {
     HANDLE handle;
     bool tried;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    uint64_t lifecycle_generation;
+#endif
     ~rocketnet_platform_sleep_timer_t()
     {
         if ( handle )
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        {
+            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) handle, lifecycle_generation ) )
+            {
+                const BOOL closed = CloseHandle( handle );
+                rocketnet_lifecycle_track_close_end( lifecycle_generation, closed != 0 );
+            }
+        }
+#else
             CloseHandle( handle );
+#endif
     }
 };
 
@@ -4585,6 +4777,11 @@ void rocketnet_platform_sleep( double time )
     {
         rocketnet_platform_sleep_timer.tried = true;
         rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        if ( rocketnet_platform_sleep_timer.handle )
+            rocketnet_platform_sleep_timer.lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
+                (uintptr_t) rocketnet_platform_sleep_timer.handle, "platform sleep timer" );
+#endif
     }
 
     if ( rocketnet_platform_sleep_timer.handle )
@@ -4849,6 +5046,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         rocketnet_free( context, s );
         return NULL;
     }
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    s->lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) s->handle, "platform socket" );
+#endif
 
     // IMPORTANT: tell windows we don't want to receive any connection or network
     // reset reports for this socket, otherwise a receive errors out after a remote endpoint
@@ -5009,7 +5209,14 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 
     if ( rocketnet_platform_socket_handle_is_valid( socket->handle ) )
     {
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket->handle,
+                                                      socket->lifecycle_generation ) ) return;
+        const int closed = closesocket( socket->handle );
+        rocketnet_lifecycle_track_close_end( socket->lifecycle_generation, closed == 0 );
+#else
         closesocket( socket->handle );
+#endif
         socket->handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
     }
 
@@ -5325,6 +5532,10 @@ struct rocketnet_platform_wake_t
     rocketnet_platform_socket_handle_t socket_handle;
     WSAEVENT read_event;
     HANDLE wake_event;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    uint64_t read_generation;
+    uint64_t wake_generation;
+#endif
 };
 
 // docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
@@ -5337,6 +5548,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->context = context;
     wake->socket_handle = socket ? socket->handle : INVALID_SOCKET;
     wake->read_event = WSA_INVALID_EVENT;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    wake->read_generation = 0;
+    wake->wake_generation = 0;
+#endif
     if ( socket )
     {
         wake->read_event = WSACreateEvent();
@@ -5345,9 +5560,21 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
             rocketnet_free( context, wake );
             return NULL;
         }
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        wake->read_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event,
+                                                                 "platform WSA read event" );
+#endif
         if ( WSAEventSelect( (SOCKET) socket->handle, wake->read_event, FD_READ ) != 0 )
         {
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
+            {
+                const BOOL closed = WSACloseEvent( wake->read_event );
+                rocketnet_lifecycle_track_close_end( wake->read_generation, closed != 0 );
+            }
+#else
             WSACloseEvent( wake->read_event );
+#endif
             rocketnet_free( context, wake );
             return NULL;
         }
@@ -5357,12 +5584,25 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // by a later ResetEvent. Socket-backed client wakes keep their existing
     // manual-reset behavior.
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( wake->wake_event )
+        wake->wake_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event,
+                                                                 "platform wake event" );
+#endif
     if ( wake->wake_event == NULL )
     {
         if ( socket )
         {
             WSAEventSelect( (SOCKET) socket->handle, NULL, 0 );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
+            {
+                const BOOL closed = WSACloseEvent( wake->read_event );
+                rocketnet_lifecycle_track_close_end( wake->read_generation, closed != 0 );
+            }
+#else
             WSACloseEvent( wake->read_event );
+#endif
         }
         rocketnet_free( context, wake );
         return NULL;
@@ -5376,9 +5616,21 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
     if ( wake->read_event != WSA_INVALID_EVENT )
     {
         WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+        if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) ) return;
+        const BOOL closed = WSACloseEvent( wake->read_event );
+        rocketnet_lifecycle_track_close_end( wake->read_generation, closed != 0 );
+#else
         WSACloseEvent( wake->read_event );
+#endif
     }
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event, wake->wake_generation ) ) return;
+    const BOOL closed = CloseHandle( wake->wake_event );
+    rocketnet_lifecycle_track_close_end( wake->wake_generation, closed != 0 );
+#else
     CloseHandle( wake->wake_event );
+#endif
     rocketnet_free( wake->context, wake );
 }
 
@@ -5459,8 +5711,18 @@ bool rocketnet_platform_client_ipv6_available()
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe == INVALID_SOCKET )
         return false;
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    const uint64_t probe_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe,
+                                                                       "platform IPv6 probe socket" );
+#endif
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, probe_generation ) ) return false;
+    const int closed = closesocket( probe );
+    rocketnet_lifecycle_track_close_end( probe_generation, closed == 0 );
+#else
     closesocket( probe );
+#endif
     return true;
 #else
     int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
@@ -5681,9 +5943,9 @@ uint64_t rocketnet_platform_socket_allocation_bytes()
 
 uint64_t rocketnet_platform_thread_allocation_bytes()
 {
-    // Includes the transient shim, freed when the worker begins. Counting
-    // every shim gives a conservative constructor peak independent of scheduling.
-    return rocketnet_memory_allocations({sizeof(rocketnet_platform_thread_t), sizeof(thread_shim_data_t)});
+    // the thread record holds its shim: one allocation, live from create to
+    // destroy, so the peak is the same whenever the worker begins
+    return rocketnet_memory_allocations({sizeof(thread_record_t)});
 }
 
 uint64_t rocketnet_platform_wake_allocation_bytes()

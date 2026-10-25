@@ -190,7 +190,10 @@ void configure( struct rocketnet_client_config_t * client, struct rocketnet_serv
 and walked left to right at client `connect` and server `start`. The first
 candidate that starts wins, and a list that every candidate refuses fails
 loudly. `"auto"` (the default, also NULL or the empty
-string) is the platform's recommended order; a one-element list is a pin. A
+string) is the platform's recommended order; a one-element list is a pin.
+The client's `auto` order is the native client, then `portable`: `gso`,
+`portable` on Linux; `msgx`, `portable` on macOS; `iocp`, `portable` on Windows. `portable` is ranked last on every OS and is the
+fallback when the native client's create refuses. A
 known name this endpoint does not have is skipped with one log line; a name
 that is no transport anywhere is a typo and fails loudly. The accessor on each
 end reports the transport that won.
@@ -317,12 +320,15 @@ client and requests transport shutdown. `rocketnet_server_stopped` reports
 completion without waiting. Until it is true, start is refused; afterward start
 can finalize the old run and activate a new transport. Clients are identified by an `int` index,
 `0 .. max_clients - 1`, the slot each connection takes.
-Each client and server is one block that create allocates through the
+Each client and server starts with one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
-`rocketnet_server_required_memory` report that block's size, so a program that
-wants every byte up front can pass `rocketnet_init` an allocator
-over a block of its own, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`. Connect
-and start may also allocate transport memory. A normal client connect starts
+`rocketnet_server_required_memory` report the peak allocator memory over the
+whole lifecycle, including transport allocations at connect and start and the
+development link simulator in development builds. For planned built-in
+transports with unchanged configuration and environment overrides, a program
+can pass `rocketnet_init` an allocator over a region of that size, aligned to
+`ROCKETNET_ALLOCATION_ALIGNMENT`. Operating-system-owned memory and a custom
+transport's own allocations are outside this bound. A normal client connect starts
 one background network thread. A transport with wait/wake support uses that
 thread for bounded batched I/O and hands buffers to the frame thread; the
 fallback path uses it as a polling receive worker while sends stay on the frame
@@ -340,9 +346,12 @@ the worker has not exited.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 18.4 GB (18,393,982,336 bytes)
-of memory, which scales to approximately 18.4 MB (18,391,808 bytes) per client slot.
-This memory figure can be measured directly using `rocketnet_server_required_memory`:
+A default 1,000-client server requires approximately 20.9 GB (20,908,851,146 bytes)
+of memory, which scales to approximately 19.0 MB (19,033,780 bytes) per client slot.
+This is the lifecycle peak the server's allocator sees over create, start, stop,
+restart and destroy, for the largest transport the default ladder can grant
+(see `rocketnet.h`). This memory figure can be measured directly using
+`rocketnet_server_required_memory`:
 
 ```c
 #include "rocketnet.h"
@@ -373,8 +382,10 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ./measure_server_memory
 ```
 
-It prints `1000 clients: 18393982336`, `1 client: 20502336`, `2 clients: 38894144`
-and `delta: 18391808` on this SDK revision.
+On Linux x86-64 with io_uring and XDP built (the default development build) it
+prints `1000 clients: 20908851146`, `1 client: 1894073054`, `2 clients: 1913106834`
+and `delta: 19033780` on this SDK revision. The figures differ by platform and
+build, because each counts the largest transport that platform's ladder can grant.
 
 A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
@@ -388,13 +399,21 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 956,510,400 bytes (about 0.96 GB, 956,510 bytes per slot on average).
-The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 3,064,000 bytes.
+reports 3,231,507,666 bytes (about 3.2 GB) on Linux x86-64 with io_uring
+and XDP built. The matching `rocketnet_client_light_config` makes
+`rocketnet_client_required_memory` report 22,896,245 bytes.
 
-Both figures are the SDK's create block only. They exclude the transport
-allocations made at connect and start, native resources, and process
-overhead. The default profile remains the stock acceptance.
+Both figures are the lifecycle peak the caller's allocator sees: create, the
+transport connect or start allocates for the largest transport the ladder can
+grant, disconnect or stop, the next cycle, and destroy. They exclude the
+memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
+rings, kernel socket buffers) and process overhead. In a production build
+(`ROCKETNET_DEV=OFF`) they are 3,225,111,302 and 22,110,441 bytes. Other
+platforms report their own figures (macOS has no io_uring or XDP, so its
+server figure is about half). On Windows x64 with MSVC, the server/client
+figures are 1,523,705,813 / 22,968,879 bytes in development builds and
+1,517,309,449 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`. The default profile
+remains the stock acceptance.
 
 ```c
 #include "rocketnet.h"
