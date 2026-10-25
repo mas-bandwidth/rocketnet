@@ -465,13 +465,17 @@ remaining transport combinations for `test_posix_destroy_under_traffic_100`.
 The ordinary suite keeps the msgx hard-killed-client cases and the msgx/msgx
 1000-client connection case.
 
-The suite runner enforces a memory bound for each case process
-(`tests/suite_runner.h`). Cases using the counting allocator are limited to
-their planned peak plus 64 MiB; other cases use the suite-wide 698 MiB bound
-or a case-specific `SUITE_CASE_RSS_BOUND`. Set
-`ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the bounds, and
-`ROCKETNET_TEST_REPORT=1` to print each case's peak and bound. These variables
-configure the test executable, not the library.
+The unit suite measures peak resident set and reports over-bound cases without
+making the OS measurement part of its verdict. The functional suite enforces
+the same bounds. Its `test_unit_case_memory` row runs the unit binary in
+enforcement mode, reusing every `SUITE_CASE_RSS_BOUND` declaration and the
+suite-wide fallback without copying their values.
+
+Cases using the counting allocator are limited to their planned peak plus 64
+MiB; other cases use the suite-wide 698 MiB bound or a case-specific
+`SUITE_CASE_RSS_BOUND`. Set `ROCKETNET_TEST_MAX_CASE_RSS_MB` to override the
+bounds, and `ROCKETNET_TEST_REPORT=1` to print each case's peak and bound.
+These variables configure the test executable, not the library.
 
 ## Verify a Mac
 

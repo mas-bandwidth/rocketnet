@@ -95,8 +95,20 @@ Both runners record each case process's peak resident set (`wait4`
 `ru_maxrss` on POSIX, normalised from kilobytes on Linux and bytes on macOS;
 `PeakWorkingSetSize` on Windows). With `ROCKETNET_TEST_REPORT=1` both
 runners print, after the results, a `slowest cases:` block and a `peak rss:`
-block of the ten largest (`suite_print_report`). A case whose peak is over the
-bound fails the suite with `check failed: <case> peak_rss_mb=<n> bound_mb=<b>`. The bound is
+block of the ten largest (`suite_print_report`). The unit suite reports an
+over-bound case as `<case> peak_rss_mb=<n> bound_mb=<b>` without changing its
+verdict. The functional suite enforces the bound and fails with the same values.
+
+`test_unit_case_memory` is a functional sibling row that runs the complete unit
+binary in enforcement mode. The unit binary therefore supplies the case list,
+the suite-wide fallback, every case-specific declaration and every measured
+peak directly; there is no second bound table. The outer functional row keeps
+the 120-second limit but does not compare the unit controller's aggregate child
+usage with one case's bound. Its inner runner retains the 120-second per-case
+Release limit, including the existing Debug and sanitizer scaling, and enforces
+each unit case separately.
+
+The suite-wide bound is
 `ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `tests/suite_runner.h` (the larger
 of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
 environment variable of the same name overrides it with a positive value. A sanitizer build
@@ -123,4 +135,4 @@ under it, but never lowers a declared bound: a Windows Debug job's override
 does not take a full-table case below its plan. Sanitizer builds continue to
 report without enforcing a bound unless the environment sets one. A declared
 plan of zero falls back to the suite-wide bound, so a refused memory plan
-cannot silently disable the check.
+cannot silently disable functional enforcement.

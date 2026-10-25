@@ -76,6 +76,7 @@ static int rocketnet_functional_worker( const char * name )
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_client_test_group( const char * name );
+suite_exec rocketnet_unit_case_memory_exec();
 
 #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
@@ -167,25 +168,28 @@ int main( int argc, char ** argv )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
 
 #if defined(_WIN32)
-    static const suite_exec execs[] = {
-        { "test_serialize", "test_serialize" },
-        { "test_transport_control", "test_transport_control" },
-        { "test_iocp", "test_iocp" },
+    const suite_exec execs[] = {
+        rocketnet_unit_case_memory_exec(),
+        { "test_serialize", "test_serialize", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true },
+        { "test_iocp", "test_iocp", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #elif defined(__APPLE__)
-    static const suite_exec execs[] = {
-        { "test_serialize", "test_serialize" },
-        { "test_transport_control", "test_transport_control" },
-        { "test_msgx", "test_msgx" },
+    const suite_exec execs[] = {
+        rocketnet_unit_case_memory_exec(),
+        { "test_serialize", "test_serialize", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true },
+        { "test_msgx", "test_msgx", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 3, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #elif defined(__linux__)
-    static const suite_exec execs[] = {
-        { "test_serialize", "test_serialize" },
-        { "test_transport_control", "test_transport_control" },
+    const suite_exec execs[] = {
+        rocketnet_unit_case_memory_exec(),
+        { "test_serialize", "test_serialize", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true },
 #if ROCKETNET_XDP
-        { "test_xdp", "test_xdp" },
+        { "test_xdp", "test_xdp", NULL, true },
 #endif
     };
     // io_uring cases are bounded by RLIMIT_MEMLOCK as well as by the one job:
@@ -193,10 +197,11 @@ int main( int argc, char ** argv )
     // the limit (tests/suite_runner.h, tools/check_memlock.sh)
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
 #else
-    static const suite_exec execs[] = {
-        { "test_serialize", "test_serialize" },
-        { "test_transport_control", "test_transport_control" },
+    const suite_exec execs[] = {
+        rocketnet_unit_case_memory_exec(),
+        { "test_serialize", "test_serialize", NULL, true },
+        { "test_transport_control", "test_transport_control", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 2, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #endif
 }
