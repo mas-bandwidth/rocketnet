@@ -296,7 +296,7 @@ record_host()
 }
 sample_loads()
 {
-    local phase=$1 i=0 host line load1 nproc
+    local phase=$1 i=0 host line load1 nproc violation=""
     for host in $server_ssh $client_sshs; do
         line=$( ssh_run "$host" "$remote_path" load ) || fail "cannot record $phase load"
         printf '%s\n' "$line" > "$run_dir/load-$phase-$i"
@@ -306,19 +306,20 @@ sample_loads()
         case "$phase:$i" in
             start:*)
                 awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l * 2 >= n) ? 0 : 1 }' &&
-                    fail "$phase load $load1 is at or above half of $nproc cores; discarding this run"
+                    violation="$phase load $load1 is at or above half of $nproc cores"
                 ;;
             runtime-*:0)
                 awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l > n) ? 0 : 1 }' &&
-                    fail "$phase server load $load1 is above $nproc cores; discarding this run"
+                    violation="$phase server load $load1 is above $nproc cores"
                 ;;
             end:[1-9]*)
                 awk -v l="$load1" -v n="$nproc" 'BEGIN { exit (l > n) ? 0 : 1 }' &&
-                    fail "$phase client load $load1 is above $nproc cores; discarding this run"
+                    violation="$phase client load $load1 is above $nproc cores"
                 ;;
         esac
         i=$(( i + 1 ))
     done
+    [ -z "$violation" ] || fail "$violation; discarding this run"
 }
 record_host "$server_ssh" "$server_iface" "$run_dir/server.host"
 i=0
