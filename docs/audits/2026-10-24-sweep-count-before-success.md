@@ -39,6 +39,7 @@ A sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfb
 - Defect: `rn_ordered_write` counts `ROCKETNET_COUNTER_MESSAGE_RESENT` for every resend item the builder placed in a packet, before the transport's `finish_packet`; when the finish fails, `rn_endpoint_packet_failed` calls `rn_ordered_packet_failed` (line 1421), which makes the same records due again, and the next write counts them again.
 - Failure or cost: Each failed finish of an ordered packet that carried resends inflates the published resend counter by those records, so `MESSAGE_RESENT` (class path_loss) reports wire loss for records that never reached the wire even once more.
 - Smallest fix: Count the resends in `rn_ordered_commit` (the transport-sent commit) instead of at write, from the committed packet's resend items.
+- Status (2026-10-24): fixed. `MESSAGE_RESENT` is counted at `rn_packet_builder_commit`, when the packet carrying each number is sent; a refused resend whose original is acked before its retry is never counted. Covered by `test_ordered_refused_resend_acked_before_retry_not_counted`, `test_ordered_refused_resends_counted_only_when_sent` and `test_ordered_failed_resend_counted_once` in `tests/test_unit_channel_ordered.cpp`.
 
 ## Counts
 

@@ -4,7 +4,7 @@ A connection owns every item marked **RESET**. Ending a connection runs one
 internal reset for that side before a slot or client object can be reused. A
 **KEEP** row is object-lifetime state and includes the reason it survives.
 `tla/ClientSession.tla` models the client `End` transition and
-`tla/ServerSession.tla` models `EndClient` and the per-slot `Reset(i)`.
+`tla/ServerSession.tla` models `EndSlot` and the per-slot `Reset(i)`.
 
 The same decisions are data in `sdk/rocketnet_connection_reset.h`, one X-macro
 per struct. Each of these structs is declared from a manifest list beside it
@@ -40,6 +40,7 @@ naming `<struct>.<member>`.
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
 | | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction and public monotonic statistics |
+| | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
 | `rn_message_connection_t` / `rn_endpoint_t` | endpoint region; ordered/reliable queues; descriptors; receive ring; send store; packet, delivery, hold, receipt and resend rings | channel and allocator state | RESET | `rn_endpoint_reset` carves the region fresh |
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |
@@ -76,7 +77,7 @@ other session state.
 | | component pointers | allocation owners | KEEP | their named per-slot records reset |
 | | update output tags | receipt attribution | KEEP | produced rows retain attribution for the update |
 | server replay marks | marks for this client index | staged replay ownership | RESET | transport cleanup removes this slot's marks |
-| `rocketnet_server_transport_t` | `client_wire_totals[client_index]` | the slot's wire packet and byte totals | KEEP through the reset | not touched by `rocketnet_server_connection_reset`; cleared when the slot is next assigned (`rocketnet_server_wire_totals_assign`), which also folds in the new client's pre-slot handshake totals. `rocketnet_server_transport_client_stats` reads zeros for an empty slot, so the ended connection's totals are never observable |
+| `rocketnet_server_transport_t` | `client_wire_totals[client_index]` | the slot's wire packet and byte totals | KEEP through the reset | not touched by `rocketnet_server_connection_reset`; cleared when the slot is next assigned (`rocketnet_server_wire_totals_assign`, which zeroes them when the connecting response assigns the slot). `rocketnet_server_transport_client_stats` reads zeros for an empty slot, so the ended connection's totals are never observable |
 | | other slots, server totals, transport/config and counters | server-wide state | KEEP | lifetime state or another connection |
 | message connection / endpoint | the client table's message and channel fields | per-slot message state | RESET | endpoint reset makes the slot fresh |
 | | `disconnect_reason` | last connection's reason | KEEP | cleared only when a new id is observed |
@@ -92,7 +93,7 @@ observes the transport connection-id change.
 | Struct | Field | Decision | Reason |
 |---|---|---|---|
 | server protocol | protocol/filter, server keys, advertised addresses, cookie keys and rotation state | KEEP | server identity and configuration |
-| | used-token history | KEEP | STANDARD says, “Entries expire with the tokens they name”; token lifetime is independent of stop/start |
+| | used-token history | KEEP | the standard's rationale (`standard/RATIONALE.md`) says, “Entries expire with the tokens they name”; token lifetime is independent of stop/start |
 | | signature verification budget and counters | KEEP | shared abuse budget and lifetime accounting |
 | server transport | transport, I/O owner, config, whole-server wire totals and stats | KEEP | server-wide or lifetime state |
 | message object | config, arena owner, aggregate counters, clock and transport link | KEEP | object lifetime |

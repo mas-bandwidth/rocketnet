@@ -129,7 +129,10 @@ static void server_xdp_count( __u32 counter )
 
 // The IPv6 next header values that name an extension header (RFC 8200
 // section 4): hop-by-hop options, routing, fragment, destination options,
-// AH and ESP. The program does not walk the chain behind any of them.
+// AH and ESP. These are the headers the walk below starts from. That walk
+// steps over hop-by-hop, routing, destination options, AH, and a first
+// fragment. ESP stops the walk with the header unopened. A non-first
+// fragment is read, and the walk stops without stepping past it.
 
 static __always_inline int server_xdp_is_ipv6_extension( __u8 next_header )
 {
@@ -296,10 +299,16 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
 
     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
     const __u32 udp_len = __builtin_bswap16( udp->len );
-    if ( udp_len < sizeof(struct udphdr) || udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
+    if ( udp_len < sizeof(struct udphdr) )
     {
-        debug_printf( "packet udp length is too small or exceeds bounds" );
+        debug_printf( "packet udp length is below the UDP header" );
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+        return XDP_DROP;
+    }
+    if ( udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
+    {
+        debug_printf( "packet udp length exceeds the IP datagram or the frame" );
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
         return XDP_DROP;
     }
 
@@ -473,8 +482,9 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     // the IP total length bounds the datagram when it names
                     // at least a UDP header and fits in the frame; otherwise
-                    // it is malformed, and zero bytes make server_xdp_udp
-                    // drop it as too small once the port and address match
+                    // it is malformed; make server_xdp_udp count an otherwise
+                    // valid UDP length as too large once the port and address
+                    // match
 
                     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
                     const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
@@ -523,9 +533,9 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                     // the IPv6 payload length bounds the datagram when it
                     // names at least a UDP header and fits in the frame;
-                    // otherwise it is malformed, and zero bytes make
-                    // server_xdp_udp drop it as too small once the port and
-                    // address match
+                    // otherwise it is malformed; make server_xdp_udp count an
+                    // otherwise valid UDP length as too large once the port
+                    // and address match
 
                     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8*)udp );
                     const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
