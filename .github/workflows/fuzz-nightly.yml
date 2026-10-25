@@ -397,6 +397,167 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
+  # Windows x64 on the fleet's native Windows member, the runner label ci.yml's
+  # Windows rows use. The libFuzzer runtime ships with the ClangCL toolset of
+  # Visual Studio (VC/Tools/Llvm/x64, clang_rt.fuzzer-x86_64.lib beside the
+  # AddressSanitizer runtime in clang's resource directory), the toolset
+  # nightly.yml's windows-toolchains job builds with. MSVC cl's
+  # /fsanitize=fuzzer has its own x64 runtime there too (clang_rt.fuzzer_MD),
+  # but clang-cl is the same libFuzzer the Linux and macOS legs run and takes
+  # -fsanitize=fuzzer-no-link for the library, so this leg uses clang-cl.
+  # The library is built once through CMake with that toolset, instrumented
+  # with /fsanitize=address -fsanitize=fuzzer-no-link, and each target is
+  # compiled by clang-cl at the tree's warning floor (/W4 /WX and the strict
+  # set CMakeLists.txt adds for clang-cl) and linked against it with
+  # -fsanitize=fuzzer,address. The link set is the replay targets' one:
+  # rocketnet_dev.lib alone, whose platform source names WS2_32, IPHLPAPI,
+  # Qwave and winmm itself. Debug keeps the asserts, on the static release C
+  # runtime (/MT) with the STL's ASan string and vector annotations off,
+  # because Visual Studio's clang_rt.fuzzer-x86_64.lib is built that way and
+  # its link refuses any object that differs (/failifmismatch on
+  # RuntimeLibrary and annotate_string); clang-cl refuses AddressSanitizer
+  # with a debug runtime.
+  # No UndefinedBehaviorSanitizer: clang-cl links it only as the standalone
+  # runtime, which cannot share a process with ASan's dynamic runtime.
+  # The netcode differential target stays on the Linux leg.
+  fuzz-windows:
+    name: nightly fuzz Windows (${{ fromJSON(matrix.leg).target }})
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg:
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/dict/rocketnet_fuzz_message.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+    concurrency:
+      group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Find the clang-cl that carries libFuzzer
+        run: |
+          set -euo pipefail
+          vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          vs=""
+          if [ -x "$vswhere" ]; then
+            vs=$("$vswhere" -latest -products '*' -property installationPath | tr -d '\r')
+          fi
+          clang_cl=""
+          [ -n "$vs" ] && clang_cl="$(cygpath "$vs")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
+          if [ -z "$clang_cl" ] || [ ! -x "$clang_cl" ]; then
+            echo "TOOL-MISSING clang-cl (Visual Studio ClangCL toolset, any) (VC/Tools/Llvm/x64/bin under ${vs:-no Visual Studio}) on $RUNNER_NAME"
+            exit 1
+          fi
+          runtime="$(cygpath "$("$clang_cl" -print-resource-dir | tr -d '\r')")/lib/windows"
+          if [ ! -f "$runtime/clang_rt.fuzzer-x86_64.lib" ] || [ ! -f "$runtime/clang_rt.asan_dynamic-x86_64.dll" ]; then
+            echo "TOOL-MISSING clang-cl with clang_rt.fuzzer-x86_64.lib and clang_rt.asan_dynamic-x86_64.dll (any) ($runtime) on $RUNNER_NAME"
+            exit 1
+          fi
+          "$clang_cl" --version
+          echo "ROCKETNET_FUZZ_CLANG_CL=$clang_cl" >> "$GITHUB_ENV"
+          echo "ROCKETNET_FUZZ_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      - name: Check the fleet's build dependencies are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          key: fuzz-corpus-windows-${{ fromJSON(matrix.leg).target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-windows-${{ fromJSON(matrix.leg).target }}-
+
+      # clang-cl's dash spellings, not /DWIN32 and /fsanitize: Git Bash
+      # rewrites a leading-slash argument into a Windows path. The compiler
+      # check builds a static library: linked as a program, its object carries
+      # the fuzzer-no-link and ASan references the Visual Studio link has no
+      # runtime for, and CMake calls the compiler broken.
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz -T ClangCL -A x64
+          -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -fsanitize=address -fsanitize=fuzzer-no-link"
+          "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+
+      - name: Build ${{ fromJSON(matrix.leg).target }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          "$ROCKETNET_FUZZ_CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
+            -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
+            -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
+            -fsanitize=fuzzer,address \
+            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/Debug/rocketnet_dev.lib \
+            -fuse-ld=lld "-Fe:bin/${{ fromJSON(matrix.leg).target }}.exe"
+          cp "$ROCKETNET_FUZZ_RUNTIME_DIR/clang_rt.asan_dynamic-x86_64.dll" bin/
+
+      # LeakSanitizer is not part of AddressSanitizer on Windows: the runtime
+      # has no leak checker there and refuses detect_leaks=1 as unsupported, so
+      # this leg runs without it; leaks stay checked on the Linux leg.
+      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          set -euo pipefail
+          mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
+          T="${{ github.event.inputs.max_total_time || '900' }}"
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
+          ./"bin/${{ fromJSON(matrix.leg).target }}.exe" \
+            "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
+            -dict="${{ fromJSON(matrix.leg).dict }}" \
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-windows-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
+
   # MemorySanitizer over the same ten-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
