@@ -397,9 +397,10 @@ jobs:
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
     # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
-    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all, inside the 90-minute bound.
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The portable, iocp and
+    # rio server cells add 1800 s each, about 109 minutes in all, inside the 150-minute bound.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -432,6 +433,7 @@ jobs:
         run: ./bin/Release/soak.exe 200000
 
       - name: Portable transport soak under loss, jitter and duplication (Windows)
+        timeout-minutes: 40
         shell: bash
         run: |
           set -uo pipefail
@@ -473,12 +475,62 @@ jobs:
             exit 1
           fi
 
-      - name: Keep Windows transport soak log
+      # The iocp and rio server cells: 1800 s of bin/soak each under loss,
+      # latency, jitter and duplication at both ends of the link simulator
+      # (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, the values
+      # scripts/soak-per-transport runs), held to flat handles, threads and
+      # private bytes by --assert-flat, which also fails a run the impairment
+      # leaves no drops or refused duplicates in. The server transport is
+      # pinned and the granted name and the applied link settings are checked
+      # from the run's own lines.
+      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
+        timeout-minutes: 70
+        shell: bash
+        run: |
+          set -uo pipefail
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-windows
+          failures=0
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          for transport in iocp rio; do
+            log="build/soak-windows/${transport}.log"
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT=portable \
+                ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+                ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+                ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+                ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+                timeout $((seconds + 120)) ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$log"
+            # the soak log is CRLF: strip it once to an LF copy and read only that copy,
+            # never a pipe out of tr, so an early-exiting grep cannot fail a cell under pipefail
+            lf="$log.lf"
+            tr -d '\r' < "$log" > "$lf"
+            server=$(summary "$lf" server_transport_io)
+            link_ok=1
+            for end in server client; do
+              grep -qx "soak link simulator: $end $want_link" "$lf" || link_ok=0
+            done
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$link_ok" = 1 ]; then
+              echo "SOAK cell=$transport PASS server=$server seconds=$seconds verified=$(summary "$lf" verified) handles=$(resources "$lf" handles) threads=$(resources "$lf" threads) private_bytes=$(resources "$lf" private_bytes) link=impaired missing=$(summary "$lf" client_to_server_missing)/$(summary "$lf" server_to_client_missing) duplicates_refused=$(summary "$lf" duplicates_refused_at_server)/$(summary "$lf" duplicates_refused_at_client) log=$log"
+            else
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} link_as_asked=$link_ok log=$log"
+              failures=$((failures + 1))
+            fi
+          done
+          exit "$failures"
+
+      - name: Upload Windows soak logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soak-windows-portable-${{ github.run_id }}
-          path: build/soak-windows/portable.log
+          name: soak-windows-logs-${{ strategy.job-index }}
+          path: build/soak-windows
 
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
