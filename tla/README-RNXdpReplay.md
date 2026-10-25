@@ -97,7 +97,7 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `phase` | the update | `"run"` while packets are processed, `"flush"` between the walk and the commit |
 | `reached[s]` | (ghost) | the highest `highest_opened` session `s` reached |
 | `dropped` | (ghost) | genuine packets the kernel dropped, with the session of the mark it dropped them against |
-| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1; the control and the stale-forget witness raise it to 2) |
+| `forgetFailures` | (bound) | the forgets the kernel refused so far, at most `ForgetFailureBudget` (1; the control and the superseded-forget witness raise it to 2) |
 | `nextSession` | (ghost) | the id the next connection takes |
 
 Six rule switches are definitions with the design's values, each
