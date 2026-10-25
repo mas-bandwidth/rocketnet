@@ -103,6 +103,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_force_flags( int flags );
 
 #if defined(ROCKETNET_IOCP_TESTS)
+uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
 void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * iocp, bool hold );
