@@ -420,27 +420,33 @@ static void windows_handle_type( windows_query_object_t query, HANDLE handle, wc
         wcsncpy_s( type, type_chars, information.name.buffer, chars < type_chars - 1 ? chars : type_chars - 1 );
 }
 
+struct diag_sys_entry_t { void * object; ULONG_PTR process_id; ULONG_PTR value; ULONG access; USHORT trace_index; USHORT type_index; ULONG attributes; ULONG reserved; };
+struct diag_sys_info_t { ULONG_PTR count; ULONG_PTR reserved; diag_sys_entry_t entries[1]; };
+typedef LONG ( WINAPI * diag_query_system_t )( int, void *, ULONG, ULONG * );
+// RUN-ONLY: enumerate this process's handles from the system list, so no invalid value is referenced
 static void windows_handle_table_read( windows_handle_table_t * table )
 {
     HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
     const windows_query_object_t query = ntdll ? (windows_query_object_t) (void *) GetProcAddress( ntdll, "NtQueryObject" ) : NULL;
+    const diag_query_system_t system = (diag_query_system_t) (void *) GetProcAddress( ntdll, "NtQuerySystemInformation" );
     table->count = 0;
     table->overflow = false;
-    for ( uint32_t value = 4; value < WINDOWS_HANDLE_VALUE_LIMIT; value += 4 )
+    SIZE_T bytes = 64u << 20;
+    diag_sys_info_t * info = (diag_sys_info_t *) VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+    ULONG returned = 0;
+    const LONG status = info ? system( 64, info, (ULONG) bytes, &returned ) : -1;
+    if ( status < 0 ) { printf( "DIAG system handle list status 0x%lx
+", (unsigned long) status ); table->overflow = true; }
+    const ULONG_PTR self = (ULONG_PTR) GetCurrentProcessId();
+    for ( ULONG_PTR i = 0; status >= 0 && i < info->count; i++ )
     {
-        const HANDLE handle = (HANDLE) (uintptr_t) value;
-        DWORD flags = 0;
-        if ( !GetHandleInformation( handle, &flags ) )
-            continue;
-        if ( table->count == WINDOWS_HANDLE_TABLE_ENTRIES )
-        {
-            table->overflow = true;
-            return;
-        }
+        if ( info->entries[i].process_id != self ) continue;
+        if ( table->count == WINDOWS_HANDLE_TABLE_ENTRIES ) { table->overflow = true; break; }
         windows_handle_entry_t * entry = &table->entries[table->count++];
-        entry->value = value;
-        windows_handle_type( query, handle, entry->type, sizeof( entry->type ) / sizeof( entry->type[0] ) );
+        entry->value = (uint32_t) info->entries[i].value;
+        windows_handle_type( query, (HANDLE) info->entries[i].value, entry->type, sizeof( entry->type ) / sizeof( entry->type[0] ) );
     }
+    if ( info ) VirtualFree( info, 0, MEM_RELEASE );
 }
 
 static bool windows_handle_table_has( const windows_handle_table_t * table, const windows_handle_entry_t * entry )
