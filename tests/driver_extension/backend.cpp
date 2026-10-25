@@ -49,13 +49,14 @@ static bool replay_forget( void *, const rocketnet_address_t * address )
     external_test_replay_has_forgotten = true;
     return true;
 }
-static void replay_mark( void *, const rocketnet_address_t * address, uint32_t high_water )
+static bool replay_mark( void *, const rocketnet_address_t * address, uint32_t high_water )
 {
     external_test_replay_last_address = *address;
     if ( high_water > external_test_replay_max_high_water )
         external_test_replay_max_high_water = high_water;
     external_test_replay_has_address = true;
     ++external_test_replay_marks;
+    return true;
 }
 static void replay_commit( void * ) {}
 

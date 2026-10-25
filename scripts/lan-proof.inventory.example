@@ -1,0 +1,22 @@
+# lan-proof.inventory.example -- placeholder names only.
+#
+# One row per machine, whitespace separated:
+#
+#   label ssh-name role os iface uplink
+#
+#   label     the name on every result line; never a hostname
+#   ssh-name  the name ssh would use; replace every .invalid name before a live run
+#   role      server or client
+#   os        linux, macos or windows
+#   iface     the test interface; for an xdp server, a Linux bridge backed by
+#             the dedicated test NIC. On macOS "default" names the interface of
+#             the default route. On Windows it is the adapter name with _ for
+#             each space, its interface index, or "default".
+#   uplink    "-" or "uplink"; the xdp cell refuses an uplink interface
+#
+# The real inventory lives outside the repository.
+
+# label     ssh-name            role    os      iface  uplink
+server-a    server-a.invalid    server  linux   eth0   -
+client-a    client-a.invalid    client  linux   eth0   -
+client-b    client-b.invalid    client  linux   eth0   -
