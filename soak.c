@@ -104,25 +104,26 @@
     library_bytes=<n>", library_bytes being what the library holds through
     the allocator soak gives rocketnet_init; on Linux it adds
     "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup, and on
-    Windows "threads=<n> os_threads=<n>", the OS's own threads that the
-    thread count leaves out (process_resources_thread_is_os); phase is
+    Windows "threads=<n> os_threads=<n>"; phase is
     between (no client alive) or live (a client alive), and only between
     samples are compared.
     Each count prints as "soak resources: <name> start=<n> end=<n> peak=<n>"
-    (fds, threads, resident_bytes; handles, threads, private_bytes on
-    Windows); a run that ends inside the warm cycle, as every run under 30 s
+    (fds, threads, resident_bytes; handles, threads, private_bytes,
+    os_threads on Windows, where every thread proven the OS's by its start
+    address also prints at the post-warmup and end samples as
+    "soak resources: <sample> os_thread id=<n> start=ntdll+0x<offset>");
+    library_bytes prints the same way on every platform as a per-source
+    figure and is not compared; a run that ends inside the warm cycle, as every run under 30 s
     does, has no post-warmup sample and prints
     "soak resources: none (the run ended inside the warm cycle)".
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
     fd (handle) and thread counts at the end equal their post-warmup counts,
     and the memory count grows by at most one page per ten minutes of run
-    since the post-warmup sample (at least one page). On Windows the memory
-    count held to that rule is library_bytes, the library's own allocations
-    (also printed as "soak resources: library_bytes start=<n> end=<n>
-    peak=<n>" on every platform), because private_bytes is the whole
-    process's commit charge and the OS's share of it is not the library's
-    (soak_memory_count_is_os). A count that is not
+    since the post-warmup sample (at least one page); on Windows os_threads
+    may fall and never rise, so the full thread count never grows. A resource
+    read that fails (a thread walk that ends on an error among them) fails
+    the run. A count that is not
     flat prints "soak: --assert-flat FAILED: <name> start=<n> end=<n>" and
     the run exits 1; so does a run that ends inside the warm cycle. A second
     --assert-flat, or one given a value (--assert-flat=...), is refused with
@@ -520,29 +521,25 @@ static void soak_library_free( void * context, void * p )
     free( block );
 }
 
-// Windows only, the memory count is not compared: PrivateUsage is the whole
-// process's commit charge, and the OS's share of it moves on its own (a 60 s
-// run measured private_bytes +8192 with library_bytes exactly flat: growth
-// outside every allocation the library made, in memory the OS and the C
-// runtime own). The
-// library's own bytes (library_bytes) are held to the same flat rule in its
-// place; the process's count still prints. On Linux and macOS the memory
-// count is compared as it is.
+// Windows only: names every thread the counts take as the OS's, with its
+// start address, at one sample; a walk that fails here was already failed by
+// the sample's own read
 
-static int soak_memory_count_is_os( int index )
+static void soak_print_os_threads( const char * sample_label )
 {
 #if defined(_WIN32)
-    return index == PROCESS_RESOURCES_MEMORY;
+    int64_t threads = 0;
+    int64_t os_threads = 0;
+    process_resources_walk_threads( &threads, &os_threads, sample_label );
 #else
-    (void) index;
-    return 0;
+    (void) sample_label;
 #endif
 }
 
 // one "soak memory:" line: the memory count of *sample, the library's own
-// allocated bytes, on Linux the smaps_rollup Rss and Private_Dirty read now,
-// and on Windows how many of the process's threads are the OS's own (never
-// compared; see process_resources_thread_is_os)
+// allocated bytes (a per-source figure beside the process's count, never
+// compared), on Linux the smaps_rollup Rss and Private_Dirty read now, and on
+// Windows the sample's threads and os_threads
 
 static void soak_print_memory( const char * phase, double seconds, const struct process_resources_t * sample )
 {
@@ -553,7 +550,7 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
     if ( process_resources_smaps( &rss, &private_dirty ) )
         printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
 #if defined(_WIN32)
-    printf( " threads=%lld os_threads=%lld", (long long) sample->values[PROCESS_RESOURCES_THREADS], (long long) process_resources_os_threads() );
+    printf( " threads=%lld os_threads=%lld", (long long) sample->values[PROCESS_RESOURCES_THREADS], (long long) sample->values[PROCESS_RESOURCES_OS_THREADS] );
 #endif
     printf( "\n" );
     fflush( stdout );
@@ -848,6 +845,7 @@ int main( int argc, char ** argv )
                     resources_start = sample;
                     resources_peak = sample;
                     resources_start_time = rocketnet_time();
+                    soak_print_os_threads( "post-warmup" );
                     library_bytes_start = soak_library_bytes_read();
                     library_bytes_peak = library_bytes_start;
                 }
@@ -1085,7 +1083,12 @@ int main( int argc, char ** argv )
             if ( resources_started )
             {
                 struct process_resources_t sample;
-                if ( process_resources_read( &sample ) )
+                if ( !process_resources_read( &sample ) )
+                {
+                    printf( "soak: failed to read the process resource counts\n" );
+                    failures++;
+                    break;
+                }
                 {
                     process_resources_peak( &resources_peak, &sample );
                     if ( resources_started && soak_library_bytes_read() > library_bytes_peak )
@@ -1183,6 +1186,7 @@ int main( int argc, char ** argv )
     if ( resources_started && process_resources_read( &resources_end ) )
     {
         resources_ended = 1;
+        soak_print_os_threads( "end" );
         process_resources_peak( &resources_peak, &resources_end );
         library_bytes_end = soak_library_bytes_read();
         if ( library_bytes_end > library_bytes_peak )
@@ -1197,7 +1201,7 @@ int main( int argc, char ** argv )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
-            if ( assert_flat && !soak_memory_count_is_os( i ) && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
+            if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
                 printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
@@ -1209,13 +1213,6 @@ int main( int argc, char ** argv )
         }
         printf( "soak resources: library_bytes start=%lld end=%lld peak=%lld\n",
                 (long long) library_bytes_start, (long long) library_bytes_end, (long long) library_bytes_peak );
-        if ( assert_flat && soak_memory_count_is_os( PROCESS_RESOURCES_MEMORY ) && !process_resources_flat( PROCESS_RESOURCES_MEMORY, library_bytes_start, library_bytes_end, seconds_since_start ) )
-        {
-            printf( "soak: --assert-flat FAILED: library_bytes start=%lld end=%lld (allowed growth %lld bytes over %.0f s)\n",
-                    (long long) library_bytes_start, (long long) library_bytes_end,
-                    (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
-            failures++;
-        }
     }
     else
     {

@@ -13,8 +13,17 @@
                  resident_bytes  proc_pidinfo PROC_PIDTASKINFO pti_resident_size
         Windows  handles         GetProcessHandleCount
                  threads         a Toolhelp32 walk of this process's threads,
-                                 less the OS's own (process_resources_thread_is_os)
-                 private_bytes   GetProcessMemoryInfo PrivateUsage
+                                 less those proven the OS's (os_threads)
+                 private_bytes   GetProcessMemoryInfo PrivateUsage, the whole
+                                 process's commit charge: heap, VirtualAlloc
+                                 regions (RIO buffers) and thread stacks alike
+                 os_threads      the same walk's threads whose start address
+                                 is inside ntdll.dll (process_resources_thread_is_os)
+
+    Every Windows thread is in exactly one of threads and os_threads, so the
+    two together are the process's full thread count, and the walk fails
+    closed: a list that cannot be opened, a first entry that cannot be read,
+    or a walk that ends on any error but ERROR_NO_MORE_FILES reads both as -1.
 
     The Linux and macOS counters are the ones functional/posix_lifecycle_stress.cpp
     reads for its cells; the Windows counters are the ones load.c reads.
@@ -45,7 +54,9 @@
 
     THE FLAT RULE (process_resources_flat). Taken after a warm cycle, so every
     path the run repeats has run once, and after the warm-up above: the fd or handle count and the thread
-    count at the end must equal their post-warmup counts exactly, and the
+    count at the end must equal their post-warmup counts exactly (on Windows
+    os_threads may fall, as the OS retires its pool workers on its own timers,
+    and never rise, so the full thread count never grows), and the
     memory count at the end may exceed its post-warmup count by at most one
     page for every ten minutes of run since the post-warmup sample, rounded
     up, and never less than one page. A memory count below its post-warmup
@@ -85,11 +96,16 @@
 #include <unistd.h>
 #endif
 
-#define PROCESS_RESOURCES_COUNT 3
-
 #define PROCESS_RESOURCES_HANDLES 0
 #define PROCESS_RESOURCES_THREADS 1
 #define PROCESS_RESOURCES_MEMORY 2
+
+#if defined(_WIN32)
+#define PROCESS_RESOURCES_OS_THREADS 3
+#define PROCESS_RESOURCES_COUNT 4
+#else
+#define PROCESS_RESOURCES_COUNT 3
+#endif
 
 struct process_resources_t
 {
@@ -107,6 +123,7 @@ static inline const char * process_resources_name( int index )
         case PROCESS_RESOURCES_HANDLES: return "handles";
         case PROCESS_RESOURCES_THREADS: return "threads";
         case PROCESS_RESOURCES_MEMORY:  return "private_bytes";
+        case PROCESS_RESOURCES_OS_THREADS: return "os_threads";
 #else
         case PROCESS_RESOURCES_HANDLES: return "fds";
         case PROCESS_RESOURCES_THREADS: return "threads";
@@ -169,18 +186,21 @@ static inline int64_t process_resources_resident_bytes( void )
 #endif
 
 #if defined(_WIN32)
-// Windows only: 1 when the thread's start address is inside ntdll.dll. Those
-// are the OS's own threads, the thread pool's workers and the parallel
-// loader's, which the OS starts and retires on its own timers (a run sees one
-// exit some seconds after the post-warmup sample). Every thread the library
-// or the program starts begins in their own code, never in ntdll, so the
-// thread count is theirs alone. A thread that cannot be queried counts as the
-// program's.
+// Windows only: a thread's start address (ThreadQuerySetWin32StartAddress),
+// and whether it is inside ntdll.dll. A thread starting in ntdll is the OS's
+// own: the thread pool's workers and the parallel loader's (TppWorkerThread),
+// which the OS starts and retires on its own timers. Every thread the library
+// creates starts in the library's own code (rocketnet_platform.cpp passes its
+// thread_function_shim to CreateThread), never in ntdll. Returns 1 for a
+// thread proven the OS's, and 0 for every other thread, including one whose
+// start address cannot be read: only a proven OS thread is left out of the
+// threads count.
 
 typedef LONG (WINAPI * process_resources_query_thread_t)( HANDLE thread, int information_class, void * information, ULONG information_bytes, ULONG * returned_bytes );
 
-static inline int process_resources_thread_is_os( DWORD thread_id )
+static inline int process_resources_thread_is_os( DWORD thread_id, uintptr_t * start_offset )
 {
+    *start_offset = 0;
     HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
     if ( !ntdll )
         return 0;
@@ -199,44 +219,70 @@ static inline int process_resources_thread_is_os( DWORD thread_id )
     HMODULE start_module = NULL;
     if ( !GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) start_address, &start_module ) )
         return 0;
-    return start_module == ntdll;
+    if ( start_module != ntdll )
+        return 0;
+    *start_offset = (uintptr_t) start_address - (uintptr_t) ntdll;
+    return 1;
 }
 
-// Windows only: a Toolhelp32 walk of this process's threads, counting the
-// OS's own (process_resources_thread_is_os) when os is 1 and the rest when
-// os is 0. Returns -1 when the thread list cannot be read.
+// Windows only: one Toolhelp32 walk of this process's threads into *threads
+// (the rest) and *os_threads (proven the OS's). When print_label is not NULL
+// each OS thread prints as "soak resources: <label> os_thread id=<n>
+// start=ntdll+0x<offset>", so every thread left out of threads is named with
+// its start address. Fails closed: returns 0, with both counts -1, when the
+// list cannot be opened, its first entry cannot be read, or the walk ends on
+// an error other than ERROR_NO_MORE_FILES.
 
-static inline int64_t process_resources_count_threads( int os )
+static inline int process_resources_walk_threads( int64_t * threads, int64_t * os_threads, const char * print_label )
 {
+    *threads = -1;
+    *os_threads = -1;
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
-        return -1;
+        return 0;
     THREADENTRY32 entry;
+    memset( &entry, 0, sizeof( entry ) );
     entry.dwSize = sizeof( entry );
     const DWORD self_pid = GetCurrentProcessId();
-    int64_t threads = 0;
+    int64_t program_count = 0;
+    int64_t os_count = 0;
+    int ok = 0;
     if ( Thread32First( thread_list, &entry ) )
     {
-        do
+        for ( ;; )
         {
-            if ( entry.th32OwnerProcessID == self_pid && process_resources_thread_is_os( entry.th32ThreadID ) == os )
-                threads++;
-        } while ( Thread32Next( thread_list, &entry ) );
+            if ( entry.th32OwnerProcessID == self_pid )
+            {
+                uintptr_t start_offset = 0;
+                if ( process_resources_thread_is_os( entry.th32ThreadID, &start_offset ) )
+                {
+                    os_count++;
+                    if ( print_label )
+                        printf( "soak resources: %s os_thread id=%lu start=ntdll+0x%llx\n", print_label, (unsigned long) entry.th32ThreadID, (unsigned long long) start_offset );
+                }
+                else
+                {
+                    program_count++;
+                }
+            }
+            entry.dwSize = sizeof( entry );
+            if ( !Thread32Next( thread_list, &entry ) )
+            {
+                ok = GetLastError() == ERROR_NO_MORE_FILES;
+                break;
+            }
+        }
     }
     CloseHandle( thread_list );
-    return threads;
-}
-
-// Windows only: how many of this process's threads are the OS's own, printed
-// beside the counts and never compared
-
-static inline int64_t process_resources_os_threads( void )
-{
-    return process_resources_count_threads( 1 );
+    if ( !ok )
+        return 0;
+    *threads = program_count;
+    *os_threads = os_count;
+    return 1;
 }
 #endif
 
-// reads every count into *resources; returns 1 when all three were read
+// reads every count into *resources; returns 1 when every count was read
 
 static inline int process_resources_read( struct process_resources_t * resources )
 {
@@ -249,7 +295,7 @@ static inline int process_resources_read( struct process_resources_t * resources
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
         resources->values[PROCESS_RESOURCES_HANDLES] = (int64_t) handles;
 
-    resources->values[PROCESS_RESOURCES_THREADS] = process_resources_count_threads( 0 );
+    process_resources_walk_threads( &resources->values[PROCESS_RESOURCES_THREADS], &resources->values[PROCESS_RESOURCES_OS_THREADS], NULL );
 
     PROCESS_MEMORY_COUNTERS_EX memory;
     memset( &memory, 0, sizeof( memory ) );
@@ -330,6 +376,10 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
         return 0;
     if ( index == PROCESS_RESOURCES_MEMORY )
         return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
+#if defined(_WIN32)
+    if ( index == PROCESS_RESOURCES_OS_THREADS )
+        return end <= start;
+#endif
     return end == start;
 }
 
