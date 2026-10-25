@@ -707,6 +707,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_server_receive_buffer_granted( "iocp", receive_buffer_bytes, granted_receive_bytes );
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_SNDBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
+    // Match the portable socket's don't-fragment rule, tolerating option refusal.
+    setsockopt( iocp->socket, iocp->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                iocp->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char*) &enabled, sizeof(enabled) );
     // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;
     // a refusal is logged once and the receive paths skip the statuses
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
@@ -828,6 +831,8 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    // Release callers may not use a frame or packet id the transport did not issue.
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     (void) frame;
     iocp->sends[packet_id].packet_bytes = packet_bytes;
 }
@@ -836,6 +841,8 @@ void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp, uint64_
 {
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
+    // Release callers may not use a frame or packet id the transport did not issue.
+    if ( packet_id >= ROCKETNET_IOCP_SEND_QUEUE_SIZE || frame != iocp->sends[packet_id].frame ) return;
     (void) frame;
     iocp->sends[packet_id].packet_bytes = 0;
 }
@@ -1148,6 +1155,11 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
 }
 
 #if defined(ROCKETNET_IOCP_TESTS)
+uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp )
+{
+    return (uintptr_t) iocp->socket;
+}
+
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold )
 {
     iocp->test_hold_tx.store( hold, std::memory_order_release );
@@ -1232,6 +1244,12 @@ bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t 
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
 {
     return iocp->stopping.load( std::memory_order_acquire );
+}
+
+int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id )
+{
+    rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
+    return iocp->sends[packet_id].packet_bytes;
 }
 
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status )

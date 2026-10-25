@@ -10,11 +10,20 @@
 (* NewSessionNeverDroppedByOldMark; MCRNXdpReplayBrokenNarrowWindow.cfg    *)
 (* sets KernelWindow <- KernelWindowBroken (the kernel window one short of *)
 (* the userspace window, the shape of the old 16 against 4096) and must    *)
-(* fail FreshGenuineNeverDropped;                                         *)
+(* fail FreshGenuineNeverDropped;                                          *)
 (* MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg sets                        *)
-(* WalkForgetsUnmarked <- WalkForgetsUnmarkedBroken (the walk forgets the  *)
-(* reply MAC of the marked slots only) and must fail                       *)
-(* ReleasedSlotForgetsItsReplyMac.                                        *)
+(* WalkForgetsUnmarked <- WalkForgetsUnmarkedBroken and must fail          *)
+(* ReleasedSlotForgetsItsReplyMac;                                         *)
+(* MCRNXdpReplayBrokenFailedForgetDropped.cfg sets                         *)
+(* KeepFailedForgets <- KeepFailedForgetsBroken (a forget the kernel       *)
+(* refused is dropped, not kept for the next commit) and must fail         *)
+(* ForgetOwedUntilApplied;                                                 *)
+(* MCRNXdpReplayBrokenSupersededForget.cfg sets                          *)
+(* SupersedeStaleForgets <- SupersedeStaleForgetsBroken (a refused forget  *)
+(* is kept over a newer session's applied mark of the same address) and    *)
+(* must fail RetryNeverDeletesNewerMark.  The control and that witness set *)
+(* ForgetFailureBudget <- ForgetFailureBudgetTwo: a kept forget refused    *)
+(* again in the commit that lands the newer mark.                          *)
 (***************************************************************************)
 EXTENDS RNXdpReplay
 
@@ -24,4 +33,7 @@ KernelAdvancesBroken == TRUE
 WalkForgetsBroken    == FALSE
 WalkForgetsUnmarkedBroken == FALSE
 KernelWindowBroken   == W - 1
+KeepFailedForgetsBroken == FALSE
+SupersedeStaleForgetsBroken == FALSE
+ForgetFailureBudgetTwo == 2
 =============================================================================
