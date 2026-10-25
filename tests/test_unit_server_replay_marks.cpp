@@ -148,8 +148,10 @@ static void server_replay_marks_check_forget( const struct server_replay_marks_c
 }
 
 // Walk pass 2: each connected slot is marked once for its current
-// highest_opened, a second walk with nothing changed marks none, an advance
-// marks exactly that slot, and a slot at zero is never marked.
+// highest_opened, a slot first seen at zero included (that zero mark
+// overwrites an older session's kernel entry for the address,
+// tla/RNXdpReplay.tla NewSessionNeverDroppedByOldMark), a second walk with
+// nothing changed marks none, and an advance marks exactly that slot.
 
 static void test_server_replay_marks_mark_connected_slots_once()
 {
@@ -168,9 +170,10 @@ static void test_server_replay_marks_mark_connected_slots_once()
     memset( &recording, 0, sizeof(recording) );
 
     server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 2 );
+    rocketnet_unit_check( recording.count == 3 );
     server_replay_marks_check_mark( &recording.calls[0], &a, 41 );
     server_replay_marks_check_mark( &recording.calls[1], &b, 7 );
+    server_replay_marks_check_mark( &recording.calls[2], &c, 0 );
 
     memset( &recording, 0, sizeof(recording) );
     server_replay_marks_walk( &fixture, &recording );
@@ -205,8 +208,9 @@ static void test_server_replay_marks_forget_released_slots_first()
     memset( &recording, 0, sizeof(recording) );
 
     server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
+    rocketnet_unit_check( recording.count == 2 );
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
     rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
@@ -353,8 +357,9 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
-// A slot that is connected with no mark yet -- its highest_opened is 0, so
-// the walk never marked it -- and then leaves is still forgotten: the
+// A slot that is connected with nothing opened yet -- its highest_opened is
+// 0, so the walk marked it only at zero -- and then leaves is still
+// forgotten: the
 // transport's forget drops the reply MAC of that address too, and a learned
 // MAC outranks the gateway in the reply path, so a stale one would send the
 // next client's replies to the old link-layer address.
@@ -372,7 +377,8 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
     memset( &recording, 0, sizeof(recording) );
 
     server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 0 );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     rocketnet_client_slots_release( fixture.slots, client.slot );
     rocketnet_encryption_map_remove( fixture.map, client.mapping );

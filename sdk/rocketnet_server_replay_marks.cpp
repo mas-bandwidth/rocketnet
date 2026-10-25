@@ -122,8 +122,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         }
     }
 
-    // then the marks -- every connected slot whose highest_opened is nonzero
-    // and differs from what it last marked. Every connected slot with a
+    // then the marks -- every connected slot whose highest_opened differs
+    // from what it last marked (none counting as zero), and every slot first
+    // seen, zero included. Every connected slot with a
     // mapping is seen at its address, marked or not, so that the forget pass
     // can drop the reply MAC of a slot that left before it ever marked.
 
@@ -147,15 +148,20 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
             continue;
 
+        // tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
+        // first seen, or whose highest_opened fell below its mark (a new
+        // session in the slot), is marked even at zero, so the commit before
+        // its first keep-alive leaves overwrites any older session's entry
+        // for the address, whether or not that session's forget has landed.
+        const bool first_seen = !slot->seen;
+
         slot->seen = 1;
         slot->seen_address = *address;
 
-        if ( highest_opened == 0 )
-            continue;
-
         const uint32_t high_water = (uint32_t) highest_opened;
+        const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
 
-        if ( slot->has_mark && slot->marked_value == high_water )
+        if ( !first_seen && high_water == last_marked )
             continue;
 
         sink->mark( sink->context, address, high_water );

@@ -11,8 +11,9 @@
 (* never writes the map.  Userspace writes it once per server update: the  *)
 (* transport walks its client slots, FORGETs the address of every slot     *)
 (* that was seen connected and is no longer connected, then MARKs every    *)
-(* slot whose session replay window's highest_opened is nonzero and        *)
-(* differs from what it last marked; the transport applies the forgets, then  *)
+(* slot whose session replay window's highest_opened differs from what it   *)
+(* last marked (none counting as zero), and every slot it first sees, zero *)
+(* included; the transport applies the forgets, then                       *)
 (* the marks, in one commit.  The kernel may refuse a forget; the refused  *)
 (* forget stays pending and the next commit applies it first, again.       *)
 (* The same accepted forget drops the reply MAC learned for that address; *)
@@ -22,6 +23,17 @@
 (* per address, a reconnect from the same address being a new session     *)
 (* whose sequences restart at 1.  A slot whose mapping changes address is  *)
 (* the same forget as a release, for the old address.                      *)
+(*                                                                         *)
+(* A reconnect may come before the old session's forget is queued or       *)
+(* while the kernel refuses it.  The new session's client sends no session *)
+(* packet until the server's first keep-alive reaches it, and the server   *)
+(* publishes that keep-alive after the commit of the update that connected *)
+(* it (sdk/rocketnet_server_transport.cpp, the replay walk and commit come *)
+(* before the update's send flush): greeted[a].  That commit carries the   *)
+(* new session's first mark, zero when nothing has opened, which replaces  *)
+(* whatever the kernel held for the address; a high_water of 0 drops       *)
+(* nothing.  A disconnect burst a client sends before its first keep-alive *)
+(* is left out: a dropped one costs the server a timeout, not the session. *)
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
 (* sequence) is left out, as are the byte layout of the key and value and  *)
@@ -66,6 +78,10 @@ ASSUME /\ Addresses # {}
 (*     design: W, ROCKETNET_XDP_REPLAY_WINDOW, the userspace window).      *)
 (*   KeepFailedForgets: a forget the kernel refused stays pending for the  *)
 (*     next commit (the design: TRUE).                                     *)
+(*   MarkNewSessions: the walk marks a slot it first sees and a slot whose *)
+(*     highest_opened differs from its mark, zero included, so a new       *)
+(*     session's first commit replaces an older session's entry (the       *)
+(*     design: TRUE; FALSE marks only a nonzero highest_opened).           *)
 (*   SupersedeStaleForgets: a refused forget whose address a mark applied  *)
 (*     in the same commit is dropped, not kept: the mark was taken after   *)
 (*     the forget was queued, so the entry is a newer session's and the   *)
@@ -81,6 +97,7 @@ WalkForgetsUnmarked == TRUE
 KernelWindow      == W
 KeepFailedForgets == TRUE
 SupersedeStaleForgets == TRUE
+MarkNewSessions   == TRUE
 
 ForgetFailureBudget == 1
 
@@ -113,11 +130,13 @@ VARIABLES
     pendingMacForget, \* accepted reply-MAC forgets, applied by Commit
     phase,          \* "run" (packet processing) or "flush" (walk done)
     dropped,        \* ghost: genuine packets the kernel dropped
-    forgetFailures  \* the forgets the kernel refused so far, at most the budget
+    forgetFailures, \* the forgets the kernel refused so far, at most the budget
+    greeted         \* greeted[a]: the live session's first keep-alive has left
 
 vars == <<session, nextSession, sent, opened, reached, marked, seen,
           seenBeforeRelease, replyMac, kmap, net, pendingForget,
-          pendingMark, pendingMacForget, phase, dropped, forgetFailures>>
+          pendingMark, pendingMacForget, phase, dropped, forgetFailures,
+          greeted>>
 
 Drops == [addr : Addresses, seq : Seqs, session : 0..Sessions,
           against : 0..Sessions]
@@ -136,11 +155,12 @@ TypeOK ==
     /\ net \subseteq Packets
     /\ pendingForget \subseteq Addresses
     /\ Cardinality(pendingForget) <= ForgetCapacity
-    /\ pendingMark \subseteq [addr : Addresses, hw : Seqs, sess : SessionIds]
+    /\ pendingMark \subseteq [addr : Addresses, hw : 0..MaxSeq, sess : SessionIds]
     /\ pendingMacForget \subseteq Addresses
     /\ phase \in {"run", "flush"}
     /\ dropped \subseteq Drops
     /\ forgetFailures \in 0..ForgetFailureBudget
+    /\ greeted \in [Addresses -> BOOLEAN]
 
 Init ==
     /\ session = [a \in Addresses |-> NoSession]
@@ -160,15 +180,17 @@ Init ==
     /\ phase = "run"
     /\ dropped = {}
     /\ forgetFailures = 0
+    /\ greeted = [a \in Addresses |-> FALSE]
 
 Max(x, y) == IF x >= y THEN x ELSE y
 
 (***************************************************************************)
 (* Connect(a): a new session from a; its sequences restart at 1 and its    *)
 (* highest_opened is 0.  A userspace step, so only while packets are being *)
-(* processed. A reconnect may arrive before a retained delete succeeds;   *)
-(* the model keeps that interleaving because the kernel map still sees the *)
-(* source address while the delete is owed.                                *)
+(* processed. A reconnect may arrive before the old forget is queued or    *)
+(* while a retained delete is refused: there is no settle guard here, and  *)
+(* the kernel map may still hold the old session's entry for a.  The new   *)
+(* session is not greeted until the next Commit.                           *)
 (***************************************************************************)
 Connect(a) ==
     /\ phase = "run"
@@ -179,13 +201,16 @@ Connect(a) ==
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
     /\ replyMac' = [replyMac EXCEPT ![a] = nextSession]
+    /\ greeted' = [greeted EXCEPT ![a] = FALSE]
     /\ UNCHANGED <<reached, marked, seen, seenBeforeRelease, kmap, net,
                    pendingForget, pendingMark, pendingMacForget, phase,
                    dropped, forgetFailures>>
 
-(* ClientSend(a): the live session sends its next genuine sequence.        *)
+(* ClientSend(a): the live session sends its next genuine sequence, once   *)
+(* its first keep-alive has reached it (the client's connected state).     *)
 ClientSend(a) ==
     /\ session[a] # NoSession
+    /\ greeted[a]
     /\ sent[a] < MaxSeq
     /\ Cardinality(net) < MaxInFlight
     /\ sent' = [sent EXCEPT ![a] = sent[a] + 1]
@@ -195,7 +220,7 @@ ClientSend(a) ==
     /\ UNCHANGED <<session, nextSession, opened, reached, marked, seen,
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
-                   forgetFailures>>
+                   forgetFailures, greeted>>
 
 (* Forge(a, s): an attacker spoofing a sends any sequence; it never opens. *)
 Forge(a, s) ==
@@ -205,7 +230,7 @@ Forge(a, s) ==
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
-                   forgetFailures>>
+                   forgetFailures, greeted>>
 
 (* Duplicate(p): the network delivers a second copy of a packet.           *)
 Duplicate(p) ==
@@ -216,7 +241,7 @@ Duplicate(p) ==
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
-                   forgetFailures>>
+                   forgetFailures, greeted>>
 
 (***************************************************************************)
 (* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
@@ -248,7 +273,7 @@ KernelFilter(p) ==
                   /\ UNCHANGED dropped
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, replyMac, pendingForget, pendingMark,
-                   pendingMacForget, phase, forgetFailures>>
+                   pendingMacForget, phase, forgetFailures, greeted>>
 
 (***************************************************************************)
 (* UserOpen(p): userspace receives a packet the kernel passed.  A genuine  *)
@@ -267,7 +292,7 @@ UserOpen(p) ==
     /\ UNCHANGED <<session, nextSession, sent, marked, seen,
                    seenBeforeRelease, replyMac, kmap, pendingForget,
                    pendingMark, pendingMacForget, phase, dropped,
-                   forgetFailures>>
+                   forgetFailures, greeted>>
 
 (* Release(a): the session ends (timeout, disconnect).  Userspace.         *)
 Release(a) ==
@@ -277,6 +302,7 @@ Release(a) ==
     /\ sent' = [sent EXCEPT ![a] = 0]
     /\ opened' = [opened EXCEPT ![a] = 0]
     /\ seenBeforeRelease' = [seenBeforeRelease EXCEPT ![a] = seen[a]]
+    /\ greeted' = [greeted EXCEPT ![a] = FALSE]
     /\ UNCHANGED <<nextSession, reached, marked, seen, replyMac, kmap, net,
                    pendingForget, pendingMark, pendingMacForget, phase,
                    dropped, forgetFailures>>
@@ -285,8 +311,12 @@ Release(a) ==
 (* Walk: once per update, after packet processing and before the flush.   *)
 (* First the forgets: every slot that held a mark and is no longer         *)
 (* connected.  Then the marks: every connected slot whose highest_opened   *)
-(* is nonzero and differs from what it last marked.  The broken shape      *)
-(* WalkForgets = FALSE never forgets a released slot.                      *)
+(* differs from what it last marked (0 for none), and every connected slot *)
+(* not yet seen, zero included (MarkNewSessions).  A reconnect at a before *)
+(* the walk saw the release still has the old session's marked[a], and    *)
+(* its highest_opened is 0 until it is greeted, so it is marked at 0.  The *)
+(* broken shape WalkForgets = FALSE never forgets a released slot; the     *)
+(* broken shape MarkNewSessions = FALSE marks only a nonzero value.        *)
 (***************************************************************************)
 Forgets == IF WalkForgets
              THEN IF WalkForgetsUnmarked
@@ -294,10 +324,14 @@ Forgets == IF WalkForgets
                     ELSE {a \in Addresses : marked[a] # 0 /\ session[a] = NoSession}
              ELSE {}
 
+MarkTaken(b) ==
+    IF MarkNewSessions
+      THEN opened[b] # marked[b] \/ ~seen[b]
+      ELSE opened[b] # 0 /\ opened[b] # marked[b]
+
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
             a \in {b \in Addresses : /\ session[b] # NoSession
-                                     /\ opened[b] # 0
-                                     /\ opened[b] # marked[b]}}
+                                     /\ MarkTaken(b)}}
 
 AdmittedNewForgets == {accepted \in SUBSET (Forgets \ pendingForget) :
     /\ Cardinality(pendingForget \cup accepted) <= ForgetCapacity
@@ -321,7 +355,7 @@ Walk ==
         /\ phase' = "flush"
         /\ UNCHANGED <<session, nextSession, sent, opened, reached,
                        seenBeforeRelease, replyMac, kmap, net, dropped,
-                       forgetFailures>>
+                       forgetFailures, greeted>>
 
 (* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.  The kernel may refuse  *)
@@ -330,7 +364,9 @@ Walk ==
 (* before its marks, unless a mark of the same address was applied in this *)
 (* commit: that entry is a newer session's, and the stale forget is        *)
 (* superseded (rocketnet_xdp_replay_marks_reset_keeping's mark_applied).   *)
-(* Marks always apply here; a refused mark is out of the model.            *)
+(* Marks always apply here; a refused mark is out of the model.  A mark of *)
+(* 0 is an entry that drops nothing.  The update's send flush follows the  *)
+(* commit, so every live session is greeted.                               *)
 (* The broken shape KeepFailedForgets = FALSE drops it; the broken shape   *)
 (* SupersedeStaleForgets = FALSE keeps it over the newer mark.             *)
 Commit ==
@@ -356,6 +392,7 @@ Commit ==
                             THEN NoSession ELSE replyMac[a]]
     /\ pendingMark' = {}
     /\ pendingMacForget' = {}
+    /\ greeted' = [a \in Addresses |-> session[a] # NoSession]
     /\ phase' = "run"
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
                    seenBeforeRelease, net, dropped>>
@@ -398,10 +435,12 @@ RetryNeverDeletesNewerMark ==
           /\ kmap[a].sess = session[a])
 
 (* MarkNeverAhead: with a live session, the entry for its address is none, *)
-(* or was taken from that session and is no more than its highest_opened. *)
-(* With no live session the forget is owed (ForgetOwedUntilApplied): the   *)
-(* map lags the truth by one update, or by the commits a refused forget    *)
-(* took to land.                                                           *)
+(* or was taken from that session and is no more than its highest_opened, *)
+(* or the session is not yet greeted and its first mark is owed: still to  *)
+(* be taken by the walk, or pending for the commit before its first        *)
+(* keep-alive.  With no live session the forget is owed                    *)
+(* (ForgetOwedUntilApplied): the map lags the truth by one update, or by   *)
+(* the commits a refused forget took to land.                              *)
 MarkNeverAhead ==
     /\ ForgetOwedUntilApplied
     /\ \A a \in Addresses :
@@ -409,6 +448,10 @@ MarkNeverAhead ==
         \/ session[a] = NoSession
         \/ /\ kmap[a].sess = session[a]
            /\ kmap[a].hw <= opened[a]
+        \/ /\ ~greeted[a]
+           /\ \/ \E m \in pendingMark : m.addr = a
+              \/ opened[a] # marked[a]
+              \/ ~seen[a]
 
 (* FreshGenuineNeverDropped: a genuine packet of the live session dropped *)
 (* against a mark of its own session is never fresh: its sequence is at    *)
@@ -421,7 +464,8 @@ FreshGenuineNeverDropped ==
             => d.seq <= opened[d.addr] - W
 
 (* NewSessionNeverDroppedByOldMark: no genuine packet of a session is      *)
-(* dropped against a mark taken in an earlier session.                     *)
+(* dropped against a mark taken in an earlier session, whether or not the  *)
+(* earlier session's forget had been queued or accepted.                   *)
 NewSessionNeverDroppedByOldMark ==
     \A d \in dropped : ~(d.against # NoSession /\ d.against < d.session)
 
