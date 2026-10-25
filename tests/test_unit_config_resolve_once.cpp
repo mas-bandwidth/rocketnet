@@ -39,13 +39,8 @@
 #define check rocketnet_unit_check
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
 
-#if defined( _WIN32 )
-static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_putenv_s( name, value ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_putenv_s( name, "" ) == 0 ); }
-#else
 static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
 static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
-#endif
 
 static const uint8_t resolve_once_filter_a[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
 static const uint8_t resolve_once_filter_b[ROCKETNET_PACKET_FILTER_BYTES] = { 0x6B, 0x6B, 0x6B, 0x6B };

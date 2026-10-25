@@ -126,20 +126,12 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
 
 static int test_set_environment( const char * name, const char * value )
 {
-#if defined( _WIN32 )
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static int test_unset_environment( const char * name )
 {
-#if defined( _WIN32 )
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 static void dev_warning_server_config( rocketnet_server_transport_config_t * config )

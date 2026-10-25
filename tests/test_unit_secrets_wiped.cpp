@@ -813,20 +813,12 @@ static void secrets_wiped_staging_seen( const uint8_t * staging, int bytes )
 
 static int secrets_wiped_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static int secrets_wiped_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 struct secrets_wiped_config_t

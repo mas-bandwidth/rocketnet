@@ -72,13 +72,8 @@
 #define SEQUENCE_WRAP_FIELD_LIMIT 0xFFFFFFFFULL
 #define SEQUENCE_WRAP_MAX_PACKETS 16384
 
-#if defined( _WIN32 )
-static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_putenv_s( name, value ) == 0 ); }
-static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_putenv_s( name, "" ) == 0 ); }
-#else
 static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
 static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
-#endif
 
 static double sequence_wrap_clock = 1000.0;
 static double sequence_wrap_time_callback( void * ) { return sequence_wrap_clock; }

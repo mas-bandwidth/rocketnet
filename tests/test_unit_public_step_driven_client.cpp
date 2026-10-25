@@ -146,19 +146,11 @@ REGISTER_UNIT_TEST( test_public_step_driven_client_refused_on_a_threaded_only_tr
 
 static int public_step_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 static int public_step_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 static void test_public_step_driven_client_env_selects_the_mode()

@@ -13291,15 +13291,8 @@ void rocketnet_test_config_validation()
     // field untouched -- and the LOG LINE is asserted, not assumed: the
     // return value and the field alone cannot tell "set to empty" from
     // "not set at all", so without the capture this case would still pass
-    // if the empty branch vanished entirely
-    //
-    // windows cannot run it. the CRT has no set-but-empty state at all --
-    // rocketnet_test_env_putenv_s( name,"") DELETES the variable -- so the shim at the top of
-    // this file cannot put the process in the state the case needs, and
-    // the branch it covers is unreachable on that platform. a skipped test
-    // is named and logged, never silent
-
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    // if the empty branch vanished entirely. the unit environment table
+    // stores the empty value present on every platform, windows included
 
     rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 );
     rocketnet_server_transport_default_config_current( &config );
@@ -13316,8 +13309,6 @@ void rocketnet_test_config_validation()
 
     rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
-
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_test_env_restore( &guard );
 

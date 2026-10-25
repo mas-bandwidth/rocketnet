@@ -570,20 +570,12 @@ static void loopback_error_end()
 
 static int loopback_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static int loopback_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 static void loopback_signed_token( uint8_t * token )

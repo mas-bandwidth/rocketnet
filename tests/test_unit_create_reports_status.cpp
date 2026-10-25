@@ -48,13 +48,8 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
 
-#if defined( _WIN32 )
-static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_putenv_s( name, value ); }
-static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_putenv_s( name, "" ); }
-#else
 static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
 static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif
 
 // Whether the variable is set; its value, or empty, in value.
 static bool create_status_getenv( const char * name, std::string & value )

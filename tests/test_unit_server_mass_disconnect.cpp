@@ -47,20 +47,12 @@ static const int MASS_DISCONNECT_CLIENTS = 1000;
 
 static int mass_disconnect_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static int mass_disconnect_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 // a ROCKETNET_SERVER_TRANSPORT or ROCKETNET_CLIENT_TRANSPORT pin would replace

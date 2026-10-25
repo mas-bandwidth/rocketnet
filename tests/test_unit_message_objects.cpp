@@ -3072,15 +3072,10 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 // ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
 // the public creates (sdk/rocketnet_api.cpp:135 and :173).
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
-// Windows has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
+// The helpers set and unset the unit environment table on every platform.
 
-#if defined( _WIN32 )
-static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_putenv_s( name, value ); }
-static void mo_unsetenv( const char * name ) { rocketnet_test_env_putenv_s( name, "" ); }
-#else
 static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
 static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
-#endif
 
 static void test_send_budget_message_env_is_not_read()
 {

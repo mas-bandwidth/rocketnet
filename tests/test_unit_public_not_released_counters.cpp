@@ -39,13 +39,8 @@
 // over the struct by design, so a CI leg pinned to a real transport would open a
 // socket the step-driven loopback client never reaches. The pin is set aside
 // for the create and put back after, as test_unit_status_server_transport_create_ex.cpp does.
-#if defined(_WIN32)
-static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_putenv_s( name, value ); }
-static int public_not_released_unsetenv( const char * name ) { return rocketnet_test_env_putenv_s( name, "" ); }
-#else
 static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
 static int public_not_released_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif
 
 #define check rocketnet_unit_check
 

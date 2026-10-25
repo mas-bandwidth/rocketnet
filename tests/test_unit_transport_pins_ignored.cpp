@@ -28,20 +28,12 @@ void rocketnet_unit_prepare();
 
 static void pins_set( const char * name, const char * value )
 {
-#if defined(_WIN32)
-    rocketnet_test_env_putenv_s( name, value );
-#else
     rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static void pins_clear( const char * name )
 {
-#if defined(_WIN32)
-    rocketnet_test_env_putenv_s( name, "" );
-#else
     rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 static double pins_ignored_clock = 1000.0;

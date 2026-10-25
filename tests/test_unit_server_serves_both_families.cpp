@@ -39,13 +39,8 @@
 
 #define BOTH_FAMILIES_PROTOCOL 0xB071FA11A11E5001ULL
 
-#if defined(_WIN32)
-static int both_families_setenv( const char * name, const char * value ) { return rocketnet_test_env_putenv_s( name, value ); }
-static int both_families_unsetenv( const char * name ) { return rocketnet_test_env_putenv_s( name, "" ); }
-#else
 static int both_families_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
 static int both_families_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif
 
 struct both_families_identity_t
 {

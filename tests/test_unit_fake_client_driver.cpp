@@ -208,11 +208,7 @@ static void fake_disconnect_wake( void * transport )
 
 static int fake_disconnect_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return value[0] ? rocketnet_test_env_setenv( name, value, 1 ) : rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 // the environment overlays the config's transport name at create; each pin is

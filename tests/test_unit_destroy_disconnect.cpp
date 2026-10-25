@@ -45,20 +45,12 @@ static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
 // them at its end.
 static int destroy_disconnect_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, value );
-#else
     return rocketnet_test_env_setenv( name, value, 1 );
-#endif
 }
 
 static int destroy_disconnect_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return rocketnet_test_env_putenv_s( name, "" );
-#else
     return rocketnet_test_env_unsetenv( name );
-#endif
 }
 
 struct destroy_disconnect_env_guard_t

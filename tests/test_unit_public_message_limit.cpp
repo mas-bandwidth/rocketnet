@@ -114,11 +114,7 @@ struct message_limit_env_t
     }
     void set( const char * value )
     {
-#if defined( _WIN32 )
-        check( rocketnet_test_env_putenv_s( name, value ? value : "" ) == 0 );
-#else
         check( value ? rocketnet_test_env_setenv( name, value, 1 ) == 0 : rocketnet_test_env_unsetenv( name ) == 0 );
-#endif
     }
     ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }
 };

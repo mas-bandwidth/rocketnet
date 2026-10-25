@@ -46,6 +46,8 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
         if ( rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
             return 0;
     }
+    // An empty value is stored present and empty on every platform, so a
+    // case can reach the set-but-empty branch that the Windows CRT cannot.
     rocketnet_platform_test_environment_set( name, value );
     return 0;
 }
@@ -53,15 +55,6 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
 static inline int rocketnet_test_env_unsetenv( const char * name )
 {
     rocketnet_platform_test_environment_unset( name );
-    return 0;
-}
-
-static inline int rocketnet_test_env_putenv_s( const char * name, const char * value )
-{
-    if ( value[0] )
-        rocketnet_platform_test_environment_set( name, value );
-    else
-        rocketnet_platform_test_environment_unset( name );
     return 0;
 }
 
