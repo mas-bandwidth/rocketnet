@@ -12,7 +12,7 @@ does not have the transport.
 
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
 | --- | --- | --- | --- | --- |
-| `xdp` | Linux | 10 | - | root (or `CAP_BPF`, `CAP_NET_ADMIN`, and `CAP_NET_RAW`), `RLIMIT_MEMLOCK` for the 4096-byte UMEM frames, a NIC driver with AF_XDP, a real port (not 0), and a build with XDP compiled in; see [docs/LINUX.md](docs/LINUX.md), section 6 |
+| `xdp` | Linux | 10 | - | effective UID 0, permission to raise `RLIMIT_MEMLOCK` for the 4096-byte UMEM frames, a NIC driver with AF_XDP, a real port (not 0), and a build with XDP compiled in; see [docs/LINUX.md](docs/LINUX.md), section 6 |
 | `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_xdp_queues` at most 32 |
 | `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_xdp_queues` at most 32 |
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](docs/MACOS.md) |

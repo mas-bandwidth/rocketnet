@@ -594,7 +594,11 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 4. queue this frame's outgoing messages */
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
     if ( out )
+    {
+        for ( int i = 0; i < 64; i++ )
+            out[i] = 0; /* replace with this frame's serialized message */
         rocketnet_client_finish_message( client, 64 );
+    }
 
     /* 5. last: send now, so this frame's messages leave this frame */
     rocketnet_client_send_packets( client );
