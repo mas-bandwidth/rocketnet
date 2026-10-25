@@ -17,6 +17,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -570,20 +571,12 @@ static void loopback_error_end()
 
 static int loopback_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return _putenv_s( name, value );
-#else
-    return setenv( name, value, 1 );
-#endif
+    return rocketnet_test_env_setenv( name, value, 1 );
 }
 
 static int loopback_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif
+    return rocketnet_test_env_unsetenv( name );
 }
 
 static void loopback_signed_token( uint8_t * token )

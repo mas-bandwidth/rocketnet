@@ -14,6 +14,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "fake_client_driver.h"
@@ -145,25 +146,17 @@ REGISTER_UNIT_TEST( test_public_step_driven_client_refused_on_a_threaded_only_tr
 
 static int public_step_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return _putenv_s( name, value );
-#else
-    return setenv( name, value, 1 );
-#endif
+    return rocketnet_test_env_setenv( name, value, 1 );
 }
 static int public_step_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif
+    return rocketnet_test_env_unsetenv( name );
 }
 
 static void test_public_step_driven_client_env_selects_the_mode()
 {
     char saved[64] = {};
-    const bool present = rocketnet_test_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
+    const bool present = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
 
     rocketnet_client_transport_config_t config;
     int num_fields = 0;
