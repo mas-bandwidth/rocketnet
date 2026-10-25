@@ -148,10 +148,12 @@ logs once; the transport logs every path's count, zeros included, beside the
 socket's send failures when it closes. On a 600 s cell at 1000 clients the
 worker's QoS class read default (0x15) and it ran on the same six cores
 throughout. It held 16.3 to 17.3 us per packet for most of the run, but in two
-episodes of about 30 s (with the server host's load rising to 8.3) the cost rose
+episodes of about 30 s (from 210 s and from 411 s to 440 s into the run) (with the server host's load rising to 8.3) the cost rose
 to 26 to 29 us per packet. The worker then drains fewer packets a second than
 main produces, and no bank size absorbs a deficit that lasts that long: those
-episodes dropped 240,768 packets, all `no-free-bank`, no socket errno.
+episodes dropped 240,768 packets, all `no-free-bank`, no socket errno. This is
+an observation of a host loaded by other work, not a bank sizing fault: the
+banks are unchanged.
 
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
