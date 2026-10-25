@@ -31,7 +31,8 @@
 (* mutex), WriteAfterPublish (the worker keeps writing a buffer after it  *)
 (* published it), SkipWake (main does not wake the worker it owes),       *)
 (* ReleaseBeforeSent (the send worker frees a ring before it has sent it)  *)
-(* and DropFinal (the send worker exits without the ring stop handed it). *)
+(* DropFinal (the send worker exits without the ring stop handed it), and *)
+(* DiscardOnStop (queued and final send buffers are discarded on quit).   *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences
 
@@ -41,7 +42,7 @@ CONSTANTS N,                \* buffers
           MaxReady,         \* ready buffers the producer may queue
           Direction,        \* "send" or "receive"
           MainBlocks, WorkUnderLock, WriteAfterPublish, SkipWake,
-          ReleaseBeforeSent, DropFinal
+          ReleaseBeforeSent, DropFinal, DiscardOnStop
 
 ASSUME N >= 3 /\ Cap >= 1 /\ MaxReady >= 1 /\ MaxReady < N
 ASSUME Direction \in {"send", "receive"}
@@ -134,7 +135,8 @@ Consume(t) ==
     /\ t = "worker" => ~asleep
     /\ cheld # NONE
     /\ content[cheld] # << >>
-    /\ consumed' = consumed \o content[cheld]
+    /\ consumed' = IF Direction = "send" /\ quit /\ DiscardOnStop
+                   THEN consumed ELSE consumed \o content[cheld]
     /\ content' = [ content EXCEPT ![cheld] = << >> ]
     /\ view' = << >>
     /\ idle' = IF t = "worker" THEN FALSE ELSE idle
@@ -267,7 +269,7 @@ WorkerExit ==
     /\ IF Direction = "send"
        THEN /\ Done(cheld)
             /\ ready = << >>
-            /\ consumed' = IF final # NONE /\ ~DropFinal THEN consumed \o content[final] ELSE consumed
+            /\ consumed' = IF final # NONE /\ ~DropFinal /\ ~DiscardOnStop THEN consumed \o content[final] ELSE consumed
             /\ content' = IF final # NONE THEN [ content EXCEPT ![final] = << >> ] ELSE content
        ELSE UNCHANGED << consumed, content >>
     /\ exited' = TRUE
