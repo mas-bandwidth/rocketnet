@@ -435,8 +435,7 @@ static void windows_handle_table_read( windows_handle_table_t * table )
     diag_sys_info_t * info = (diag_sys_info_t *) VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
     ULONG returned = 0;
     const LONG status = info ? system( 64, info, (ULONG) bytes, &returned ) : -1;
-    if ( status < 0 ) { printf( "DIAG system handle list status 0x%lx
-", (unsigned long) status ); table->overflow = true; }
+    if ( status < 0 ) { printf( "DIAG system handle list status 0x%lx\n", (unsigned long) status ); table->overflow = true; }
     const ULONG_PTR self = (ULONG_PTR) GetCurrentProcessId();
     for ( ULONG_PTR i = 0; status >= 0 && i < info->count; i++ )
     {
