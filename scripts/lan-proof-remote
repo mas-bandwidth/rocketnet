@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#
+# lan-proof-remote -- the file a coordinator copies to a host and runs there.
+# This commit has no live body. The coordinator's dry run never executes it.
+
+echo "lan-proof-remote: live run is not in this commit" >&2
+exit 2
