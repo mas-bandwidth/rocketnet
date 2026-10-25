@@ -312,8 +312,258 @@ the caller's thread. Disconnect and stop request that those threads end, the
 completion queries report when they have, and destroy joins them, which is
 why destroy comes after completion.
 
+## 8. Move from development tokens to a production backend (`ROCKETNET_DEV=0`)
+
+Sections 2 through 4 started with the development build (`ROCKETNET_DEV=1`),
+where `examples/client_server_server.c` uses `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`,
+`examples/client_server_client.c` calls `rocketnet_create_dev_connect_token`,
+and the server loop guards `rocketnet_server_start_message` (`if ( !p ) continue;`)
+before writing payload bytes and calling `rocketnet_server_finish_message`.
+(Every caller of `rocketnet_client_start_message` and
+`rocketnet_server_start_message` in production code must check `p != NULL`
+before writing to `p`.)
+
+Before deploying a game, switch the C SDK build to `ROCKETNET_DEV=0`
+(`-DROCKETNET_DEV=OFF`) and mint connect tokens on a backend service using
+[examples/backend](../examples/backend/README.md) (available in Go at
+`examples/backend/go` and C# at `examples/backend/csharp`; **the C# project is a
+backend token service only — RocketNet has no C# client API**).
+
+### Step 1: Build the production library and backend examples (`ROCKETNET_DEV=0`)
+
+Configure a production build with `-DROCKETNET_DEV=OFF` and build the portable
+backend server, client, token checker, and `keygen` utility:
+
+```sh
+cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
+cmake --build build-production --target example_backend_server example_backend_client backend_check_token keygen
+```
+
+In a `ROCKETNET_DEV=0` build:
+
+- `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and `rocketnet_create_dev_connect_token`
+  are compiled out of `sdk/rocketnet.h` and the library.
+- `rocketnet_server_start` refuses an all-zero `backend_public_key` with
+  `ROCKETNET_STATUS_MISSING_KEYS` (`-10`) and refuses the published development
+  backend or server key with `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION` (`-12`).
+- `rocketnet_client_create` and `rocketnet_server_create` refuse the published
+  development packet filter with
+  `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`).
+  `example_backend_server` and `example_backend_client` use the non-secret
+  4-byte title packet filter `RNBE` (`EXAMPLE_BACKEND_PACKET_FILTER`, overridable
+  via matching base64 `ROCKETNET_SERVER_PACKET_FILTER` and
+  `ROCKETNET_CLIENT_PACKET_FILTER`).
+- `rocketnet_client_connect` refuses any token sealed to the published
+  development server key with
+  `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`).
+
+### Step 2: Provision the backend signing keypair and keep key boundaries
+
+Generate a fresh Ed25519 backend signing keypair with the Go backend, the C#
+backend, or `./build-production/bin/keygen`:
+
+```sh
+umask 077
+(cd examples/backend/go && go run . --keygen) > backend-keys.env
+# Or with C#:
+# (cd examples/backend/csharp && dotnet build Backend && dotnet run --no-build --project Backend -- --keygen) > backend-keys.env
+# Or with the C SDK keygen tool:
+# ./build-production/bin/keygen > backend-keys.env
+```
+
+Each command prints two base64 environment assignments:
+
+- `ROCKETNET_BACKEND_PRIVATE_KEY` (64-byte Ed25519 secret signing key): stays
+  **strictly on the backend token service**. Never ship it with game clients,
+  never pass it to game servers, and never commit `backend-keys.env` or log its
+  value. Both the Go and C# backends zero the secret key buffer and per-token
+  session keys in memory after signing.
+- `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` (32-byte Ed25519 public verification
+  key): given to every game server via `config.backend_public_key` or the
+  `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` environment variable (read once at
+  `rocketnet_server_create`).
+
+### Step 3: Start and register a live production server
+
+Each server instance generates its own ephemeral X25519 keypair inside
+`rocketnet_server_create` (`rocketnet_generate_server_keypair`); the 32-byte
+secret key never leaves the server object and is wiped by
+`rocketnet_server_destroy`. After `rocketnet_server_start` succeeds, the server
+exports its bound UDP address and 32-byte X25519 public key
+(`rocketnet_server_public_key`) so the backend can seal tokens to it. From
+[examples/backend_server.c](../examples/backend_server.c), lines 75 to 84 and
+88 to 96:
+
+```c
+enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &status );
+if ( server )
+    status = rocketnet_server_start( server );
+if ( status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: server start: %s\n", rocketnet_status_name( status ) );
+    return 1;
+}
+printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_server_transport_name( server ) );
+```
+
+```c
+char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+char server_public_key_base64[4 * ( ( ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 2 ) / 3 ) + 1];
+rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) );
+rocketnet_server_public_key( server, server_public_key );
+write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
+FILE * env = fopen( ENV_FILE, "w" );
+fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
+fclose( env );
+```
+
+Start the production server in Terminal 1 with only the public verification key,
+and start the Go or C# backend in Terminal 2 with the private signing key:
+
+```sh
+# Terminal 1: production server
+export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
+./build-production/bin/example_backend_server
+```
+
+```sh
+# Terminal 2: Go or C# backend (port 8080)
+export ROCKETNET_BACKEND_PRIVATE_KEY="$(grep '^ROCKETNET_BACKEND_PRIVATE_KEY=' backend-keys.env | cut -d= -f2-)"
+(cd examples/backend/go && go run .)
+# Or: (cd examples/backend/csharp && dotnet run --project Backend)
+```
+
+In Terminal 3, register the live server with `PUT /servers/{serverID}`:
+
+```sh
+. ./backend.env
+curl -i -X PUT http://localhost:8080/servers/local \
+  -H 'Content-Type: application/json' \
+  --data "{\"addresses\":[\"${ROCKETNET_BACKEND_SERVER_ADDRESSES}\"],\"public_key\":\"${ROCKETNET_BACKEND_SERVER_PUBLIC_KEY}\"}"
+# HTTP/1.1 204 No Content
+```
+
+**Title-owned seam — server registration authentication:** The example backend
+accepts unauthenticated `PUT /servers/{serverID}` requests on `localhost` (up to
+4096 bytes) for local testing. In production, authenticate server registration
+on a trusted control plane (mTLS, fleet credentials, or private network) so
+untrusted callers cannot add or overwrite servers in the registry.
+
+### Step 4: Authenticate a player, mint a token, and connect the C client
+
+**Title-owned seam — player authentication and server selection:** In the
+example backends, `GET /match/{clientID}` accepts an unauthenticated decimal
+64-bit `clientID` in the URL path and selects a registered server uniformly at
+random (`registry.random()` / `registry.Random()`). In production, your match
+endpoint authenticates the player's platform or account session first, derives
+the authoritative `uint64_t` `client_id` on the backend, and selects a server by
+region, capacity (such as the demonstrated 1000-player `ROCKETNET_MAX_CLIENTS`
+server configuration under its stated workload and deployment conditions), or
+match assignment before minting the token.
+
+The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
+1024 base64 characters) binds:
+
+- `protocol_id`: 64-bit game protocol ID (`0x52434b544e455431` default via
+  `ROCKETNET_BACKEND_PROTOCOL_ID`), which must be nonzero and match
+  `server_config.protocol_id`;
+- `create_timestamp` and `expire_timestamp`: 64-bit Unix timestamps in seconds
+  (default 30-second lifetime via `ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS`);
+- `timeout_seconds`: 32-bit handshake and keepalive timeout in seconds (default
+  `10` via `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS`);
+- `addresses` and `address_flags`: 1 or 2 literal UDP server endpoints (`IPv4`,
+  `IPv6`, or one of each);
+- `server_public_key`: the selected server's 32-byte X25519 public key, to which
+  the 432-byte `sealed_private_block` (`client_id`, inner `protocol_id` and
+  `expire_timestamp`, `client_to_server_key`, `server_to_client_key`, and
+  256-byte `user_data`) is sealed via `crypto_box_seal`, with the 576-byte
+  `signed_connect_data` signed by `ROCKETNET_BACKEND_PRIVATE_KEY`.
+
+Pass the opaque base64 token to `rocketnet_client_connect`. From
+[examples/backend_client.c](../examples/backend_client.c), lines 44 to 60:
+
+```c
+const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
+struct rocketnet_client_config_t config;
+rocketnet_client_default_config( &config );
+config.transport = "portable";
+memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
+config.state_change_callback = state_changed;
+struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
+
+// connect checks the token first: a string that does not parse, or one
+// already expired, is refused here
+const enum rocketnet_status_t status = rocketnet_client_connect( client, argv[2] );
+if ( status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
+    return 1;
+}
+printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
+```
+
+Request a fresh token and connect the production C client (or run the automated
+end-to-end verification across both Go and C# backends):
+
+```sh
+./build-production/bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
+python3 tools/run_backend_examples.py --build build-production --production
+```
+
+### Step 5: Handle token and handshake refusals safely
+
+- **Backend HTTP refusals:**
+  - `GET /match/{clientID}` returns `HTTP 503 Service Unavailable` when no
+    servers are registered; register a live server via `PUT /servers/{serverID}`
+    (`HTTP 204 No Content`) before matching.
+  - `GET /match/{clientID}` returns `HTTP 400 Bad Request` if `clientID` is not
+    an unsigned 64-bit decimal integer.
+  - `PUT /servers/{serverID}` returns `HTTP 400 Bad Request` (or `HTTP 413` in
+    C# when the body exceeds 4096 bytes) if `serverID` is empty or `> 128`
+    bytes, JSON is malformed or has unknown fields, `addresses` is empty, has
+    `> 2` entries, repeats an IP family, uses a hostname instead of a literal
+    IP, uses port `0`, or `public_key` is not 32-byte base64.
+- **Synchronous pre-send refusals at `rocketnet_client_connect(client, token)`:**
+  - `NULL` pointer -> `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`).
+  - Empty string, length `!= 1024`, invalid base64, wrong `wire_version`, bad
+    `address_flags`, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp`
+    -> `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) (setting
+    `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` = `-6` when the 768-byte
+    token decoded but failed field validation).
+  - Token already expired (`expire_timestamp <= current_timestamp`) ->
+    `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-16`) and state
+    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
+  - Token sealed to the published development server key in a `ROCKETNET_DEV=0`
+    build -> `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`).
+  - Token naming port `0` -> `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`).
+  - **Safe action:** Do not enter the connected loop; request a fresh token from
+    the backend before calling `rocketnet_client_connect` again.
+- **Asynchronous handshake refusals (`rocketnet_client_state(client) < 0` during `rocketnet_client_update`):**
+  - Wrong `protocol_id`, wrong or stale `server_public_key` (e.g., server
+    restarted without re-registering), unadvertised server address, or token
+    expired on arrival -> server ignores the request before the cookie gate;
+    client ends in `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`) or
+    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
+  - Wrong backend signing key (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` mismatch),
+    corrupted sealed private block, token already used by another client
+    address, or `client_id` already connected -> server ignores the post-cookie
+    connection request; client ends in
+    `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
+    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
+  - All `max_clients` server slots full -> server sends a sealed denial; client
+    ends in `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`).
+  - **Safe action:** Call `rocketnet_client_disconnect(client)`, poll
+    `rocketnet_client_disconnected(client)` until `true`, and request a
+    **fresh** connect token from the backend before reconnecting (or call
+    `rocketnet_client_destroy(client)`). Never reuse an expired or consumed
+    connect token.
+
 ## Where to go next
 
+- [examples/backend/README.md](../examples/backend/README.md): full reference
+  for the Go and C# token services, failure tables, and test suites.
 - [USAGE.md](../USAGE.md): configuration, stats, send budgets, and every state
   and refusal.
 - [examples/README.md](../examples/README.md): one example per feature, and how
