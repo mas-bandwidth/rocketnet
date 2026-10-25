@@ -213,6 +213,27 @@ jobs:
           [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
           check_cell xdp xdp "$line"
 
+      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload XDP filter guest artifacts
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdp-filter-guest-${{ steps.refslug.outputs.slug }}
+          path: build/xdp-filter-guest
+          if-no-files-found: ignore
+
   # Thirty minutes per Linux server cell under impairment, with flat fds,
   # threads and resident memory: scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
