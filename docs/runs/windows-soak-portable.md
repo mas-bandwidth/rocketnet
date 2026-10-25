@@ -22,7 +22,10 @@ client, the link simulator at both ends set to 30 ms latency, 20 ms jitter,
   `test_light_profile_server_1000_required_memory`
   (`light server lifecycle bytes: actual=1591206044 expected=1523705813`).
   That red comes from main: at this head the branch differs from main only in
-  the workflow file and this record.
+  the workflow file and this record. Main then landed the fix to that test
+  pin (`tests/test_unit_light_profile.cpp` only, no file soak.exe builds
+  from). At the merge `7be6547e` the Release build exited 0 and
+  `./bin/Release/test.exe` printed `*** ALL TESTS PASSED ***`.
 - Command: the workflow step's `run:` block with `seconds` set to 60 (smoke)
   and then 1800, which runs
 
