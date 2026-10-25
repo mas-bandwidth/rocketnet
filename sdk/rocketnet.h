@@ -907,9 +907,13 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// Initializes the library, platform and crypto state. Call before creating
 /// clients or servers. Do not race this call with term.
 ///
-/// All allocations go through this allocator, except platform-specific
-/// allocations that must be made in a particular way. Examples are AF_XDP
-/// UMEM, io_uring rings, RIO buffers and thread stacks.
+/// All allocations go through this allocator, except the memory the operating
+/// system must own: AF_XDP UMEM (page-aligned and registered with the kernel),
+/// io_uring rings (mapped by the kernel and liburing) and thread stacks
+/// (created at the platform's default size). The RIO registered region comes
+/// from this allocator: RIO registration takes committed memory at the
+/// allocator's ROCKETNET_ALLOCATION_ALIGNMENT (64-byte) alignment and locks
+/// the pages it spans, so it needs no page alignment of its own.
 /// NULL for both selects the system allocator. Passing only one
 /// returns ROCKETNET_STATUS_INVALID_ARGUMENT. Both must be thread-safe.
 /// malloc_function returns memory aligned for any fundamental type, or NULL.
@@ -1451,8 +1455,29 @@ struct rocketnet_server_config_t
 /// allocator. Connect and start then allocate transport memory through the
 /// same allocator, before any traffic: sockets, worker threads, I/O rings and
 /// buffers, and on the server its per-client protocol tables. Nothing in the
-/// frame loop below allocates. The required_memory calls report only the
-/// block create needs.
+/// frame loop below allocates. Disconnect and stop retire the transport; the
+/// next connect or start frees it before it allocates the next, and destroy
+/// frees it, so a reconnect or restart takes the same bytes again and the
+/// peak never grows across cycles. The required_memory calls report that
+/// peak: the most the allocator holds over create, connect or start,
+/// disconnect or stop, reconnect or restart, and destroy, each allocation
+/// with its alignment header, for whichever transport of the config's list
+/// is granted (the largest of them). For the planned built-in transports,
+/// with unchanged configuration and environment overrides, an allocator over
+/// a region of that size never runs out. The development link simulator is
+/// included in development builds.
+///
+/// Not counted, because the operating system owns it: each worker thread's
+/// stack (the platform default: pthread's default attribute, or the
+/// executable's /STACK reserve, 1 MiB by default, on Windows); on the xdp
+/// transport the page-aligned UMEM, 256 MiB per queue (65536 frames of 4096
+/// bytes), and the AF_XDP rings; on the
+/// io_uring transport its rings and each queue's provided buffer ring; kernel
+/// socket buffers. A custom transport's own memory and a
+/// ROCKETNET_SERVER_ or ROCKETNET_CLIENT_ environment
+/// override changed after the call are not counted either. Connect and start
+/// log each candidate's plan at info level ("client memory plan",
+/// "server memory plan").
 ///
 /// Pass the same game clock to every update, in seconds.
 /// Run each frame on one thread. Update first, receive until NULL, simulate,
@@ -1554,7 +1579,9 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
     return rocketnet_client_light_config_internal( config );
 }
 
-/// Returns the memory needed by create for this config.
+/// Returns the most memory the allocator holds for this config over the
+/// client's lifecycle: create's block plus the transport each connect
+/// allocates (see Messages above). It is at least the block create needs.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
 ///
@@ -1562,8 +1589,9 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 /// environment.
 ///
 /// @param config The config to size, or NULL for the defaults.
-/// @return The bytes create allocates for the client, or 0 when the config,
-/// its config_bytes or an environment override is invalid.
+/// @return The most bytes the allocator holds for the client over its
+/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
 
@@ -2096,17 +2124,22 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
     return rocketnet_server_light_config_internal( config );
 }
 
-/// As rocketnet_client_required_memory, for this config and max_clients.
-/// The defaults' test filter in a production build is an invalid config. A
-/// named transport memory estimate is diagnostic and does not grant that
-/// transport at create or start.
+/// Returns the most memory the allocator holds for this config and
+/// max_clients over the server's lifecycle: create's block plus the
+/// transport and per-client tables each start allocates (see Messages above).
+/// It is at least the block create needs.
+/// Applies the same environment overrides as create.
+/// NULL config selects defaults. Invalid config returns 0, including the
+/// defaults' test filter in a production build. A named transport memory
+/// estimate is diagnostic and does not grant that transport at create or start.
 ///
 /// Needs no server. Thread: any thread; it reads only config and the
 /// environment.
 ///
 /// @param config The config to size, or NULL for the defaults.
-/// @return The bytes create allocates for the server, or 0 when the config,
-/// its config_bytes or an environment override is invalid.
+/// @return The most bytes the allocator holds for the server over its
+/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
 

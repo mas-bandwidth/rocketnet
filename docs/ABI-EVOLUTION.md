@@ -145,7 +145,11 @@ receive queue uses `rocketnet_message_batch_t` and needs no release call.
 `rocketnet_server_create( context, address, NULL, config, &status )` take a nullable
 status out-parameter, so a NULL result has a specific `rocketnet_status_t`.
 Each makes one block through the allocator; `rocketnet_client_required_memory`
-and `rocketnet_server_required_memory` give its size. The process-wide
+and `rocketnet_server_required_memory` give the lifecycle allocator peak,
+including planned built-in transport allocations at connect or start and
+repeated cycles with unchanged configuration and environment overrides.
+Development builds include the link simulator. OS-owned memory and custom
+transport allocations are excluded. The process-wide
 allocator, assert function, log function, log level, quiet flag and thread
 priority switch are installed through `rocketnet_init`,
 `rocketnet_assert_function`, `rocketnet_log_function`, `rocketnet_log_level`,

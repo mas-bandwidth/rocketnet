@@ -72,7 +72,9 @@ build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
-(tests/README.md).
+(tests/README.md). Peak resident set is telemetry in this unit run: an
+over-bound line names the measured peak and bound without changing the unit
+verdict.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -92,6 +94,12 @@ case, including sibling binaries, runs alone on every platform. Setting
 `ROCKETNET_TEST_JOBS` cannot increase functional concurrency; deterministic
 unit cases may still run in parallel. Run separate functional invocations and
 other network workloads separately on the same test host as well.
+
+The functional suite enforces peak-resident-set bounds. Its
+`test_unit_case_memory` sibling row runs the complete unit binary in enforcement
+mode, so the bound declarations beside unit cases and the suite-wide fallback
+are reused directly. The row and every unit case inside it retain the
+existing time limits.
 
 Functional assertions check delivery, ordering, state transitions and eventual
 recovery. Wall-clock latency and receive gaps are diagnostics, not pass/fail
@@ -614,10 +622,11 @@ staging per client; the asserts check that the most queues can. The XDP
 replay window (16 packets per client) is unchanged.
 
 Memory grows with the clients a server asks for, at the per-client depth the
-config sets: `rocketnet_server_required_memory` gives the block before create.
-The default per-client config needs about 18.3 GB at 1000 clients and 183 GB at
-10000, so a 10000-client server sets lighter per-client limits (send and
-receive buffers, queues, windows, receipts and reassembly slots) for its game.
+config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
+peak before create, including the largest planned built-in transport in the
+configured ladder. Query the exact build and configuration for its requirement;
+a 10000-client server can set lighter per-client limits (send and receive
+buffers, queues, windows, receipts and reassembly slots) for its game.
 A build for more clients also carries larger fixed per-server tables (the
 receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
 the server's `max_clients`.
@@ -647,9 +656,12 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_required_memory(config)` returns the bytes of the one block
-`rocketnet_server_create` allocates through the allocator for `config` at its
-`max_clients`. It works before
+`rocketnet_server_required_memory(config)` returns the peak bytes held by the
+allocator over create, start, stop, restart and destroy for `config` at its
+`max_clients`, including planned built-in transport allocations and the
+development link simulator in development builds. The bound assumes unchanged
+configuration and environment overrides; OS-owned memory and custom-transport
+allocations are excluded. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
 applies environment overrides (matching create), but does not check keys, probe

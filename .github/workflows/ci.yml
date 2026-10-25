@@ -287,7 +287,7 @@ jobs:
           ./bin/fuzz_replay_rocketnet_fuzz_client_transport fuzz/corpus_client_transport/*
           ./bin/fuzz_replay_rocketnet_fuzz_session fuzz/corpus_session/*
 
-      - name: Run unit tests
+      - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: contains(matrix.leg, 'b')
         run: ./bin/test
 
@@ -317,7 +317,9 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'b')
         run: bash tools/check_memlock.sh
 
-      - name: Run functional suite (auto ladder — the fall, on Linux)
+      # This run includes test_unit_case_memory, the row that enforces the unit
+      # cases' measured RSS against their existing registry and fallback bound.
+      - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
         if: contains(matrix.leg, 'b')
         run: ./bin/functional
 

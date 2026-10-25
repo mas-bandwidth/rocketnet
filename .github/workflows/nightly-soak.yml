@@ -217,8 +217,10 @@ jobs:
   # threads and resident memory: scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
   # io_uring, and xdp inside a virtme-ng guest of the runner's own kernel),
-  # with loss, latency, jitter and duplication at both ends through the link
-  # simulator's env overlay, and prints one PASS or FAIL line per cell. Five
+  # with loss, latency, jitter and duplication at both ends of the link
+  # simulator (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, written into
+  # the transport configs soak creates from, and a cell fails when they leave
+  # no drops or refused duplicates), and prints one PASS or FAIL line per cell. Five
   # cells of 30 minutes are about 152 minutes, past the two-minute rule as
   # every nightly is. A runner with no VM tier fails the xdp cell by name.
   soak-per-transport:

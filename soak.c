@@ -77,11 +77,38 @@
     soak exits 1 on any payload verify failure, any counter conservation
     failure and any disconnect that is not its own planned reconnect, naming
     which. Every REFUSAL counter must read 0, with one exception: when the
-    link simulator duplicates packets (ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT
-    or ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT nonzero), the duplicates
-    it plants are refused as already received, so every <FAMILY>_ALREADY_RECEIVED
-    refusal (payload, keep-alive, ack, fragment and disconnect, on the client
-    and the server) is counted and printed, not failed.
+    link simulator at one end duplicates packets, the duplicates it plants
+    are refused as already received at the other end, so there every
+    <FAMILY>_ALREADY_RECEIVED refusal (payload, keep-alive, ack, fragment and
+    disconnect) is counted and printed, not failed.
+
+    THE LINK IMPAIRMENT. ROCKETNET_DEV_SERVER_LATENCY_MS, _JITTER_MS,
+    _PACKET_LOSS_PERCENT and _DUPLICATE_PERCENT, and the ROCKETNET_DEV_CLIENT_
+    twins (the names the library's public create reads for its development
+    link simulator), set the simulator of each end: soak writes them into the
+    transport configs it creates the server and every client from. Latency
+    and jitter are 0 .. 60000 ms, loss and duplicate 0 .. 100 percent; a
+    value outside that, or not all digits, is refused with exit 2, and so is
+    any ROCKETNET_SERVER_SIMULATED_* or ROCKETNET_CLIENT_SIMULATED_* name,
+    which nothing reads. At start soak prints what each end was created with,
+    read from its config, as "soak link simulator: server latency_ms=<n>
+    jitter_ms=<n> loss_percent=<n> duplicate_percent=<n>" and the same for
+    the client. A client created with any of these nonzero runs no network
+    thread (the library's rule: the simulator holds its packets and the
+    caller sends them).
+    At the end it prints, per direction, "soak link witness:
+    <client_to_server|server_to_client> missing=<n> late=<n> repeated=<n>
+    duplicates_refused=<n>": missing the payloads sent before one that
+    arrived that never arrived themselves (read from the payload size cycle;
+    the library counts none of its simulator's drops), late those that
+    arrived behind a later one, repeated a payload delivered twice in a row,
+    and duplicates_refused the receiving end's already-received refusals.
+    The summary carries client_to_server_missing, server_to_client_missing,
+    duplicates_refused_at_server and duplicates_refused_at_client. With
+    --assert-flat a requested impairment that left no trace fails the run,
+    "soak: --assert-flat FAILED: link impairment not observed: ...": loss at
+    an end with nothing missing in the direction it sends, or duplication at
+    an end with no already-received refusal at the other.
     ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
     uses as its negative control.
@@ -108,8 +135,8 @@
     library holds: the bytes it holds through the allocator soak gives
     rocketnet_init plus direct_bytes, the blocks it takes from the OS itself
     (the regions and rings a transport registers with or maps from the
-    kernel: the RIO region, the AF_XDP UMEM and rings, the io_uring rings and
-    provided buffer rings, read from rocketnet_direct_allocation_bytes); on
+    kernel: the AF_XDP UMEM and rings, the io_uring rings and provided
+    buffer rings, read from rocketnet_direct_allocation_bytes); on
     Linux it adds
     "smaps_rss=<n> private_dirty=<n>" from /proc/self/smaps_rollup, and on
     Windows "threads=<n> os_threads=<n>"; phase is
@@ -281,19 +308,159 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
         totals[i] += rocketnet_counter_value( counters, i );
 }
 
-// Whether the link simulator duplicates packets on either end, read from the
-// same env overlay the transports apply at create.
+// THE LINK IMPAIRMENT. Each end's link simulator setting, as the transport
+// config fields the library's development simulator reads
+// (simulated_latency_ms, simulated_jitter_ms, simulated_loss_percent,
+// simulated_duplicate_percent), requested under the names the library's
+// public create reads for them: ROCKETNET_DEV_<END>_LATENCY_MS, _JITTER_MS,
+// _PACKET_LOSS_PERCENT and _DUPLICATE_PERCENT, END being SERVER or CLIENT.
+// soak creates its transports with an explicit config, and the transport
+// create reads none of these names, so soak reads them itself (digits only,
+// latency and jitter 0 .. 60000, loss and duplicate 0 .. 100, the library's
+// ranges) and writes them into the configs it creates from, through the
+// sized creates (rocketnet_*_transport_create_sized with the struct's size):
+// the unsized creates read only the config revision before the simulator
+// fields, so a setting passed through them is dropped. Each end's
+// simulator acts on what that end sends: the server's setting impairs the
+// server to client direction, the client's the client to server one.
 
-static int soak_duplicates_planted( void )
+struct soak_link_t
 {
-    const char * names[] = { "ROCKETNET_SERVER_SIMULATED_DUPLICATE_PERCENT", "ROCKETNET_CLIENT_SIMULATED_DUPLICATE_PERCENT" };
-    for ( int i = 0; i < 2; i++ )
+    int latency_ms;
+    int jitter_ms;
+    int loss_percent;
+    int duplicate_percent;
+};
+
+// the settings in the configs the transports were created from
+static struct soak_link_t soak_server_link;
+static struct soak_link_t soak_client_link;
+
+// one variable: 1 read (unset or empty leaves *value at 0), 0 refused
+static int soak_link_env_value( const char * name, int max_value, int * value )
+{
+    char text[64];
+    *value = 0;
+    const int found = rocketnet_test_getenv( name, text, sizeof( text ) );
+    if ( !found || text[0] == '\0' )
+        return 1;
+    long parsed = 0;
+    for ( const char * cursor = text; *cursor != '\0'; cursor++ )
     {
-        char value[256];
-        if ( rocketnet_test_getenv( names[i], value, sizeof( value ) ) && value[0] != '\0' && strtol( value, NULL, 10 ) != 0 )
-            return 1;
+        if ( *cursor < '0' || *cursor > '9' || parsed > max_value )
+        {
+            fprintf( stderr, "soak: %s=\"%s\" refused: expected 0 .. %d\n", name, text, max_value );
+            return 0;
+        }
+        parsed = parsed * 10 + ( *cursor - '0' );
+    }
+    if ( parsed > max_value )
+    {
+        fprintf( stderr, "soak: %s=\"%s\" refused: expected 0 .. %d\n", name, text, max_value );
+        return 0;
+    }
+    *value = (int) parsed;
+    return 1;
+}
+
+static int soak_link_request( const char * end, struct soak_link_t * link )
+{
+    char name[64];
+    snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_LATENCY_MS", end );
+    if ( !soak_link_env_value( name, 60000, &link->latency_ms ) )
+        return 0;
+    snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_JITTER_MS", end );
+    if ( !soak_link_env_value( name, 60000, &link->jitter_ms ) )
+        return 0;
+    snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_PACKET_LOSS_PERCENT", end );
+    if ( !soak_link_env_value( name, 100, &link->loss_percent ) )
+        return 0;
+    snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_DUPLICATE_PERCENT", end );
+    return soak_link_env_value( name, 100, &link->duplicate_percent );
+}
+
+// The names nothing reads: a run that sets one asks for an impairment no
+// transport applies, so it is refused rather than run on a clean link.
+static int soak_link_unread_name_set( void )
+{
+    const char * ends[] = { "SERVER", "CLIENT" };
+    const char * fields[] = { "LOSS_PERCENT", "LATENCY_MS", "JITTER_MS", "DUPLICATE_PERCENT" };
+    const char * replacements[] = { "PACKET_LOSS_PERCENT", "LATENCY_MS", "JITTER_MS", "DUPLICATE_PERCENT" };
+    for ( int e = 0; e < 2; e++ )
+    {
+        for ( int f = 0; f < 4; f++ )
+        {
+            char name[64];
+            char value[64];
+            snprintf( name, sizeof( name ), "ROCKETNET_%s_SIMULATED_%s", ends[e], fields[f] );
+            if ( rocketnet_test_getenv( name, value, sizeof( value ) ) && value[0] != '\0' )
+            {
+                fprintf( stderr, "soak: %s is read by nothing and would run a clean link; set ROCKETNET_DEV_%s_%s\n", name, ends[e], replacements[f] );
+                return 1;
+            }
+        }
     }
     return 0;
+}
+
+static void soak_print_link( const char * end, int latency_ms, int jitter_ms, int loss_percent, int duplicate_percent )
+{
+    printf( "soak link simulator: %s latency_ms=%d jitter_ms=%d loss_percent=%d duplicate_percent=%d\n",
+            end, latency_ms, jitter_ms, loss_percent, duplicate_percent );
+}
+
+// The link witness, one per direction. The library keeps no count of the
+// packets its simulator drops or duplicates, so the drops are read from the
+// payloads: each direction sends its payload sizes in a cycle, 1 ..
+// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, so the receiver knows which size comes
+// next. From the first payload each connection receives, a size that skips
+// ahead counts the sizes it skipped as missing, and a size behind the
+// highest one received (a packet the jitter held back past a later one)
+// arrives late and takes one back off missing. What is missing at the end
+// was sent before something that arrived and never arrived itself: on a
+// clean loopback link it is 0. The planted duplicates are read from the
+// receiving end's <FAMILY>_ALREADY_RECEIVED refusals (below), which are 0 on
+// a clean link.
+
+struct soak_link_witness_t
+{
+    int have_last;
+    int last_size;
+    uint64_t missing;
+    uint64_t late;
+    uint64_t repeated;
+};
+
+static void soak_link_witness_connect( struct soak_link_witness_t * witness )
+{
+    witness->have_last = 0;
+}
+
+static void soak_link_witness_receive( struct soak_link_witness_t * witness, int payload_bytes )
+{
+    const int cycle = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    if ( payload_bytes < 1 || payload_bytes > cycle )
+        return;
+    if ( !witness->have_last )
+    {
+        witness->have_last = 1;
+        witness->last_size = payload_bytes;
+        return;
+    }
+    const int ahead = ( payload_bytes - witness->last_size + cycle ) % cycle;
+    if ( ahead == 0 )
+        witness->repeated++;
+    else if ( ahead < cycle / 2 )
+    {
+        witness->missing += (uint64_t) ( ahead - 1 );
+        witness->last_size = payload_bytes;
+    }
+    else
+    {
+        witness->late++;
+        if ( witness->missing > 0 )
+            witness->missing--;
+    }
 }
 
 // a planted duplicate of any sealed packet (payload, keep-alive, ack,
@@ -317,7 +484,8 @@ static int soak_refusal_planted_by_duplicates( const char * counter_name )
 
 static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters )
 {
-    const int duplicates_planted = soak_duplicates_planted();
+    // the refusals at an end are planted by the other end's duplicates
+    const int duplicates_planted = strcmp( name, "server" ) == 0 ? soak_client_link.duplicate_percent != 0 : soak_server_link.duplicate_percent != 0;
     int violations = 0;
 
     char report[256];
@@ -748,6 +916,9 @@ int main( int argc, char ** argv )
     char fault_verify_env[256];
     int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
 
+    if ( soak_link_unread_name_set() || !soak_link_request( "SERVER", &soak_server_link ) || !soak_link_request( "CLIENT", &soak_client_link ) )
+        return 2;
+
     signal( SIGINT, interrupt_handler );
 
     if ( rocketnet_init( NULL, soak_library_malloc, soak_library_free ) != ROCKETNET_STATUS_OK )
@@ -765,6 +936,19 @@ int main( int argc, char ** argv )
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    server_config.simulated_latency_ms = soak_server_link.latency_ms;
+    server_config.simulated_jitter_ms = soak_server_link.jitter_ms;
+    server_config.simulated_loss_percent = soak_server_link.loss_percent;
+    server_config.simulated_duplicate_percent = soak_server_link.duplicate_percent;
+
+    // every client is created from this config: the defaults and the
+    // client's link simulator setting
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.simulated_latency_ms = soak_client_link.latency_ms;
+    client_config.simulated_jitter_ms = soak_client_link.jitter_ms;
+    client_config.simulated_loss_percent = soak_client_link.loss_percent;
+    client_config.simulated_duplicate_percent = soak_client_link.duplicate_percent;
 
     // Bind port zero and adopt what the kernel grants, the #107 shape. A soak
     // is the worst place for a fixed port: it is the one binary the estate
@@ -778,13 +962,23 @@ int main( int argc, char ** argv )
     if ( !rocketnet_test_getenv( "SOAK_SERVER_ADDRESS", server_bind, sizeof( server_bind ) ) || server_bind[0] == '\0' )
         snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config);
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_config, sizeof( server_config ) );
     if ( !server )
     {
         printf( "soak: failed to create the server transport on %s\n", server_bind );
         rocketnet_term();
         return 1;
     }
+
+    // what the server was created with, read from its config (the library
+    // has no call that reads a running transport's simulator setting back);
+    // the duplicate refusals and the witness below are held to these
+    soak_server_link.latency_ms = server_config.simulated_latency_ms;
+    soak_server_link.jitter_ms = server_config.simulated_jitter_ms;
+    soak_server_link.loss_percent = server_config.simulated_loss_percent;
+    soak_server_link.duplicate_percent = server_config.simulated_duplicate_percent;
+    soak_print_link( "server", server_config.simulated_latency_ms, server_config.simulated_jitter_ms,
+                     server_config.simulated_loss_percent, server_config.simulated_duplicate_percent );
 
     // the token names the host bound and the port granted, or the port the
     // address named when the transport reports none (xdp discovers no port)
@@ -860,6 +1054,10 @@ int main( int argc, char ** argv )
     int server_payload_size = 1;
     struct soak_sequences_t sequences;
     memset( &sequences, 0, sizeof( sequences ) );
+    struct soak_link_witness_t client_to_server;
+    struct soak_link_witness_t server_to_client;
+    memset( &client_to_server, 0, sizeof( client_to_server ) );
+    memset( &server_to_client, 0, sizeof( server_to_client ) );
     uint64_t resident_baseline = 0;
     uint64_t asserts = 0;
     // the pacing, per connection: packets each way sent since the connect,
@@ -975,7 +1173,7 @@ int main( int argc, char ** argv )
                 break;
             }
 #endif
-            client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
+            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
 #if defined(__linux__)
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
             {
@@ -995,6 +1193,13 @@ int main( int argc, char ** argv )
             {
                 snprintf( client_transport_name, sizeof( client_transport_name ), "%s", granted ? granted : "unknown" );
                 printf( "soak transport: client %s\n", client_transport_name );
+                // what every client is created with, read from its config
+                soak_client_link.latency_ms = client_config.simulated_latency_ms;
+                soak_client_link.jitter_ms = client_config.simulated_jitter_ms;
+                soak_client_link.loss_percent = client_config.simulated_loss_percent;
+                soak_client_link.duplicate_percent = client_config.simulated_duplicate_percent;
+                soak_print_link( "client", client_config.simulated_latency_ms, client_config.simulated_jitter_ms,
+                                 client_config.simulated_loss_percent, client_config.simulated_duplicate_percent );
             }
             else if ( !granted || strcmp( granted, client_transport_name ) != 0 )
             {
@@ -1062,6 +1267,8 @@ int main( int argc, char ** argv )
                 connected = 1;
                 connects++;
                 connect_time = rocketnet_time();
+                soak_link_witness_connect( &client_to_server );
+                soak_link_witness_connect( &server_to_client );
                 connection_client_sent = 0;
                 connection_server_sent = 0;
                 struct rocketnet_delivery_capture_t capture;
@@ -1142,6 +1349,8 @@ int main( int argc, char ** argv )
                 int payload_client_index, payload_bytes;
                 uint8_t * server_payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
                 server_received++;
+                if ( payload_client_index == client_index )
+                    soak_link_witness_receive( &client_to_server, payload_bytes );
                 if ( fault_verify_pending && payload_bytes > 0 )
                 {
                     server_payload[0] ^= 0xff;
@@ -1163,6 +1372,7 @@ int main( int argc, char ** argv )
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
             {
                 client_received++;
+                soak_link_witness_receive( &server_to_client, received_bytes );
                 if ( fault_verify_pending )
                 {
                     received[0] ^= 0xff;
@@ -1325,6 +1535,55 @@ int main( int argc, char ** argv )
     else
         printf( "soak: conservation ok (server and every client)\n" );
 
+    // the link witness: what each direction lost and what each receiving end
+    // refused as already received (every client's counters, and the
+    // server's). --assert-flat with an impairment requested fails a run
+    // where the impairment left no trace: loss at an end with nothing
+    // missing in the direction it sends, or duplication at an end with no
+    // already-received refusal where it is received.
+
+    uint64_t duplicates_refused_at_server = 0;
+    uint64_t duplicates_refused_at_client = 0;
+    {
+        const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+        for ( int i = 0; i < rocketnet_num_counters() && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
+        {
+            if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || !soak_refusal_planted_by_duplicates( rocketnet_counter_name( i ) ) )
+                continue;
+            duplicates_refused_at_server += rocketnet_counter_value( counters, i );
+            duplicates_refused_at_client += client_counters[i];
+        }
+    }
+    printf( "soak link witness: client_to_server missing=%llu late=%llu repeated=%llu duplicates_refused=%llu\n",
+            (unsigned long long) client_to_server.missing, (unsigned long long) client_to_server.late,
+            (unsigned long long) client_to_server.repeated, (unsigned long long) duplicates_refused_at_server );
+    printf( "soak link witness: server_to_client missing=%llu late=%llu repeated=%llu duplicates_refused=%llu\n",
+            (unsigned long long) server_to_client.missing, (unsigned long long) server_to_client.late,
+            (unsigned long long) server_to_client.repeated, (unsigned long long) duplicates_refused_at_client );
+    if ( assert_flat )
+    {
+        if ( soak_client_link.loss_percent != 0 && client_to_server.missing == 0 )
+        {
+            printf( "soak: --assert-flat FAILED: link impairment not observed: client loss_percent=%d and client_to_server missing=0\n", soak_client_link.loss_percent );
+            failures++;
+        }
+        if ( soak_server_link.loss_percent != 0 && server_to_client.missing == 0 )
+        {
+            printf( "soak: --assert-flat FAILED: link impairment not observed: server loss_percent=%d and server_to_client missing=0\n", soak_server_link.loss_percent );
+            failures++;
+        }
+        if ( soak_client_link.duplicate_percent != 0 && duplicates_refused_at_server == 0 )
+        {
+            printf( "soak: --assert-flat FAILED: link impairment not observed: client duplicate_percent=%d and no already-received refusal at the server\n", soak_client_link.duplicate_percent );
+            failures++;
+        }
+        if ( soak_server_link.duplicate_percent != 0 && duplicates_refused_at_client == 0 )
+        {
+            printf( "soak: --assert-flat FAILED: link impairment not observed: server duplicate_percent=%d and no already-received refusal at the client\n", soak_server_link.duplicate_percent );
+            failures++;
+        }
+    }
+
     // the end sample, between clients as the post-warmup sample was: the
     // last client is destroyed, the server is still running
 
@@ -1408,6 +1667,10 @@ int main( int argc, char ** argv )
     printf( "soak summary: client_verified %llu\n", (unsigned long long) client_verified );
     printf( "soak summary: server_verified %llu\n", (unsigned long long) server_verified );
     printf( "soak summary: reconnects %llu\n", (unsigned long long) reconnects );
+    printf( "soak summary: client_to_server_missing %llu\n", (unsigned long long) client_to_server.missing );
+    printf( "soak summary: server_to_client_missing %llu\n", (unsigned long long) server_to_client.missing );
+    printf( "soak summary: duplicates_refused_at_server %llu\n", (unsigned long long) duplicates_refused_at_server );
+    printf( "soak summary: duplicates_refused_at_client %llu\n", (unsigned long long) duplicates_refused_at_client );
     printf( "soak summary: server_transport_io %s\n", server_transport_name );
     printf( "soak summary: client_transport_io %s\n", client_transport_name[0] ? client_transport_name : "none" );
     printf( "soak summary: client_highest_sent_sequence %llu\n", (unsigned long long) sequences.client_highest_sent );

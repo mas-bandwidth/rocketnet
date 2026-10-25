@@ -11,6 +11,7 @@
 #include <atomic>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -1858,6 +1859,17 @@ struct thread_shim_data_t
     rocketnet_platform_thread_t * thread;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 // the platform thread the calling thread runs as, for thread_wait; NULL on a
 // thread that thread_create did not start
 static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
@@ -1866,11 +1878,9 @@ static void* thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
     rocketnet_platform_thread_self = shim_data->thread;
-    rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return NULL;
 }
@@ -1901,19 +1911,15 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -1923,7 +1929,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -1932,7 +1937,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         pthread_cond_destroy( &thread->wake_cond );
         pthread_mutex_destroy( &thread->wake_mutex );
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -3927,6 +3931,17 @@ struct thread_shim_data_t
     rocketnet_platform_thread_t * thread;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 // the platform thread the calling thread runs as, for thread_wait; NULL on a
 // thread that thread_create did not start
 static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
@@ -3935,11 +3950,9 @@ static void * thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
     rocketnet_platform_thread_self = shim_data->thread;
-    rocketnet_free( context, data );
 
     real_thread_function( real_thread_data );
     return NULL;
@@ -3956,19 +3969,15 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -3978,7 +3987,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -3986,7 +3994,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     {
         semaphore_destroy( mach_task_self(), (semaphore_t) thread->wake_semaphore );
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -4444,33 +4451,38 @@ struct thread_shim_data_t
     rocketnet_platform_thread_func_t real_thread_function;
 };
 
+// the thread and its shim are one allocation: the shim lives as long as the
+// thread record (thread_destroy, after join), so no allocation is freed when
+// the worker begins and a restart's peak never depends on scheduling. The
+// thread is the first member, so freeing the thread frees the record.
+struct thread_record_t
+{
+    rocketnet_platform_thread_t thread;
+    thread_shim_data_t shim;
+};
+static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
+
 static DWORD WINAPI thread_function_shim( void * data )
 {
     rocketnet_assert( data );
     thread_shim_data_t * shim_data = (thread_shim_data_t*) data;
-    void * context = shim_data->context;
     void * real_thread_data = shim_data->real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
-    rocketnet_free( context, data );
     real_thread_function( real_thread_data );
     return 0;
 }
 
 rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
 {
-    rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t ) );
+    thread_record_t * record = (thread_record_t*) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
-    if ( !thread )
+    if ( !record )
         return NULL;
 
+    rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    if ( !shim_data )
-    {
-        rocketnet_free( context, thread );
-        return NULL;
-    }
+    thread_shim_data_t * shim_data = &record->shim;
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
@@ -4480,7 +4492,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     if ( thread->handle == NULL )
     {
         rocketnet_free( context, thread );
-        rocketnet_free( context, shim_data );
         return NULL;
     }
 
@@ -5702,9 +5713,9 @@ uint64_t rocketnet_platform_socket_allocation_bytes()
 
 uint64_t rocketnet_platform_thread_allocation_bytes()
 {
-    // Includes the transient shim, freed when the worker begins. Counting
-    // every shim gives a conservative constructor peak independent of scheduling.
-    return rocketnet_memory_allocations({sizeof(rocketnet_platform_thread_t), sizeof(thread_shim_data_t)});
+    // the thread record holds its shim: one allocation, live from create to
+    // destroy, so the peak is the same whenever the worker begins
+    return rocketnet_memory_allocations({sizeof(thread_record_t)});
 }
 
 uint64_t rocketnet_platform_wake_allocation_bytes()

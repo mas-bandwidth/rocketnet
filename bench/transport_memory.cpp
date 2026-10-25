@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Pre-allocation plan and optional allocator-observed server footprint.
 #include "../tests/native_shutdown.h"
+#include "../tests/token_string.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include <errno.h>
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if !defined(_WIN32)
 extern "C" char ** environ;
 #endif
@@ -85,17 +87,113 @@ static bool server_environment_overridden()
             return true;
     return false;
 }
+// The lifecycle rows: the public server and client through two cycles each,
+// observed by the counting allocator from a base after init. The server is
+// created, started, stopped, started again, stopped and destroyed; the client
+// connects to it, disconnects, connects again, disconnects and is destroyed.
+// required_memory must bound the first cycle's peak, and the second cycle's
+// peak must equal the first: a restart or reconnect takes the same bytes.
+static bool wait_until(bool (*done)(void *), void (*step)(void *), void * object)
+{
+    const double deadline = rocketnet_time() + 10.0;
+    while (!done(object))
+    {
+        if (rocketnet_time() >= deadline) return false;
+        if (step) step(object);
+        rocketnet_sleep(0.001);
+    }
+    return true;
+}
+static bool server_stopped(void * server) { return rocketnet_server_stopped((rocketnet_server_t *) server); }
+static bool client_disconnected(void * client) { return rocketnet_client_disconnected((rocketnet_client_t *) client); }
+static void client_step(void * client) { rocketnet_client_update((rocketnet_client_t *) client, rocketnet_time()); }
+
+static int lifecycle(const rocketnet_server_transport_config_t & transport_config, const char * transport,
+    const rocketnet_server_memory_plan_t & plan)
+{
+    if (rocketnet_init(NULL, allocate, release) != ROCKETNET_STATUS_OK) return 1;
+    rocketnet_forbid_xdp_commit();
+    uint8_t seed[32], backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[64];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(0x6C ^ i);
+    const uint64_t protocol_id = 0x7A11C1C1E5EED0B1ULL;
+    rocketnet_server_config_t server_config;
+    if (rocketnet_generate_backend_keypair_from_seed(seed, backend_public, backend_secret) != ROCKETNET_STATUS_OK ||
+        rocketnet_server_default_config(&server_config) != ROCKETNET_STATUS_OK) { rocketnet_term(); return 1; }
+    server_config.protocol_id = protocol_id;
+    memcpy(server_config.backend_public_key, backend_public, sizeof(server_config.backend_public_key));
+    server_config.transport = transport;
+    server_config.max_clients = transport_config.max_clients;
+    server_config.max_fragmented_messages = transport_config.max_fragmented_messages;
+    server_config.num_xdp_queues = transport_config.num_xdp_queues;
+    const size_t server_required = rocketnet_server_required_memory(&server_config);
+    const size_t base = live.load();
+    peak.store(base);
+    rocketnet_server_t * server = server_required ? rocketnet_server_create(NULL, "127.0.0.1:0", NULL, &server_config, NULL) : NULL;
+    if (!server) { fprintf(stderr, "lifecycle server create refused\n"); rocketnet_term(); return 1; }
+    size_t server_peaks[2] = {0, 0};
+    bool ok = true;
+    for (int cycle = 0; cycle < 2 && ok; cycle++)
+    {
+        ok = rocketnet_server_start(server) == ROCKETNET_STATUS_OK;
+        if (ok) { rocketnet_server_update(server, 1000.0); rocketnet_server_stop(server); ok = wait_until(server_stopped, NULL, server); }
+        server_peaks[cycle] = peak.load() - base;
+    }
+    printf("{\"lifecycle\":\"server\",\"transport\":\"%s\",\"required_bytes\":%zu,\"first_cycle_peak_bytes\":%zu,"
+        "\"second_cycle_peak_bytes\":%zu,\"allocator_plan_bytes\":%llu,\"os_bytes\":%llu,\"thread_stack_bytes\":%llu,"
+        "\"umem_bytes\":%llu,\"mapped_ring_bytes\":%llu,\"worker_threads\":%d}\n",
+        transport, server_required, server_peaks[0], server_peaks[1], (unsigned long long)plan.allocator_bytes,
+        (unsigned long long)plan.os_bytes, (unsigned long long)plan.thread_stack_bytes, (unsigned long long)plan.umem_bytes,
+        (unsigned long long)plan.mapped_ring_bytes, plan.worker_threads);
+    // the client, against the running server: the platform's default client transport
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    char address[64];
+    rocketnet_client_config_t client_config;
+    size_t client_required = 0, client_base = 0, client_peaks[2] = {0, 0};
+    rocketnet_client_t * client = NULL;
+    if (ok) ok = rocketnet_server_start(server) == ROCKETNET_STATUS_OK && rocketnet_client_default_config(&client_config) == ROCKETNET_STATUS_OK;
+    if (ok)
+    {
+        snprintf(address, sizeof(address), "127.0.0.1:%u", (unsigned) rocketnet_server_port(server));
+        const char * addresses[] = { address };
+        const uint64_t now = (uint64_t) time(NULL);
+        ok = rn_test_server_token_string(backend_secret, server, protocol_id, addresses, 1, 0x4C4946, now, now + 300, 30, NULL, token) == ROCKETNET_STATUS_OK;
+        client_required = rocketnet_client_required_memory(&client_config);
+        client_base = live.load();
+        peak.store(client_base);
+        client = ok && client_required ? rocketnet_client_create(NULL, &client_config, NULL) : NULL;
+        ok = client != NULL;
+    }
+    for (int cycle = 0; cycle < 2 && ok; cycle++)
+    {
+        ok = rocketnet_client_connect(client, token) == ROCKETNET_STATUS_OK;
+        if (ok) { rocketnet_client_update(client, rocketnet_time()); rocketnet_client_disconnect(client); ok = wait_until(client_disconnected, client_step, client); }
+        client_peaks[cycle] = peak.load() - client_base;
+    }
+    printf("{\"lifecycle\":\"client\",\"required_bytes\":%zu,\"first_cycle_peak_bytes\":%zu,\"second_cycle_peak_bytes\":%zu}\n",
+        client_required, client_peaks[0], client_peaks[1]);
+    if (client) rocketnet_client_destroy(client);
+    const bool client_freed = live.load() == client_base;
+    if (rocketnet_server_running(server)) { rocketnet_server_stop(server); ok = wait_until(server_stopped, NULL, server) && ok; }
+    rocketnet_server_destroy(server);
+    const bool server_freed = live.load() == base;
+    rocketnet_term();
+    if (!ok) { fprintf(stderr, "lifecycle step refused\n"); return 1; }
+    if (!client_freed || !server_freed) { fprintf(stderr, "lifecycle leaked allocations\n"); return 1; }
+    return 0;
+}
+
 int main(int argc, char ** argv)
 {
     if (argc < 4 || argc > 7)
     {
-        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only]]]\n");
+        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only|--lifecycle]]]\n");
         return 1;
     }
     const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
     const bool session_plan_only = argc == 7 && strcmp(argv[6], "--session-plan-only") == 0;
-    if (argc == 7 && !plan_only && !session_plan_only) return 1;
+    const bool lifecycle_only = argc == 7 && strcmp(argv[6], "--lifecycle") == 0;
+    if (argc == 7 && !plan_only && !session_plan_only && !lifecycle_only) return 1;
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
@@ -151,13 +249,17 @@ int main(int argc, char ** argv)
     printf("{\"transport\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,\"reassembly_slots\":%d,"
         "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
         "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
-        "\"worker_threads\":%d,\"sockets\":%d,\"os_and_application_bytes\":null}\n",
+        "\"worker_threads\":%d,\"sockets\":%d,\"allocator_bytes\":%llu,\"os_bytes\":%llu,"
+        "\"thread_stack_bytes\":%llu,\"mapped_ring_bytes\":%llu,\"os_and_application_bytes\":null}\n",
         transport, config.max_clients, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, config.max_fragmented_messages,
         (unsigned long long)plan.total_bytes, (unsigned long long)plan.transport_bytes,
         (unsigned long long)plan.protocol_bytes, (unsigned long long)plan.reassembly_bytes,
         (unsigned long long)plan.send_arena_bytes, (unsigned long long)plan.transport_bytes,
-        (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
+        (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets,
+        (unsigned long long)plan.allocator_bytes, (unsigned long long)plan.os_bytes,
+        (unsigned long long)plan.thread_stack_bytes, (unsigned long long)plan.mapped_ring_bytes);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
+    if (lifecycle_only) return lifecycle(config, transport, plan);
     if (rocketnet_init( NULL, allocate, release ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);

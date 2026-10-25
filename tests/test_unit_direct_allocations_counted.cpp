@@ -8,8 +8,8 @@
 // regions and rings a transport takes from the OS itself. A create/destroy
 // cycle returns both to their start. The unit tier reaches the fixtures that
 // build a transport without a socket or a kernel ring: the io_uring fake on
-// Linux and the RIO overflow fixture on Windows; the real creates (RIO region,
-// AF_XDP UMEM and rings, io_uring rings) open sockets, so the soak's
+// Linux and the RIO overflow fixture on Windows; the real creates (AF_XDP UMEM
+// and rings, io_uring rings, the RIO region) open sockets, so the soak's
 // --assert-flat covers them. No real time, no sockets, no threads.
 
 #include "test_unit_registry.h"

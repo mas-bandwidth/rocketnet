@@ -16,6 +16,13 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_driver_loopback.h"
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include "rocketnet_client_gso.h"
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include "rocketnet_client_iocp.h"
+#endif
 #include "rocketnet_memory_checks.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_jitter_tracker.h"
@@ -928,10 +935,12 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // rocketnet_client_race_t (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
 // RaceFamilies). A one-family create allocates less than the plan.
 
+// total_bytes is all through the caller's allocator; thread_stack_bytes is
+// the OS-owned default stack of the network thread a threaded client starts.
 struct rocketnet_client_memory_plan_t
 {
     uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
-    uint64_t transport_io_bytes, race_bytes, link_simulator_bytes, total_bytes;
+    uint64_t transport_io_bytes, race_bytes, link_simulator_bytes, total_bytes, thread_stack_bytes;
     int sockets;
 };
 
@@ -978,10 +987,49 @@ struct rocketnet_platform_wake_layout_t
 #endif
 #endif
 
-// The memory plan seam allocates this mirror of the platform thread_shim_data_t
-// that rocketnet_platform_thread_create allocates beside the thread, so the seam
-// allocates the bytes rocketnet_platform_thread_allocation_bytes counts. The
-// Windows shim carries no thread pointer; the POSIX shims do.
+// Mirrors of the native client I/O records, member for member, so the plan
+// counts the bytes their creates allocate: the gso client's one record
+// (sdk/rocketnet_client_gso_linux.cpp rocketnet_client_gso_io_t), beside its
+// platform socket and wake, and the iocp client's one record
+// (sdk/rocketnet_client_iocp_windows.cpp rocketnet_client_iocp_io_t), beside
+// its platform socket. The lifecycle cases measure them against the plan.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+struct rocketnet_client_gso_io_layout_t
+{
+    void * context;
+    rocketnet_platform_socket_t * socket;
+    rocketnet_platform_wake_t * wake;
+    rocketnet_client_gso_t gso;
+};
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+struct rocketnet_client_iocp_receive_layout_t
+{
+    OVERLAPPED overlapped;
+    WSABUF buffer;
+    DWORD flags;
+    INT from_bytes;
+    sockaddr_storage from;
+    int index;
+};
+struct rocketnet_client_iocp_io_layout_t
+{
+    void * context;
+    rocketnet_platform_socket_t * socket;
+    bool ipv6;
+    HANDLE port;
+    rocketnet_client_iocp_t core;
+    rocketnet_client_iocp_receive_layout_t receives[ROCKETNET_CLIENT_IOCP_RECEIVES];
+    OVERLAPPED_ENTRY entries[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
+    uint8_t buffers[ROCKETNET_CLIENT_IOCP_RECEIVES * ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES];
+};
+#endif
+
+// The memory plan seam allocates this mirror of the platform thread_record_t
+// (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
+// rocketnet_platform_thread_create allocates, so the seam allocates the bytes
+// rocketnet_platform_thread_allocation_bytes counts. The Windows shim carries
+// no thread pointer; the POSIX shims do.
 struct rocketnet_thread_shim_layout_t
 {
     void * context;
@@ -990,6 +1038,11 @@ struct rocketnet_thread_shim_layout_t
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     void * thread;
 #endif
+};
+struct rocketnet_thread_record_layout_t
+{
+    rocketnet_platform_thread_t thread;
+    rocketnet_thread_shim_layout_t shim;
 };
 
 // Test seam for socket-free, thread-free client memory plan unit testing.
@@ -1026,12 +1079,46 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         if ( !plan.link_simulator_bytes ) return false;
     }
 
-    if ( strcmp( transport, "portable" ) == 0
+    bool threaded = !config->step_driven;
+    if ( strcmp( transport, "loopback" ) == 0 )
+    {
+        // one endpoint's queue; the endpoint record is in the process-wide
+        // table, and loopback opens no socket. A threaded client still starts
+        // its network thread.
+        plan.transport_io_bytes = rocketnet_memory_allocations( { rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) } );
+        if ( threaded && !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
+            return false;
+        plan.sockets = 0;
+    }
+    else if ( strcmp( transport, "portable" ) == 0
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC // msgx exists on macOS only, as in the registry and the server plan
          || strcmp( transport, "msgx" ) == 0
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX // the native clients the default ladder ranks first
+         || strcmp( transport, "gso" ) == 0
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+         || strcmp( transport, "iocp" ) == 0
+#endif
        )
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        if ( strcmp( transport, "gso" ) == 0 )
+            plan.transport_io_bytes = rocketnet_memory_allocations( {
+                sizeof(rocketnet_platform_socket_t),
+                sizeof(rocketnet_client_gso_io_layout_t),
+                sizeof(rocketnet_platform_wake_layout_t)
+            } );
+        else
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        if ( strcmp( transport, "iocp" ) == 0 )
+            plan.transport_io_bytes = rocketnet_memory_allocations( {
+                sizeof(rocketnet_platform_socket_t),
+                sizeof(rocketnet_client_iocp_io_layout_t)
+            } );
+        else
+#endif
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
         plan.transport_io_bytes = rocketnet_memory_allocations( {
             sizeof(rocketnet_platform_socket_t),
@@ -1042,11 +1129,12 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif
         // the family race's second socket, the same allocations as the first,
-        // and the race block that routes the two
+        // and the race block that routes the two. The copy is taken before the
+        // network thread is added, so the race does not count a second thread.
         plan.race_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_race_t) } );
         if ( !plan.race_bytes || !rocketnet_memory_add( plan.race_bytes, 1, plan.transport_io_bytes ) )
             return false;
-        if ( !config->step_driven )
+        if ( threaded )
         {
             if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
                 return false;
@@ -1055,11 +1143,37 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     }
     else return false;
 
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes || !plan.race_bytes ) return false;
+    // loopback opens no socket and runs no family race
+    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes ) return false;
+    if ( plan.sockets != 0 && !plan.race_bytes ) return false;
     for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes,
                              plan.link_simulator_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) ) return false;
+    if ( threaded )
+    {
+        plan.thread_stack_bytes = rocketnet_thread_stack_bytes();
+        if ( !plan.thread_stack_bytes ) return false;
+    }
     return plan.total_bytes <= SIZE_MAX;
+}
+
+uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config )
+{
+    rocketnet_client_transport_config_t defaults;
+    if ( !config ) { rocketnet_client_transport_default_config( &defaults ); config = &defaults; }
+    int num_available = 0;
+    const int * available = rocketnet_client_transport_io_availability( &num_available );
+    struct rocketnet_transport_ladder_t ladder;
+    if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder, false ) )
+        return 0;
+    uint64_t most = 0;
+    for ( int i = 0; i < ladder.num_candidates; ++i )
+    {
+        rocketnet_client_memory_plan_t plan;
+        if ( rocketnet_client_transport_memory_plan( config, rocketnet_transport_name( ladder.candidates[i] ), plan ) && plan.total_bytes > most )
+            most = plan.total_bytes;
+    }
+    return most;
 }
 
 uint64_t rocketnet_client_transport_required_memory( const rocketnet_client_transport_config_t * config, const char * transport )
@@ -1868,9 +1982,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
         if ( rocketnet_client_memory_plan_seam_enabled )
         {
-            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
-            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
-            rocketnet_free( context, shim_mem );
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_record_layout_t) );
             client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
         }
         else
@@ -1882,9 +1994,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     {
         if ( rocketnet_client_memory_plan_seam_enabled )
         {
-            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_platform_thread_t) );
-            void * shim_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_shim_layout_t) );
-            rocketnet_free( context, shim_mem );
+            void * thread_mem = rocketnet_malloc( context, sizeof(rocketnet_thread_record_layout_t) );
             client_transport->thread = (rocketnet_platform_thread_t*) thread_mem;
         }
         else
