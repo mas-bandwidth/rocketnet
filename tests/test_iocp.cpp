@@ -692,6 +692,33 @@ static void iocp_finish( rocketnet_server_iocp_t * transport, rocketnet_platform
     rocketnet_platform_socket_destroy(client);
 }
 
+static void test_iocp_finish_refuses_unissued_packet_id()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1, 0, ROCKETNET_IOCP_DISABLE_USO);
+    CHECK(transport);
+    const rocketnet_address_t to = address("127.0.0.1:40000");
+    uint64_t first_id, second_id;
+    uint8_t * first_frame = rocketnet_server_iocp_start_packet(transport, &to, &first_id);
+    uint8_t * second_frame = rocketnet_server_iocp_start_packet(transport, &to, &second_id);
+    CHECK(first_frame && second_frame && first_id != second_id);
+
+    rocketnet_server_iocp_finish_packet(transport, second_id, first_frame, FAULT_BYTES);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, second_id) == 0);
+    rocketnet_server_iocp_finish_packet(transport, second_id, second_frame, FAULT_BYTES);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, second_id) == FAULT_BYTES);
+    rocketnet_server_iocp_abort_packet(transport, second_id, first_frame);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, second_id) == FAULT_BYTES);
+    rocketnet_server_iocp_finish_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, first_frame, FAULT_BYTES);
+    rocketnet_server_iocp_abort_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, first_frame);
+
+    rocketnet_server_iocp_abort_packet(transport, first_id, first_frame);
+    rocketnet_server_iocp_abort_packet(transport, second_id, second_frame);
+    wait_stopped(transport);
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    printf("test_iocp_transport_finish_refuses_unissued_packet_id\n");
+}
+
 static void test_iocp_stop_sends_published_burst()
 {
     rocketnet_address_t bind = address("127.0.0.1:0");
@@ -1467,6 +1494,7 @@ static void test_windows_send_failures_counted()
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
+    { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
