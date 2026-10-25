@@ -622,7 +622,7 @@ static uint32_t plan_random()
     return plan_random_state;
 }
 
-#define PLAN_MAX_ITEMS          512
+#define PLAN_MAX_ITEMS          ROCKETNET_PACKET_BUILDER_MAX_ITEMS
 #define PLAN_PAYLOADS           ROCKETNET_PACKET_BUILDER_MAX_PACKETS
 #define PLAN_PAYLOAD_BYTES      1191
 
@@ -694,8 +694,8 @@ static void test_packet_builder_matches_reference_order()
         reference_frames[p] = plan_reference_frames[p];
     }
 
-    static const int sizes[] = { 1, 2, 5, 17, 32, 64, 128, 255, 512 };
-    static const uint32_t moduli[] = { 1, 2, 3, 8, 32 };
+    static const int sizes[] = { 1, 2, 5, 17, 32, 64, 95, ROCKETNET_PACKET_BUILDER_MAX_ITEMS };
+    static const uint32_t moduli[] = { 1, 2, 3, 8, 32, 65536 };
     static const int packet_counts[] = { 1, 4, 16 };
 
     const int num_sizes = (int) ( sizeof( sizes ) / sizeof( sizes[0] ) );
@@ -762,13 +762,12 @@ static void test_packet_builder_matches_reference_order()
     rn_arena_destroy( arena );
 }
 
-// the builder's cost is linear in the plan: one visit per item to link the
-// channels' lists, then one visit per channel head of the class for each
-// pick, never a scan of the plan per pick. Plans of 32, 128 and 512 items over
-// 8 channels, one packet per call (the endpoint's shape) and 16. BASE's
-// picker, counted the same way, is quadratic in the plan for every pick.
+// the builder's plan cost is linear: one item scan, six stable radix touches,
+// one epoch/index tag and one suffix-minimum step per writable item. Selection
+// inspects one contiguous group head per pick, never the items of that group.
+// BASE's picker, counted the same way, is quadratic in the plan per pick.
 
-static void test_packet_builder_visits_linear()
+static void test_packet_builder_operations_bounded()
 {
 #if ROCKETNET_TEST_SEAMS
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
@@ -786,7 +785,7 @@ static void test_packet_builder_visits_linear()
     }
 
     const uint32_t channels = 8;
-    static const int sizes[] = { 32, 128, 512 };
+    static const int sizes[] = { 32, 64, ROCKETNET_PACKET_BUILDER_MAX_ITEMS };
     static const int packet_counts[] = { 1, 16 };
 
     for ( int s = 0; s < 3; s++ )
@@ -824,16 +823,15 @@ static void test_packet_builder_visits_linear()
                 taken += builder.packet[p].records;
             rocketnet_unit_check( taken >= 1 );
 
-            // one visit per item to link, and each pick (every take, and at
-            // most one pick per packet that ends the packet without a take)
-            // visits at most one head per channel: 11 channel values here
-            const uint64_t heads = channels + 3;
-            rocketnet_unit_check( builder.visits <= (uint64_t) num_items + ( taken + (uint64_t) packets_per_update ) * heads );
+            const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
+            const uint64_t groups = plan->group_count;
+            rocketnet_unit_check( plan->plan_operations <= (uint64_t) num_items * 9 );
+            rocketnet_unit_check( plan->selection_operations <= ( taken + (uint64_t) packets_per_update ) * groups );
 
-            // and a plan of 512 costs under a tenth of BASE's scan (BASE visits
-            // every item for every channel head on every pick)
-            if ( num_items == 512 )
-                rocketnet_unit_check( (uint64_t) builder.visits * 10 < reference.visits );
+            // At the maximum production plan, grouping plus selection costs
+            // under one tenth of BASE's repeated item scans.
+            if ( num_items == ROCKETNET_PACKET_BUILDER_MAX_ITEMS )
+                rocketnet_unit_check( ( plan->plan_operations + plan->selection_operations ) * 10 < reference.visits );
         }
     }
 
@@ -841,9 +839,92 @@ static void test_packet_builder_visits_linear()
 #endif // #if ROCKETNET_TEST_SEAMS
 }
 
+// The flat plan is tagged by the call's full-width epoch and exact caller
+// item index. Channel/class groups are contiguous across sparse channels all
+// the way through 65535, their suffix levels are exact, an earlier larger
+// call cannot leave a live entry in a later smaller one, and neither capacity
+// nor epoch exhaustion is silently truncated or wrapped.
+
+static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
+{
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rocketnet_unit_check( arena != NULL );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    rn_packet_builder_t builder;
+    rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, 1, PLAN_PAYLOAD_BYTES ) );
+    builder.num_channels = 65536;
+    builder.round_robin = 65535;
+
+    static const uint16_t channels[] = { 65535, 0, 32768, 256, 255, 65535, 0, 32768 };
+    struct rn_packet_item_t items[8];
+    for ( int i = 0; i < 8; i++ )
+    {
+        builder_item( &items[i], channels[i], ROCKETNET_MESSAGE_CODE_UNRELIABLE, i % 4, plan_data[i], 2 );
+        items[i].priority = (uint8_t) ( 3 - i % 4 );
+        plan_data[i][0] = (uint8_t) i;
+        plan_data[i][1] = (uint8_t) ( i + 1 );
+    }
+
+    uint8_t * frames[1] = { plan_builder_frames[0] };
+    rocketnet_unit_check( rn_packet_builder_write( &builder, items, 8, frames, 1 ) == 1 );
+    const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
+    rocketnet_unit_check( builder.call_epoch == 1 );
+    rocketnet_unit_check( plan->group_count == 8 );
+
+    for ( uint32_t g = 0; g < plan->group_count; g++ )
+    {
+        const struct rn_packet_builder_group_t * group = &plan->groups[g];
+        rocketnet_unit_check( group->begin < group->end );
+        rocketnet_unit_check( group->end <= 8 );
+        uint8_t suffix = ROCKETNET_PACKET_BUILDER_LEVELS;
+        for ( uint32_t p = group->end; p > group->begin; p-- )
+        {
+            const struct rn_packet_builder_sequence_t * entry = &plan->sequence[p - 1];
+            rocketnet_unit_check( entry->call_epoch == builder.call_epoch );
+            rocketnet_unit_check( entry->item_index < 8 );
+            rocketnet_unit_check( entry->group_index == g );
+            const struct rn_packet_item_t * item = &items[entry->item_index];
+            rocketnet_unit_check( item->send_class == group->send_class );
+            rocketnet_unit_check( item->channel == group->channel );
+            suffix = item->priority < suffix ? item->priority : suffix;
+            rocketnet_unit_check( entry->suffix_level == suffix );
+        }
+    }
+
+    // A one-item next call advances the epoch and exposes only its one group;
+    // every slot outside that range remains invalid for the current epoch.
+    builder_item( &items[0], 65535, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_NEW_RELIABLE, plan_data[0], 2 );
+    rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 1 );
+    plan = rn_packet_builder_test_last_plan();
+    rocketnet_unit_check( builder.call_epoch == 2 );
+    rocketnet_unit_check( plan->group_count == 1 );
+    rocketnet_unit_check( plan->sequence[0].call_epoch == 2 );
+    rocketnet_unit_check( plan->sequence[0].item_index == 0 );
+    rocketnet_unit_check( plan->sequence[1].call_epoch != builder.call_epoch );
+
+    struct rn_packet_item_t over[ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1];
+    for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
+        builder_item( &over[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, plan_data[i % PLAN_MAX_ITEMS], 2 );
+    const uint64_t before_over = builder.call_epoch;
+    rocketnet_unit_check( rn_packet_builder_write( &builder, over, ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1, frames, 1 ) == 0 );
+    rocketnet_unit_check( builder.call_epoch == before_over );
+    for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
+        rocketnet_unit_check( !over[i].taken );
+
+    builder.call_epoch = UINT64_MAX;
+    items[0].taken = 0;
+    rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 0 );
+    rocketnet_unit_check( builder.call_epoch == UINT64_MAX );
+    rocketnet_unit_check( !items[0].taken );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
 REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
-REGISTER_UNIT_TEST( test_packet_builder_visits_linear );
+REGISTER_UNIT_TEST( test_packet_builder_operations_bounded );
+REGISTER_UNIT_TEST( test_packet_builder_flat_plan_tags_ranges_and_bounds );

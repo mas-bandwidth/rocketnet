@@ -98,13 +98,21 @@ every update, and 1 transport loss.
 | Action / operator | Function in `sdk/rocketnet_packet_builder.cpp` |
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
-| `IsHead`, `Boost` | `rn_builder_link`: once per call, each channel's writable items of a class linked in the caller's order through the items' own fields, each with the best priority to its list's end, so a list's head is `IsHead` and its `channel_level` is `Boost`; `rn_builder_take_head` moves a channel's head on when it is taken |
-| `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one visit per channel head of the class (with `rn_builder_effective_clock`, the pull-forward); `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
+| `IsHead`, `Boost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is `IsHead` and its suffix minimum is `Boost`; `rn_builder_take_head` advances only that cursor |
+| `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); every flat entry validates the current full-width call epoch and caller item index; `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
 | `Write` (class order, clock step, `rr'`) | `rn_packet_builder_write`'s class loop, `rn_builder_take_level` |
 | `Tick`'s clock reset | the end of `rn_packet_builder_write`: every item taken -> `rn_builder_reset_clocks` |
 
 A packet the budget refuses is not written, so the builder restores the
-clocks and the round-robin cursor to their values at the packet's start.
+clocks, round-robin cursor and each range cursor to their values at the
+packet's start.
+
+The call plan is a refinement artifact, not additional scheduler state in
+`RNScheduler.tla`: the stable flat sequence represents the same `IsHead` and
+`Boost` sets the module derives from `st`. Its generation is a full-width
+implementation validity tag. Epoch exhaustion refuses a new plan instead of
+wrapping; stale sequence slots therefore cannot add a candidate to `Cands`.
+The model's order, clocks and fairness remain unchanged.
 
 ## Design choices
 

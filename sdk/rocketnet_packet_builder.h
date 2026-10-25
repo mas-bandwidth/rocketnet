@@ -15,6 +15,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_test_seams.h"
 #include "rocketnet_window_ack.h"
 
 // Layer 6's packet builder (docs/CHANNELS.md 9.3): per connection per update,
@@ -37,6 +38,7 @@
 #define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets ONE builder call tracks; the endpoint asks for one packet per call and counts the update's packets against the config's packets_per_update (1 .. 1024), so this is not the per-update limit
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
+#define ROCKETNET_PACKET_BUILDER_MAX_ITEMS              96      // the bounded ordered plan one call accepts (the producer has the same 96-item ceiling)
 
 #define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // the four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
 
@@ -65,13 +67,51 @@ struct rn_packet_item_t
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: a resend; the count is taken when the packet carrying it is sent (rn_packet_builder_commit)
     uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
+};
 
-    // The builder's own links, written by rn_packet_builder_write at the start
-    // of every call before it reads them, so the caller never sets them: the
-    // caller owns this memory and the builder owns none (R2).
-    int32_t next_in_channel;        // the next writable item of this item's channel and class, in the caller's order, or -1
-    int32_t next_head;              // the next channel head of this item's class, or -1
-    uint8_t channel_level;          // the best priority from this item to its channel's last writable item of the class: the boost (9.2)
+// One call's flat sequence entry. The full-width call epoch and exact caller
+// item index are validated before use, so a slot left by an earlier, larger
+// plan is never mistaken for a current item. Epoch UINT64_MAX is terminal:
+// write refuses rather than wrap a stale tag back into validity.
+
+struct rn_packet_builder_sequence_t
+{
+    uint64_t call_epoch;
+    uint32_t item_index;
+    uint16_t group_index;
+    uint8_t suffix_level;
+    uint8_t reserved;
+};
+
+// One contiguous channel/class range in sequence[]. cursor is the first
+// untaken entry. Groups are sorted by class then the full 16-bit channel.
+
+struct rn_packet_builder_group_t
+{
+    uint16_t channel;
+    uint8_t begin;
+    uint8_t end;
+    uint8_t cursor;
+    uint8_t send_class;
+};
+
+// One write call's bounded scratch. It lives on that call's stack, not in
+// each connection: the maximum is 96 items, so the flat plan stays small
+// without making every client permanently pay for transient scheduler state.
+
+struct rn_packet_builder_plan_t
+{
+    struct rn_packet_builder_sequence_t sequence[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
+    struct rn_packet_builder_group_t groups[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
+    uint8_t sort_indices[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
+    uint8_t group_count;
+    uint8_t class_group_begin[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
+    uint8_t class_group_end[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
+
+#if ROCKETNET_TEST_SEAMS
+    uint64_t plan_operations;                   // bounded grouping/tag/suffix operations in this call
+    uint64_t selection_operations;              // current group heads inspected in this call
+#endif // #if ROCKETNET_TEST_SEAMS
 };
 
 struct rn_packet_builder_t
@@ -87,7 +127,7 @@ struct rn_packet_builder_t
     uint32_t round_robin;                       // the channel the last item was taken from
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
-    uint32_t visits;                            // items the last call looked at (ROCKETNET_TEST_SEAMS builds count it, others leave it 0)
+    uint64_t call_epoch;                        // generation of sequence[]; zero before the first valid plan, never wraps
 
     uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (the level weights)
     uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
@@ -101,6 +141,13 @@ struct rn_packet_builder_t
         int admitted_wire_bytes;                // what the budget charged for it, to settle after sealing
     } packet[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
 };
+
+#if ROCKETNET_TEST_SEAMS
+// The calling thread's last completed flat plan, for operation-bound and tag
+// checks. This development-only snapshot is not part of a connection and is
+// absent from ROCKETNET_DEV=0 builds.
+const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void );
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // Binds a builder to one connection. Allocates nothing. packets_per_update
 // is clamped to ROCKETNET_PACKET_BUILDER_MAX_PACKETS; payload_capacity outside
@@ -130,9 +177,9 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 // class, so a priority boosts the whole channel and never reorders it (17.3
 // item 3). The caller lists each channel's items in the order the
 // application queued them. An item whose priority is not 0 to 3 is never
-// taken. Taking items is linear in the plan: one pass links each channel's
-// items of a class through the items' own link fields, and each take looks at
-// one head per channel. Several small records pack per packet (9.3). A record that does not
+// taken. Taking items is linear in the plan: one stable radix plan pass makes
+// contiguous channel/class ranges and their suffix priority minima, and each
+// take looks at one current range head. Several small records pack per packet (9.3). A record that does not
 // fit ends the packet; it is never split. When every item is taken the clocks
 // reset to their seeds.
 //

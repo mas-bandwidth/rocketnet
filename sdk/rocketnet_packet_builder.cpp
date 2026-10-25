@@ -18,7 +18,7 @@
 static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
 }
 
 // The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
@@ -26,6 +26,15 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 
 static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
 static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
+
+#if ROCKETNET_TEST_SEAMS
+static thread_local struct rn_packet_builder_plan_t rn_builder_last_plan;
+
+const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void )
+{
+    return &rn_builder_last_plan;
+}
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
 // the seeds, so the interleave describes a backlog and nothing else.
@@ -131,96 +140,148 @@ static bool rn_builder_writable( const struct rn_packet_item_t * item )
     return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
 }
 
-// The items the builder looked at, counted only where the unit seams are
-// compiled in (test_packet_builder_visits_linear pins the bound).
-
-static inline void rn_builder_visit( struct rn_packet_builder_t * builder )
+static inline void rn_builder_plan_operation( struct rn_packet_builder_plan_t * plan )
 {
 #if ROCKETNET_TEST_SEAMS
-    builder->visits++;
+    plan->plan_operations++;
 #else // #if ROCKETNET_TEST_SEAMS
-    (void) builder;
+    (void) plan;
 #endif // #if ROCKETNET_TEST_SEAMS
 }
 
-// The hash a channel and class find their list under while the lists are
-// linked. 128 slots hold 32 channels times 4 classes with no collision, so the
-// default configuration never walks a chain; more channels share slots and
-// walk their chain. It lives on the stack of one call: the builder owns no
-// memory (R2).
+static inline void rn_builder_selection_operation( struct rn_packet_builder_plan_t * plan )
+{
+#if ROCKETNET_TEST_SEAMS
+    plan->selection_operations++;
+#else // #if ROCKETNET_TEST_SEAMS
+    (void) plan;
+#endif // #if ROCKETNET_TEST_SEAMS
+}
 
-#define RN_BUILDER_LINK_SLOTS                   128
+// One byte of the stable radix key: class in the most significant pass and
+// the full 16-bit channel in the first two. Stable passes preserve caller
+// order inside an equal channel/class key. The 256-entry count table is the
+// only call stack scratch: it is bounded independently of the configured
+// maximum of 65536 channels.
 
-// RNScheduler's IsHead and Boost, made once per call: every writable item of
-// a class joins its channel's list, in the caller's order (next_in_channel),
-// and records the best priority from itself to the list's end
-// (channel_level), so the head of a list is the channel's head (IsHead) and
-// its channel_level is the channel's boost (Boost). The heads of each class
-// are linked through next_head from class_head[class]. Items are visited in
-// reverse, so each is put in front of its list and the lists come out in the
-// caller's order. One visit per writable item: linear in the plan.
+static uint8_t rn_builder_key_byte( const struct rn_packet_item_t * items, uint32_t item_index, int pass )
+{
+    if ( pass == 0 )
+        return (uint8_t) items[item_index].channel;
+    if ( pass == 1 )
+        return (uint8_t) ( items[item_index].channel >> 8 );
+    return items[item_index].send_class;
+}
+
+static void rn_builder_radix_pass( struct rn_packet_builder_plan_t * plan, const struct rn_packet_item_t * items, const uint8_t * input, uint8_t * output, uint32_t count, int pass )
+{
+    uint8_t buckets[256];
+    memset( buckets, 0, sizeof( buckets ) );
+
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        buckets[rn_builder_key_byte( items, input[i], pass )]++;
+        rn_builder_plan_operation( plan );
+    }
+
+    uint32_t offset = 0;
+    for ( uint32_t b = 0; b < 256; b++ )
+    {
+        const uint32_t n = buckets[b];
+        buckets[b] = (uint8_t) offset;
+        offset += n;
+    }
+
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        const uint8_t item_index = input[i];
+        output[buckets[rn_builder_key_byte( items, item_index, pass )]++] = item_index;
+        rn_builder_plan_operation( plan );
+    }
+}
+
+// RNScheduler's IsHead and Boost, made once per call. Writable item indices
+// are stably radix-grouped into contiguous class/channel ranges. A reverse
+// pass over each range stores its suffix priority minimum, so cursor is the
+// channel head (IsHead) and sequence[cursor].suffix_level is Boost. No item
+// or group link is built and no grouping work repeats per packet.
 //
 // Returns true when a writable item has a class outside the budget's four,
 // so it is never taken and the plan never drains.
 
 // tla/RNScheduler.tla, IsHead and Boost
-static bool rn_builder_link( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, int32_t * class_head )
+static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_packet_builder_plan_t * plan, struct rn_packet_item_t * items, int num_items )
 {
-    int32_t slot_head[RN_BUILDER_LINK_SLOTS];
-    for ( int k = 0; k < RN_BUILDER_LINK_SLOTS; k++ )
-        slot_head[k] = -1;
-
+    uint8_t alternate[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
+    uint32_t count = 0;
     bool stray = false;
 
-    for ( int i = num_items - 1; i >= 0; i-- )
+    for ( int i = 0; i < num_items; i++ )
     {
-        rn_builder_visit( builder );
-
-        struct rn_packet_item_t * item = &items[i];
-        if ( !rn_builder_writable( item ) )
+        rn_builder_plan_operation( plan );
+        if ( !rn_builder_writable( &items[i] ) )
             continue;
-
-        if ( item->send_class > ROCKETNET_SEND_CLASS_UNRELIABLE )
+        if ( items[i].send_class > ROCKETNET_SEND_CLASS_UNRELIABLE )
         {
             stray = true;
             continue;
         }
-
-        // the channel's list so far: its head is the channel's item after this one
-        int32_t * link = &slot_head[( (uint32_t) item->channel * 4u + item->send_class ) % RN_BUILDER_LINK_SLOTS];
-        while ( *link >= 0 && ( items[*link].channel != item->channel || items[*link].send_class != item->send_class ) )
-        {
-            rn_builder_visit( builder );
-            link = &items[*link].next_head;
-        }
-
-        const int32_t next = *link;
-        if ( next >= 0 )
-        {
-            item->next_in_channel = next;
-            item->channel_level = items[next].channel_level < item->priority ? items[next].channel_level : item->priority;
-            item->next_head = items[next].next_head;
-        }
-        else
-        {
-            item->next_in_channel = -1;
-            item->channel_level = item->priority;
-            item->next_head = -1;
-        }
-        *link = (int32_t) i;
+        plan->sort_indices[count++] = (uint8_t) i;
     }
 
-    // each slot's heads onto their class's list
-    for ( int k = 0; k < RN_BUILDER_LINK_SLOTS; k++ )
+    rn_builder_radix_pass( plan, items, plan->sort_indices, alternate, count, 0 );
+    rn_builder_radix_pass( plan, items, alternate, plan->sort_indices, count, 1 );
+    rn_builder_radix_pass( plan, items, plan->sort_indices, alternate, count, 2 );
+
+    plan->group_count = 0;
+    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE; c++ )
     {
-        int32_t head = slot_head[k];
-        while ( head >= 0 )
+        plan->class_group_begin[c] = 0;
+        plan->class_group_end[c] = 0;
+    }
+
+    uint32_t position = 0;
+    while ( position < count )
+    {
+        const uint32_t first = alternate[position];
+        const uint8_t send_class = items[first].send_class;
+        const uint16_t channel = items[first].channel;
+        const uint8_t group_index = plan->group_count++;
+        struct rn_packet_builder_group_t * group = &plan->groups[group_index];
+        group->begin = (uint8_t) position;
+        group->cursor = (uint8_t) position;
+        group->channel = channel;
+        group->send_class = send_class;
+
+        do
         {
-            const int32_t next = items[head].next_head;
-            items[head].next_head = class_head[items[head].send_class];
-            class_head[items[head].send_class] = head;
-            head = next;
+            struct rn_packet_builder_sequence_t * entry = &plan->sequence[position];
+            entry->call_epoch = builder->call_epoch;
+            entry->item_index = alternate[position];
+            entry->group_index = (uint16_t) group_index;
+            position++;
+            rn_builder_plan_operation( plan );
+        } while ( position < count && items[alternate[position]].send_class == send_class && items[alternate[position]].channel == channel );
+
+        group->end = (uint8_t) position;
+        uint8_t suffix = ROCKETNET_PACKET_BUILDER_LEVELS;
+        for ( uint32_t p = group->end; p > group->begin; p-- )
+        {
+            struct rn_packet_builder_sequence_t * entry = &plan->sequence[p - 1];
+            const uint8_t priority = items[entry->item_index].priority;
+            suffix = priority < suffix ? priority : suffix;
+            entry->suffix_level = suffix;
+            rn_builder_plan_operation( plan );
         }
+    }
+
+    uint32_t next_group = 0;
+    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE; c++ )
+    {
+        plan->class_group_begin[c] = (uint8_t) next_group;
+        while ( next_group < plan->group_count && plan->groups[next_group].send_class == (uint8_t) c )
+            next_group++;
+        plan->class_group_end[c] = (uint8_t) next_group;
     }
 
     return stray;
@@ -234,14 +295,14 @@ static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * b
 }
 
 // RNScheduler!Pick inside one class. Returns the item's index, or -1 when the
-// class is spent; *out_level is the level it was taken at and *out_link the
-// link that holds it, for rn_builder_take_head.
+// class is spent; *out_level is the level it was taken at and *out_group the
+// contiguous range that holds it, for rn_builder_take_head.
 //
 // 1. Channel FIFO: only a channel's head (its first writable item of this
 //    class, in the caller's order, which is the order the application
 //    queued) is offered, at the best priority among the channel's writable
 //    items of this class: per-send priority boosts the whole channel (17.3
-//    item 3, RNScheduler!Boost and IsHead). rn_builder_link made both.
+//    item 3, RNScheduler!Boost and IsHead). rn_builder_plan made both.
 // 2. The level: the smallest clock among the levels offered, a clock behind
 //    clock_base counting as clock_base (the pull-forward); a tie goes to
 //    the more urgent level (RNScheduler!PickLevel).
@@ -250,12 +311,12 @@ static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * b
 //    distance away (a channel at or past the modulus) go in the caller's
 //    order.
 //
-// One visit per channel head of the class, so a take costs the channels
+// One selection operation per channel head of the class, so a take costs the channels
 // with something to send (at most ROCKETNET_MAX_CHANNELS, plus any channel
 // at or past it), never the plan.
 
 // tla/RNScheduler.tla, PickLevel and PickIn
-static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int32_t * class_head, int * out_level, int32_t ** out_link )
+static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struct rn_packet_builder_plan_t * plan, struct rn_packet_item_t * items, int num_items, int send_class, int * out_level, uint32_t * out_group )
 {
     const uint32_t channels = builder->num_channels > 0 ? builder->num_channels : 1;
 
@@ -263,14 +324,21 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
     int best_level = 0;
     uint64_t best_clock = 0;
     uint32_t best_distance = 0;
-    int32_t * best_link = NULL;
+    uint32_t best_group = 0;
 
-    for ( int32_t * link = class_head; *link >= 0; link = &items[*link].next_head )
+    for ( uint32_t g = plan->class_group_begin[send_class]; g < plan->class_group_end[send_class]; g++ )
     {
-        rn_builder_visit( builder );
+        rn_builder_selection_operation( plan );
 
-        const int i = *link;
-        const int level = items[i].channel_level;
+        const struct rn_packet_builder_group_t * group = &plan->groups[g];
+        if ( group->cursor >= group->end )
+            continue;
+        const struct rn_packet_builder_sequence_t * entry = &plan->sequence[group->cursor];
+        if ( entry->call_epoch != builder->call_epoch || entry->item_index >= (uint32_t) num_items || entry->group_index != g )
+            continue;                                           // a stale or damaged plan slot is never an item
+
+        const int i = (int) entry->item_index;
+        const int level = entry->suffix_level;
         const uint64_t clock = rn_builder_effective_clock( builder, level );
         const uint32_t distance = ( items[i].channel % channels + channels - builder->round_robin % channels - 1 ) % channels;
 
@@ -281,32 +349,24 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
             best_level = level;
             best_clock = clock;
             best_distance = distance;
-            best_link = link;
+            best_group = g;
         }
     }
 
     *out_level = best_level;
-    *out_link = best_link;
+    *out_group = best_group;
     return best;
 }
 
-// A head taken: the channel's next item of the class is its head now, at its
-// own channel_level (the boost of what is left), or the channel leaves the
-// class's list. Only heads are ever taken, so the lists stay exact.
+// A head taken: advance its contiguous range. The next sequence entry already
+// carries the suffix priority of what remains.
 
-static void rn_builder_take_head( struct rn_packet_item_t * items, int32_t * link )
+static uint32_t rn_builder_take_head( struct rn_packet_builder_plan_t * plan, uint32_t group_index )
 {
-    const int32_t taken = *link;
-    const int32_t next = items[taken].next_in_channel;
-    if ( next >= 0 )
-    {
-        items[next].next_head = items[taken].next_head;
-        *link = next;
-    }
-    else
-    {
-        *link = items[taken].next_head;
-    }
+    struct rn_packet_builder_group_t * group = &plan->groups[group_index];
+    const uint32_t position = group->cursor;
+    group->cursor++;
+    return position;
 }
 
 // RNScheduler!Write's clock step: the level taken becomes the origin and its
@@ -328,17 +388,25 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     builder->packets = 0;
     builder->unreliable_dropped = 0;
-    builder->visits = 0;
 
     if ( !items || num_items < 1 || !payloads || num_payloads < 1 )
         return 0;
 
-    // each class's channel heads, linked once for the whole call: an item
-    // leaves its list only when it is taken, and a refused packet ends the call
-    int32_t class_head[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
-    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE; c++ )
-        class_head[c] = -1;
-    const bool stray = rn_builder_link( builder, items, num_items, class_head );
+    // The production producer's plan is capped at the same 96 items. Refuse
+    // a larger direct/internal call without touching its items, rather than
+    // truncate it into a different scheduler trace. A full-width epoch never
+    // wraps back into the validity domain of an earlier plan.
+    if ( num_items > ROCKETNET_PACKET_BUILDER_MAX_ITEMS || builder->call_epoch == UINT64_MAX )
+        return 0;
+    builder->call_epoch++;
+
+    // Each class's channel groups are built once for the whole call. An item
+    // advances its group's cursor only when taken; a refused packet restores
+    // the positions it took. This bounded transient plan stays on the call's
+    // stack instead of adding persistent bytes to every connection.
+    struct rn_packet_builder_plan_t plan;
+    memset( &plan, 0, sizeof( plan ) );
+    const bool stray = rn_builder_plan( builder, &plan, items, num_items );
     bool refused = false;
 
     const int limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
@@ -363,7 +431,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         uint32_t count = 0;
         uint32_t records = 0;
         int packet_class = -1;
-        int taken[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+        uint32_t taken_positions[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
 
         // 9.3 and RNScheduler!Write: fill in the budget's class order, the
         // outer rule (RNScheduler ClassOrderBeforePriority). Within a class,
@@ -375,8 +443,8 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             for ( ;; )
             {
                 int level = 0;
-                int32_t * link = NULL;
-                const int i = rn_builder_next_in_class( builder, items, &class_head[send_class], &level, &link );
+                uint32_t group_index = 0;
+                const int i = rn_builder_next_in_class( builder, &plan, items, num_items, send_class, &level, &group_index );
                 if ( i < 0 )
                     break;
 
@@ -404,8 +472,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 }
 
                 items[i].taken = 1;
-                rn_builder_take_head( items, link );
-                taken[records] = i;
+                taken_positions[records] = rn_builder_take_head( &plan, group_index );
                 records++;
 
                 if ( packet_class < 0 )
@@ -445,8 +512,14 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             // reliable one waits for the next update and is never dropped, an
             // unreliable one is dropped and counted. Either way nothing after
             // it spends the bucket this update.
-            for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; r++ )
-                items[taken[r]].taken = 0;
+            for ( uint32_t r = records; r > 0; r-- )
+            {
+                const struct rn_packet_builder_sequence_t * entry = &plan.sequence[taken_positions[r - 1]];
+                struct rn_packet_builder_group_t * group = &plan.groups[entry->group_index];
+                rocketnet_assert( group->cursor > group->begin );
+                group->cursor--;
+                items[entry->item_index].taken = 0;
+            }
 
             for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
                 builder->level_clock[l] = saved_level_clock[l];
@@ -479,15 +552,19 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     }
 
     // RNScheduler!Tick's reset: every item taken, nothing queued, the clocks
-    // go back to the seeds. Every class list empty is every writable item
+    // go back to the seeds. Every group range spent is every writable item
     // taken, unless a refused packet gave its items back or an item's class
     // is none of the four.
     bool drained = !refused && !stray;
-    for ( int c = 0; c <= ROCKETNET_SEND_CLASS_UNRELIABLE && drained; c++ )
-        if ( class_head[c] >= 0 )
+    for ( uint32_t g = 0; g < plan.group_count && drained; g++ )
+        if ( plan.groups[g].cursor < plan.groups[g].end )
             drained = false;
     if ( drained )
         rn_builder_reset_clocks( builder );
+
+#if ROCKETNET_TEST_SEAMS
+    rn_builder_last_plan = plan;
+#endif // #if ROCKETNET_TEST_SEAMS
 
     return (int) builder->packets;
 }
