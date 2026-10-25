@@ -620,7 +620,7 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 #endif
         }
     }
-    if ( rio->region ) VirtualFree( rio->region, 0, MEM_RELEASE );
+    if ( rio->region ) rocketnet_free( context, rio->region );
     if ( rio->notify )
     {
 #if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
@@ -781,12 +781,14 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // one region, carved only by the layout, registered once
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
                                      ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof(SOCKADDR_INET), 4096, &rio->layout ) ) goto failed;
-    rio->region = (uint8_t*) VirtualAlloc( NULL, (SIZE_T) rio->layout.total_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-    if ( !rio->region )
-    {
-        rocketnet_allocation_refused();
-        goto failed;
-    }
+    // the region comes from the caller's allocator like every other block:
+    // RIORegisterBuffer takes any committed memory and locks the pages it
+    // spans, so ROCKETNET_ALLOCATION_ALIGNMENT is enough (the layout's
+    // sub-regions are offsets from the region's base). It is zeroed once
+    // here, as VirtualAlloc's pages were, before any traffic.
+    rio->region = (uint8_t*) rocketnet_malloc( context, (size_t) rio->layout.total_bytes );
+    if ( !rio->region ) goto failed;
+    memset( rio->region, 0, (size_t) rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
 #if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )

@@ -630,6 +630,19 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues )
     return bytes <= SIZE_MAX ? bytes : 0;
 }
 
+// each queue's provided buffer ring, mapped by liburing (or by the fallback
+// mmap in rocketnet_server_uring_setup_buf_ring), whole pages, outside the
+// allocator; the submission and completion rings are the kernel's and are not
+// counted
+uint64_t rocketnet_server_uring_mapped_bytes( int queues )
+{
+    if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES )
+        return 0;
+    const uint64_t page = (uint64_t) getpagesize();
+    const uint64_t ring = ( (uint64_t) ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf) + page - 1 ) / page * page;
+    return (uint64_t) queues * ring;
+}
+
 // an SQE, submitting the queued ones first when the submission queue is full
 
 static struct io_uring_sqe * rocketnet_server_uring_get_sqe( struct rocketnet_server_uring_t * uring )
@@ -1807,6 +1820,12 @@ bool rocketnet_server_uring_available()
 }
 
 uint64_t rocketnet_server_uring_allocation_bytes( int queues )
+{
+    (void) queues;
+    return 0;
+}
+
+uint64_t rocketnet_server_uring_mapped_bytes( int queues )
 {
     (void) queues;
     return 0;

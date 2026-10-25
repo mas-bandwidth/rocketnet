@@ -97,11 +97,14 @@ failure in every 10000 cell, each built with zero warnings:
 | clang DEV ON | 0 | exit 0, ALL TESTS PASSED | 1078 |
 | clang DEV OFF | 0 | exit 0, ALL TESTS PASSED | 1079 |
 
-`test_secrets_wiped_destroy_writes_only_keys` runs and passes in each. At
-attempt 3 it failed every 10000 cell (`peak_rss_mb=1698 bound_mb=1217`):
+`test_secrets_wiped_destroy_writes_only_keys` runs and passes in each. The unit
+suite now reports its peak and bound, while the functional suite's
+`test_unit_case_memory` row enforces that same declaration. At attempt 3,
+before that tier split, the unit suite failed every 10000 cell
+(`peak_rss_mb=1698 bound_mb=1217`):
 the case copies every live block of its connected pair before destroy, so
 its peak is twice the pair's memory, and the server transport's fixed
 tables grow with the build's maximum whatever the case's `max_clients`. The
-plan-derived `SUITE_CASE_RSS_BOUND` at `tests/test_unit_secrets_wiped.cpp:750`
-bounds it at twice the pair's planned memory, so the nightly's unit step is
-green.
+plan-derived `SUITE_CASE_RSS_BOUND` beside the case bounds it at twice the
+pair's planned memory. A 10000-client functional qualification must therefore
+include the memory row; the ordinary unit step remains deterministic.

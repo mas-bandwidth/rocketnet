@@ -845,6 +845,7 @@ if(ROCKETNET_BUILD_TESTS)
     file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/functional/channel_*.cpp" )
     add_executable(functional
         functional/main.cpp
+        functional/unit_case_memory.cpp
         functional/rocketnet_functional_tests.cpp
         functional/platform_primitives.cpp
         functional/server_receive_backlog.cpp
@@ -876,6 +877,7 @@ if(ROCKETNET_BUILD_TESTS)
     endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     target_compile_features(functional PRIVATE cxx_std_11)
+    add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_dependencies(functional test_serialize test_transport_control)
         if(ROCKETNET_XDP)

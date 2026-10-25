@@ -24,9 +24,72 @@ Trace hashes cover the seed, ordered fault decisions and observable endpoint
 events.
 
 Short deterministic cases belong in the ordinary functional tier. Larger seed
-sweeps and multi-hour campaigns are planned hardening gates. They must use the
-same invariants and replay format; a larger run does not weaken a failed short
-case.
+sweeps and multi-hour campaigns use the same invariants and replay format; a
+larger run does not weaken a failed short case.
+
+## The command line
+
+`./bin/dst` is built Release with the tools (`make`; on Windows
+`cmake --build build --config Release --target dst`, giving
+`bin/Release/dst.exe`). `--seeds a-b` runs every seed in the range and ends with
+
+    PASS seeds=a-b runs=N trace=<hash>
+
+where the trace folds each seed's trace hash in order. A failing seed prints
+
+    FAIL seed=<n> step=<s> check=<name> what=<detail>
+    replay: ./bin/dst --seeds <n>-<n> --shape full
+
+and the range ends with `FAIL seeds=a-b runs=N failed=F` and exit code 1. The
+replay line names every non-default flag of the run (`--shape`, `--clients`,
+`--steps`, `--faults`), so running it reproduces the same schedule.
+
+## The same trace on every OS
+
+The same seeds and options print the same trace on Linux, macOS and Windows,
+so a seed that fails on one OS replays on the others. The reference is
+
+    ./bin/dst --seeds 1-50
+    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+
+measured equal, Release, at executable source 968673ea (current main c456b6fc
+merged into the nightly carry) on all three OSes:
+
+    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    Windows (x64, MSVC)    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+
+The trace was f5b51aa640524001 at main 010c8167 (also equal on the three OSes);
+the library changes landed between the two moved it. A change that moves this
+trace changes what a run does; it updates the reference here and
+`DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together, from
+three equal PASS lines.
+
+## The nightly
+
+`.github/workflows/nightly-dst.yml` runs every night (and by
+`workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
+ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
+Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
+runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
+then sweeps a longer range sized to about twenty minutes on that OS (Linux
+51-11000, macOS 51-14000, Windows 51-6000). A FAIL line or a trace
+mismatch fails the leg; the log holds the replay line.
+
+The Linux and macOS ranges were refreshed in Release at executable source
+968673ea: Linux 51-11000 PASS in 1442.42 s and macOS 51-14000 PASS in
+1153.10 s. Windows (x64, MSVC, Release) was run at executable source
+809ad504 (current main 6fa04f88 merged into the same carry), holding the
+Windows host exclusively: the build had 0 warnings, the fifteen cases passed,
+`--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 51-6000 passed
+in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
+
+    PASS seeds=51-2050 runs=2000 trace=3398a85cc19ce52f    432.65 s
+    PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
+    PASS seeds=4051-6000 runs=1950 trace=b9551ab88eec7cbd  418.88 s
+
+Each leg's `timeout-minutes: 50` is about
+twice the sweep plus the build.
 
 ## Fault kinds
 
