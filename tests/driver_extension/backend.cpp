@@ -42,11 +42,12 @@ static void send( void * socket, const rocketnet_address_t * to, const uint8_t *
 static int receive( void * socket, rocketnet_address_t * from, uint8_t * data, int bytes )
 { return rocketnet_platform_socket_receive_packet((rocketnet_platform_socket_t*)socket, from, data, bytes); }
 
-static void replay_forget( void *, const rocketnet_address_t * address )
+static bool replay_forget( void *, const rocketnet_address_t * address )
 {
     ++external_test_replay_forgets;
     external_test_replay_forgotten_address = *address;
     external_test_replay_has_forgotten = true;
+    return true;
 }
 static void replay_mark( void *, const rocketnet_address_t * address, uint32_t high_water )
 {

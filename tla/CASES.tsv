@@ -207,7 +207,10 @@ MCRNXdpReplay.cfg	MCRNXdpReplay.tla	pass	-	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenKernelAdvances.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNeverDropped	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenNoForget.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenNarrowWindow.cfg	MCRNXdpReplay.tla	invariant	FreshGenuineNeverDropped	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenFailedForgetDropped.cfg	MCRNXdpReplay.tla	invariant	ForgetOwedUntilApplied	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg	MCRNXdpReplay.tla	invariant	ReleasedSlotForgetsItsReplyMac	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenReconnectFreshness.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenSupersededForget.cfg	MCRNXdpReplay.tla	invariant	RetryNeverDeletesNewerMark	check	rnxdpreplay	required	-
 MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
