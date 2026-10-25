@@ -1,10 +1,14 @@
 # LAN 1000-client proof, Windows server (iocp, rio)
 
-Date (UTC): 2026-10-25, runs between 04:14 and 05:13.
-Head: 1ca477339e150220f90e96bbe7c61be5b175eb51 (built and reported by every host).
-Verdict: HOLD. No cell made a valid proof run. iocp ran unpinned and was
-refused, and rio never got the server's exclusive lock within the runner's
-900 s ready wait.
+Verdict: HOLD. No cell has made a valid proof run.
+
+Two attempts are recorded here. The first, at
+1ca477339e150220f90e96bbe7c61be5b175eb51, found a runner defect: the
+Windows server never received its transport pin. The second, at
+e40cc6a6f4d9302363f95ea957e742efc8e503a6, carries the fix to
+`scripts/lan-proof-remote`. It built that head on the server, but the
+server's exclusive bench lock was not granted within any bound, so neither
+cell and no pinned start was made.
 
 ## Machines
 
@@ -14,14 +18,25 @@ refused, and rio never got the server's exclusive lock within the runner's
 | linux-client-1 | client (2 shards of 250) | Linux 7.0.0-38-generic | Aquantia AQtion AQC113 (rev 03) | atlantic | 1000 Mb/s Full |
 | linux-client-2 | client (2 shards of 250) | Linux 7.0.0-38-generic | Aquantia AQtion AQC113 (rev 03) | atlantic | 1000 Mb/s Full |
 
-The server's facts come from `Get-NetAdapter` through the runner's hostinfo
-step. The clients' facts come from `ethtool eno1`, `ethtool -i eno1` and `lspci`.
+These facts were read in the first attempt, on 2026-10-25. The server's facts
+come from `Get-NetAdapter` through the runner's hostinfo step. The clients'
+facts come from `ethtool eno1`, `ethtool -i eno1` and `lspci`. The second
+attempt's hostinfo call on the server timed out in the lock queue, so it read
+no new facts.
 
-Start load (load1 / logical cores): iocp run 28.16/64, 0.13/16, 0.23/16; rio
-run 2.56/64, 2.01/16, 6.26/16. Every value was under half the cores, so both
-runs were admitted.
+## Cells
 
-## Commands
+| cell | server | nic Mb/s | clients | duration | connected | timeouts | mode delivery | size delivery | min kbps | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| iocp | windows-server-1 | 10000 | 1000 | 600 | not made | not made | not made | not made | not made | not made: the server's exclusive lock was not granted (second attempt) |
+| rio | windows-server-1 | 10000 | 1000 | 600 | not made | not made | not made | not made | not made | not made: the server's exclusive lock was not granted (both attempts) |
+
+The runner printed no table row for either cell. No merger verdict line, per-mode
+or per-size verdict, receipt or per-client kbps exists for either cell.
+
+## First attempt (head 1ca47733)
+
+Runs between 04:14 and 05:13 UTC on 2026-10-25.
 
 ```text
 scripts/lan-proof --inventory <inventory> --cell iocp --duration 600 --clients 1000 \
@@ -30,60 +45,70 @@ scripts/lan-proof --inventory <inventory> --cell rio --duration 600 --clients 10
     --commit 1ca477339e150220f90e96bbe7c61be5b175eb51 --run-dir <dir>/rio --run-id 1ca4773300000210
 ```
 
-## Cells
+Start load (load1 / logical cores) was 28.16/64, 0.13/16 and 0.23/16 for iocp,
+and 2.56/64, 2.01/16 and 6.26/16 for rio. Both runs were admitted.
 
-| cell | server | nic Mb/s | clients | duration | connected | timeouts | mode delivery | size delivery | min kbps | verdict |
-|---|---|---|---|---|---|---|---|---|---|---|
-| iocp | windows-server-1 | 10000 | 1000 | 600 | not made | not made | not made | not made | not made | FAIL: server unpinned, refused before ready |
-| rio | windows-server-1 | 10000 | 1000 | 600 | not made | not made | not made | not made | not made | not made: exclusive lock not granted within the 900 s ready wait |
-
-The runner printed no table row for either cell, because each one stopped
-before its shards started. No merger verdict line, per-mode or per-size
-verdict, receipt or per-client kbps exists for either cell.
-
-### iocp: log tail
-
-The runner printed `lan-proof: FAIL: the locked Windows server ended before
-it was ready`. The server log tail (addresses redacted):
+iocp stopped with `lan-proof: FAIL: the locked Windows server ended before it
+was ready`. The server log tail, with addresses redacted:
 
 ```text
 info: server transport started on 0.0.0.0:40000 [portable] (development keys)
 split_transport_refused: role=server run_id=1ca47733000010c1 pin=none granted=portable
-split_receipt: ... connected=0 ... transport=portable ... delivery_verdict=FAIL load_verdict=FAIL ... verdict=FAIL transport_pin=none
 split_proof: role=server run_id=1ca47733000010c1 transport=portable transport_pin=none ... disconnects=0 verdict=FAIL
 ```
 
-Cause: `scripts/lan-proof-remote` `cmd_start_server` sets
-`env ROCKETNET_SERVER_TRANSPORT=<cell>` in the WSL shell and then runs
-`load_split.exe`. WSL hands a Linux environment variable to a Win32 process
-only when WSLENV names it. On the server, under its bench lock:
-`env ROCKETNET_PROBE=set cmd.exe /c echo %ROCKETNET_PROBE%` prints the literal
-`%ROCKETNET_PROBE%`. With `WSLENV=ROCKETNET_PROBE` added, it prints `set`.
-The server therefore saw no pin, fell back to portable, and the proof mode
-refused it, as designed. This is a runner defect. It is not a library result.
+Cause: `cmd_start_server` set `ROCKETNET_SERVER_TRANSPORT` in the Linux
+subsystem shell. That shell hands a variable to a Windows program only when
+WSLENV names it. `env ROCKETNET_PROBE=set cmd.exe /c echo %ROCKETNET_PROBE%`
+prints the literal `%ROCKETNET_PROBE%`. With `WSLENV=ROCKETNET_PROBE` added, it
+prints `set`. The server saw no pin, fell back to portable, and the proof mode
+refused it, as designed. This was a runner defect, not a library result.
 
-### rio: log tail
+rio stopped with `lan-proof: FAIL: the server printed no split_ready line`. The
+exclusive hold stayed queued behind other exclusive work on the server for the
+runner's whole 900 s ready wait.
 
-```text
-host ... load1=2.56 nproc=64   (admitted)
-lan-proof: FAIL: the server printed no split_ready line
-```
+## The fix (head e40cc6a6)
 
-`server.start` was empty. The exclusive hold-server stayed queued behind
-other cards' exclusive Windows runs for the runner's whole ready wait. The
-queued hold was then ended before it could start a server with no clients.
-The rio server never started, so this cell's run was not made. It goes
-through the same `cmd_start_server` path as iocp, but no rio run shows that.
+`cmd_start_server` now passes
+`WSLENV="ROCKETNET_SERVER_TRANSPORT${WSLENV:+:$WSLENV}"` with the pin. Names
+already in WSLENV are kept: with WSLENV unset the value is
+`ROCKETNET_SERVER_TRANSPORT`, and with `USERPROFILE/p:FOO` set it is
+`ROCKETNET_SERVER_TRANSPORT:USERPROFILE/p:FOO`. Linux and macOS servers
+ignore WSLENV, so their start is unchanged. `scripts/lan-proof-selftest`
+prints `lan-proof-selftest: ok`.
+
+## Second attempt (head e40cc6a6)
+
+Runs between 05:17 and 06:33 UTC on 2026-10-25.
+
+- Remote step script installed on the server under a shared slot. The slot
+  was granted after a 10-minute queue.
+- `lan-proof-remote build e40cc6a6...` was granted a shared slot after
+  about 30 minutes. It built
+  `bin/Release/load_split.exe` and reported head
+  `e40cc6a6f4d9302363f95ea957e742efc8e503a6`.
+- Server hostinfo: the 1200 s bound expired in the lock queue. No facts were
+  read.
+- The pinned start (iocp then rio, about 15 s each under the exclusive lock,
+  logging the granted transport) queued at 06:08. Its 1500 s bound expired
+  at 06:33 without the lock being granted, so it was not made. The fix is
+  therefore not yet shown by a run on the server.
+- The iocp cell (`scripts/lan-proof ... --cell iocp ... --commit e40cc6a6...
+  --run-id e40c01006add9cc5`) started at 06:08 with the client-host lock
+  held. It was stopped at 06:18, still queued on its first server step, so
+  that the client hosts were not held idle. No server or shard was started.
+  rio was not started.
 
 ## What closes this
 
-1. Pass the pin through WSL in `scripts/lan-proof-remote` `cmd_start_server`,
-   for example `env ROCKETNET_SERVER_TRANSPORT="$transport"
-   WSLENV="ROCKETNET_SERVER_TRANSPORT${WSLENV:+:$WSLENV}" ...`. Apply this on
-   Windows only, or unconditionally, since Linux and macOS ignore WSLENV.
-2. Rerun both cells when the server's exclusive lock is free. The 900 s
-   ready wait counts the lock queue.
+1. A short pinned start on the server at this head, showing
+   `[iocp]` and `[rio]` granted (not portable).
+2. Both cells, when the server's exclusive lock can be granted within the
+   runner's bounds. The server's queue, not the library, has blocked every
+   run so far. The runner's 900 s lock wait and its 1800 s Windows build
+   bound are both shorter than the queue seen in the second attempt.
 
 The known history of raw UDP drops on the old Windows 1 GbE path is not
-exercised here. The server's test adapter now negotiates 10 GbE, and the
-client links negotiate 1 GbE.
+exercised here. The server's test adapter negotiates 10 GbE, and the client
+links negotiate 1 GbE.
