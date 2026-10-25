@@ -15,9 +15,11 @@
 // Client slots: the server's fixed set of connected clients, allocated once
 // at create. A slot is assigned only in step 3 of the handshake, holds the
 // identity recovered from the connect token and a reference to the
-// encryption mapping, and is found by client id in constant time -- a
-// chained map under a per-run SipHash key, because the client-id check runs
-// on every connection request and must not be linear in the slot count.
+// encryption mapping, and is found by client id in expected constant time --
+// a flat open-addressed slot index under a per-run SipHash key. Each indexed
+// fixed slot owns the full client id and full-width generation, and lookup
+// compares that full id. Neither a hash bucket nor a reused numeric slot is
+// identity. Any lookup or update examines at most the fixed index capacity.
 // Per-address lookup belongs to the encryption map, which already owns the
 // address; a slot never duplicates it.
 
@@ -72,5 +74,34 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
 
 // Unit-test poison/release/reuse witness for the private slot arrays.
 bool rocketnet_client_slots_reset_witness_for_test();
+
+#if ROCKETNET_DEV
+// Development-only ownership witness. The full client id, numeric slot and
+// uint64 generation are the exact same-object identity; a delayed witness
+// cannot release a replacement in the reused slot. Production release paths
+// remain synchronous and index-based; this seam is absent from DEV=0 and the
+// installed public C API.
+struct rocketnet_client_slot_handle_t
+{
+    uint64_t client_id;
+    int client_index;
+    uint64_t generation;
+};
+
+bool rocketnet_client_slots_handle( const struct rocketnet_client_slots_t * slots,
+                                    int client_index,
+                                    struct rocketnet_client_slot_handle_t * handle );
+bool rocketnet_client_slots_release_handle( struct rocketnet_client_slots_t * slots,
+                                            const struct rocketnet_client_slot_handle_t * handle );
+
+// Development-only deterministic-cost seams. They are absent from DEV=0,
+// including production test-hook builds.
+uint64_t rocketnet_client_slots_test_hash_index( const struct rocketnet_client_slots_t * slots,
+                                                 uint64_t client_id );
+bool rocketnet_client_slots_test_force_hash_index( struct rocketnet_client_slots_t * slots,
+                                                   int index );
+uint64_t rocketnet_client_slots_test_last_probes( const struct rocketnet_client_slots_t * slots );
+uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client_slots_t * slots );
+#endif // #if ROCKETNET_DEV
 
 #endif // #ifndef ROCKETNET_CLIENT_SLOTS_H
