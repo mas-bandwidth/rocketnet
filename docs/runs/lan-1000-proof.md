@@ -31,9 +31,9 @@ Hosts (from the script's host facts):
 
 | label | role | OS, kernel | test NIC model, driver | speed, duplex | logical cores |
 | --- | --- | --- | --- | --- | --- |
-| server-a | server | Linux 7.0.0-34-generic | Intel X540-AT2 10-Gigabit, ixgbe | 1000 Mb/s, full | 64 |
-| client-a | client, shard0 + shard2 | Linux 7.0.0-38-generic | Aquantia AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
-| client-b | client, shard1 + shard3 | Linux 7.0.0-38-generic | Aquantia AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
+| server-a | server | Linux 7.0.0-34-generic | X540-AT2 10-Gigabit, ixgbe | 1000 Mb/s, full | 64 |
+| client-a | client, shard0 + shard2 | Linux 7.0.0-38-generic | AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
+| client-b | client, shard1 + shard3 | Linux 7.0.0-38-generic | AQC113 NBase-T, atlantic | 1000 Mb/s, full | 16 |
 
 The negotiated link speed on every host was 1000 Mb/s, so this cell proves
 1000 clients over a gigabit path, not a 10-gigabit one.
