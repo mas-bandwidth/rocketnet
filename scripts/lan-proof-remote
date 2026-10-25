@@ -1,7 +1,160 @@
 #!/usr/bin/env bash
 #
-# lan-proof-remote -- the file a coordinator copies to a host and runs there.
-# This commit has no live body. The coordinator's dry run never executes it.
+# lan-proof-remote -- one host's steps of one LAN proof cell.
+#
+# scripts/lan-proof copies this file to ~/lan-proof-live/lan-proof-remote on
+# each machine and runs it there; it is never pasted into an ssh command
+# string. Subcommands:
+#
+#   build <commit>
+#   hostinfo <iface>
+#   load
+#   start-server <commit> <dir> <transport> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   start-shard <commit> <dir> <name> <total> <duration> <run-id> <first> <count> <server-endpoint> <key> <cap-kbps>
+#   alive <pidfile>
+#   stop <pidfile>
+#   collect <file>
+#
+# Every process this file starts is recorded in a pidfile under the run
+# directory; stop kills only the process named in that pidfile.
 
-echo "lan-proof-remote: live run is not in this commit" >&2
-exit 2
+set -u
+
+REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
+BASE="${HOME}/lan-proof-live"
+
+fail()
+{
+    echo "lan-proof-remote: $*" >&2
+    exit 1
+}
+
+usage()
+{
+    echo "usage: lan-proof-remote build|hostinfo|load|start-server|start-shard|alive|stop|collect ..." >&2
+    exit 2
+}
+
+cmd_build()
+{
+    local commit=$1 dir="$BASE/$1" head
+    case "$commit" in
+        ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
+    esac
+    mkdir -p "$BASE" || fail "build: cannot create $BASE"
+    if [ ! -d "$dir/.git" ]; then
+        git clone --quiet "$REPO_URL" "$dir" || fail "build: cannot clone"
+    fi
+    git -C "$dir" fetch --quiet origin || fail "build: cannot fetch"
+    git -C "$dir" checkout --quiet "$commit" || fail "build: commit not in the clone"
+    head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
+    [ "$head" = "$commit" ] || fail "build: HEAD is $head, not $commit"
+    ( cd "$dir" && mkdir -p build && cd build && \
+      cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null && \
+      nice make -j4 --no-print-directory load_split ) || fail "build: cmake or make failed"
+    echo "$head"
+}
+
+cmd_hostinfo()
+{
+    local iface=$1 os kernel speed duplex driver model address load1 nproc
+    os=$( uname -s )
+    kernel=$( uname -r )
+    speed=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ { print $2 }' )
+    duplex=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ { print $2 }' )
+    driver=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^driver:/ { print $2 }' )
+    model=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2 }' )
+    address=$( ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }' )
+    load1=$( awk '{ print $1 }' /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }' )
+    nproc=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
+    case "$speed" in
+        *Mb/s) speed=${speed%Mb/s} ;;
+        *Gb/s) speed=$( awk -v g="${speed%Gb/s}" 'BEGIN { printf "%d", g * 1000 }' ) ;;
+        *) speed=unknown ;;
+    esac
+    [ -n "$duplex" ] || duplex=unknown
+    [ -n "$driver" ] || driver=unknown
+    [ -n "$model" ] || model=unknown
+    [ -n "$address" ] || address=unknown
+    echo "os=$os kernel=$kernel iface=$iface model=$model driver=$driver speed_mbps=$speed duplex=$duplex address=$address load1=${load1:-unknown} nproc=$nproc"
+}
+
+cmd_load()
+{
+    local load1 nproc
+    load1=$( awk '{ print $1 }' /proc/loadavg 2>/dev/null || echo unknown )
+    nproc=$( nproc 2>/dev/null || echo 1 )
+    echo "load1=$load1 nproc=$nproc"
+}
+
+start_recorded()
+{
+    local dir=$1 name=$2
+    shift 2
+    mkdir -p "$dir" || fail "start: cannot create $dir"
+    if [ "$( uname -s )" = "Darwin" ]; then
+        ulimit -n 65535 2>/dev/null || true
+    fi
+    nohup "$@" > "$dir/$name.log" 2>&1 &
+    echo $! > "$dir/$name.pid"
+    echo "$name pid $!"
+}
+
+cmd_start_server()
+{
+    local commit=$1 dir=$2 transport=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
+    local bin="$BASE/$commit/build/load_split"
+    [ -x "$bin" ] || fail "start-server: no built load_split for $commit"
+    start_recorded "$dir" server env ROCKETNET_SERVER_TRANSPORT="$transport" \
+        "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+cmd_start_shard()
+{
+    local commit=$1 dir=$2 name=$3 total=$4 duration=$5 run_id=$6 first=$7 count=$8 endpoint=$9 key=${10} cap=${11}
+    local bin="$BASE/$commit/build/load_split"
+    [ -x "$bin" ] || fail "start-shard: no built load_split for $commit"
+    start_recorded "$dir" "$name" \
+        "$bin" client-shard "$total" "$duration" "$run_id" "$first" "$count" "$endpoint" "$key" "$cap" proof
+}
+
+cmd_alive()
+{
+    local pidfile=$1 pid
+    [ -f "$pidfile" ] || exit 1
+    pid=$( cat "$pidfile" )
+    kill -0 "$pid" 2>/dev/null
+}
+
+cmd_stop()
+{
+    local pidfile=$1 pid
+    [ -f "$pidfile" ] || return 0
+    pid=$( cat "$pidfile" )
+    case "$pid" in
+        ''|*[!0-9]*) fail "stop: pidfile $pidfile does not hold a process id" ;;
+    esac
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 1
+    done
+    kill -9 "$pid" 2>/dev/null || true
+}
+
+cmd_collect()
+{
+    cat "$1"
+}
+
+case "${1:-}" in
+    build)        [ $# -eq 2 ] || usage; cmd_build "$2" ;;
+    hostinfo)     [ $# -eq 2 ] || usage; cmd_hostinfo "$2" ;;
+    load)         cmd_load ;;
+    start-server) [ $# -eq 10 ] || usage; cmd_start_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    start-shard)  [ $# -eq 12 ] || usage; cmd_start_shard "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" ;;
+    alive)        [ $# -eq 2 ] || usage; cmd_alive "$2" ;;
+    stop)         [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
+    collect)      [ $# -eq 2 ] || usage; cmd_collect "$2" ;;
+    *) usage ;;
+esac

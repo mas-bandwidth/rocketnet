@@ -53,6 +53,16 @@ EOF
 "$proof" --dry-run --inventory "$tmp/uplink" --cell xdp --duration 120 >"$tmp/xdp" 2>&1 && say "xdp accepted an uplink"
 grep -q 'refuses an uplink' "$tmp/xdp" || say "xdp refusal did not name the uplink"
 
+cat > "$tmp/server.log" <<'EOF'
+split_ready: schema=split_v1 role=server run_id=0123456789abcdef total=1000 duration_s=120 profile=default payload_bytes=proof rate_target_hz=10 load=proof address=192.0.2.10:40000 key=00 transport=gso startup_utc_s=1 transport_pin=gso
+split_proof: role=server run_id=0123456789abcdef transport=gso transport_pin=gso small_bytes=1200 fragmented_bytes=2000 target_kbps=256 min_client_up_kbps=277.859200 min_client_down_kbps=279.153067 checksum_errors=0 receipt_errors=0 receipts_dropped=0 disconnects=0 verdict=PASS
+EOF
+cat > "$tmp/merge.log" <<'EOF'
+split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_sent=2400000 messages_delivered=2399996 unreliable_lost=4 sequenced_skipped=0 timing_verdict=FAIL
+EOF
+row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server.log" "$tmp/merge.log") || say "cell-row exited $?"
+[ "$row" = 'gso|server-a|1000|1000|120|yes|0|pass|277|pass' ] || say "cell-row printed '$row'"
+
 if [ "$fail" -ne 0 ]; then
     echo "lan-proof-selftest: failed" >&2
     exit 1
