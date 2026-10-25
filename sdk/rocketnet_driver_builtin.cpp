@@ -52,6 +52,16 @@ static uint64_t portable_rx_storage_bytes( int capacity )
     return (uint64_t) PORTABLE_RX_BANKS * (uint64_t) capacity *
         ( sizeof( rocketnet_address_t ) + sizeof( int ) + ROCKETNET_RECEIVE_CEILING );
 }
+// Every packet the send handoff drops is counted by the path that dropped it,
+// apart from the socket's own send failures; SEND_FAILED reads the sum, and
+// the transport logs each path's count when it closes.
+static const int PORTABLE_TX_DROP_NO_FREE_BANK = 0;  // the producer bank is full and every other bank is in flight
+static const int PORTABLE_TX_DROP_HANDOFF_BUSY = 1;  // the producer bank is full and the handoff lock was held
+static const int PORTABLE_TX_DROP_STOPPING = 2;      // sent after stop, or unpublished at stop
+static const int PORTABLE_TX_DROP_INVALID = 3;       // no address, no data, or a size outside the datagram ceiling
+static const int PORTABLE_TX_DROP_PATHS = 4;
+static const char * const portable_tx_drop_path_name[PORTABLE_TX_DROP_PATHS] =
+    { "no-free-bank", "handoff-busy", "stopping", "invalid-packet" };
 struct portable_tx_bank_t
 {
     int count = 0;
@@ -82,6 +92,8 @@ struct portable_server_t
     std::atomic<bool> exited{false};
     std::atomic<bool> rx_exited{false};
     std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> dropped_by_path[PORTABLE_TX_DROP_PATHS] = {}; // the paths of dropped, by PORTABLE_TX_DROP_*
+    int publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY; // main only: why the last publish try failed
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
@@ -178,11 +190,25 @@ static bool portable_tx_storage_create( portable_server_t * server, int capacity
     return true;
 }
 
+// Main only: counts packets dropped on one path into SEND_FAILED and into
+// that path's count. The first drop on each path logs once; later ones are
+// only counted, and the transport logs every path's count when it closes.
+static void portable_tx_drop( portable_server_t * server, int path, uint64_t packets )
+{
+    if ( packets == 0 ) return;
+    server->dropped.fetch_add( packets, std::memory_order_relaxed );
+    if ( server->dropped_by_path[path].fetch_add( packets, std::memory_order_relaxed ) == 0 )
+        rocketnet_info( "server send handoff dropped %llu packets (%s): first of its kind; later ones are counted and logged when the transport closes",
+                        (unsigned long long) packets, portable_tx_drop_path_name[path] );
+}
+
 // The only shared ownership transition. No copy, allocation or socket call
-// occurs with the mutex held. A failed try retains the main-owned producer.
+// occurs with the mutex held. A failed try retains the main-owned producer
+// and records why in publish_refusal.
 static bool portable_tx_publish( portable_server_t * server )
 {
     if ( server->bank[server->producer].count == 0 ) return true;
+    server->publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY;
 #if defined(ROCKETNET_PORTABLE_TX_TEST_HOOKS)
     if ( server->stopping.load( std::memory_order_relaxed ) && server->quit.load( std::memory_order_relaxed ) )
         server->stop_publish_saw_quit = true;
@@ -192,6 +218,7 @@ static bool portable_tx_publish( portable_server_t * server )
     if ( server->free_count == 0 )
     {
         rocketnet_platform_mutex_release( &server->mutex );
+        server->publish_refusal = PORTABLE_TX_DROP_NO_FREE_BANK;
         return false;
     }
     const int old = server->producer;
@@ -401,7 +428,17 @@ static void portable_server_cleanup( portable_server_t * server )
     if ( server->rx_mutex.ok ) rocketnet_platform_mutex_destroy( &server->rx_mutex );
     if ( server->wake ) rocketnet_platform_wake_destroy( server->wake );
     if ( server->mutex.ok ) rocketnet_platform_mutex_destroy( &server->mutex );
-    if ( server->socket ) rocketnet_platform_socket_destroy( server->socket );
+    if ( server->socket )
+    {
+        // every drop path once, zeros included, beside the socket's own failures
+        rocketnet_info( "server send handoff drops: %s %llu, %s %llu, %s %llu, %s %llu packets; socket send failures %llu",
+            portable_tx_drop_path_name[PORTABLE_TX_DROP_NO_FREE_BANK], (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_NO_FREE_BANK].load(),
+            portable_tx_drop_path_name[PORTABLE_TX_DROP_HANDOFF_BUSY], (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_HANDOFF_BUSY].load(),
+            portable_tx_drop_path_name[PORTABLE_TX_DROP_STOPPING], (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_STOPPING].load(),
+            portable_tx_drop_path_name[PORTABLE_TX_DROP_INVALID], (unsigned long long) server->dropped_by_path[PORTABLE_TX_DROP_INVALID].load(),
+            (unsigned long long) rocketnet_platform_socket_send_failures( server->socket ) );
+        rocketnet_platform_socket_destroy( server->socket );
+    }
     void * context = server->context;
     // the receive banks hold datagrams, never a secret: freed as they are,
     // so destroy touches no bank page the run did not (tla/RNDestroyWipe.tla)
@@ -506,20 +543,20 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
     {
         if ( server->stopping.load( std::memory_order_acquire ) )
         {
-            server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
+            portable_tx_drop( server, PORTABLE_TX_DROP_STOPPING, (uint64_t)( count - i ) );
             return;
         }
         portable_tx_bank_t * bank = &server->bank[server->producer];
         if ( bank->count == server->tx_capacity && !portable_tx_publish( server ) )
         {
-            server->dropped.fetch_add( (uint64_t)( count - i ), std::memory_order_relaxed );
+            portable_tx_drop( server, server->publish_refusal, (uint64_t)( count - i ) );
             return;
         }
         bank = &server->bank[server->producer];
         const rocketnet_platform_send_t * packet = &packets[i];
         if ( !packet->to || !packet->packet_data || packet->packet_bytes <= 0 || packet->packet_bytes > ROCKETNET_RECEIVE_CEILING )
         {
-            server->dropped.fetch_add( 1, std::memory_order_relaxed );
+            portable_tx_drop( server, PORTABLE_TX_DROP_INVALID, 1 );
             continue;
         }
         const int slot = bank->count;
@@ -570,7 +607,7 @@ static void portable_stop( void * transport )
     // final try cannot publish it, account and drop it before completion.
     if ( !portable_tx_publish( server ) )
     {
-        server->dropped.fetch_add( (uint64_t)server->bank[server->producer].count, std::memory_order_relaxed );
+        portable_tx_drop( server, PORTABLE_TX_DROP_STOPPING, (uint64_t)server->bank[server->producer].count );
         server->bank[server->producer].count = 0;
     }
     // Publish or drop the main-owned bank before allowing an empty-ready
@@ -812,6 +849,55 @@ bool rocketnet_portable_tx_test_sizing()
     int queued = 0;
     for ( int i = 0; i < PORTABLE_TX_BANKS; ++i ) queued += server->bank[i].count;
     valid &= queued == 1 + 3 * 1100;
+    portable_server_cleanup( server );
+    return valid;
+#endif
+}
+
+// Drop paths: each way the handoff drops a packet is counted on its own path,
+// and SEND_FAILED's handoff part is their sum. No worker and no socket: the
+// test takes a ready bank by hand to keep it in flight.
+bool rocketnet_portable_tx_test_drop_paths()
+{
+#if !defined(ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE)
+    return true;
+#else
+    portable_server_t * server = portable_tx_test_owner( ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    if ( !server ) return false;
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+    uint8_t bytes[4] = { 1, 2, 3, 4 };
+    const rocketnet_platform_send_t send = { &to, bytes, 4 };
+    const rocketnet_platform_send_t empty = { &to, bytes, 0 };
+    portable_send( server, &empty, 1 );
+    bool valid = server->dropped_by_path[PORTABLE_TX_DROP_INVALID].load() == 1;
+    // one bank in flight, one ready, and a full producer: no free bank
+    portable_send( server, &send, 1 );
+    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+    server->ready_count--;
+    portable_send( server, &send, 1 );
+    for ( int i = 0; i < server->tx_capacity; ++i ) portable_send( server, &send, 1 );
+    valid &= server->bank[server->producer].count == server->tx_capacity && server->dropped.load() == 1;
+    portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 );
+    valid &= server->dropped_by_path[PORTABLE_TX_DROP_NO_FREE_BANK].load() == 2;
+    // the worker returns a bank, but the handoff lock is held: handoff busy
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = 0;
+    server->free_count++;
+    server->force_publish_busy = true;
+    portable_send( server, &send, 1 );
+    valid &= server->dropped_by_path[PORTABLE_TX_DROP_HANDOFF_BUSY].load() == 1;
+    server->force_publish_busy = false;
+    // stop publishes the full producer into the free bank; later sends drop
+    portable_stop( server );
+    valid &= server->bank[server->producer].count == 0 && server->dropped_by_path[PORTABLE_TX_DROP_STOPPING].load() == 0;
+    rocketnet_platform_send_t sends[5] = { send, send, send, send, send };
+    portable_send( server, sends, 5 );
+    valid &= server->dropped_by_path[PORTABLE_TX_DROP_STOPPING].load() == 5;
+    uint64_t sum = 0;
+    for ( int path = 0; path < PORTABLE_TX_DROP_PATHS; ++path ) sum += server->dropped_by_path[path].load();
+    valid &= sum == 1 + 2 + 1 + 5 && server->dropped.load() == sum;
     portable_server_cleanup( server );
     return valid;
 #endif

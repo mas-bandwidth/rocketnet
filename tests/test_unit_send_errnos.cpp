@@ -14,6 +14,7 @@
 
 // Compiled only into rocketnet_test_hooks (sdk/rocketnet_driver_builtin.cpp).
 bool rocketnet_portable_tx_test_sizing();
+bool rocketnet_portable_tx_test_drop_paths();
 
 static void test_send_banks_sized_to_clients()
 {
@@ -21,6 +22,16 @@ static void test_send_banks_sized_to_clients()
 }
 
 REGISTER_UNIT_TEST( test_send_banks_sized_to_clients );
+
+// Each way the send handoff drops a packet is counted on its own path (no
+// free bank, handoff lock busy, stopping, invalid packet), and SEND_FAILED's
+// handoff part is their sum, so a run's log names which path dropped.
+static void test_send_drops_counted_by_path()
+{
+    rocketnet_unit_check( rocketnet_portable_tx_test_drop_paths() );
+}
+
+REGISTER_UNIT_TEST( test_send_drops_counted_by_path );
 
 static void test_send_errnos_counted_by_call()
 {
