@@ -426,7 +426,15 @@ toolchain), in three legs, each in its own job and its own build directory:
   Linux sanitizers job. Apple silicon AddressSanitizer has no `detect_leaks`,
   so `ASAN_OPTIONS=detect_leaks=0` and the leaks leg is the leak check.
 - **tsan**: Debug with `-fsanitize=thread`,
-  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`.
+  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
+  functional suite is a nightly check with a one-hour case limit (owner
+  ruling, 2026-10-25): the leg's two functional steps set
+  `ROCKETNET_TEST_CASE_TIME_SCALE=30`, which multiplies the suite's 120 s
+  case limit to 3600 s (`tests/suite_runner.h`, `suite_case_limit`). Under
+  TSAN the live message matrix
+  (`test_loopback_transport_live_message_matrix`) takes 106 to 116 s, CPU
+  bound in sending and crypto, against 120 s. Per-PR CI and every other run
+  leave the variable unset and keep 120 s.
 - **leaks**: an unsanitized Debug build. The suites run each case in a child
   process (`tests/suite_runner.h`), and `leaks --atExit` inspects only the
   process it launched and does not pass its exit status through. So the suite
@@ -448,7 +456,7 @@ cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
   -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
 cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
-TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
+TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ROCKETNET_TEST_CASE_TIME_SCALE=30 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
 ```
 
