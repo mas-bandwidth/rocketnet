@@ -53,6 +53,18 @@ checks balanced generations, reuse of a raw value while the old generation is
 closing, a stale close that must terminate a bounded child run, and a capacity
 overflow that must be reported as an error.
 
+<!-- The next section is hand-written for the preview-3 release candidate; its source of truth is docs/QUALIFICATION-v1.0.0-preview-3.md. -->
+
+## Preview-3 release-candidate qualification
+
+[docs/QUALIFICATION-v1.0.0-preview-3.md](docs/QUALIFICATION-v1.0.0-preview-3.md)
+records the v1.0.0-preview-3 candidate head; the native Release unit and
+functional suites at that head on Linux, macOS and Windows with their exact
+commands and last lines; the LAN proof table; the per-transport soak records;
+the documentation gate; and an explicit list of what is not qualified. The
+release gates that run at tag time are listed there as owed. The preview-2
+table below is the previous release's record and is unchanged.
+
 ## Preview-2 exact-head qualification
 
 Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/roadmap/render.py)

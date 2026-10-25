@@ -70,18 +70,20 @@ available; production server auto selection prefers native transports. Follow [B
 
 ## Preview status
 
-The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) describe changes
-from preview-1 and the required migration steps. Preview-2 release testing is
-pending; [TESTING.md](TESTING.md) records qualification separately from
-historical results. The API remains provisional. Large-server frame time,
-memory use and transport qualification still need attention; see the
-[roadmap](ROADMAP.md).
+The [preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) describe changes
+from preview-2 and the required migration steps.
+[docs/QUALIFICATION-v1.0.0-preview-3.md](docs/QUALIFICATION-v1.0.0-preview-3.md)
+records the release qualification, and [TESTING.md](TESTING.md) keeps it
+separate from historical results. The API remains provisional. Known issues,
+including large-server memory and the transports not yet qualified under LAN
+load, are listed in the notes; see also the [roadmap](ROADMAP.md).
 
 ## Documentation
 
 - [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
-- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits.
-- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
+- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — migration from preview-2, changes and known issues.
+- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — the previous preview.
+- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the first preview.
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [KEYS.md](KEYS.md) — the backend and server keys: generating, where each lives, development versus production, rotation.
