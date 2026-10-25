@@ -215,6 +215,8 @@ MCRNXdpReplayReconnect.cfg	MCRNXdpReplay.tla	pass	-	check	rnxdpreplay	required	-
 MCRNXdpReplayRefusedMark.cfg	MCRNXdpReplay.tla	pass	-	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenRefusedMarkDropped.cfg	MCRNXdpReplay.tla	invariant	MarkOwedUntilApplied	check	rnxdpreplay	required	-
 MCRNXdpReplayBrokenKeptMarkAfterForget.cfg	MCRNXdpReplay.tla	invariant	ForgetOwedUntilApplied	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenGreetBeforeMark.cfg	MCRNXdpReplay.tla	invariant	NewSessionNeverDroppedByOldMark	check	rnxdpreplay	required	-
+MCRNXdpReplayBrokenQueueRefusedAdvances.cfg	MCRNXdpReplay.tla	invariant	MarkOwedUntilApplied	check	rnxdpreplay	required	-
 MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
