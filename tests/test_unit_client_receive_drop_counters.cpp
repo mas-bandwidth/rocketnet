@@ -33,6 +33,9 @@
 
 #define check rocketnet_unit_check
 
+#define ROCKETNET_COUNTERS_CHECK check
+#include "counters_expect.h"
+
 #define DROP_COUNTERS_MAX_SCRIPT 32
 
 // the fake first, so the fake's own callbacks read the same pointer
@@ -149,9 +152,18 @@ static void drop_counters_run( bool batch )
     rocketnet_client_transport_t * transport = drop_counters_create( driver, &operations, &clock );
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
 
-    const uint64_t short_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
-    const uint64_t large_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 0 );
+    // Seed a live attempt before any refusal: connect already holds genuine
+    // nonzero protocol state -- the client sits in requesting cookie, the
+    // dialed server address is held, and the connection salt and ephemeral
+    // keypair are armed. An empty step and update run the handshake send
+    // scheduler with nothing inbound, so no receive state moves while the
+    // prestate is established.
+    rocketnet_client_io_step( io, false );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( rocketnet_client_transport_state( transport ) ==
+           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    const struct rocketnet_counters_t before = *rocketnet_client_transport_counters( transport );
 
     // from the dialed server, each outside the size bounds: passed by the
     // I/O step, refused by the prefilter on update, each counted once
@@ -187,11 +199,29 @@ static void drop_counters_run( bool batch )
     rocketnet_client_io_step( io, false );
     check( driver->head == driver->count );
 
-    clock.now = 1000.1;
+    clock.now = 1000.05;
     rocketnet_client_transport_update( transport, clock.now );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == (uint64_t) foreign );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == (uint64_t) too_short );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == (uint64_t) too_large );
+
+    // Every rejected datagram is a dead end. The only counters that may move
+    // are the diagnostics that name the stage: the source check before any
+    // protocol work for the foreign group (sdk/rocketnet_client_transport.cpp:
+    // 2208-2212), and the prefilter for the server's short and large group
+    // (sdk/rocketnet_client_protocol.cpp:1366-1372). Everything else must sit
+    // still: protocol state, the ack endpoint, the replay/window marks, any
+    // payload/message queue, delivery, and connection or ownership. The
+    // exact-delta oracle over the whole counter block proves it; nothing a
+    // refused packet could inappropriately feed has a counter that moved.
+    const struct rocketnet_counters_t after = *rocketnet_client_transport_counters( transport );
+    check( rocketnet_client_transport_state( transport ) ==
+           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    rocketnet_counters_expect( &before, &after,
+    {
+        { ROCKETNET_COUNTER_PACKETS_RECEIVED, too_short + too_large },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, too_short },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, too_large },
+        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, foreign }
+    } );
 
     // a refusal
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
@@ -227,8 +257,16 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config, clock.now, &operations, driver );
     check( transport != NULL );
 
-    const uint64_t short_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
-    const uint64_t large_before = drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+    // seed the live attempt as in drop_counters_run: the create already
+    // holds the dialed server address and requesting-cookie protocol state;
+    // an empty step and update run the handshake send scheduler with nothing
+    // inbound
+    rocketnet_client_io_step( rocketnet_client_transport_client_io( transport ), false );
+    rocketnet_client_transport_update( transport, clock.now );
+    check( rocketnet_client_transport_state( transport ) ==
+           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    const struct rocketnet_counters_t before = *rocketnet_client_transport_counters( transport );
 
     const char * server = "127.0.0.1:40000";
     const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
@@ -239,12 +277,21 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
         drop_counters_push( driver, server, large_sizes[i] );
     drop_counters_push( driver, "127.0.0.1:40001", 2 );
 
-    clock.now = 1000.1;
+    clock.now = 1000.05;
     rocketnet_client_transport_update( transport, clock.now );
     check( driver->head == driver->count );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_SHORT ) - short_before == 2 );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 4 );
-    check( drop_counters_value( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) == 1 );
+
+    const struct rocketnet_counters_t after = *rocketnet_client_transport_counters( transport );
+    check( rocketnet_client_transport_state( transport ) ==
+           ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    rocketnet_counters_expect( &before, &after,
+    {
+        { ROCKETNET_COUNTER_PACKETS_RECEIVED, 6 },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, 2 },
+        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, 4 },
+        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, 1 }
+    } );
 
     rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
