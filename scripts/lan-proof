@@ -538,16 +538,28 @@ print(f"manifest shards={len(shards)}")
 PYEOF
 
 merge_args=""
+client_transport=""
 s=0
 while [ "$s" -lt "$shard_count" ]; do
     merge_args="$merge_args --shard $run_dir/shard$s.log"
+    # The client ranking picks each shard's native transport. Every shard
+    # must name the same one, and a portable client is no proof.
+    shard_transport=$( grep '^split_receipt: ' "$run_dir/shard$s.log" | tail -n 1 |
+        sed -n 's/.* transport=\([a-z_0-9]*\).*/\1/p' )
+    case "$shard_transport" in
+        ''|none|portable) fail "shard$s names no native client transport: '${shard_transport}'" ;;
+    esac
+    [ -z "$client_transport" ] || [ "$client_transport" = "$shard_transport" ] ||
+        fail "shards name different client transports: $client_transport and $shard_transport"
+    client_transport=$shard_transport
     s=$(( s + 1 ))
 done
+echo "client transport $client_transport on every shard" | tee "$run_dir/client-transport.txt"
 # shellcheck disable=SC2086
 python3 "$root/tools/check_split_load.py" --server "$run_dir/server.log" $merge_args \
     --run-id "$run_id" --total "$clients_total" --duration "$duration" \
     --aggregate-limit-kbps "$cap_kbps" --server-transport "$cell" \
-    --client-transport portable --allocation-manifest "$run_dir/allocation.json" \
+    --client-transport "$client_transport" --allocation-manifest "$run_dir/allocation.json" \
     --load proof > "$run_dir/merge.log" 2>&1
 merge_status=$?
 cat "$run_dir/merge.log"
