@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// Per-connection key derivation, per STANDARD.md. Token keys never seal a
+// Per-connection key derivation, per TRANSPORT.md t7 Key schedule. Token keys never seal a
 // packet; every connection derives four working keys -- two handshake, two
 // session -- from the token keys, the client's connection salt, the server's
 // session nonce, and (for the session keys) the ephemeral exchange. All four

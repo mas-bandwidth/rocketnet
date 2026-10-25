@@ -36,6 +36,14 @@
 (* whichever frames they hold, so a release while ahead > 0 at the start   *)
 (* of a pass gives back descriptors that were never read.                  *)
 (*                                                                         *)
+(* A driver or kernel defect can post a descriptor naming a frame outside  *)
+(* the receive region (a send frame, SendFrame here): KernelMisdeliver,    *)
+(* at most once per behaviour.  The worker reads it and refuses it         *)
+(* (rocketnet_xdp_receive_descriptor), and hands a frame back to the fill  *)
+(* ring only when rocketnet_xdp_fill_return (sdk/rocketnet_xdp_frame.h)    *)
+(* places it in the receive region, so a send frame is never received      *)
+(* into while it is also on the send free list.                            *)
+(*                                                                         *)
 (* Left out: the pending return's capacity (the peek is bounded by it and  *)
 (* it is ROCKETNET_XDP_RECV_QUEUE_SIZE, no fewer than the frames, so it    *)
 (* never binds), packet contents and the frame codec's drops (a dropped    *)
@@ -63,6 +71,20 @@ ASSUME /\ Frames # {}
 (***************************************************************************)
 CancelUnconsumed == TRUE
 
+(***************************************************************************)
+(*   RefusedRefilled: a descriptor naming a frame outside the receive      *)
+(*     region is handed back to the fill ring like any dropped frame (the  *)
+(*     worker before rocketnet_xdp_fill_return: FALSE in the design).      *)
+(***************************************************************************)
+RefusedRefilled == FALSE
+
+(* The frame a defective descriptor names: one the model does not own for  *)
+(* receive (a send-region frame).  An untyped model value Frames holds is  *)
+(* never equal to it.                                                      *)
+SendFrame == "send frame"
+
+AllFrames == Frames \cup {SendFrame}
+
 VARIABLES
     fq,        \* the fill ring's entries, published consumer to producer
     kcache,    \* the entries at the front of fq the kernel's batch peeked
@@ -75,9 +97,10 @@ VARIABLES
     taken,     \* the descriptors the current pass took
     pending,   \* the frames the worker holds: taken, awaiting the fill ring
     staged,    \* the packets in the staging buffer (copies, not frames)
-    took       \* ghost: the current pass has taken a descriptor
+    took,      \* ghost: the current pass has taken a descriptor
+    defect     \* the kernel has posted a descriptor naming SendFrame
 
-vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took>>
+vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
@@ -93,18 +116,19 @@ Fill == {fq[i] : i \in kused + 1..Len(fq)}
 FlushFits == Len(fq) + Cardinality(pending) <= FillSize
 
 TypeOK ==
-    /\ fq \in Seq(Frames) /\ Len(fq) <= FillSize
+    /\ fq \in Seq(AllFrames) /\ Len(fq) <= FillSize
     /\ kcache \in 0..Len(fq)
     /\ kused \in 0..kcache
-    /\ ring \in Seq(Frames) /\ Len(ring) <= RingSize
+    /\ ring \in Seq(AllFrames) /\ Len(ring) <= RingSize
     /\ ahead \in 0..RingSize
     /\ phase \in {"idle", "taking"}
     /\ start \in 0..RingSize
     /\ peeked \in 0..PeekMax
     /\ taken \in 0..PeekMax
-    /\ pending \subseteq Frames
+    /\ pending \subseteq AllFrames
     /\ staged \in 0..StageCap
     /\ took \in BOOLEAN
+    /\ defect \in BOOLEAN
 
 Init ==
     /\ fq = SetSeq(Frames)
@@ -119,6 +143,7 @@ Init ==
     /\ pending = {}
     /\ staged = 0
     /\ took = FALSE
+    /\ defect = FALSE
 
 (* KernelReceive: a packet lands in the next frame of the kernel's batch,  *)
 (* posted to the RX ring while the ring has a free entry as the kernel     *)
@@ -128,7 +153,16 @@ KernelReceive ==
     /\ Len(ring) < RingSize
     /\ kused' = kused + 1
     /\ ring' = Append(ring, fq[kused + 1])
-    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took>>
+    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+
+(* KernelMisdeliver: a driver or kernel defect posts a descriptor naming a *)
+(* frame outside the receive region, once.                                 *)
+KernelMisdeliver ==
+    /\ ~defect
+    /\ Len(ring) < RingSize
+    /\ ring' = Append(ring, SendFrame)
+    /\ defect' = TRUE
+    /\ UNCHANGED <<fq, kcache, kused, ahead, phase, start, peeked, taken, pending, staged, took>>
 
 (* KernelRefresh: a packet finds the batch used up.  The kernel publishes  *)
 (* its consumer (the taken entries' slots go back to the user) and peeks   *)
@@ -140,7 +174,7 @@ KernelRefresh ==
     /\ fq' = SubSeq(fq, kused + 1, Len(fq))
     /\ kused' = 0
     /\ kcache' = Len(fq) - kused
-    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took>>
+    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax;    *)
 (* the worker takes the receive mutex.  A peek of zero is no step.         *)
@@ -153,19 +187,23 @@ Peek ==
     /\ peeked' = n
     /\ taken' = 0
     /\ phase' = "taking"
-    /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took, defect>>
 
 (* Take: the staging buffer has room; read descriptor start + taken + 1    *)
-(* (rx_desc at the peek's index + i) and hold its frame.                   *)
+(* (rx_desc at the peek's index + i) and hold its frame.  A descriptor     *)
+(* outside the receive region is refused: no packet is staged and its      *)
+(* frame is not held for the fill ring (rocketnet_xdp_fill_return false),  *)
+(* unless RefusedRefilled.                                                 *)
 Take ==
+    LET d == ring[start + taken + 1] IN
     /\ phase = "taking"
     /\ taken < peeked
     /\ staged < StageCap
-    /\ pending' = pending \cup {ring[start + taken + 1]}
+    /\ pending' = IF d \in Frames \/ RefusedRefilled THEN pending \cup {d} ELSE pending
     /\ taken' = taken + 1
-    /\ staged' = staged + 1
+    /\ staged' = IF d \in Frames THEN staged + 1 ELSE staged
     /\ took' = TRUE
-    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, defect>>
 
 (* Finish: every peeked descriptor taken, or the staging buffer full.      *)
 (* Cancel the rest (CancelUnconsumed), release the mutex, release the      *)
@@ -187,7 +225,7 @@ Finish ==
           THEN /\ fq' = fq \o SetSeq(pending)
                /\ pending' = {}
           ELSE UNCHANGED <<fq, pending>>
-    /\ UNCHANGED <<kcache, kused, staged>>
+    /\ UNCHANGED <<kcache, kused, staged, defect>>
 
 (* Refill: the flush again at the top of the worker's next pass; a         *)
 (* reservation of zero is this step not yet taken.                         *)
@@ -197,18 +235,19 @@ Refill ==
     /\ FlushFits
     /\ fq' = fq \o SetSeq(pending)
     /\ pending' = {}
-    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took>>
+    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took, defect>>
 
 (* Drain: the application takes the staging buffer, under the mutex.       *)
 Drain ==
     /\ phase = "idle"
     /\ staged > 0
     /\ staged' = 0
-    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, took, defect>>
 
 Next ==
     \/ KernelReceive
     \/ KernelRefresh
+    \/ KernelMisdeliver
     \/ Peek
     \/ Take
     \/ Finish
@@ -226,13 +265,20 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next) /\ SF_vars(Drain)
 (* The RX ring's descriptors the current pass has not taken: a taken       *)
 (* descriptor stays in the kernel's ring until the release, and its frame  *)
 (* is already the worker's.                                                *)
-Untaken == {i \in 1..Len(ring) : i \notin start + 1..start + taken}
+(* A descriptor naming SendFrame is the defect's, not a receive frame's.   *)
+Untaken == {i \in 1..Len(ring) : i \notin start + 1..start + taken /\ ring[i] \in Frames}
 InRing == {ring[i] : i \in Untaken}
+
+(* The fill ring only ever holds receive-region frames: a frame outside    *)
+(* the region on it would be received into while it is also the send       *)
+(* path's.                                                                 *)
+FillHoldsOnlyReceiveFrames == \A i \in 1..Len(fq) : fq[i] \in Frames
 
 (* Every frame is in exactly one of the fill ring (untaken), the RX ring   *)
 (* (untaken) or the worker's hands (the staging buffer holds copies),      *)
-(* once each.                                                              *)
+(* once each, and the fill ring holds nothing else.                        *)
 FrameConservation ==
+    /\ FillHoldsOnlyReceiveFrames
     /\ Cardinality(Untaken) = Cardinality(InRing)
     /\ Len(fq) - kused = Cardinality(Fill)
     /\ Fill \cap InRing = {}

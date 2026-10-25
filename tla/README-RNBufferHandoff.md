@@ -107,3 +107,17 @@ was taken with only 256 packets charged). The budget witness is 14 states
 index leaves that buffer ownerless). Logs are retained on the allocated
 Linux bench under `~/p3-stella-handoff/tlc-base-3/`; measured records are in
 `RUNS.tsv`. `tlacheck groups --stale` returned `[]` after integration.
+
+## IOCP stop drain
+
+The Windows server transport follows `MainStop` and `WorkerExit`: stop transfers
+its final producer, and TX sends every published bank before that producer.
+`DiscardOnStop` restores the defect that clears these buffers after quit without
+appending their datagrams to `consumed`. The reversed configuration
+`MCRNBufferHandoffBrokenDiscardOnStop.cfg` checks `ExitSentAll`; existing
+configurations keep this switch FALSE. The native
+`test_iocp_transport_stop_sends_published_burst` holds TX, publishes ten loopback
+datagrams, stops, releases TX and checks all ten arrive with no failed sends.
+Completion workers wait for TX exit before cancelling receives individually,
+so cancellation cannot abort the final sends. Kernel completion and cancellation
+are outside this buffer ownership model.

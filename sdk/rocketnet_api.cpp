@@ -522,12 +522,84 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
 // far as this library knows and its tail is ignored; an older caller's smaller
 // struct reads its prefix and the rest takes the defaults. Every byte the
 // library reads or writes is below the caller's config_bytes.
-static enum rocketnet_status_t rn_public_config_bytes( const char * endpoint, size_t bytes, size_t current, size_t * use )
+#define RN_PUBLIC_FIELD_END( struct_name, field ) ( offsetof( struct struct_name, field ) + sizeof( ( (struct struct_name *) 0 )->field ) )
+
+static constexpr size_t rn_client_config_field_ends[] = {
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, config_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, transport ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, state_change_callback ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, packet_filter ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, max_fragmented_messages ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, send_kbps ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, num_channels ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, reliable_messages_in_flight ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, receive_message_buffer_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, max_message_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, send_message_buffer_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, send_queue_messages ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, packets_in_flight ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, packets_per_update ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, unreliable_messages_per_update ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, sequenced_messages_held ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, max_message_receipts ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, message_resend_delay_initial_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, message_resend_delay_min_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, message_resend_delay_max_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, reliable_message_timeout_ms ),
+};
+static_assert( rn_client_config_field_ends[sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_client_config_t ), "client config field ends" );
+
+static constexpr size_t rn_server_config_field_ends[] = {
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, config_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, protocol_id ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_clients ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, packet_filter ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, backend_public_key ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_xdp_queues ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_os_cpus ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_fragmented_messages ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_timeout_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, handshake_deadline_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, transport ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, per_client_send_kbps ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_channels ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, reliable_messages_in_flight ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, receive_message_buffer_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_message_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, send_message_buffer_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, send_queue_messages ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, packets_in_flight ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, packets_per_update ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, unreliable_messages_per_update ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, sequenced_messages_held ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_message_receipts ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_initial_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_min_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_max_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, reliable_message_timeout_ms ),
+};
+static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
+
+#undef RN_PUBLIC_FIELD_END
+
+static enum rocketnet_status_t rn_public_config_bytes( const char * endpoint, size_t bytes, size_t current, const size_t * field_ends, size_t num_field_ends, size_t * use )
 {
     if ( bytes < sizeof( size_t ) )
     {
         rocketnet_error( "%s config refused: config_bytes is %d; fill the config with rocketnet_%s_default_config first", endpoint, (int) bytes, endpoint );
         return ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED;
+    }
+    // docs/ABI-EVOLUTION.md rule 5: never reads or writes past config_bytes, so a size below the struct size must end exactly at a field end.
+    if ( bytes < current )
+    {
+        bool on_field_end = false;
+        for ( size_t i = 0; i < num_field_ends; i++ )
+            on_field_end = on_field_end || field_ends[i] == bytes;
+        if ( !on_field_end )
+        {
+            rocketnet_error( "%s config refused: config_bytes is %d and ends inside a field; fill the config with rocketnet_%s_default_config first", endpoint, (int) bytes, endpoint );
+            return ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED;
+        }
     }
     *use = bytes < current ? bytes : current;
     return ROCKETNET_STATUS_OK;
@@ -546,7 +618,7 @@ enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketn
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     size_t use = 0;
-    const enum rocketnet_status_t status = rn_public_config_bytes( "client", config->config_bytes, sizeof( struct rocketnet_client_config_t ), &use );
+    const enum rocketnet_status_t status = rn_public_config_bytes( "client", config->config_bytes, sizeof( struct rocketnet_client_config_t ), rn_client_config_field_ends, sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ), &use );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
     struct rocketnet_client_config_t defaults;
@@ -556,15 +628,16 @@ enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketn
 }
 
 // the light-client profile (sdk/rocketnet.h): the defaults, then the light
-// geometry; config_bytes is set first, as the inline default_config does
-enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
+// geometry inside the caller's config_bytes
+enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    config->config_bytes = sizeof( *config );
     const enum rocketnet_status_t status = rocketnet_client_default_config_internal( config );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
+    const size_t use = config->config_bytes < sizeof( *config ) ? config->config_bytes : sizeof( *config );
+#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_client_config_t, field ) + sizeof( config->field ) <= use ) config->field = ( value ); } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
@@ -572,19 +645,20 @@ enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_c
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
-    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
-    config->send_kbps = 256;                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
-    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
-    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
-    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
-    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
-    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
-    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
-    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
-    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
-    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
+    RN_LIGHT_SET( max_fragmented_messages, 1 );                                  // one reassembly slot: a message stays whole
+    RN_LIGHT_SET( send_kbps, 256 );                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
+    RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    RN_LIGHT_SET( send_message_buffer_bytes, 141500 );                           // 100 * 1415 bytes over the 10 s timeout
+    RN_LIGHT_SET( send_queue_messages, 128 );                                    // 100 messages in 10 s, rounded up; minimum is 16
+    RN_LIGHT_SET( packets_in_flight, 256 );                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
+    RN_LIGHT_SET( packets_per_update, 4 );                                       // one data packet, plus the second chunk and an acknowledgement
+    RN_LIGHT_SET( unreliable_messages_per_update, 4 );                           // one message per update, with room for a short burst
+    RN_LIGHT_SET( sequenced_messages_held, 100 );                                // 10 messages/s * 10 s
+    RN_LIGHT_SET( max_message_receipts, 128 );                                   // 100 receipts in 10 s, rounded up; minimum is 16
+#undef RN_LIGHT_SET
     return ROCKETNET_STATUS_OK;
 }
 
@@ -598,7 +672,7 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
     if ( !config )
         return ROCKETNET_STATUS_OK;
     size_t use = 0;
-    const enum rocketnet_status_t status = rn_public_config_bytes( "client", config->config_bytes, sizeof( *current ), &use );
+    const enum rocketnet_status_t status = rn_public_config_bytes( "client", config->config_bytes, sizeof( *current ), rn_client_config_field_ends, sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ), &use );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
     rn_client_default_config_current( current );
@@ -717,6 +791,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
         if ( !base )
         {
+            rocketnet_error( "client create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;
@@ -1407,7 +1482,7 @@ enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketn
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     size_t use = 0;
-    const enum rocketnet_status_t status = rn_public_config_bytes( "server", config->config_bytes, sizeof( struct rocketnet_server_config_t ), &use );
+    const enum rocketnet_status_t status = rn_public_config_bytes( "server", config->config_bytes, sizeof( struct rocketnet_server_config_t ), rn_server_config_field_ends, sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ), &use );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
     struct rocketnet_server_config_t defaults;
@@ -1417,15 +1492,16 @@ enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketn
 }
 
 // the light-client profile (sdk/rocketnet.h): the defaults, then the light
-// geometry; config_bytes is set first, as the inline default_config does
-enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
+// geometry inside the caller's config_bytes
+enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    config->config_bytes = sizeof( *config );
     const enum rocketnet_status_t status = rocketnet_server_default_config_internal( config );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
+    const size_t use = config->config_bytes < sizeof( *config ) ? config->config_bytes : sizeof( *config );
+#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_server_config_t, field ) + sizeof( config->field ) <= use ) config->field = ( value ); } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
@@ -1433,19 +1509,20 @@ enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_c
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
-    config->max_fragmented_messages = 1;                                  // one reassembly slot: a message stays whole
-    config->per_client_send_kbps = 256;                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    config->num_channels = 8;                                             // one channel per reliability mode; one 10 Hz update uses one mode
-    config->reliable_messages_in_flight = 256;                            // 200 numbers, next power of two; minimum is 64
-    config->receive_message_buffer_bytes = 142400;                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
-    config->max_message_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
-    config->send_message_buffer_bytes = 141500;                           // 100 * 1415 bytes over the 10 s timeout
-    config->send_queue_messages = 128;                                    // 100 messages in 10 s, rounded up; minimum is 16
-    config->packets_in_flight = 256;                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
-    config->packets_per_update = 4;                                       // one data packet, plus the second chunk and an acknowledgement
-    config->unreliable_messages_per_update = 4;                           // one message per update, with room for a short burst
-    config->sequenced_messages_held = 100;                                // 10 messages/s * 10 s
-    config->max_message_receipts = 128;                                   // 100 receipts in 10 s, rounded up; minimum is 16
+    RN_LIGHT_SET( max_fragmented_messages, 1 );                                  // one reassembly slot: a message stays whole
+    RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
+    RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
+    RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
+    RN_LIGHT_SET( send_message_buffer_bytes, 141500 );                           // 100 * 1415 bytes over the 10 s timeout
+    RN_LIGHT_SET( send_queue_messages, 128 );                                    // 100 messages in 10 s, rounded up; minimum is 16
+    RN_LIGHT_SET( packets_in_flight, 256 );                                      // 200 packets in 10 s (2 per ceiling message), rounded up; at least the window
+    RN_LIGHT_SET( packets_per_update, 4 );                                       // one data packet, plus the second chunk and an acknowledgement
+    RN_LIGHT_SET( unreliable_messages_per_update, 4 );                           // one message per update, with room for a short burst
+    RN_LIGHT_SET( sequenced_messages_held, 100 );                                // 10 messages/s * 10 s
+    RN_LIGHT_SET( max_message_receipts, 128 );                                   // 100 receipts in 10 s, rounded up; minimum is 16
+#undef RN_LIGHT_SET
     return ROCKETNET_STATUS_OK;
 }
 
@@ -1457,7 +1534,7 @@ static enum rocketnet_status_t rn_server_config_read( rocketnet_server_config_t 
     if ( !config )
         return ROCKETNET_STATUS_OK;
     size_t use = 0;
-    const enum rocketnet_status_t status = rn_public_config_bytes( "server", config->config_bytes, sizeof( *current ), &use );
+    const enum rocketnet_status_t status = rn_public_config_bytes( "server", config->config_bytes, sizeof( *current ), rn_server_config_field_ends, sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ), &use );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
     rn_server_default_config_current( current );
@@ -1666,6 +1743,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         if ( !base )
         {
             sodium_memzero( &transport, sizeof( transport ) );
+            rocketnet_error( "server create refused: %llu bytes", (unsigned long long) total );
             if ( status )
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             return NULL;

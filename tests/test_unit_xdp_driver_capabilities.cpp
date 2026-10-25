@@ -23,6 +23,11 @@
 // destination, so one client's packets use one queue
 // (rocketnet_server_socket_send_queue). Both are pure functions of their
 // arguments: no socket and no kernel object.
+//
+// Each queue's UMEM is the send half and only the receive frames put on the
+// fill ring at create (ROCKETNET_XDP_UMEM_FRAMES): rocketnet_xdp_umem_bytes,
+// which the memory plan and the XDP preflight count, plans no frame the
+// transport never uses. The size is computed, never allocated.
 
 #include "test_unit_registry.h"
 
@@ -33,6 +38,8 @@
 #if ROCKETNET_XDP
 
 #include "rocketnet_constants.h"
+#include "rocketnet_memory.h"
+#include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_socket_config.h"
 
 #include <stddef.h>
@@ -170,10 +177,62 @@ static void test_xdp_transport_send_queue_is_one_per_destination()
     check( rocketnet_server_socket_send_queue( &client_ipv6, 3 ) == queue_ipv6 );
 }
 
+static void test_xdp_transport_umem_holds_only_the_fill_frames()
+{
+    const uint64_t queue_bytes = (uint64_t) ( ROCKETNET_XDP_NUM_FRAMES / 2 + ROCKETNET_XDP_FILL_FRAMES ) * ROCKETNET_XDP_FRAME_SIZE;
+
+    check( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE == queue_bytes );
+    check( rocketnet_xdp_umem_bytes( 1 ) == queue_bytes );
+    check( rocketnet_xdp_umem_bytes( 7 ) == 7 * queue_bytes );
+
+    // a queue count out of range plans nothing
+
+    check( rocketnet_xdp_umem_bytes( 0 ) == 0 );
+    check( rocketnet_xdp_umem_bytes( ROCKETNET_XDP_MAX_QUEUES + 1 ) == 0 );
+}
+
+// R3 of the pre-flight refuses an interface with a program attached in any
+// mode. libbpf reports prog_id 0 when programs are attached in more than one
+// mode (XDP_ATTACHED_MULTI), so the decision reads every per-mode id. The
+// decision is a pure function of the query's result: nothing is queried here.
+
+static void test_xdp_transport_preflight_refuses_any_attached_mode()
+{
+    rocketnet_xdp_attached_t attached;
+
+    memset( &attached, 0, sizeof(attached) );
+    check( !rocketnet_xdp_attached_any( &attached ) );
+
+    memset( &attached, 0, sizeof(attached) );
+    attached.prog_id = 11;
+    check( rocketnet_xdp_attached_any( &attached ) );
+
+    memset( &attached, 0, sizeof(attached) );
+    attached.drv_prog_id = 12;
+    check( rocketnet_xdp_attached_any( &attached ) );
+
+    memset( &attached, 0, sizeof(attached) );
+    attached.skb_prog_id = 13;
+    check( rocketnet_xdp_attached_any( &attached ) );
+
+    memset( &attached, 0, sizeof(attached) );
+    attached.hw_prog_id = 14;
+    check( rocketnet_xdp_attached_any( &attached ) );
+
+    // the multi-mode shape: no single id, a native and a generic program
+
+    memset( &attached, 0, sizeof(attached) );
+    attached.drv_prog_id = 12;
+    attached.skb_prog_id = 13;
+    check( rocketnet_xdp_attached_any( &attached ) );
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_prefilter_counters_transport_reports_them );
 REGISTER_UNIT_TEST( test_xdp_transport_socket_config_requests_zero_copy_at_bind );
 REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rings );
 REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
 REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
+REGISTER_UNIT_TEST( test_xdp_transport_umem_holds_only_the_fill_frames );
+REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_any_attached_mode );
 
 #endif // #if ROCKETNET_XDP

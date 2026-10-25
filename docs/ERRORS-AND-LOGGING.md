@@ -65,10 +65,9 @@ The helper names used later in this document (`rocketnet_error`,
 `rocketnet_platform_socket_create`, `rocketnet_platform_socket_create_with_pump`,
 `rocketnet_platform_thread_create`, `rocketnet_platform_mutex_create`,
 `rocketnet_free`, `rocketnet_frame_sync_create`, `rocketnet_frame_sync_create_ex`,
-`rocketnet_num_counters`, `rocketnet_counter_name`, `rocketnet_counter_value`
-and `rocketnet_last_error`) are internal to the SDK
-(`sdk/rocketnet_layers.h`, `sdk/rocketnet_internal.h`); a game does not call
-them.
+`rocketnet_num_counters`, `rocketnet_counter_name` and `rocketnet_counter_value`)
+are internal to the SDK (its headers under `sdk/` other than `sdk/rocketnet.h`,
+or static in its sources); a game does not call them.
 
 ## 2. STATUS CODES
 
@@ -77,7 +76,7 @@ them.
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, dense from `-1` to `-30`. `status < 0`
+2. Every failure code is negative, dense from `-1` to `-31`. `status < 0`
    means the call failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
    It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,

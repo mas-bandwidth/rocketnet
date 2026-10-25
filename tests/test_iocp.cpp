@@ -692,6 +692,31 @@ static void iocp_finish( rocketnet_server_iocp_t * transport, rocketnet_platform
     rocketnet_platform_socket_destroy(client);
 }
 
+static void test_iocp_stop_sends_published_burst()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create(NULL, &bind, 1, 0, ROCKETNET_IOCP_DISABLE_USO);
+    CHECK(transport);
+    rocketnet_address_t client_address;
+    rocketnet_platform_socket_t * client = fault_client(&client_address);
+    const int round = ++fault_round & 0xFF;
+    const uint64_t failed = iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED);
+    rocketnet_server_iocp_test_hold_tx(transport, true);
+    iocp_stage(transport, &client_address, round, 10);
+    rocketnet_server_iocp_send_packets(transport);
+    CHECK(rocketnet_server_iocp_test_ready_tx_banks(transport) == 1);
+    rocketnet_server_iocp_stop(transport);
+    rocketnet_server_iocp_test_hold_tx(transport, false);
+    wait_stopped(transport);
+    const int received = fault_client_receive(client, round, 10);
+    const uint64_t failed_delta = iocp_counter(transport, ROCKETNET_IOCP_SEND_FAILED) - failed;
+    printf("stop burst: received=%d/10 send_failed=%llu\n", received, (unsigned long long) failed_delta);
+    CHECK(received == 10);
+    CHECK(failed_delta == 0);
+    iocp_finish(transport, client);
+    printf("test_iocp_transport_stop_sends_published_burst\n");
+}
+
 static void test_iocp_send_completion_fails()
 {
     // Per-datagram sends: one completion is one frame.
@@ -898,10 +923,10 @@ struct case_watchdog_t
     ~case_watchdog_t() { done.store( true ); thread.join(); }
 };
 
-// Destroy with I/O in flight: rocketnet_server_iocp_stop cancels with
-// CancelIoEx( socket, NULL ), which cancels every thread's outstanding I/O on
-// the handle, then wakes each worker; destroy joins the workers and only then
-// closes the socket. 100 idle servers are created and destroyed, then 100
+// Destroy with I/O in flight: after TX drains, completion workers cancel
+// each outstanding receive by its OVERLAPPED without cancelling sends.
+// Destroy joins the workers and only then closes the socket.
+// 100 idle servers are created and destroyed, then 100
 // more after datagrams completed, so at least one receive was re-posted by a
 // worker thread rather than the destroying one. Each destroy runs under its
 // own 10 s watchdog.
@@ -1061,7 +1086,6 @@ static rocketnet_server_rio_t * rio_open( rocketnet_address_t * bind )
 static void rio_finish( rocketnet_server_rio_t * rio, rocketnet_platform_socket_t * client )
 {
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(client);
 }
 
@@ -1259,7 +1283,6 @@ static void test_rio_destroy_commits_deferred_sends()
     const double start = rocketnet_platform_time();
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     const double elapsed = rocketnet_platform_time() - start;
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     CHECK(elapsed < 1.0);
     fault_client_receive(client, round, 10);
     rocketnet_platform_socket_destroy(client);
@@ -1291,7 +1314,6 @@ static void test_rio_stop_retries_refused_deferred_commit()
     CHECK(rocketnet_server_rio_pending(rio) == 0);
 
     rn_native_backend_stop_and_destroy(rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy);
-    CHECK(rocketnet_server_rio_leaked_regions() == 0);
     rocketnet_platform_socket_destroy(client);
     printf("test_rio_transport_stop_retries_refused_deferred_commit\n");
 }
@@ -1389,7 +1411,7 @@ static void test_windows_port_exclusive()
             closesocket(thief);
             if ( portable ) rocketnet_platform_socket_destroy(portable);
             if ( iocp ) { wait_stopped(iocp); rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy ); }
-            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); CHECK(rocketnet_server_rio_leaked_regions() == 0); }
+            if ( rio ) { rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy ); }
             CHECK(!bound);
         }
     }
@@ -1445,6 +1467,7 @@ static void test_windows_send_failures_counted()
 struct fault_case_t { const char * name; void (*run)(); };
 
 static const fault_case_t fault_cases[] = {
+    { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },

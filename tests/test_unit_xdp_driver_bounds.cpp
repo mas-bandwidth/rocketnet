@@ -171,6 +171,39 @@ static void test_xdp_transport_receive_descriptor_refuses_bad_descriptors()
     free( umem );
 }
 
+// the server's UMEM: send frames in the first half, receive frames in the
+// second (sdk/rocketnet_server_socket_linux.cpp); only a receive frame goes
+// back to the fill ring, at its frame boundary
+
+static void test_xdp_transport_refused_descriptor_not_refilled()
+{
+    const uint64_t frame_bytes = (uint64_t) ROCKETNET_XDP_FRAME_SIZE;
+    const uint64_t receive_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * frame_bytes;
+    const uint64_t receive_end = (uint64_t) ROCKETNET_XDP_NUM_FRAMES * frame_bytes;
+
+    // a receive-region address carrying the headroom offset: returned, aligned
+    uint64_t frame_addr = 0;
+    rocketnet_unit_check( rocketnet_xdp_fill_return( receive_begin + frame_bytes + 256, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( frame_addr == receive_begin + frame_bytes );
+
+    // the receive region's first and last frames: returned
+    rocketnet_unit_check( rocketnet_xdp_fill_return( receive_begin, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( frame_addr == receive_begin );
+    rocketnet_unit_check( rocketnet_xdp_fill_return( receive_end - frame_bytes + 64, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( frame_addr == receive_end - frame_bytes );
+
+    // the first send-region frame, the send region's last frame and an
+    // address past the UMEM: never returned, and the frame address is untouched
+    frame_addr = 1;
+    rocketnet_unit_check( !rocketnet_xdp_fill_return( 0, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( !rocketnet_xdp_fill_return( receive_begin - frame_bytes + 256, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( !rocketnet_xdp_fill_return( receive_end, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( !rocketnet_xdp_fill_return( receive_end + 256, receive_begin, receive_end, &frame_addr ) );
+    rocketnet_unit_check( frame_addr == 1 );
+
+    rocketnet_unit_check( !rocketnet_xdp_fill_return( receive_begin, receive_begin, receive_end, NULL ) );
+}
+
 static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
 {
     rocketnet_unit_check( !rocketnet_xdp_cpu_in_set( -1, 1024 ) );
@@ -178,6 +211,31 @@ static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
     rocketnet_unit_check( !rocketnet_xdp_cpu_in_set( 0x7FFFFFFF, 1024 ) );
     rocketnet_unit_check( rocketnet_xdp_cpu_in_set( 0, 1024 ) );
     rocketnet_unit_check( rocketnet_xdp_cpu_in_set( 1023, 1024 ) );
+}
+
+static void test_xdp_transport_preflight_refuses_pin_targets_outside_isolated()
+{
+    int first_missing = -1;
+
+    // the audit's example: two OS cpus, seven queues and isolcpus=1-7 on an
+    // eight-cpu machine pass the old count-only check, but the last thread
+    // targets cpu 8
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "1-7\n", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 8 );
+
+    // a layout that holds every pin target: 2 .. 8
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2-8\n", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == -1 );
+
+    // a gap at 5
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-4,6-8", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 5 );
+
+    // no list, a malformed list: neither verifies
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 2 );
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-8x", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 2 );
 }
 
 static void test_xdp_transport_stats_cpus_are_bounded()
@@ -222,7 +280,9 @@ static void test_xdp_transport_receive_drain_rotates_first_queue()
 REGISTER_UNIT_TEST( test_xdp_transport_receive_drain_rotates_first_queue );
 REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
+REGISTER_UNIT_TEST( test_xdp_transport_refused_descriptor_not_refilled );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
+REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
 
 #endif // #if defined(__linux__)
