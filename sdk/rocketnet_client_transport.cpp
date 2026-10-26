@@ -3435,7 +3435,7 @@ struct rocketnet_client_t * rocketnet_client_ack_stats_public_client_for_test( c
     rocketnet_client_transport_t * transport = rocketnet_client_transport_ack_stats_open_for_test( endpoint );
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    auto * message = (rocketnet_message_client_t *) rocketnet_malloc( NULL, sizeof( *message ) );
+    rocketnet_message_client_t * message = (rocketnet_message_client_t *) rocketnet_malloc( NULL, sizeof( rocketnet_message_client_t ) );
     rocketnet_assert( message );
     memset( message, 0, sizeof( *message ) );
     message->object.link = link;
