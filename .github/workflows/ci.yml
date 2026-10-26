@@ -912,7 +912,7 @@ jobs:
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
       # (ROCKETNET_DEV=OFF) as a consumer sees it.
       - name: Configure
-        run: cmake -B build -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -1197,7 +1197,7 @@ jobs:
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -A x64
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
