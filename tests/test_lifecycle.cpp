@@ -612,7 +612,7 @@ static void make_valid_token( uint8_t * token )
     write_valid_token( token, now - 100, now + 100000 );
 }
 
-static void check_game_clock_client_create()
+static void check_game_clock_client_create( allocator_state & state )
 {
     const uint64_t epoch = 1700000000ULL;
     const uint64_t create = epoch + 1000;
@@ -624,7 +624,7 @@ static void check_game_clock_client_create()
     rocketnet_client_transport_default_config( &config );
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.game_clock_epoch = epoch;
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( NULL, token, &config, 1000.0, NULL );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( &state, token, &config, 1000.0, NULL );
     check( client != NULL );
     rn_native_client_transport_stop_and_destroy( client );
 }
@@ -790,7 +790,7 @@ int main()
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
     check_client_memory_budget( state );
-    check_game_clock_client_create();
+    check_game_clock_client_create( state );
     check( state.live == baseline );
 
     for ( int failure = 1; failure <= expected_platform_thread_allocations; ++failure )
