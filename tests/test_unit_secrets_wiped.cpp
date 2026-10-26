@@ -820,7 +820,6 @@ REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 #if ROCKETNET_DEV
 extern void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes );
 
-#if ROCKETNET_DEV
 static uint8_t secrets_wiped_staging[256];
 static int secrets_wiped_staging_bytes = -1;
 
