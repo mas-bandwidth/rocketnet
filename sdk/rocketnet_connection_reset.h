@@ -96,7 +96,7 @@ struct rn_message_object_t;
     X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
-    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
     X( RESET, held ) X( RESET, state )
 
 /*
