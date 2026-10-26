@@ -295,8 +295,11 @@ static void test_public_step_driven_client_delivers_both_ways()
 }
 REGISTER_UNIT_TEST( test_public_step_driven_client_delivers_both_ways );
 
-// the client's counters, in the stats struct's order
-#define PUBLIC_STEP_NUM_COUNTERS 11
+// The deterministic trace: the client's counters in the stats struct's
+// order, then the server's delivery-relevant counters, then the verified
+// server delivery count and byte total. A run that delivers nothing fails
+// inside the trace, so two empty traces can never compare equal and pass.
+#define PUBLIC_STEP_NUM_COUNTERS 19
 
 static void public_step_trace( const public_step_identity_t * identity, uint16_t port,
                                uint64_t * counters )
@@ -304,20 +307,51 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     public_step_pair_t pair;
     public_step_pair_create( &pair, identity, port );
     public_step_connect( &pair );
+    int delivered = 0;
+    uint64_t delivered_bytes = 0;
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
         check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
         // every delivery is received before the next update (standard/MESSAGES.md m1.6)
-        while ( rocketnet_server_receive_messages( pair.server ) != NULL ) {}
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; m++ )
+            {
+                check( delivered < 8 );
+                check( batch->bytes[m] == 1 );
+                check( batch->data[m][0] == (uint8_t) delivered );
+                check( batch->client_index[m] == 0 );
+                delivered++;
+                delivered_bytes += (uint64_t) batch->bytes[m];
+            }
+        }
         while ( rocketnet_client_receive_messages( pair.client ) != NULL ) {}
     }
+    check( delivered == 8 );
+    check( delivered_bytes == 8 );
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( pair.client, &stats );
+    check( stats.packets_sent > 0 );
+    check( stats.packets_received > 0 );
+    check( stats.bytes_sent > 0 );
+    check( stats.bytes_received > 0 );
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( pair.server, &server_stats );
+    check( server_stats.packets_sent > 0 );
+    check( server_stats.packets_received > 0 );
+    check( server_stats.bytes_sent > 0 );
+    check( server_stats.bytes_received > 0 );
+    check( server_stats.payloads_received > 0 );
+    check( server_stats.connections_accepted == 1 );
     const uint64_t values[PUBLIC_STEP_NUM_COUNTERS] = { stats.packets_sent, stats.packets_received, stats.bytes_sent,
         stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
-        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected };
+        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected,
+        server_stats.packets_sent, server_stats.packets_received, server_stats.bytes_sent,
+        server_stats.bytes_received, server_stats.payloads_received, server_stats.connections_accepted,
+        (uint64_t) delivered, delivered_bytes };
     memcpy( counters, values, sizeof( values ) );
     public_step_pair_destroy( &pair );
 }
