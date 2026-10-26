@@ -26,6 +26,12 @@
 
 struct rocketnet_reassembly_set_t;
 
+#if ROCKETNET_DEV
+#define ROCKETNET_SERVER_TEST_FAIL_WRITER_NONE               0
+#define ROCKETNET_SERVER_TEST_FAIL_REQUEST_DENIED_WRITER     1
+#define ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER    2
+#endif // #if ROCKETNET_DEV
+
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1
 #define ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE     2
@@ -80,6 +86,13 @@ struct rocketnet_server_protocol_t
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
     int defer_payload_acks;
+#if ROCKETNET_DEV
+    // One protocol call consumes this private development fault. It lets the
+    // unit suite make a fixed-size writer return an impossible size after a
+    // valid packet has reached that writer, without bypassing any parsing,
+    // authentication or state checks. Production builds carry no field.
+    int test_fail_fixed_writer;
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_TEST_SEAMS
     uint64_t test_payload_writes;                           // writes of a payload's plaintext bytes: the open, and any copy after it
 #endif // #if ROCKETNET_TEST_SEAMS

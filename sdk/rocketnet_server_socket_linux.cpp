@@ -51,6 +51,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -999,7 +1000,22 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
                     continue;
                 }
 
-                const int cpu = atoi( affinity );
+                errno = 0;
+                char * affinity_end = NULL;
+                const long parsed_cpu = strtol( affinity, &affinity_end, 10 );
+                while ( *affinity_end == ' ' || *affinity_end == '\t' ||
+                    *affinity_end == '\r' || *affinity_end == '\n' )
+                {
+                    affinity_end++;
+                }
+                if ( affinity_end == affinity || *affinity_end != '\0' ||
+                    errno == ERANGE || parsed_cpu < INT_MIN || parsed_cpu > INT_MAX )
+                {
+                    rocketnet_warn( "xdp pre-flight: irq %d affinity is unreadable (R4): cannot verify its pin", irq );
+                    provisioned = false;
+                    continue;
+                }
+                const int cpu = (int) parsed_cpu;
 
                 if ( have_isolated && !rocketnet_server_socket_cpu_in_list( isolated, cpu ) )
                 {
