@@ -170,7 +170,9 @@ static std::vector<std::string> env_names_documented( const char * relative_path
         size_t end = begin;
         while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             end++;
-        if ( end > begin && std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
+        // Namespace prefixes are prose, not complete environment variable names.
+        if ( end > begin && text[end - 1] != '_' &&
+             std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
             names.push_back( text.substr( begin, end - begin ) );
     }
     }
@@ -396,6 +398,7 @@ static void test_config_env_every_name_read_is_documented()
     const std::vector<std::string> documented = env_names_public();
     const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
     const std::vector<std::string> reads = env_names_pass_reads();
+    check( !env_names_contains( documented, "ROCKETNET_SERVER_" ) );
     check( documented.size() == building.size() );
     for ( size_t i = 0; i < documented.size(); i++ )
     {
