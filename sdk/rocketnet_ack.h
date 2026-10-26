@@ -132,6 +132,8 @@ static_assert( sizeof(rocketnet_received_packet_record_t) == 24,
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
+#if ROCKETNET_DEV
+
 // The fields the statistics definition reads, as a standalone history for the
 // reference recompute (rocketnet_ack_stats_history_compute). The live ACK
 // endpoint keeps its own running aggregates; nothing copies into this form.
@@ -195,6 +197,8 @@ struct rocketnet_ack_stats_validity_t
     void initialize() { sent.initialize(); received.initialize(); rtt.initialize(); }
     void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
 };
+
+#endif // #if ROCKETNET_DEV
 
 
 struct rocketnet_ack_endpoint_t
@@ -429,6 +433,8 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
 int rocketnet_ack_popcount64( uint64_t value );
 int rocketnet_ack_popcount64_portable( uint64_t value );
 
+#if ROCKETNET_DEV
+
 // The six-field result of the reference recompute over a standalone history.
 // The function never mutates the history.
 struct rocketnet_ack_stats_result_t
@@ -441,6 +447,8 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
                                         const uint64_t * sent_written = NULL,
                                         const uint64_t * received_written = NULL,
                                         const rocketnet_ack_stats_validity_t * validity = NULL );
+
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                    the server's acks

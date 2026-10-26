@@ -25,7 +25,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
@@ -37,6 +39,7 @@
 #include <string.h>
 
 #define check rocketnet_unit_check
+#if ROCKETNET_DEV
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
 
 static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
@@ -232,99 +235,10 @@ static void test_config_client_env_transport_refused_at_create()
 }
 REGISTER_UNIT_TEST( test_config_client_env_transport_refused_at_create );
 
-#if !ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
-// Production posture: the struct keeps the published test filter and the
-// environment supplies a private one. Create resolves the environment before
-// it validates, so both endpoints are accepted, start and connect.
-static void test_production_env_only_packet_filter_accepted()
-{
-    rocketnet_quiet( 1 );
-    rocketnet_development_values_refused_test_enable( 1 );
-    resolve_once_identity_t identity;
-    resolve_once_identity( &identity );
-    char filter_a[16];
-    resolve_once_filter_text( resolve_once_filter_a, filter_a, sizeof( filter_a ) );
-    resolve_once_setenv( "ROCKETNET_SERVER_PACKET_FILTER", filter_a );
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", filter_a );
-
-    rocketnet_server_config_t server_config;
-    resolve_once_server_config( &server_config, &identity, 1 );
-    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
-    check( server != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    check( server && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
-
-    rocketnet_client_test_config_t client_config;
-    resolve_once_client_config( &client_config );
-    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
-    check( client != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    if ( server && client )
-    {
-        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        resolve_once_token( server, &identity, 0x3000, token );
-        check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
-        for ( int step = 0; step < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
-            resolve_once_pump( server, &client, 1, 1 );
-        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    }
-
-    resolve_once_unsetenv( "ROCKETNET_SERVER_PACKET_FILTER" );
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" );
-    rn_test_client_stop_and_destroy( client );
-    rn_test_server_stop_and_destroy( server );
-    rocketnet_development_values_refused_test_enable( 0 );
-    rocketnet_quiet( 0 );
-}
-REGISTER_UNIT_TEST( test_production_env_only_packet_filter_accepted );
-
-// Production posture: the struct holds a private filter and the environment
-// supplies the published test filter. The resolved filter is the test filter,
-// so both creates refuse it with TEST_PACKET_FILTER_IN_PRODUCTION.
-static void test_production_env_only_test_packet_filter_refused()
-{
-    rocketnet_quiet( 1 );
-    rocketnet_development_values_refused_test_enable( 1 );
-    resolve_once_identity_t identity;
-    resolve_once_identity( &identity );
-    static const uint8_t test_filter[ROCKETNET_PACKET_FILTER_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    char test_filter_text[16];
-    resolve_once_filter_text( test_filter, test_filter_text, sizeof( test_filter_text ) );
-    resolve_once_setenv( "ROCKETNET_SERVER_PACKET_FILTER", test_filter_text );
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", test_filter_text );
-
-    rocketnet_server_config_t server_config;
-    resolve_once_server_config( &server_config, &identity, 1 );
-    memcpy( server_config.packet_filter, resolve_once_filter_a, sizeof( server_config.packet_filter ) );
-    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
-    check( server == NULL );
-    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-
-    rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.transport = "loopback";
-    memcpy( client_config.packet_filter, resolve_once_filter_a, sizeof( client_config.packet_filter ) );
-    status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
-    check( client == NULL );
-    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-
-    resolve_once_unsetenv( "ROCKETNET_SERVER_PACKET_FILTER" );
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" );
-    if ( client )
-        rn_test_client_stop_and_destroy( client );
-    if ( server )
-        rn_test_server_stop_and_destroy( server );
-    rocketnet_development_values_refused_test_enable( 0 );
-    rocketnet_quiet( 0 );
-}
-REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
-
-#endif // #if !ROCKETNET_DEV
+// Production environment filter acceptance/refusal runs in
+// test_platform_primitives against ordinary native workers.
 
 // Auto expands to the availability list, and the ladder holds only
 // ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more

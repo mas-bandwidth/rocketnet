@@ -37,6 +37,7 @@
 #define FAIR_CHANNEL_RELIABLE    0
 #define FAIR_CHANNEL_UNRELIABLE  1
 
+#if ROCKETNET_DEV
 static double fair_now = 1000.0;
 static double fair_clock( void * ) { return fair_now; }
 
@@ -479,6 +480,7 @@ REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
 REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
+#endif // #if ROCKETNET_DEV
 
 // The configuration test_server_send_capacity_default_covers_clients creates: the
 // default, at ROCKETNET_MAX_CLIENTS clients, on the loopback transport. The case

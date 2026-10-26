@@ -139,7 +139,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 // for the following updates, so ending every client at once costs each call
 // a bounded number of seals, never the population's 10 per client.
 
-#define ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE                        64
+#define ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE              64
 
 // The send staging of a transport whose one staging serves every client of
 // the server (loopback, IOCP, RIO): two packets for each client the build

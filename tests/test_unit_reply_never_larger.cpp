@@ -320,7 +320,8 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
         memset( user_data, 0, sizeof(user_data) );
         for ( int i = 0; i < 4; i++ )
-            rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF200 + (uint64_t) i, -1, user_data ) == i );
+            rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF200 + (uint64_t) i, -1,
+                                                                 0xF200 + (uint64_t) i, user_data ) == i );
 
         rocketnet_unit_check( reply_process_at( &test, &test.second_address, denied_request, sizeof(denied_request),
                                                 response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
@@ -390,7 +391,8 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
         memset( user_data, 0, sizeof(user_data) );
         for ( int i = 0; i < 4; i++ )
-            rocketnet_unit_check( rocketnet_client_slots_assign( denied_test.server.client_slots, 0xF300 + (uint64_t) i, -1, user_data ) == i );
+            rocketnet_unit_check( rocketnet_client_slots_assign( denied_test.server.client_slots, 0xF300 + (uint64_t) i, -1,
+                                                                 0xF300 + (uint64_t) i, user_data ) == i );
 
         rocketnet_unit_check( reply_process_at( &denied_test, &denied_test.client_address,
                                                 client_response, client_response_bytes,

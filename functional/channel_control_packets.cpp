@@ -220,7 +220,10 @@ void control_denied_when_server_full()
         mapping->control->last_receive_time = h.now;
         mapping->last_send_time = h.now;
         mapping->last_keep_alive_send_time = h.now;
-        const int slot = rocketnet_client_slots_assign( h.server.client_slots, mapping->client_id, mapping_index, mapping->user_data );
+        const uint64_t mapping_generation =
+            rocketnet_encryption_map_owner_generation( h.server.encryption_map, mapping_index );
+        const int slot = rocketnet_client_slots_assign( h.server.client_slots, mapping->client_id, mapping_index,
+                                                        mapping_generation, mapping->user_data );
         control_check( slot >= 0, "slot assign" );
         mapping->control->client_index = slot;
         mapping->control->established = 1;

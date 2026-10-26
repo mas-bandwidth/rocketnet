@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 #include "unit_shutdown.h"
 #include "token_string.h"
@@ -101,6 +103,7 @@ static void test_public_message_limit_does_not_expand_transport_memory()
 }
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
 
+#if ROCKETNET_DEV
 struct message_limit_env_t
 {
     const char * name;
@@ -118,7 +121,9 @@ struct message_limit_env_t
     }
     ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }
 };
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_public_message_limit_env_is_endpoint_scoped()
 {
     message_limit_env_t client_env( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES" );
@@ -145,7 +150,9 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     check( message.max_message_bytes == 65536 );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_env_is_endpoint_scoped );
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static double message_limit_now = 1000.0;
 static double message_limit_clock( void * ) { return message_limit_now; }
 
@@ -271,3 +278,4 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_unreliable_up_to_max_message_bytes );
+#endif // #if ROCKETNET_DEV

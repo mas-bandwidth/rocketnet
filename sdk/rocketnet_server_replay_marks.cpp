@@ -229,7 +229,8 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     const bool parsed = rocketnet_address_parse( &address, "198.51.100.91:4091" );
     uint8_t user[ROCKETNET_USER_DATA_BYTES] = {};
     const int mapping = parsed ? rocketnet_encryption_map_add( map, &address, 1005.0 ) : -1;
-    const int index = mapping >= 0 ? rocketnet_client_slots_assign( slots, 1, mapping, user ) : -1;
+    const uint64_t owner_generation = mapping >= 0 ? rocketnet_encryption_map_owner_generation( map, mapping ) : 1;
+    const int index = mapping >= 0 ? rocketnet_client_slots_assign( slots, 1, mapping, owner_generation, user ) : -1;
     if ( index == 0 )
     {
         rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( map, mapping );
@@ -242,7 +243,7 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     {
         rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
         rocketnet_client_slots_release( slots, index );
-        rocketnet_encryption_map_remove( map, mapping );
+        rocketnet_encryption_map_remove_current( map, mapping );
         rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
     }
     const uint8_t zero[sizeof(rocketnet_server_replay_slot_mark_t)] = {};

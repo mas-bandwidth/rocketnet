@@ -19,10 +19,10 @@
 
 // The encryption mapping table: the server's per-address record of derived
 // keys and handshake state, created only for a request that carried a valid
-// backend signature. Constant time by address: chained buckets under a
-// per-run SipHash of the canonical address bytes, parallel fixed arrays,
-// the hot address array split from the cold mapping payload and walked
-// alone by find.
+// backend signature. Expected constant time by address: a flat open-addressed
+// index under a per-run SipHash of the canonical address bytes points to
+// generation-tagged fixed slots. Every probe validates the full slot handle
+// and full canonical address; a hash or physical index is never identity.
 //
 // A mapping is bound by two independent deadlines: a handshake deadline
 // fixed at creation and never refreshed -- connect within it or be
@@ -101,8 +101,14 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map );
 
-// returns the mapping index for this address, or -1. one keyed hash, one
-// short chain walk over the hot address array.
+// Wipes every live mapping and reconstructs the index and free-handle
+// sequence. The full-width generation stream never restarts, so every old
+// handle stays stale. Refuses without mutation only after it is exhausted.
+
+bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map );
+
+// returns the mapping index for this address, or -1. one keyed hash, then a
+// bounded flat-index probe that validates the complete stored address.
 
 int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map, const struct rocketnet_address_t * address );
 
@@ -129,9 +135,24 @@ struct rocketnet_encryption_mapping_control_t * rocketnet_encryption_map_control
 
 const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index );
 
-// Removes a mapping, zeroing all key material before the slot is freed.
+// The exact nonzero generation that owns a live mapping index. Client slots
+// retain this value with the index so a delayed reset cannot remove a reused
+// mapping.
 
-void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );
+uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encryption_map_t * map, int index );
+
+// Removes a mapping only when index and owner_generation still name the same
+// live mapping. A stale owner is a no-op and returns false.
+
+bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * map,
+                                            int index,
+                                            uint64_t owner_generation );
+
+// Removes a mapping whose index was obtained synchronously from the current
+// add, find or iterator operation. Persisted indices must use remove_owned.
+// All key material is zeroed before the slot is freed.
+
+void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index );
 
 // Iterates the live mappings: start with iterator = -1, call until it
 // returns 0; each call yields the next live index. Removing the yielded
@@ -146,5 +167,20 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
 // remove. The unit suite pins the receive path's cost per packet with it.
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
 #endif // #if ROCKETNET_TEST_SEAMS
+
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+// Deterministic probe accounting and handle access for the DEV-only
+// collision/stale-generation oracles. Probes are counted at the actual index
+// cell inspection. The home slot exposes no key material; it lets a test
+// discover real collisions under the map's random keyed hash.
+uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption_map_t * map );
+uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encryption_map_t * map );
+int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t * map,
+                                        const struct rocketnet_address_t * address );
+bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
+                                           struct rn_sequence_buffer_handle_t * handle );
+bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
+                                                  const struct rn_sequence_buffer_handle_t * handle );
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
 #endif // #ifndef ROCKETNET_ENCRYPTION_MAP_H

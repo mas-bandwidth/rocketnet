@@ -13,10 +13,11 @@ each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
 that exchange alone. `update` and `send_packets` only try that mutex: when the
 I/O thread holds it, the exchange waits for the next call, so they never wait
 on the I/O thread. Sends then leave with the next hand-off
-(`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. With
-`ROCKETNET_CLIENT_STEP_DRIVEN=1`,
-the caller performs transport
-receive and send work inside those calls and no client I/O thread starts.
+(`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. In a
+development library only, `ROCKETNET_CLIENT_STEP_DRIVEN=1` lets deterministic
+tests perform transport receive and send work inside those calls without a
+client I/O thread. A production library does not recognize that variable and
+always uses the normal worker-owned route.
 
 The BASE receive path uses the same ownership queues and reserves one buffer
 for the producer. Up to N-1 batches may be READY. Each update takes all oldest
@@ -85,7 +86,8 @@ must preserve these invariants:
 - internal client and server transports use the same stop, stopped, destroy
   order. Their stop requests and completion checks never wait for workers.
 
-The optional `time_callback` in `sdk/rocketnet_testing.h` supplies receive-stamp time;
+The optional `time_callback` in the private `sdk/rocketnet_testing.h` test
+header supplies receive-stamp time;
 it is not the game clock passed to update. It may run on the I/O thread and on
 the caller's thread when an explicitly step-driven client is updated. Stop
 and completion queries do not read that clock. Keep its function and context
@@ -97,7 +99,7 @@ The executable invariants live in `tla/RNBufferHandoff.tla`,
 `tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
 functional transport matrix.
 
-A step-driven test advances shutdown explicitly with update (or its I/O-step
+A development-only step-driven test advances shutdown explicitly with update (or its I/O-step
 seam), then checks completion. Checking alone never drives the backend. A game
 using the normal threaded mode keeps its event loop running while it polls.
 Keep the allocator context, callback context, and transport memory alive through

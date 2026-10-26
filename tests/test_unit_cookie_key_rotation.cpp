@@ -155,7 +155,7 @@ static void rocketnet_rotation_clear_mapping( struct rocketnet_rotation_server_t
 {
     int index = rocketnet_encryption_map_find( test->server.encryption_map, &test->client_address );
     if ( index != -1 )
-        rocketnet_encryption_map_remove( test->server.encryption_map, index );
+        rocketnet_encryption_map_remove_current( test->server.encryption_map, index );
 }
 
 static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint64_t client_id )

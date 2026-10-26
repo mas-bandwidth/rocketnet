@@ -61,3 +61,16 @@ means each precedence held and the bad value was refused.
 - The C standard library: `getenv`, `system`, `strcmp`, `memcpy`, `snprintf`, `printf`
 
 The full field list lives in `sdk/rocketnet.h`.
+
+## Disconnect notification work
+
+`disconnect_packets_per_update` has the same precedence rules. Its environment
+name is `ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE`, its default is 64,
+and its valid range is 1 through 1024. It is a whole-server packet allowance,
+not a per-client allowance. Setting it below the 10 redundant disconnect
+copies deliberately spreads those best-effort notifications across updates;
+the server still closes and frees the local session immediately. When the
+bounded deferred ring is full, older work is retained and the new redundant
+copies may be dropped rather than exceeding the allowance. Zero and values
+above 1024 are refused with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`; zero does
+not mean unlimited.

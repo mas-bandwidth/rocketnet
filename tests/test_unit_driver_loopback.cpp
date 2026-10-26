@@ -525,7 +525,10 @@ static void test_wire_totals_staged_finish_counts_exactly()
         rocketnet_unit_check( index >= 0 );
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index, user_data ) == i );
+        const uint64_t owner_generation =
+            rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
+        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index,
+                                                             owner_generation, user_data ) == i );
         mapping->control->client_index = i;
         mapping->client_id = (uint64_t) ( i + 1 );
         mapping->control->established = 1;
@@ -1028,7 +1031,10 @@ static void shape_junk_connect_slot0( rocketnet_server_transport_t * server, roc
     rocketnet_unit_check( index >= 0 );
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-    rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, 1, index, user_data ) == 0 );
+    const uint64_t owner_generation =
+        rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
+    rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, 1, index,
+                                                         owner_generation, user_data ) == 0 );
     mapping->control->client_index = 0;
     mapping->client_id = 1;
     mapping->control->established = 1;

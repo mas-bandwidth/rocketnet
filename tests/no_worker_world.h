@@ -6,7 +6,7 @@
 // The shared world for the 1000-client server-stats cases: test_server_stats_*
 // in tests/test_unit_server_stats_no_worker.cpp (unit) and
 // functional/process_thread_counts.cpp (functional). The server runs on the
-// in-memory loopback transport with step-driven clients and a test clock
+// in-memory loopback transport with development-only step-driven clients and a test clock
 // starting at 1000.0; no socket, no sleep and no real time. The includer
 // defines `check` before including.
 

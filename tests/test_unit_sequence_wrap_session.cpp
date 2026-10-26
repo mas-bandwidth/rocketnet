@@ -65,6 +65,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 #define SEQUENCE_WRAP_DT 0.01
 #define SEQUENCE_WRAP_STEPS 5000
 #define SEQUENCE_WRAP_SETTLE 100
@@ -72,6 +73,7 @@
 #define SEQUENCE_WRAP_FIELD_LIMIT 0xFFFFFFFFULL
 #define SEQUENCE_WRAP_MAX_PACKETS 16384
 
+#if ROCKETNET_DEV
 static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
 static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
@@ -533,6 +535,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     rn_test_message_server_stop_and_destroy( pair.server );
 #endif // #if ROCKETNET_TEST_SEAMS
 }
+#endif // #if ROCKETNET_DEV
 
 // rocketnet_reconstruct_near (sdk/rocketnet_protocol.cpp) on its own, no
 // session: of the three candidates sharing the wire value in their low 32
@@ -540,6 +543,8 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 // expected wins and an exact tie takes the larger. Pins the behaviour the
 // session cases above rely on, at each edge: the same block, the block below,
 // the block above, a tie, and expected zero (no block below).
+
+#endif // #if ROCKETNET_DEV
 
 static void test_reconstruct_near_picks_nearest_and_larger_on_tie( void )
 {
@@ -550,6 +555,8 @@ static void test_reconstruct_near_picks_nearest_and_larger_on_tie( void )
     check( rocketnet_reconstruct_near( 0xFFFFFFFFU, 0 ) == 0xFFFFFFFFULL );
 }
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_sequence_wrap_session_both_directions );
 REGISTER_UNIT_TEST( test_sequence_wrap_session_starts_at_wrap_edge );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_reconstruct_near_picks_nearest_and_larger_on_tie );
