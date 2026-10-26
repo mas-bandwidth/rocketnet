@@ -56,14 +56,57 @@ void rocketnet_test_platform_thread()
     rocketnet_check( threads_work );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static bool rocketnet_windows_handle_is_closed( HANDLE handle )
+{
+    DWORD flags = 0;
+#if defined(_MSC_VER)
+    __try
+    {
+        if ( GetHandleInformation( handle, &flags ) != 0 )
+            return false;
+        return GetLastError() == ERROR_INVALID_HANDLE;
+    }
+    __except ( GetExceptionCode() == STATUS_INVALID_HANDLE ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH )
+    {
+        return true;
+    }
+#else
+    return GetHandleInformation( handle, &flags ) == 0 && GetLastError() == ERROR_INVALID_HANDLE;
+#endif
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 void rocketnet_test_frame_sync_wait()
 {
     // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
     // the assertion is pacing and accounting, never precision -- precision
     // was the issue #56 measurement campaign's job, and CI runners are noisy.
 
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_track_begin();
+    rocketnet_lifecycle_resources_t before_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
+#endif
+
+    int create_status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( NULL, 250.0, &create_status );
     rocketnet_check( frame_sync );
+    rocketnet_check( create_status == ROCKETNET_STATUS_OK );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const HANDLE timer_handle = frame_sync->waitable_timer;
+    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
+    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_resources_t live_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &live_resources ) );
+    rocketnet_check( live_resources.errors == 0 );
+    rocketnet_check( live_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( live_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
+    rocketnet_check( live_resources.live_count == before_resources.live_count + 1 );
+#endif
+#endif
 
     const double start = rocketnet_platform_time();
     for ( int i = 0; i < 25; i++ )
@@ -81,7 +124,166 @@ void rocketnet_test_frame_sync_wait()
     rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
 
     rocketnet_frame_sync_destroy( frame_sync );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_resources_t after_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
+    rocketnet_check( after_resources.errors == 0 );
+    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.live_count == before_resources.live_count );
+    rocketnet_lifecycle_track_end();
+#endif
+#endif
 }
+
+#if ROCKETNET_DEV
+
+struct rocketnet_frame_sync_timer_seam_state_t
+{
+    int calls;
+    unsigned flags[8];
+    int live_allocations;
+    int total_allocations;
+    size_t live_bytes;
+    int error_lines;
+};
+
+static rocketnet_frame_sync_timer_seam_state_t rocketnet_frame_sync_timer_seam_state;
+
+static void * rocketnet_frame_sync_seam_malloc( void * context, size_t bytes )
+{
+    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
+    rocketnet_check( state == &rocketnet_frame_sync_timer_seam_state );
+    void * raw = malloc( sizeof(size_t) + bytes );
+    if ( !raw )
+        return NULL;
+    memcpy( raw, &bytes, sizeof(size_t) );
+    ++state->total_allocations;
+    ++state->live_allocations;
+    state->live_bytes += bytes;
+    return (uint8_t *) raw + sizeof(size_t);
+}
+
+static void rocketnet_frame_sync_seam_free( void * context, void * pointer )
+{
+    if ( !pointer )
+        return;
+    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
+    rocketnet_check( state == &rocketnet_frame_sync_timer_seam_state );
+    void * raw = (uint8_t *) pointer - sizeof(size_t);
+    size_t bytes = 0;
+    memcpy( &bytes, raw, sizeof(size_t) );
+    rocketnet_check( state->live_allocations > 0 );
+    rocketnet_check( state->live_bytes >= bytes );
+    --state->live_allocations;
+    state->live_bytes -= bytes;
+    free( raw );
+}
+
+static void rocketnet_frame_sync_seam_log( void * context, rocketnet_log_level_t level, const char * message, size_t )
+{
+    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
+    if ( state && level == ROCKETNET_LOG_LEVEL_ERROR &&
+         strstr( message, "frame sync: could not create high resolution waitable timer" ) != NULL )
+    {
+        ++state->error_lines;
+    }
+}
+
+static void * rocketnet_frame_sync_reject_high_resolution_timer( unsigned flags )
+{
+    if ( rocketnet_frame_sync_timer_seam_state.calls < 8 )
+        rocketnet_frame_sync_timer_seam_state.flags[rocketnet_frame_sync_timer_seam_state.calls] = flags;
+    ++rocketnet_frame_sync_timer_seam_state.calls;
+    if ( ( flags & 0x00000002u ) != 0 )
+    {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        SetLastError( ERROR_NOT_SUPPORTED );
+#endif
+        return NULL;
+    }
+    return rocketnet_platform_priority_calls_real()->create_waitable_timer( flags );
+}
+
+void rocketnet_test_frame_sync_high_resolution_timer_required()
+{
+    memset( &rocketnet_frame_sync_timer_seam_state, 0, sizeof( rocketnet_frame_sync_timer_seam_state ) );
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( &rocketnet_frame_sync_timer_seam_state,
+                                     rocketnet_frame_sync_seam_malloc,
+                                     rocketnet_frame_sync_seam_free ) == ROCKETNET_STATUS_OK );
+
+    const rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( rocketnet_frame_sync_seam_log, &rocketnet_frame_sync_timer_seam_state );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    DWORD handles_before = 0;
+    rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_before ) != 0 );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_track_begin();
+    rocketnet_lifecycle_resources_t before_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
+#endif
+#endif
+
+    struct rocketnet_platform_priority_calls_t fake = *rocketnet_platform_priority_calls_real();
+    fake.create_waitable_timer = rocketnet_frame_sync_reject_high_resolution_timer;
+    rocketnet_platform_set_priority_calls_for_testing( &fake );
+
+    const int allocations_before = rocketnet_frame_sync_timer_seam_state.total_allocations;
+
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_frame_sync_t * frame_sync =
+        rocketnet_frame_sync_create_ex( &rocketnet_frame_sync_timer_seam_state, 250.0, &status );
+    rocketnet_check( frame_sync == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_TIMER_CREATE_FAILED );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.calls == 1 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.flags[0] == 0x00000002u );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.total_allocations == allocations_before + 1 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.error_lines == 1 );
+
+    rocketnet_check( rocketnet_frame_sync_create( &rocketnet_frame_sync_timer_seam_state, 250.0 ) == NULL );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.calls == 2 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.flags[1] == 0x00000002u );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.total_allocations == allocations_before + 2 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.error_lines == 2 );
+
+    rocketnet_platform_set_priority_calls_for_testing( NULL );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    DWORD handles_after = 0;
+    rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_after ) != 0 );
+    rocketnet_check( handles_after <= handles_before );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_resources_t after_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
+    rocketnet_check( after_resources.errors == 0 );
+    rocketnet_check( after_resources.live_count == before_resources.live_count );
+    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] );
+    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
+    rocketnet_lifecycle_track_end();
+#endif
+#endif
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
+    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_test_frame_sync_dropped_stats()
 {
@@ -795,6 +997,9 @@ int main()
     int status = ROCKETNET_STATUS_OK;
     rocketnet_check( rocketnet_frame_sync_create_ex( NULL, 0.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+#if ROCKETNET_DEV
+    rocketnet_test_frame_sync_high_resolution_timer_required();
+#endif // #if ROCKETNET_DEV
     rocketnet_test_frame_sync_wait();
 
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
