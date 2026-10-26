@@ -428,7 +428,8 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
 
 // The transport forbids an update or a flush while a fill is open (sdk/rocketnet.h,
 // the threading contract), so an in-place start still pending there is aborted:
-// the caller's error, counted, and its later finish returns 0.
+// the caller's error, counted, and its later finish asserts in a debug build
+// and returns 0 in a release build.
 
 static void rn_message_object_close_in_place( rn_message_object_t * object )
 {
@@ -1002,10 +1003,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
     {
         if ( index >= 0 && index < object->num_connections && object->in_place == -1 - index )
-        {
             object->in_place = 0;
-            return 0;
-        }
         rocketnet_assert( index >= 0 && index < object->num_connections && object->pending_connection == index );
         return 0;
     }

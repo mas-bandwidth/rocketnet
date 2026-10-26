@@ -528,6 +528,47 @@ static void test_finish_requires_start_message_objects_and_endpoint()
         check_not_asserted();
         check( rocketnet_message_server_finish( msg_server, slot1, 6 ) == 0 );
         check_asserted_once();
+
+        // In-place start closed by send_packets or update (in_place == -1 - index):
+        // finish clears in_place, asserts in Debug, and returns 0 in Release
+        c0 = rocketnet_message_client_start( msg_client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
+        check( c0 != NULL );
+        check( msg_client->object.in_place > 0 );
+        rocketnet_message_client_send_packets( msg_client );
+        check( msg_client->object.in_place == -1 );
+        check_not_asserted();
+        check( rocketnet_message_client_finish( msg_client, 6 ) == 0 );
+        check_asserted_once();
+        check( msg_client->object.in_place == 0 );
+        check( rocketnet_message_client_finish( msg_client, 6 ) == 0 );
+        check_asserted_once();
+
+        s0 = rocketnet_message_server_start( msg_server, slot0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
+        check( s0 != NULL );
+        check( server_obj->in_place > 0 );
+        rocketnet_message_server_send_packets( msg_server );
+        check( server_obj->in_place == -1 - slot0 );
+        check_not_asserted();
+        check( rocketnet_message_server_finish( msg_server, slot0, 6 ) == 0 );
+        check_asserted_once();
+        check( server_obj->in_place == 0 );
+        check( rocketnet_message_server_finish( msg_server, slot0, 6 ) == 0 );
+        check_asserted_once();
+
+        // Public API in-place start closed by send_packets / update also asserts on finish
+        c0 = rocketnet_client_start_message( world.clients[0], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
+        check( c0 != NULL );
+        rocketnet_client_send_packets( world.clients[0] );
+        check_not_asserted();
+        check( rocketnet_client_finish_message( world.clients[0], 6 ) == 0 );
+        check_asserted_once();
+
+        s0 = rocketnet_server_start_message( world.server, (uint64_t) slot0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
+        check( s0 != NULL );
+        rocketnet_server_send_packets( world.server );
+        check_not_asserted();
+        check( rocketnet_server_finish_message( world.server, 6 ) == 0 );
+        check_asserted_once();
     }
 
     // Slot0 still exchanges messages cleanly
