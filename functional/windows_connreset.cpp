@@ -81,7 +81,9 @@ static const char * windows_connreset_host( bool ipv6 )
 static struct rocketnet_server_transport_t * windows_connreset_server( const windows_connreset_transport_t * transport, int port, int max_clients )
 {
     windows_connreset_clear_env();
+#if ROCKETNET_DEV
     rocketnet_server_iocp_test_force_flags( transport->plain ? ( ROCKETNET_IOCP_DISABLE_USO | ROCKETNET_IOCP_DISABLE_URO ) : 0 );
+#endif
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -91,7 +93,9 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( bind, sizeof( bind ), "%s:%d", windows_connreset_host( transport->ipv6 ), port );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
+#if ROCKETNET_DEV
     rocketnet_server_iocp_test_force_flags( 0 );
+#endif
     windows_connreset_require( server != NULL );
     windows_connreset_require( strcmp( rocketnet_server_transport_io_name( server ), transport->transport ) == 0 );
     return server;

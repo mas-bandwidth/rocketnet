@@ -605,6 +605,13 @@ if(ROCKETNET_BUILD_TESTS)
     # receive_batch. Not a second translation unit.
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
+    # The RIO fake-kernel overflow fixture is development instrumentation, not
+    # a production-behavior unit case. A DEV=0 suite keeps every real unit case
+    # and does not compile or link this seam.
+    if(WIN32 AND NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_rio_overflow_seam.cpp")
+    endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     # Keep the reusable internal sequence-buffer contract visible to build
     # generators as a first-class dependency; its registered unit translation
@@ -617,7 +624,7 @@ if(ROCKETNET_BUILD_TESTS)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    if(WIN32)
+    if(WIN32 AND ROCKETNET_DEV)
         # The RIO overflow seam (test_unit_rio_overflow_seam.cpp) compiles into
         # the test hook library only, matching the link-simulator seam above, so
         # neither the installed static library nor the shared libraries carry it.
@@ -893,13 +900,23 @@ if(ROCKETNET_BUILD_TESTS)
         add_executable(test_iocp tests/test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp sdk/rocketnet_server_rio_windows.cpp
             sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS ROCKETNET_RIO_TESTS
-            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+            $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
         target_compile_features(test_iocp PRIVATE cxx_std_11)
         target_compile_options(test_iocp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_iocp)
         target_link_libraries(test_iocp PRIVATE Threads::Threads)
         rocketnet_warning_floor(test_iocp)
+        if(NOT ROCKETNET_DEV)
+            # The same source has a DEV=0-only main that uses ordinary IOCP and
+            # RIO constructors, real loopback datagrams and bounded shutdown.
+            # It links the production archive and cannot see any fault control.
+            add_executable(test_windows_transports_production tests/test_iocp.cpp)
+            target_include_directories(test_windows_transports_production PRIVATE tests)
+            target_link_libraries(test_windows_transports_production PRIVATE rocketnet Threads::Threads)
+            target_compile_features(test_windows_transports_production PRIVATE cxx_std_11)
+            rocketnet_warning_floor(test_windows_transports_production)
+        endif()
     endif()
     file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/functional/channel_*.cpp" )
     add_executable(functional

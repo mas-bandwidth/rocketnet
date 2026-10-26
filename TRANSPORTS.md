@@ -248,8 +248,9 @@ the create log line names each feature as yes or no.
   `UDP_SEND_MSG_SIZE` socket option, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
   `UDP_COALESCED_INFO` stride. `rocketnet_server_iocp_features` reports
-  `ROCKETNET_IOCP_FEATURE_USO` and `ROCKETNET_IOCP_FEATURE_URO`; the create flags
-  `ROCKETNET_IOCP_DISABLE_USO` and `ROCKETNET_IOCP_DISABLE_URO` skip each probe.
+  `ROCKETNET_IOCP_FEATURE_USO` and `ROCKETNET_IOCP_FEATURE_URO`. In a DEV build,
+  the test-only create flags `ROCKETNET_IOCP_DISABLE_USO` and
+  `ROCKETNET_IOCP_DISABLE_URO` skip each probe; production always probes both.
   The Winsock reference documents the segment size as a socket option, not a
   per-send control message, so a run of more than one frame sets the option to
   the run's stride and posts one `WSASendMsg` with one buffer per frame. Every

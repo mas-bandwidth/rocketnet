@@ -13,6 +13,130 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !ROCKETNET_DEV
+
+// This translation unit also supplies the production-linked native transport
+// smoke target. It uses no control seam: both constructors have their ordinary
+// signatures, probe the host normally, exchange real datagrams and cancel
+// their posted receives during bounded shutdown.
+typedef void (*production_receive_fn)( void * transport );
+typedef rocketnet_server_socket_process_packets_t * (*production_process_fn)( void * transport );
+typedef uint8_t * (*production_start_fn)( void * transport, const rocketnet_address_t * to, uint64_t * packet_id );
+typedef void (*production_finish_fn)( void * transport, uint64_t packet_id, uint8_t * frame, int packet_bytes );
+typedef void (*production_send_fn)( void * transport );
+
+#define PRODUCTION_CHECK(x) do { if (!(x)) { fprintf(stderr, "production Windows transport check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
+
+static void production_exchange( void * transport, const rocketnet_address_t * bind_address,
+    production_receive_fn receive_packets, production_process_fn process_packets,
+    production_start_fn start_packet, production_finish_fn finish_packet, production_send_fn send_packets )
+{
+    rocketnet_address_t client_address;
+    PRODUCTION_CHECK( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+    rocketnet_platform_socket_t * client = rocketnet_platform_socket_create( NULL, &client_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    PRODUCTION_CHECK( client && client_address.port != 0 );
+
+    rocketnet_address_t server_address;
+    PRODUCTION_CHECK( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    server_address.port = bind_address->port;
+    const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 7;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < packet_bytes; ++i ) packet[i] = (uint8_t) ( i * 13 + 5 );
+    rocketnet_platform_socket_send_packet( client, &server_address, packet, packet_bytes );
+
+    bool received = false;
+    double deadline = rocketnet_platform_time() + 5.0;
+    while ( !received && rocketnet_platform_time() < deadline )
+    {
+        receive_packets( transport );
+        rocketnet_server_socket_process_packets_t * batch = process_packets( transport );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            PRODUCTION_CHECK( batch->packet_bytes[i] == packet_bytes );
+            PRODUCTION_CHECK( batch->from[i].type == ROCKETNET_ADDRESS_IPV4 && batch->from[i].port == client_address.port );
+            PRODUCTION_CHECK( memcmp( batch->packet_data[i], packet, (size_t) packet_bytes ) == 0 );
+            received = true;
+        }
+        if ( !received ) rocketnet_platform_sleep( 0.001 );
+    }
+    PRODUCTION_CHECK( received );
+
+    uint64_t packet_id = 0;
+    uint8_t * frame = start_packet( transport, &client_address, &packet_id );
+    PRODUCTION_CHECK( frame );
+    uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+    for ( int i = 0; i < packet_bytes; ++i ) wire[i] = (uint8_t) ( i * 29 + 11 );
+    finish_packet( transport, packet_id, frame, packet_bytes );
+    send_packets( transport );
+
+    int reply_bytes = 0;
+    rocketnet_address_t from = {};
+    deadline = rocketnet_platform_time() + 5.0;
+    while ( reply_bytes <= 0 && rocketnet_platform_time() < deadline )
+    {
+        // Flush is a nonblocking try-publication. Retry until the worker owns
+        // the staged frame; after a successful handoff later calls are empty.
+        send_packets( transport );
+        reply_bytes = rocketnet_platform_socket_receive_packet( client, &from, packet, (int) sizeof(packet) );
+        if ( reply_bytes <= 0 ) rocketnet_platform_sleep( 0.001 );
+    }
+    PRODUCTION_CHECK( reply_bytes == packet_bytes && from.port == bind_address->port );
+    for ( int i = 0; i < packet_bytes; ++i ) PRODUCTION_CHECK( packet[i] == (uint8_t) ( i * 29 + 11 ) );
+    rocketnet_platform_socket_destroy( client );
+}
+
+static void production_iocp_receive( void * p ) { rocketnet_server_iocp_receive_packets( (rocketnet_server_iocp_t*) p ); }
+static rocketnet_server_socket_process_packets_t * production_iocp_process( void * p ) { return rocketnet_server_iocp_process_packets( (rocketnet_server_iocp_t*) p ); }
+static uint8_t * production_iocp_start( void * p, const rocketnet_address_t * to, uint64_t * id ) { return rocketnet_server_iocp_start_packet( (rocketnet_server_iocp_t*) p, to, id ); }
+static void production_iocp_finish( void * p, uint64_t id, uint8_t * frame, int bytes ) { rocketnet_server_iocp_finish_packet( (rocketnet_server_iocp_t*) p, id, frame, bytes ); }
+static void production_iocp_send( void * p ) { rocketnet_server_iocp_send_packets( (rocketnet_server_iocp_t*) p ); }
+
+static void production_rio_receive( void * p ) { rocketnet_server_rio_receive_packets( (rocketnet_server_rio_t*) p ); }
+static rocketnet_server_socket_process_packets_t * production_rio_process( void * p ) { return rocketnet_server_rio_process_packets( (rocketnet_server_rio_t*) p ); }
+static uint8_t * production_rio_start( void * p, const rocketnet_address_t * to, uint64_t * id ) { return rocketnet_server_rio_start_packet( (rocketnet_server_rio_t*) p, to, id ); }
+static void production_rio_finish( void * p, uint64_t id, uint8_t * frame, int bytes ) { rocketnet_server_rio_finish_packet( (rocketnet_server_rio_t*) p, id, frame, bytes ); }
+static void production_rio_send( void * p ) { rocketnet_server_rio_send_packets( (rocketnet_server_rio_t*) p ); }
+
+int main()
+{
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    PRODUCTION_CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_address_t bind;
+    PRODUCTION_CHECK( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( NULL, &bind, 1 );
+    PRODUCTION_CHECK( iocp && bind.port != 0 );
+    const int features = rocketnet_server_iocp_features( iocp );
+    production_exchange( iocp, &bind, production_iocp_receive, production_iocp_process,
+        production_iocp_start, production_iocp_finish, production_iocp_send );
+    rocketnet_server_iocp_stop( iocp );
+    double deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_iocp_stopped( iocp ) && rocketnet_platform_time() < deadline ) rocketnet_platform_sleep( 0.001 );
+    PRODUCTION_CHECK( rocketnet_server_iocp_stopped( iocp ) && rocketnet_server_iocp_pending( iocp ) == 0 );
+    rocketnet_server_iocp_destroy( iocp );
+    printf( "test_iocp_production_exchange_shutdown features=%d\n", features );
+
+    PRODUCTION_CHECK( rocketnet_server_rio_available() );
+    PRODUCTION_CHECK( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind );
+    PRODUCTION_CHECK( rio && bind.port != 0 );
+    production_exchange( rio, &bind, production_rio_receive, production_rio_process,
+        production_rio_start, production_rio_finish, production_rio_send );
+    rocketnet_server_rio_stop( rio );
+    deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_rio_stopped( rio ) && rocketnet_platform_time() < deadline ) rocketnet_platform_sleep( 0.001 );
+    PRODUCTION_CHECK( rocketnet_server_rio_stopped( rio ) && rocketnet_server_rio_pending( rio ) == 0 );
+    rocketnet_server_rio_destroy( rio );
+    printf( "test_rio_production_exchange_shutdown\n" );
+
+    rocketnet_term();
+    printf( "*** PRODUCTION WINDOWS TRANSPORTS PASSED ***\n" );
+    return 0;
+}
+
+#else
+
 #if defined(_WIN32)
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                   int * repost_calls, int * pending_receives, int * guard_hit );
@@ -1681,3 +1805,5 @@ int main( int argc, char ** argv )
     CHECK(live_allocations.load() == 0);
     return 0;
 }
+
+#endif // ROCKETNET_DEV
