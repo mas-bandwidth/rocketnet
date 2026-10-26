@@ -4046,8 +4046,9 @@ REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
 
-// Carve writes session metadata once. The receive ring and the send store
-// keep their bytes, so a larger payload capacity does not add carve work.
+// A reset increments the carve counter once and clears session metadata.
+// That counter counts invocations. It is not a measure of bytes visited.
+// Poisoned receive-ring and send-store bytes are still there afterwards.
 static uint64_t mo_count_byte( const uint8_t * bytes, uint64_t n, uint8_t value )
 {
     uint64_t count = 0;
@@ -4100,7 +4101,7 @@ static int mo_carve_leaves_payload_and_counts_one( const rocketnet_message_confi
     return one_carve && metadata_reset && ring_kept && store_kept;
 }
 
-static void test_region_carve_scales_with_session_metadata_not_payload_capacity()
+static void test_region_reset_keeps_payload_bytes()
 {
     rocketnet_message_config_t small_config;
     rocketnet_message_config_t large_config;
@@ -4118,4 +4119,4 @@ static void test_region_carve_scales_with_session_metadata_not_payload_capacity(
     check( small_store < large_store );
     check( (uint64_t) small_ring + small_store < (uint64_t) large_ring + large_store );
 }
-REGISTER_UNIT_TEST( test_region_carve_scales_with_session_metadata_not_payload_capacity );
+REGISTER_UNIT_TEST( test_region_reset_keeps_payload_bytes );

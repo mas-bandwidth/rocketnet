@@ -355,6 +355,44 @@ static void test_client_reconnects_with_a_second_token()
 }
 REGISTER_UNIT_TEST( test_client_reconnects_with_a_second_token );
 
+// Disconnect clears the held connection before the old object is destroyed.
+// The client can already be disconnected in that window. Session counters
+// read 0 then. Not-connected drops stay.
+static void test_client_stats_are_zero_once_disconnected()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    lifecycle_connect( &world, 0, 0x3101 );
+    lifecycle_exchange( &world, 0, 0xC3, 2 );
+    struct rocketnet_client_stats_t before;
+    rocketnet_client_stats( client, &before );
+    check( before.packets_sent > 0 );
+    check( before.payloads_received > 0 );
+    const uint64_t drops = before.messages_dropped_not_connected;
+    rocketnet_client_disconnect( client );
+    for ( int step = 0; step < 32 && !rocketnet_client_disconnected( client ); step++ )
+        lifecycle_pump( &world );
+    check( rocketnet_client_disconnected( client ) );
+    struct rocketnet_client_stats_t after;
+    rocketnet_client_stats( client, &after );
+    check( after.packets_sent == 0 );
+    check( after.packets_received == 0 );
+    check( after.bytes_sent == 0 );
+    check( after.bytes_received == 0 );
+    check( after.payloads_received == 0 );
+    check( after.messages_resent == 0 );
+    check( after.messages_duplicated == 0 );
+    check( after.receipts_acked == 0 );
+    check( after.receipts_lost == 0 );
+    check( after.receipts_dropped == 0 );
+    check( after.messages_dropped_over_budget == 0 );
+    check( after.rtt_ms == 0.0 );
+    check( after.messages_dropped_not_connected >= drops );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_stats_are_zero_once_disconnected );
+
 // A connected step-driven client retains its sealed disconnect burst until
 // the caller explicitly steps its worker. Polling and a duplicate request
 // cannot retire that generation; only an explicit update completes it, and a

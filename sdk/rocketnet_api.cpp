@@ -1310,29 +1310,33 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         return;
     uint64_t counts[RN_CLIENT_COUNT];
     memset( counts, 0, sizeof( counts ) );
-    // Session totals are only the connection that is held. An ended
-    // connection's packets, bytes and messages are not added, including
-    // after a reconnect to the same or a different server. Not-connected
-    // drops stay on the handle and stay visible with or without a connection.
+    // Session totals are only client->connection. Disconnect moves that
+    // object to retiring and clears connection, and the client can already
+    // be disconnected while retiring still exists. The retiring object's
+    // packets, bytes and messages are not published. Not-connected drops
+    // stay visible for the whole window, then move onto the handle when
+    // retiring is destroyed.
     counts[RN_CLIENT_NOT_CONNECTED_DROPS] = client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS];
-    struct rocketnet_message_client_t * held = client->connection ? client->connection : client->retiring;
-    if ( held )
+    if ( client->retiring )
+    {
+        uint64_t retiring_counts[RN_CLIENT_COUNT];
+        rn_client_connection_counts( client->retiring, retiring_counts, NULL );
+        counts[RN_CLIENT_NOT_CONNECTED_DROPS] += retiring_counts[RN_CLIENT_NOT_CONNECTED_DROPS];
+    }
+    if ( client->connection )
     {
         uint64_t connection[RN_CLIENT_COUNT];
         struct rocketnet_client_transport_stats_t transport_stats;
-        rn_client_connection_counts( held, connection, &transport_stats );
+        rn_client_connection_counts( client->connection, connection, &transport_stats );
         for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
             counts[i] += connection[i];
-        if ( client->connection )
-        {
-            stats->rtt_ms = (double) transport_stats.rtt;
-            stats->jitter_ms = (double) transport_stats.jitter;
-            stats->packet_loss_percent = (double) transport_stats.packet_loss;
-            stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
-            stats->packets_received_per_second = transport_stats.packets_received_per_second;
-            stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
-            stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
-        }
+        stats->rtt_ms = (double) transport_stats.rtt;
+        stats->jitter_ms = (double) transport_stats.jitter;
+        stats->packet_loss_percent = (double) transport_stats.packet_loss;
+        stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
+        stats->packets_received_per_second = transport_stats.packets_received_per_second;
+        stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
+        stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
     }
     stats->packets_sent = counts[RN_CLIENT_PACKETS_SENT];
     stats->packets_received = counts[RN_CLIENT_PACKETS_RECEIVED];

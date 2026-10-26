@@ -160,7 +160,8 @@ material is overwritten in place with `sodium_memzero`:
   `receipts_dropped`, and `messages_dropped_over_budget` are the connection
   that is held. A new connect, including a reconnect to the same or a different
   server, does not carry the ended connection's totals. With no connection
-  held they read 0. `messages_dropped_not_connected` stays on the client handle
+  held they read 0, including after disconnect while the old connection is
+  still finishing. `messages_dropped_not_connected` stays on the client handle
   and remains monotonic across connections. Rate and quality gauges stay
   session-scoped and read 0 without a connection. The public struct is
   unchanged. `tla/ClientSession.tla` `End` leaves `kept` unchanged, and
