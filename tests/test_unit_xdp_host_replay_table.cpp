@@ -19,7 +19,7 @@
 #include "../sdk/rocketnet_xdp_limits.h"
 #include "../sdk/rocketnet_xdp_replay_marks.h"
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #include "xdp_host/server_xdp_host.h"
 
@@ -154,4 +154,4 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_table_set_get_reset );
 
-#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
