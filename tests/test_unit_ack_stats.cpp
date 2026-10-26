@@ -38,10 +38,11 @@ static void stats_ack( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, d
     rocketnet_unit_check( unknown == 0 && full == 0 && count == 0 );
 }
 
-// Compare both typed entry points at every existing numeric edge assertion.
-// Projection happens only in this unit oracle; the worker uses its history
-// directly and performs no endpoint reconstruction.
-static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
+// Project an endpoint into the independent history scan. Projection happens
+// only in this unit oracle; the worker uses its history directly and performs
+// no endpoint reconstruction.
+static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
+                                  rocketnet_ack_stats_result_t * result )
 {
     auto * history = new rocketnet_ack_stats_history_t;
     memset(history, 0, sizeof(*history));
@@ -67,8 +68,18 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
         history->received[i].receive_time = endpoint->received[i].receive_time;
         history->received[i].wire_bytes = endpoint->received[i].wire_bytes;
     }
-    rocketnet_ack_stats_result_t result = {};
-    rocketnet_ack_stats_history_compute(history, &result);
+    memset( result, 0, sizeof(*result) );
+    rocketnet_ack_stats_history_compute(history, result);
+    delete history;
+}
+
+// Compare both typed recompute entry points at every existing manual numeric
+// edge assertion. This intentionally updates endpoint; the received live
+// aggregate cases below use a separate non-mutating oracle.
+static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
+{
+    rocketnet_ack_stats_result_t result;
+    stats_history_result( endpoint, &result );
     rocketnet_ack_endpoint_update_stats(endpoint);
     // Equal inputs must retain the exact float operation order, not merely
     // approximate a six-field result after the scratch removal.
@@ -78,7 +89,6 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
     rocketnet_unit_check(result.sent_kbps == endpoint->bandwidth_sent_kbps);
     rocketnet_unit_check(result.received_kbps == endpoint->bandwidth_received_kbps);
     rocketnet_unit_check(result.acked_kbps == endpoint->bandwidth_acked_kbps);
-    delete history;
 }
 
 static void test_ack_stats_jitter_positive_samples()
@@ -374,3 +384,209 @@ static void test_ack_received_late_alias_keeps_counted_newer()
     rocketnet_free( NULL, endpoint );
 }
 REGISTER_UNIT_TEST( test_ack_received_late_alias_keeps_counted_newer );
+
+#if ROCKETNET_DEV
+
+static bool stats_received_time_equal( double a, double b )
+{
+    return a == b || ( isnan( a ) && isnan( b ) );
+}
+
+// Compare the publication left by record_received against a fresh scan without
+// calling update_stats: that call would replace the values under test. The
+// extra received-only scan checks the block aggregate's unpublished count,
+// bytes and extrema as well as the public bandwidth field.
+static bool stats_received_live_matches_history( const rocketnet_ack_endpoint_t * endpoint )
+{
+    rocketnet_ack_stats_result_t result;
+    stats_history_result( endpoint, &result );
+
+    uint64_t base = 1;
+    if ( endpoint->highest_received_sequence >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
+        base = endpoint->highest_received_sequence - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1;
+
+    uint64_t bytes = 0;
+    uint32_t count = 0;
+    double low_time = 0.0;
+    double high_time = 0.0;
+    for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2; ++i )
+    {
+        const uint64_t sequence = base + (uint64_t) i;
+        if ( sequence > endpoint->highest_received_sequence )
+            break;
+        const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+        if ( !( ( endpoint->received_written[slot / 64] >> ( slot % 64 ) ) & 1 ) )
+            continue;
+        const rocketnet_received_packet_record_t * record = &endpoint->received[slot];
+        if ( record->sequence != sequence )
+            continue;
+        bytes += record->wire_bytes;
+        if ( count == 0 )
+        {
+            low_time = record->receive_time;
+            high_time = record->receive_time;
+        }
+        else
+        {
+            if ( record->receive_time < low_time )
+                low_time = record->receive_time;
+            if ( record->receive_time > high_time )
+                high_time = record->receive_time;
+        }
+        ++count;
+    }
+
+    return result.rtt == endpoint->rtt &&
+           result.jitter == endpoint->jitter &&
+           result.packet_loss == endpoint->packet_loss &&
+           result.sent_kbps == endpoint->bandwidth_sent_kbps &&
+           result.received_kbps == endpoint->bandwidth_received_kbps &&
+           result.acked_kbps == endpoint->bandwidth_acked_kbps &&
+           count == endpoint->stats_received_count &&
+           bytes == endpoint->stats_received_bytes &&
+           stats_received_time_equal( low_time, endpoint->stats_received_low_time ) &&
+           stats_received_time_equal( high_time, endpoint->stats_received_high_time );
+}
+
+static void stats_received_step( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence,
+                                 int wire_bytes, double time )
+{
+    rocketnet_ack_endpoint_record_received( endpoint, sequence, wire_bytes, time );
+    rocketnet_unit_check( endpoint->stats_received_operations <= 256 );
+    rocketnet_unit_check( stats_received_live_matches_history( endpoint ) );
+}
+
+// The priority replacement's exact red: after the descending writes, moving
+// the high-water mark to 3071 makes sequences 1025..2047 enter the counted
+// cohort. The former time-sorted list walked 1+...+1023 = 523776 predecessor
+// links in that one call. The fixed block aggregate visits at most 256
+// blocks/records in any receive.
+static void test_ack_received_stats_adversarial_sequence_is_bounded()
+{
+    auto * endpoint = stats_endpoint();
+    double time = 1000.0;
+    for ( uint64_t sequence = 2048; sequence >= 1024; --sequence )
+    {
+        stats_received_step( endpoint, sequence, 100, time );
+        time += 1.0;
+        if ( sequence == 1024 )
+            break;
+    }
+    stats_received_step( endpoint, 3071, 200, time );
+    printf( "received ACK stats cost: old_predecessor_visits=523776 block_record_visits=%u\n",
+            endpoint->stats_received_operations );
+    fflush( stdout );
+    rocketnet_unit_check( endpoint->stats_received_operations <= 256 );
+    rocketnet_unit_check( endpoint->stats_received_count == 1024 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 102400 );
+    rocketnet_unit_check( endpoint->stats_received_low_time == 1001.0 );
+    rocketnet_unit_check( endpoint->stats_received_high_time == 2024.0 );
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_adversarial_sequence_is_bounded );
+
+static void test_ack_received_stats_blocks_match_scan_edges()
+{
+    const uint64_t N = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    auto * endpoint = stats_endpoint();
+
+    // Equal and decreasing times, duplicate replacement, N/2, N, N+1 and
+    // many-N jumps. The scan oracle is checked after every operation.
+    stats_received_step( endpoint, 1, 11, 7.0 );
+    stats_received_step( endpoint, N / 2, 12, 7.0 );
+
+    // Prove this oracle observes the immediate publication rather than
+    // silently repairing it through update_stats before comparison.
+    const float published_received_kbps = endpoint->bandwidth_received_kbps;
+    endpoint->bandwidth_received_kbps = published_received_kbps + 1.0f;
+    rocketnet_unit_check( !stats_received_live_matches_history( endpoint ) );
+    endpoint->bandwidth_received_kbps = published_received_kbps;
+    rocketnet_unit_check( stats_received_live_matches_history( endpoint ) );
+
+    stats_received_step( endpoint, N, 13, -5.0 );
+    stats_received_step( endpoint, N / 2, 14, 9.0 );
+    stats_received_step( endpoint, N + 1, 15, 9.0 );
+    stats_received_step( endpoint, 4 * N + 19, 16, 8.0 );
+    stats_received_step( endpoint, 4 * N + 20, 17, 8.0 );
+
+    // An alias exactly N apart clears the old physical generation before
+    // the new leaf is published; a still older alias is refused unchanged.
+    const uint64_t live = 5 * N + 19;
+    stats_received_step( endpoint, live, 21, 10.0 );
+    const uint64_t count = endpoint->stats_received_count;
+    const uint64_t bytes = endpoint->stats_received_bytes;
+    stats_received_step( endpoint, live - N, 2000, 11.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == count );
+    rocketnet_unit_check( endpoint->stats_received_bytes == bytes );
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    rocketnet_unit_check( stats_received_live_matches_history( endpoint ) );
+    rocketnet_unit_check( endpoint->stats_received_count == 0 );
+    stats_received_step( endpoint, 17, 31, 4.0 );
+    stats_received_step( endpoint, N + 17, 32, 5.0 );
+    rocketnet_unit_check( endpoint->received[17].sequence == N + 17 );
+
+    // Crossing the 32-bit boundary must not truncate sequence identity or
+    // choose a summary by the low 32 bits alone.
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_received_step( endpoint, (uint64_t) UINT32_MAX - N + 1, 33, 1.0 );
+    stats_received_step( endpoint, (uint64_t) UINT32_MAX, 34, 2.0 );
+    stats_received_step( endpoint, (uint64_t) UINT32_MAX + 1, 35, 3.0 );
+    stats_received_step( endpoint, (uint64_t) UINT32_MAX + N, 36, 4.0 );
+    rocketnet_unit_check( endpoint->highest_received_sequence == (uint64_t) UINT32_MAX + N );
+    rocketnet_unit_check( endpoint->stats_received_count == 1 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 35 );
+    rocketnet_unit_check( endpoint->stats_received_low_time == 3.0 );
+    rocketnet_unit_check( endpoint->stats_received_high_time == 3.0 );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == 0.0f );
+
+    // The direct internal entry point historically accepts any double. A
+    // first-sequence NaN poisons the reference span; a later NaN is ignored;
+    // infinities and negative finite times retain the scan comparisons.
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_received_step( endpoint, 1, 40, nan("") );
+    stats_received_step( endpoint, 2, 50, -2.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 2 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 90 );
+    rocketnet_unit_check( isnan( endpoint->stats_received_low_time ) );
+    rocketnet_unit_check( isnan( endpoint->stats_received_high_time ) );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == 0.0f );
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_received_step( endpoint, 1, 40, -2.0 );
+    stats_received_step( endpoint, 2, 50, nan("") );
+    stats_received_step( endpoint, 3, 60, HUGE_VAL );
+    rocketnet_unit_check( endpoint->stats_received_count == 3 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 150 );
+    rocketnet_unit_check( endpoint->stats_received_low_time == -2.0 );
+    rocketnet_unit_check( isinf( endpoint->stats_received_high_time ) &&
+                          endpoint->stats_received_high_time > 0.0 );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == 0.0f );
+
+    // Session sequences never wrap through zero, but the retained window may
+    // end at UINT64_MAX. Exercise the physical ring wrap and full-width tags.
+    rocketnet_ack_endpoint_reset( endpoint );
+    const uint64_t base = UINT64_MAX - N + 1;
+    const uint64_t sequences[] = { base, base + N / 2 - 1, base + 3, UINT64_MAX };
+    for ( int i = 0; i < 4; ++i )
+        stats_received_step( endpoint, sequences[i], 100 + i, 100.0 + i );
+    rocketnet_unit_check( endpoint->highest_received_sequence == UINT64_MAX );
+    rocketnet_unit_check( endpoint->stats_received_count == 3 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 303 );
+    rocketnet_unit_check( endpoint->stats_received_low_time == 100.0 );
+    rocketnet_unit_check( endpoint->stats_received_high_time == 102.0 );
+    rocketnet_unit_check( fabsf( endpoint->bandwidth_received_kbps - 1.212f ) < 0.0001f );
+
+    // Dense full-window state followed by a long, deliberately unaligned
+    // overlapping jump exercises two partial clear blocks, whole blocks, a
+    // point-block rebuild and wrapped query edges in one bounded operation.
+    rocketnet_ack_endpoint_reset( endpoint );
+    for ( uint64_t sequence = 1; sequence <= N; ++sequence )
+        stats_received_step( endpoint, sequence, (int) ( 100 + sequence % 37 ), (double) sequence );
+    stats_received_step( endpoint, N + 2000, 777, 5000.0 );
+    rocketnet_unit_check( endpoint->stats_received_operations <= 256 );
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_blocks_match_scan_edges );
+
+#endif // ROCKETNET_DEV
