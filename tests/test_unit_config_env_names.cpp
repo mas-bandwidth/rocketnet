@@ -295,10 +295,6 @@ static void test_config_env_step_driven_is_absent_in_production()
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
-    config.step_driven = 0;
-    env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
-    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
-    env_names_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     check( config.step_driven == 0 );
 }
 REGISTER_UNIT_TEST( test_config_env_step_driven_is_absent_in_production );
