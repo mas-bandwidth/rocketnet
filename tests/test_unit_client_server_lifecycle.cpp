@@ -3194,6 +3194,20 @@ static int lifecycle_delayed_link_finish_packet( void * transport, struct rocket
 //      frame deliberately dropped; after bounded fake-clock retransmission and
 //      reassembly, asserts byte-exact payload, message order, ACK receipt
 //      identity, and ownership by the new session generation.
+//
+// Oracle sensitivity verified against single-concern production mutations across:
+//   - Generation-isolation guard (rocketnet_server_connection_id_assigned in
+//     sdk/rocketnet_server_protocol.cpp and rn_endpoint_reset in sdk/rocketnet_endpoint.cpp),
+//   - Delayed-ACK generation tagging and lookup (server->acked_connection_ids in
+//     sdk/rocketnet_server_protocol.cpp and rocketnet_server_transport_acked_connection_ids
+//     in sdk/rocketnet_server_transport.cpp),
+//   - Allocator/send-region refusal and exhaustion transitions (rn_region_send_refuse
+//     in sdk/rocketnet_allocator.cpp and rn_endpoint_send_room in sdk/rocketnet_endpoint.cpp),
+//   - Per-update disconnect allowance (disconnect_packets_per_update drain cap in
+//     rocketnet_server_transport_update in sdk/rocketnet_server_transport.cpp),
+//   - Fragmented chunk retransmission, ACK receipt emission, and payload byte/order
+//     integrity (rn_endpoint_ordered_due, rn_endpoint_on_acked, and rn_endpoint_finish
+//     in sdk/rocketnet_endpoint.cpp).
 static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack()
 {
     rocketnet_quiet( 1 );
