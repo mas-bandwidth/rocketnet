@@ -21,9 +21,10 @@
 #
 #   soak_sim (asan + ubsan + lsan, bounded)   297s, the biggest job here, to
 #       nightly-soak.yml -- same job name, same seed, same iteration count.
-#       asan+ubsan over the whole suite and tsan over the threaded transport
-#       both STAYED. What the estate now learns the next morning instead of on
-#       the commit is the STATEFUL simulator under the sanitizers, and LSan.
+#       At that point asan+ubsan over the whole suite and tsan over the
+#       threaded transport both STAYED. What the estate learned the next
+#       morning instead of on the commit is the STATEFUL simulator under the
+#       sanitizers, and LSan.
 #
 #   windows-2025 / Debug                      136s, to nightly.yml, step for
 #       step. Windows keeps its RELEASE row on every commit, because Release
@@ -38,6 +39,17 @@
 #       trip. THE SAME SCRIPT STILL GATES EVERY COMMIT ON LINUX AND MACOS,
 #       where it costs 15s. What waits until morning is only "does the
 #       out-of-tree backend still build under MSVC".
+#
+# A later exact receipt changed one of those facts: on 2026-10-26 the
+# asan+ubsan functional suite was still inside its first full run after 164s.
+# The per-commit sanitizer leg now runs exact reconnect-isolation,
+# transport-ring-recovery and loopback-UDP cases, followed by the existing
+# lifecycle, driver, sodium and XDP-negative controls. The exhaustive
+# functional run moved without a weaker oracle to the existing
+# nightly-leaks.yml job, which runs it daily at 06:20 UTC under the same
+# asan+ubsan flags plus LSan. A red nightly has a commit range and the next
+# morning's estate owner; it remains a required release gate, not an advisory
+# replacement for the focused per-commit signal.
 #
 # Everything else that was over the line was SPLIT, not moved: tsan into two
 # parallel legs, windows Release into (a) and (b), ubuntu Release into (a) and
@@ -61,7 +73,9 @@
 #                           as two parallel legs. The Debug row and the
 #                           Windows functional suite are in nightly.yml
 #                           (windows / Debug, windows / Release ASan).
-#   sanitizers              asan + ubsan over the whole suite
+#   sanitizers              asan + ubsan over focused transport recovery,
+#                           lifecycle, driver, sodium and XDP controls; the
+#                           exhaustive functional suite is in nightly-leaks
 #   fuzz-smoke              a bounded, deterministic replay of the committed
 #                           regression corpus over the wire-facing parsers
 #   big-endian              the suite on real big-endian bytes (s390x), the
@@ -1283,10 +1297,12 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.backend) }}
         run: *enforce_unit_functional_timing
 
-  # asan + ubsan over the whole suite, per commit, exactly as serialize runs
-  # it: the transport allocates arenas at create, hands out interior pointers
-  # into frames, and reads bytes it did not write, which is the shape of
-  # defect these two see and inspection does not.
+  # asan + ubsan over focused transport recovery, lifecycle, driver, sodium
+  # and XDP controls per commit. The transport allocates arenas at create,
+  # hands out interior pointers into frames, and reads bytes it did not write,
+  # which is the shape of defect these two see and inspection does not. The
+  # exhaustive functional suite runs unchanged under the same sanitizers plus
+  # LSan in the scheduled nightly-leaks workflow.
   #
   # -fno-sanitize-recover=all: undefined behaviour ends the run rather than
   # printing and continuing, so the leg cannot go green over a warning nobody
@@ -1299,17 +1315,18 @@ jobs:
   # against a known baseline. The per-commit gate takes asan's memory-safety
   # findings and ubsan's, both of which are immediate and unambiguous.
 
-  # SPLIT INTO THREE PARALLEL LEGS, not shortened. One job ran two unit-suite
-  # passes, the functional suite, three lifecycle binaries and a python control
-  # in series on one runner. The same reasoning and the same trade as tsan
-  # below: each leg now pays the sanitizer build once in parallel and builds
-  # only the targets it runs. NOTHING WAS DROPPED OR SHORTENED -- the same two
-  # unit passes, the functional suite, the lifecycle binaries and the control,
-  # still per commit, still with -fno-sanitize-recover=all.
+  # SPLIT INTO THREE PARALLEL LEGS. One job ran two unit-suite passes, the
+  # functional suite, three lifecycle binaries and a python control in series
+  # on one runner. Each leg now pays the sanitizer build once in parallel and
+  # builds only the targets it runs. Both full unit passes remain per commit.
+  # The functional leg retains exact, real transport recovery cases plus the
+  # lifecycle binaries and negative control with -fno-sanitize-recover=all;
+  # the exhaustive functional suite is owned by nightly-leaks, unchanged.
   #
-  # MEASURED WITH THE EXACT CI COMMANDS ON A 16-CORE BENCH: unit suite 45s,
-  # unit suite portable 44s, functional suite 36s, per-leg totals. Each leg
-  # fits within timeout-minutes: 3.
+  # The 2026-10-26 exact candidate receipt supersedes the old 36s functional
+  # estimate: the full functional suite exceeded 164s before finishing. The
+  # focused per-commit replacement must still prove itself below the workflow's
+  # strict 120s combined interval; no duration is inferred from selection.
 
   sanitizers:
     name: asan + ubsan (${{ matrix.leg }})
@@ -1389,12 +1406,16 @@ jobs:
         shell: bash
         run: *start_unit_functional_timing
 
-      - name: Run functional suite under sanitizers
+      - name: Run focused functional transport recovery under sanitizers
         if: matrix.leg == 'functional suite'
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-        run: ./bin/functional
+        run: |
+          set -euo pipefail
+          ./bin/functional --run test_session_reconnect_isolation_portable
+          ./bin/functional --run test_transport_ring_exhaustion
+          ./bin/functional --run test_loopback_transport_udp
 
       - name: "Functional binaries under sanitizers: lifecycle and driver contract"
         if: matrix.leg == 'functional suite'
