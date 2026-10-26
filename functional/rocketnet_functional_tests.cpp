@@ -2091,6 +2091,9 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
         sent[i] = (uint8_t) ( i * 37 + 11 );
     memset( received, 0, sizeof(received) );
 
+    // The wrapper's send returns void by design (errors are dropped by
+    // the platform layer), so a successful send is proven by the exact
+    // receipt asserted below: length, source and byte-exact payload.
     rocketnet_platform_socket_send_packet( socket, &local_address, sent, (int) sizeof(sent) );
 
     // Every mode, including blocking with no timeout, first observes
@@ -2157,6 +2160,8 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
                 break;
             rocketnet_platform_sleep( 0.001 );
         }
+        if ( packet_bytes == 0 )
+            fprintf( stderr, "harness timeout: darwin oversize datagram (%s, %d bytes) did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n", pump, sizes[i] );
         rocketnet_check( packet_bytes == sizes[i] );
         rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
         rocketnet_check( memcmp( receive.data, send_data, sizeof(receive.data) ) == 0 );
@@ -2207,6 +2212,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
             break;
         rocketnet_platform_sleep( 0.001 );
     }
+
+    if ( packet_bytes == 0 )
+        fprintf( stderr, "harness timeout: oversize datagram did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
 
     // the datagram is reported whole, not truncated to the ceiling
     rocketnet_check( packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 );
@@ -2270,6 +2278,8 @@ void rocketnet_test_receive_drops_oversize_datagram()
             break;
         rocketnet_platform_sleep( 0.001 );
     }
+    if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || rocketnet_server_transport_num_connected_clients( server ) != 1 )
+        fprintf( stderr, "harness timeout: live oversize handshake did not connect within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
 
@@ -2287,6 +2297,8 @@ void rocketnet_test_receive_drops_oversize_datagram()
         rocketnet_platform_sleep( 0.001 );
     }
 
+    if ( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before_too_large )
+        fprintf( stderr, "harness timeout: live server did not count the oversize datagram within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
     rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before_too_large + 1 );
     rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 0 );
 
@@ -2502,13 +2514,13 @@ static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket
 static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, int datagram_bytes, const char * phase )
 {
     wait->payload_bytes += datagram_bytes;
+    const int target_payload = wait->payload_bytes;
 #if defined(__linux__)
     const int target_accounting = wait->accounting;
-    (void) wait->payload_bytes;
+    (void) target_payload;
 #elif defined(__APPLE__)
     if ( datagram_bytes == 0 )
         return;
-    const int target_payload = wait->payload_bytes;
 #else
     fprintf( stderr, "harness error: %s has no queue completion observation on this platform\n", phase );
     rocketnet_check( 0 );
