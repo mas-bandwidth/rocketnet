@@ -131,11 +131,20 @@ static const allowlist_row_t allowlist[] =
     { F_H, "packets_received", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "of sent packets", "TRANSPORT COUNTERS AND STATS" },
+    // These fields describe the held transport connection's packet and byte
+    // counters; "packet" here names a UDP datagram, not an application message.
+    { F_H, "Packet, byte, payload, resend, duplicate, receipt and budget counts are", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Callable in every client state. Packet, byte, payload, resend, duplicate,", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "PACKETS_SENT", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "PACKETS_RECEIVED", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packets_sent", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packets_received", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
+    // These implementation comments describe per-connection transport totals
+    // and their publication lifetime; they do not call application messages packets.
+    { F_API, "The counts each public stats struct carries. A client connection's packet", "TRANSPORT COUNTERS AND STATS" },
+    { F_API, "The retiring connection is destroyed. Its packet, byte and message totals", "TRANSPORT COUNTERS AND STATS" },
+    { F_API, "packets, bytes and messages are not published. Not-connected drops", "TRANSPORT COUNTERS AND STATS" },
 
     // PACKET FILTER AND ACK TRACKING: per-datagram transport state.
     { F_H, "packets_in_flight", "PACKET FILTER AND ACK TRACKING" },

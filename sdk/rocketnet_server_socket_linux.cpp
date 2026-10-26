@@ -605,6 +605,27 @@ void rocketnet_server_socket_allow_commit()
     rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
 
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+// The suite's development control: select the pre-flight answer so the
+// production pin and ladder decisions can be asserted on a host that is
+// neither admitted nor provisioned. It guards only this non-mutating
+// predicate; a create that reaches an attach still needs the commit barrier
+// lifted, which the suite never does for an available answer.
+
+static std::atomic<int> rocketnet_server_socket_preflight_test_result( -1 );
+
+void rocketnet_server_socket_set_preflight_test_result( int result )
+{
+    rocketnet_assert( result == 0 || result == 1 );
+    rocketnet_server_socket_preflight_test_result.store( result );
+}
+
+void rocketnet_server_socket_clear_preflight_test_result()
+{
+    rocketnet_server_socket_preflight_test_result.store( -1 );
+}
+#endif
+
 // cpu list helpers for the boot-tier checks: "1-7,9" style lists as
 // /sys/devices/system/cpu/isolated and /proc/irq/N/smp_affinity_list
 // print them
@@ -789,6 +810,15 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 {
     rocketnet_assert( public_address_string );
     rocketnet_assert( num_queues >= 1 );
+
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+    const int test_result = rocketnet_server_socket_preflight_test_result.load();
+    if ( test_result >= 0 )
+    {
+        rocketnet_info( "xdp pre-flight: development control selects %s", test_result ? "available" : "unavailable" );
+        return test_result != 0;
+    }
+#endif
 
     const uint64_t memory_bytes = rocketnet_server_socket_memory_required(num_queues);
     const uint64_t memory_budget = (uint64_t)ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024;

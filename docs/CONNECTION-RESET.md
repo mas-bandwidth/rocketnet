@@ -96,6 +96,16 @@ slot. An immediate disconnect burst is committed before reset and therefore
 still increments the ending connection's totals. Assignment continues to
 clear the slot totals, and an empty-slot stats query continues to return zero.
 
+`disconnect_packets_per_update` is the one whole-server sealing allowance
+shared by immediate and deferred disconnect notifications in an update. The
+default is 64 and the valid range is 1 through 1024. A value below the
+10-packet redundant burst spreads one client's notifications across updates;
+the local slot still closes in the disconnect call. If all deferred entries
+are occupied, the server keeps their ended-generation keys and work, closes
+the new connection locally, and drops only its new redundant notification
+copies. It never seals synchronously to escape a full ring, and dropped copies
+do not increment packet or seal totals.
+
 ## Server-wide state
 
 | Struct | Field | Decision | Reason |
@@ -137,7 +147,9 @@ material is overwritten in place with `sodium_memzero`:
   zeroes the slot's `user_data` copy; and deferred server disconnect bursts copy
   only `session_server_to_client`, `connection_salt`, and `sequence` into the
   bounded burst entry and erase that entry with `sodium_memzero` as soon as the
-  burst drains or is replaced. The key is stored at the ring index where the
+  burst drains. A notification dropped because the ring is full is never
+  copied out of its mapping; the ordinary connection reset wipes that mapping.
+  The retained key is stored at the ring index where the
   burst is appended, and the completing drain wipes `disconnect_burst_keys` at
   `disconnect_burst_head`, not at the ended connection's client slot.
 

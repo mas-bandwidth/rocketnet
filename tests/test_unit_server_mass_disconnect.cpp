@@ -39,6 +39,8 @@
 // the transport's count of disconnect packets sealed (development seam,
 // sdk/rocketnet_server_transport.cpp)
 uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
+    int index, uint8_t * out, int out_bytes, int * head, int * count );
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -115,19 +117,20 @@ static void mass_disconnect_make_keys( mass_disconnect_keys_t * keys )
     check( rocketnet_generate_server_keypair( keys->server_public, keys->server_secret ) == ROCKETNET_STATUS_OK );
 }
 
-static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect_keys_t * keys, double now )
+static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect_keys_t * keys, double now, int disconnect_packets_per_update )
 {
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
     config.protocol_id = MASS_DISCONNECT_PROTOCOL_ID;
     config.max_clients = MASS_DISCONNECT_CLIENTS;
+    config.disconnect_packets_per_update = disconnect_packets_per_update;
     memcpy( config.backend_public_key, keys->backend_public, sizeof( config.backend_public_key ) );
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status );
     check( transport != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
@@ -207,11 +210,11 @@ struct mass_disconnect_population_t
     double time;
 };
 
-static void mass_disconnect_connect_all( mass_disconnect_population_t * population )
+static void mass_disconnect_connect_all( mass_disconnect_population_t * population, int disconnect_packets_per_update = ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE )
 {
     mass_disconnect_make_keys( &population->keys );
     population->time = 1000.0;
-    population->server = mass_disconnect_server_create( &population->keys, population->time );
+    population->server = mass_disconnect_server_create( &population->keys, population->time, disconnect_packets_per_update );
     const uint16_t port = rocketnet_server_port( population->server );
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
         population->clients[i] = mass_disconnect_client_create( &population->keys, port, 0x10000 + (uint64_t) i );
@@ -235,7 +238,10 @@ static void mass_disconnect_connect_all( mass_disconnect_population_t * populati
 static void mass_disconnect_destroy_all( mass_disconnect_population_t * population )
 {
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-        rn_test_client_stop_and_destroy( population->clients[i] );
+    {
+        if ( population->clients[i] )
+            rn_test_client_stop_and_destroy( population->clients[i] );
+    }
     rn_test_server_stop_and_destroy( population->server );
 }
 
@@ -271,10 +277,106 @@ static long mass_disconnect_rss_bound_mb()
 
 SUITE_CASE_RSS_BOUND( test_server_disconnect_all_1000_real_time, mass_disconnect_rss_bound_mb );
 SUITE_CASE_RSS_BOUND( test_clients_disconnect_together_server_count_exact, mass_disconnect_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_disconnect_full_queue_never_bypasses_budget, mass_disconnect_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_disconnect_prelink_kicks_share_update_allowance, mass_disconnect_rss_bound_mb );
+
+static int mass_disconnect_asserts;
+static int mass_disconnect_key_nonzero( const uint8_t key[ROCKETNET_KEY_BYTES] );
+
+static void mass_disconnect_assert_hook( const char *, const char *, const char *, int )
+{
+    mass_disconnect_asserts++;
+}
+
+// Message-layer misuse kicks run before the transport phase of the same
+// public server update. They and the queued drain must spend one shared
+// allowance, rather than the transport phase refilling it in the middle.
+static void test_server_disconnect_prelink_kicks_share_update_allowance()
+{
+#if ROCKETNET_DEV
+    mass_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
+    rocketnet_quiet( 1 );
+    static mass_disconnect_population_t population;
+    const int allowance = 64; // independent expected default, not the implementation constant
+    const int kicked = 13;
+    mass_disconnect_connect_all( &population );
+    rocketnet_server_transport_t * transport = mass_disconnect_server_transport( population.server );
+
+    for ( int i = 0; i < kicked; i++ )
+    {
+        uint8_t * out = rocketnet_client_start_message( population.clients[i], 0,
+            ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+        check( out != NULL );
+        out[0] = (uint8_t) i;
+        check( rocketnet_client_finish_message( population.clients[i], 1 ) != 0 );
+        rocketnet_client_send_packets( population.clients[i] );
+    }
+
+    // This update admits the messages into the server receive queue. Leaving
+    // them there makes the following update kick all thirteen connections.
+    population.time += 0.01;
+    rocketnet_server_update( population.server, population.time );
+    rocketnet_server_send_packets( population.server );
+    check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS );
+
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( mass_disconnect_assert_hook );
+    mass_disconnect_asserts = 0;
+    const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    population.time += 0.01;
+    rocketnet_server_update( population.server, population.time );
+    rocketnet_server_send_packets( population.server );
+    const uint64_t first_update = rocketnet_server_transport_disconnect_seals_for_test( transport ) - before;
+    rocketnet_assert_function( saved_assert );
+
+#if ROCKETNET_ASSERTS
+    check( mass_disconnect_asserts == kicked );
+#else
+    check( mass_disconnect_asserts == 0 );
+#endif
+    check( first_update == (uint64_t) allowance );
+    check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS - kicked );
+    for ( int i = 0; i < kicked; i++ )
+        check( !rocketnet_server_client_connected( population.server, i ) );
+
+    int remaining = -1;
+    uint8_t key[ROCKETNET_KEY_BYTES];
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+        (int) sizeof( key ), NULL, &remaining ) == 1 );
+    check( remaining == kicked - allowance / ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( mass_disconnect_key_nonzero( key ) > 0 );
+
+    uint64_t sealed = first_update;
+    for ( int update = 0; remaining > 0; update++ )
+    {
+        check( update < 3 );
+        population.time += 0.01;
+        const uint64_t frame_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        rocketnet_server_update( population.server, population.time );
+        rocketnet_server_send_packets( population.server );
+        const uint64_t frame_seals = rocketnet_server_transport_disconnect_seals_for_test( transport ) - frame_before;
+        check( frame_seals <= (uint64_t) allowance );
+        sealed += frame_seals;
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+            (int) sizeof( key ), NULL, &remaining ) == 1 );
+    }
+    check( sealed == (uint64_t) kicked * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
+    {
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, i, key,
+            (int) sizeof( key ), NULL, NULL ) == 1 );
+        check( mass_disconnect_key_nonzero( key ) == 0 );
+    }
+
+    mass_disconnect_destroy_all( &population );
+}
+
+REGISTER_UNIT_TEST( test_server_disconnect_prelink_kicks_share_update_allowance );
 
 // rocketnet_server_disconnect_all_clients over 1000 connected slots: the call
 // ends every slot at once and seals at most one update's allowance; each
-// following update seals at most ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE
+// following update seals at most the configured allowance
 // disconnect packets, so no
 // call's work grows with the population, and every client still receives the
 // server's disconnect and ends SERVER_DISCONNECTED, never on its timeout.
@@ -298,7 +400,8 @@ static void test_server_disconnect_all_1000_real_time()
     const uint64_t seals_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
     rocketnet_server_disconnect_all_clients( server );
     const uint64_t call_seals = rocketnet_server_transport_disconnect_seals_for_test( transport ) - seals_before;
-    check( call_seals <= (uint64_t) ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE );
+    const int allowance = ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE;
+    check( call_seals <= (uint64_t) allowance );
 
     // the slot state ends in the same call (tla/ServerSession.tla DisconnectAll)
     check( rocketnet_server_num_connected_clients( server ) == 0 );
@@ -310,7 +413,7 @@ static void test_server_disconnect_all_1000_real_time()
 
     // the bursts leave over the following updates, a bounded number of seals in each
     const uint64_t total = (uint64_t) MASS_DISCONNECT_CLIENTS * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
-    const int max_updates = (int) ( ( total + ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE - 1 ) / ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE );
+    const int max_updates = (int) ( ( total + allowance - 1 ) / allowance );
     uint64_t sealed = call_seals;
     int updates = 0;
     while ( sealed < total )
@@ -321,7 +424,7 @@ static void test_server_disconnect_all_1000_real_time()
         rocketnet_server_update( server, population.time );
         rocketnet_server_send_packets( server );
         const uint64_t step = rocketnet_server_transport_disconnect_seals_for_test( transport ) - before;
-        check( step <= (uint64_t) ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE );
+        check( step <= (uint64_t) allowance );
         sealed += step;
         updates++;
         for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
@@ -379,3 +482,162 @@ static void test_clients_disconnect_together_server_count_exact()
 }
 
 REGISTER_UNIT_TEST( test_clients_disconnect_together_server_count_exact );
+
+static int mass_disconnect_find_client( rocketnet_server_t * server, uint64_t client_id )
+{
+    for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
+        if ( rocketnet_server_client_connected( server, i ) && rocketnet_server_client_id( server, i ) == client_id )
+            return i;
+    return -1;
+}
+
+static int mass_disconnect_key_nonzero( const uint8_t * key )
+{
+    int count = 0;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+        count += key[i] != 0 ? 1 : 0;
+    return count;
+}
+
+// A full ring must never turn a best-effort notification into synchronous
+// work. The allowance is below one ten-packet burst, so a replacement can
+// reconnect through a released slot while the first retained burst is only
+// partly sent. Disconnecting that replacement therefore drops only its
+// redundant wire copies while the full ring remains owned by older sessions.
+static void test_server_disconnect_full_queue_never_bypasses_budget()
+{
+#if ROCKETNET_DEV
+    mass_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
+    rocketnet_quiet( 1 );
+    static mass_disconnect_population_t population;
+    const int allowance = 9;
+    mass_disconnect_connect_all( &population, allowance );
+    rocketnet_server_t * server = population.server;
+    rocketnet_server_transport_t * transport = mass_disconnect_server_transport( server );
+
+    const uint64_t before_all = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    rocketnet_server_disconnect_all_clients( server );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before_all <= (uint64_t) allowance );
+    check( rocketnet_server_num_connected_clients( server ) == 0 );
+    uint8_t key_before[ROCKETNET_KEY_BYTES];
+    int head = -1;
+    int count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key_before,
+        (int) sizeof( key_before ), &head, &count ) == 1 );
+    check( count == ROCKETNET_MAX_CLIENTS );
+    check( head >= 0 && head < ROCKETNET_MAX_CLIENTS );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key_before,
+        (int) sizeof( key_before ), NULL, NULL ) == 1 );
+    check( mass_disconnect_key_nonzero( key_before ) > 0 );
+
+    // The server slots are already closed, so release the old client-side
+    // loopback queues before creating replacements for those same slots.
+    for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
+    {
+        rn_test_client_stop_and_destroy( population.clients[i] );
+        population.clients[i] = NULL;
+    }
+
+    const uint16_t port = rocketnet_server_port( server );
+    const uint64_t client_id = 0x20000;
+    rocketnet_client_t * replacement = mass_disconnect_client_create( &population.keys, port, client_id );
+    int slot = -1;
+    for ( int step = 0; step < 80 && slot < 0; step++ )
+    {
+        population.time += 0.01;
+        mass_disconnect_client_step( replacement, population.time );
+        const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        rocketnet_server_update( server, population.time );
+        rocketnet_server_send_packets( server );
+        check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before <= (uint64_t) allowance );
+        mass_disconnect_client_step( replacement, population.time );
+        slot = mass_disconnect_find_client( server, client_id );
+    }
+    check( slot >= 0 );
+
+    uint8_t retained_key[ROCKETNET_KEY_BYTES];
+    int retained_head = -1;
+    int retained_count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, retained_key,
+        (int) sizeof( retained_key ), &retained_head, &retained_count ) == 1 );
+    check( retained_count == ROCKETNET_MAX_CLIENTS );
+    check( retained_head == head );
+
+    const uint64_t before_disconnect = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    rocketnet_server_disconnect_client( server, slot );
+    check( !rocketnet_server_client_connected( server, slot ) );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) == before_disconnect );
+
+    int after_head = -1;
+    int after_count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, retained_head, retained_key,
+        (int) sizeof( retained_key ), &after_head, &after_count ) == 1 );
+    check( after_count == ROCKETNET_MAX_CLIENTS );
+    check( after_head == retained_head );
+    check( mass_disconnect_key_nonzero( retained_key ) > 0 );
+    rn_test_client_stop_and_destroy( replacement );
+
+    int remaining = ROCKETNET_MAX_CLIENTS;
+    const int max_updates = ( ROCKETNET_MAX_CLIENTS * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS + allowance - 1 ) / allowance + 1;
+    for ( int update = 0; remaining > 0; update++ )
+    {
+        check( update < max_updates );
+        population.time += 0.01;
+        const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        rocketnet_server_update( server, population.time );
+        rocketnet_server_send_packets( server );
+        const uint64_t sealed = rocketnet_server_transport_disconnect_seals_for_test( transport ) - before;
+        check( sealed <= (uint64_t) allowance );
+        uint8_t key[ROCKETNET_KEY_BYTES];
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+            (int) sizeof( key ), NULL, &remaining ) == 1 );
+    }
+
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
+    {
+        uint8_t key[ROCKETNET_KEY_BYTES];
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, i, key,
+            (int) sizeof( key ), NULL, NULL ) == 1 );
+        check( mass_disconnect_key_nonzero( key ) == 0 );
+    }
+
+    // Empty-ring recovery still honors a below-burst allowance: the local
+    // close is immediate and the ten redundant packets leave over updates.
+    const uint64_t recovery_id = 0x30000;
+    rocketnet_client_t * recovery = mass_disconnect_client_create( &population.keys, port, recovery_id );
+    int recovery_slot = -1;
+    for ( int step = 0; step < 80 && recovery_slot < 0; step++ )
+    {
+        population.time += 0.01;
+        mass_disconnect_client_step( recovery, population.time );
+        rocketnet_server_update( server, population.time );
+        rocketnet_server_send_packets( server );
+        mass_disconnect_client_step( recovery, population.time );
+        recovery_slot = mass_disconnect_find_client( server, recovery_id );
+    }
+    check( recovery_slot >= 0 );
+    const uint64_t before_recovery = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    rocketnet_server_disconnect_client( server, recovery_slot );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) == before_recovery );
+    int recovery_remaining = 1;
+    for ( int update = 0; recovery_remaining > 0; update++ )
+    {
+        check( update < 2 );
+        population.time += 0.01;
+        const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        rocketnet_server_update( server, population.time );
+        rocketnet_server_send_packets( server );
+        check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before <= (uint64_t) allowance );
+        uint8_t key[ROCKETNET_KEY_BYTES];
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+            (int) sizeof( key ), NULL, &recovery_remaining ) == 1 );
+    }
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before_recovery ==
+        (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rn_test_client_stop_and_destroy( recovery );
+
+    mass_disconnect_destroy_all( &population );
+}
+
+REGISTER_UNIT_TEST( test_server_disconnect_full_queue_never_bypasses_budget );
