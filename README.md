@@ -52,9 +52,9 @@ int main( void )
 ```
 <!-- check_readme:example:end -->
 
-The complete frame loop is in [AGENTS.md](AGENTS.md): update with the caller's
-time, drain the one `rocketnet_message_batch_t` receive queue, simulate, write
-outgoing messages through start/finish, and send packets last.
+The complete integration path is in [AGENTS.md](AGENTS.md), [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md), and [USAGE.md](USAGE.md): initialize once, configure (`rocketnet_client_default_config` / `rocketnet_server_default_config`), create and connect with a backend-issued token (`docs/SESSION.md`), run the five-step frame loop (update with the caller's monotonic time, drain the one `rocketnet_message_batch_t` receive queue until `NULL`, simulate, write outgoing messages through a guarded non-`NULL` `start_message` branch with `finish_message` inside that branch, and send packets last), and shut down asynchronously by polling `rocketnet_client_disconnected` / `rocketnet_server_stopped` before `destroy`.
+
+RocketNet's demonstrated server configuration supports up to `max_clients = 1000` (with the existing 4096-byte XDP frame/ring configuration) under its stated workload, topology, and deployment conditions. Above 1000 clients, users must research, stabilize, and qualify their own configuration.
 
 ## Building
 
@@ -84,6 +84,7 @@ memory use and transport qualification still need attention; see the
 - [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
+- [docs/SESSION.md](docs/SESSION.md) — sessions, connect tokens, session isolation, and reconnect rules.
 - [KEYS.md](KEYS.md) — the backend and server keys: generating, where each lives, development versus production, rotation.
 - [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
   receiving, channels, configuration, and state transitions.

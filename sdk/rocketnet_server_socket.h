@@ -69,8 +69,6 @@ struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * contex
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 
-void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_socket );
-
 // The replay high-water writer: the server socket is the only writer of the
 // pinned server_xdp_replay_map. These calls are main thread only. Forget and
 // mark append to the socket's pending buffer; a full buffer refuses the entry
@@ -106,10 +104,6 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
-
-int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
-
-int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket );
 
 // The kernel prefilter's counters, summed across CPUs into an array of
 // ROCKETNET_SERVER_XDP_NUM_COUNTERS values -- what the XDP program dropped

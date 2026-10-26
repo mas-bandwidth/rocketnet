@@ -250,6 +250,11 @@ static void test_uso_run_owns_frames()
     CHECK(counters[ROCKETNET_IOCP_USO_SENDS] == 1);
     CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
     CHECK(counters[ROCKETNET_IOCP_SEND_COMPLETED] == 0);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats_t run_stats;
+    rocketnet_server_iocp_test_queue_stats(transport, &run_stats);
+    CHECK(run_stats.live_run_refs == run);
+#endif
     for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE - run; ++i )
     {
         uint8_t * frame = rocketnet_server_iocp_start_packet(transport, &client_address, &id);
@@ -272,6 +277,10 @@ static void test_uso_run_owns_frames()
     CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
     rocketnet_server_iocp_test_hold_completions(transport, true);
     rocketnet_server_iocp_test_hold_completions(transport, false);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats(transport, &run_stats);
+    CHECK(run_stats.live_run_refs == 0);
+#endif
     // The one completion returned every frame of the run, and only those.
     for ( int i = 0; i < run; ++i )
     {
@@ -712,8 +721,42 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     rocketnet_server_iocp_finish_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, first_frame, FAULT_BYTES);
     rocketnet_server_iocp_abort_packet(transport, ROCKETNET_IOCP_SEND_QUEUE_SIZE, first_frame);
 
+    // Recycle the exact physical operation, then prove its old packet handle
+    // cannot finish the new generation (the ABA-shaped stale-handle case).
     rocketnet_server_iocp_abort_packet(transport, first_id, first_frame);
     rocketnet_server_iocp_abort_packet(transport, second_id, second_frame);
+    iocp_flush(transport);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats_t before, empty, after;
+    rocketnet_server_iocp_test_queue_stats(transport, &before);
+#endif
+    std::vector<uint64_t> ids((size_t) ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    std::vector<uint8_t*> frames((size_t) ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    int reused = -1;
+    for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE; ++i )
+    {
+        frames[(size_t) i] = rocketnet_server_iocp_start_packet(transport, &to, &ids[(size_t) i]);
+        CHECK(frames[(size_t) i]);
+        if ( frames[(size_t) i] == first_frame ) reused = i;
+    }
+    CHECK(reused >= 0 && ids[(size_t) reused] != first_id);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats(transport, &empty);
+    CHECK(empty.free_count == 0);
+    CHECK(empty.free_pops - before.free_pops == ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+#endif
+    rocketnet_server_iocp_finish_packet(transport, first_id, frames[(size_t) reused], FAULT_BYTES);
+    CHECK(rocketnet_server_iocp_test_packet_bytes(transport, ids[(size_t) reused]) == 0);
+    for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE; ++i )
+        rocketnet_server_iocp_abort_packet(transport, ids[(size_t) i], frames[(size_t) i]);
+    iocp_flush(transport);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats(transport, &after);
+    CHECK(after.free_count == ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    CHECK(after.free_pushes - before.free_pushes == ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    CHECK(after.queue_probes - before.queue_probes <= 4 * ROCKETNET_IOCP_SEND_QUEUE_SIZE);
+    CHECK(after.live_run_refs == 0);
+#endif
     wait_stopped(transport);
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     printf("test_iocp_transport_finish_refuses_unissued_packet_id\n");
@@ -856,9 +899,13 @@ static void test_iocp_receive_completion_fails()
     }
 
     // Refused re-posts: each completion delivers its datagram, its re-post is
-    // refused and counted, and the retry list re-posts it once the refusals
+    // refused and counted, and the retry queue re-posts it once the refusals
     // end: the depth recovers to its configured count.
     const uint64_t repost_failed = iocp_counter(transport, ROCKETNET_IOCP_RECEIVE_REPOST_FAILED);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats_t retry_before, retry_after;
+    rocketnet_server_iocp_test_queue_stats(transport, &retry_before);
+#endif
     rocketnet_server_iocp_test_fail_next(transport, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, 300, WSAENOBUFS);
     const int round = ++fault_round & 0xFF;
     fault_client_send(client, &bind, round, 64);
@@ -881,6 +928,13 @@ static void test_iocp_receive_completion_fails()
     CHECK(rocketnet_server_iocp_test_faults_left(transport, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST) == 0);
     iocp_wait_depth(transport, 1);
     CHECK(iocp_counter(transport, ROCKETNET_IOCP_RECEIVE_REPOST_FAILED) - repost_failed == 300);
+#if ROCKETNET_DEV
+    rocketnet_server_iocp_test_queue_stats(transport, &retry_after);
+    CHECK(retry_after.retry_count == 0);
+    CHECK(retry_after.retry_pushes - retry_before.retry_pushes == 300);
+    CHECK(retry_after.retry_pops - retry_before.retry_pops == 300);
+    CHECK(retry_after.queue_probes - retry_before.queue_probes <= 1200);
+#endif
     iocp_exchange(transport, &bind, client, &client_address, 64);
     iocp_finish(transport, client);
     printf("test_iocp_transport_receive_completion_fails\n");

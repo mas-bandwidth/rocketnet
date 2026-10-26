@@ -548,11 +548,36 @@ double rocketnet_sleep_clamp( double seconds )
     return seconds;
 }
 
+#if ROCKETNET_DEV
+static thread_local uint64_t rocketnet_sleep_platform_dispatch_count = 0;
+static thread_local void ( *rocketnet_sleep_platform_dispatch_override_for_test )( double seconds ) = nullptr;
+
+uint64_t rocketnet_sleep_platform_dispatch_count_for_test()
+{
+    return rocketnet_sleep_platform_dispatch_count;
+}
+
+void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double seconds ) )
+{
+    rocketnet_sleep_platform_dispatch_override_for_test = dispatch;
+}
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_sleep( double seconds )
 {
     const double clamped = rocketnet_sleep_clamp( seconds );
     if ( clamped > 0.0 )
+    {
+#if ROCKETNET_DEV
+        ++rocketnet_sleep_platform_dispatch_count;
+        if ( rocketnet_sleep_platform_dispatch_override_for_test )
+        {
+            rocketnet_sleep_platform_dispatch_override_for_test( clamped );
+            return;
+        }
+#endif // #if ROCKETNET_DEV
         rocketnet_platform_sleep( clamped );
+    }
 }
 
 // -------------------------------------------------------------

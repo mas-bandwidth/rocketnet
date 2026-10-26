@@ -191,12 +191,18 @@ and walked left to right at client `connect` and server `start`. The first
 candidate that starts wins, and a list that every candidate refuses fails
 loudly. `"auto"` (the default, also NULL or the empty
 string) is the platform's recommended order; a one-element list is a pin.
+The server's `auto` order is `xdp`, `gso`, `io_uring`, `portable` on Linux;
+`msgx`, `portable` on macOS; and `iocp`, `rio`, `portable` on Windows in
+production builds (`portable`, `iocp`, `rio` in development builds).
 The client's `auto` order is the native client, then `portable`: `gso`,
-`portable` on Linux; `msgx`, `portable` on macOS; `iocp`, `portable` on Windows. `portable` is ranked last on every OS and is the
-fallback when the native client's create refuses. A
+`portable` on Linux; `msgx`, `portable` on macOS; `iocp`, `portable` on Windows. `portable` is ranked last on every OS in production and is the
+fallback when the native transport's create refuses. A
 known name this endpoint does not have is skipped with one log line; a name
-that is no transport anywhere is a typo and fails loudly. The accessor on each
-end reports the transport that won.
+that is no transport anywhere is a typo and fails loudly. When every name in a
+list is skipped for this platform or endpoint, the endpoint falls back to its
+`auto` order with a warning. The accessor on each
+end reports the transport that won. See [TRANSPORTS.md](TRANSPORTS.md) for the
+full registry table and privilege requirements.
 
 Every transport serves IPv4, IPv6, or both: `rocketnet_server_create` takes an
 IPv4 address and an IPv6 address, either NULL but not both. With both, on the
@@ -356,11 +362,15 @@ players connect.
 This is a requirement. A change that makes server cost scale with the number of
 connected clients is a regression, and an idle server costing as much as a full
 one is not a defect to fix. Size the machine for `max_clients` and measure at
-`max_clients`, with every slot connected and active.
+`max_clients`, with every slot connected and active. RocketNet's demonstrated
+server configuration is up to `max_clients = 1000` (with the existing 4096-byte
+XDP frame/ring configuration) under its stated workload, topology, and
+deployment conditions; above 1000 clients, users must research, stabilize, and
+qualify their own configuration.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 20.9 GB (20,908,851,146 bytes)
+A default 1,000-client server requires approximately 20.9 GB (20,908,851,166 bytes)
 of memory, which scales to approximately 19.0 MB (19,033,780 bytes) per client slot.
 This is the lifecycle peak the server's allocator sees over create, start, stop,
 restart and destroy, for the largest transport the default ladder can grant
@@ -397,7 +407,7 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ```
 
 On Linux x86-64 with io_uring and XDP built (the default development build) it
-prints `1000 clients: 20908851146`, `1 client: 1894073054`, `2 clients: 1913106834`
+prints `1000 clients: 20908851166`, `1 client: 1894073074`, `2 clients: 1913106854`
 and `delta: 19033780` on this SDK revision. The figures differ by platform and
 build, because each counts the largest transport that platform's ladder can grant.
 
@@ -584,7 +594,11 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 4. queue this frame's outgoing messages */
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
     if ( out )
+    {
+        for ( int i = 0; i < 64; i++ )
+            out[i] = 0; /* replace with this frame's serialized message */
         rocketnet_client_finish_message( client, 64 );
+    }
 
     /* 5. last: send now, so this frame's messages leave this frame */
     rocketnet_client_send_packets( client );
@@ -599,10 +613,14 @@ The server runs the same block with `rocketnet_server_update`,
 
 ## Sending messages
 
-The send is start message, write the message once in place, then finish message:
-`rocketnet_client_start_message` or `rocketnet_server_start_message` returns a pointer into the
-connection's region, and finish message queues the bytes written and returns the
-serial, nonzero, or `0` when the send was refused. Abort message gives the room back.
+The send is start message, check that the returned pointer is non-`NULL`, write
+the message once in place inside that branch, and call finish message inside the
+same branch: `rocketnet_client_start_message` or `rocketnet_server_start_message`
+returns a pointer into the connection's region (or `NULL` when dropped or refused),
+and finish message queues the bytes written and returns the serial, nonzero, or
+`0` when the send was refused. Calling `rocketnet_client_finish_message` or
+`rocketnet_server_finish_message` without a successful outstanding start is an
+error and returns `0`. Abort message gives the room back.
 One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. Every server per-client call
@@ -655,15 +673,19 @@ unreliable message over budget is dropped and counted.
 
 `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )`
 and `rocketnet_server_can_send_message( server, client_index, channel,
-reliability, max_bytes )` answer whether a start message with the same
-arguments would be given room now: `true` or `false`. They use the same
-decision start message uses, so a `true` answer is a start that gets its
-pointer. A `false` answer means the start would not: the connection's message
-memory is full, or the start would be dropped or refused (not CONNECTED, a
-message already open, a bad argument). The query does not soften the rule
-above: a start after a `false` still ends the connection with
-`MESSAGE_MEMORY_EXHAUSTED`. Ask, and hold the message back until room returns
-as the remote endpoint acknowledges messages.
+reliability, max_bytes )` provide an optional preflight check answering whether
+a start message with the same arguments would be given room now: `true` or
+`false`. They use the same decision start message uses, so a `true` answer is a
+start that gets its pointer (`start_message` remains the authoritative
+reservation result, so always check `if ( out )` and call `finish_message` only
+inside that branch). A `false` answer means the start would not: the
+connection's message memory is full, or the start would be dropped or refused
+(not CONNECTED, a message already open, a bad argument). The query does not
+soften the rule above: a start after a `false` still ends the connection with
+`MESSAGE_MEMORY_EXHAUSTED`. What the application does when `can_send_message`
+returns `false`—skipping a send, deferring it until room returns as the remote
+endpoint acknowledges messages, dropping it, or coalescing state—is application
+policy rather than library behavior.
 
 The query changes no state, counts nothing, allocates nothing and runs in
 constant time. Only start message and update take room, so a `true` answer
@@ -679,12 +701,16 @@ message memory.
 bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
 {
     if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
-        return false;                       /* hold it: sending now would end the connection */
+        return false;                       /* application policy: hold/defer rather than exhaust message memory */
 
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-    for ( int i = 0; i < bytes; i++ )
-        out[i] = state[i];
-    return rocketnet_client_finish_message( client, bytes ) != 0;
+    if ( out )
+    {
+        for ( int i = 0; i < bytes; i++ )
+            out[i] = state[i];
+        return rocketnet_client_finish_message( client, bytes ) != 0;
+    }
+    return false;
 }
 ```
 
@@ -710,13 +736,14 @@ that the client never acknowledged.
 uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
 {
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
-    if ( !out )
-        return 0;
+    if ( out )
+    {
+        for ( int i = 0; i < bytes; i++ )
+            out[i] = state[i];
 
-    for ( int i = 0; i < bytes; i++ )
-        out[i] = state[i];
-
-    return rocketnet_client_finish_message( client, bytes );
+        return rocketnet_client_finish_message( client, bytes );
+    }
+    return 0;
 }
 ```
 

@@ -213,6 +213,67 @@ jobs:
           [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
           check_cell xdp xdp "$line"
 
+      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload XDP filter guest artifacts
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdp-filter-guest-${{ steps.refslug.outputs.slug }}
+          path: build/xdp-filter-guest
+          if-no-files-found: ignore
+
+  low-tick-load:
+    name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build the named low-tick load case
+        run: make -j4
+
+      - name: Run the enabled low-tick load case on an idle host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cores=$(nproc)
+          load_start=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
+          if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            exit 1
+          fi
+          set +e
+          ROCKETNET_TEST_VERBOSE=1 ROCKETNET_LOW_TICK_MEASURE=1 ./bin/functional --run test_server_receive_1000_clients_256kbps_10hz
+          result=$?
+          set -e
+          load_end=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
+          if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            exit 1
+          fi
+          exit "$result"
+
   # Thirty minutes per Linux server cell under impairment, with flat fds,
   # threads and resident memory: scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
@@ -639,3 +700,65 @@ jobs:
           name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
           if-no-files-found: ignore
+
+  # Nightly validation of the six validation-tool self-test suites
+  # (defense in depth: ci.yml runs them every commit; nightly re-runs them
+  # against the current ref so a runner drift that only shows up on the
+  # nightly host is caught there). Same shape as the per-commit job: each
+  # suite its own step, full output printed, nonzero exit fails the step,
+  # and a zero-discovered-tests pass fails the count line.
+  validation-tool-selftests:
+    name: validation tool selftests
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Test the frame-budget checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the server-calls checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the split-load checker's receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the test-environment checker's inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the 1000-client load profiler's provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the release-version block and workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"

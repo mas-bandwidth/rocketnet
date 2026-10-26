@@ -415,6 +415,12 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 
+// Internal unit-test access to the production popcount and its portable
+// implementation. The latter is also the fallback used when no builtin is
+// available, so the suite can exercise it on every host.
+int rocketnet_ack_popcount64( uint64_t value );
+int rocketnet_ack_popcount64_portable( uint64_t value );
+
 // The six-field result of the reference recompute over a standalone history.
 // The function never mutates the history.
 struct rocketnet_ack_stats_result_t
