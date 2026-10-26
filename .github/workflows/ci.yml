@@ -241,6 +241,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
+            exit 1
+          fi
           unit_cases=(
             test_create_reports_status_config_refusals
             test_token_time_refusals_are_distinct
@@ -262,6 +267,25 @@ jobs:
             ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
               ./bin/functional --run "$case"
           done
+          timing_end_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
+            exit 1
+          fi
+          timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
+          printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s/%s/%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
+            "$RUNNER_OS" '${{ matrix.build_type }}' '${{ matrix.leg }}' \
+            "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
+          if (( timing_elapsed_ms >= 120000 )); then
+            echo "CI_UNIT_FUNCTIONAL_BUDGET=FAIL"
+            exit 1
+          fi
+          if (( timing_elapsed_ms <= 60000 )); then
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MET"
+          else
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MISSED"
+          fi
+          echo "CI_UNIT_FUNCTIONAL_BUDGET=PASS"
 
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
@@ -322,7 +346,18 @@ jobs:
 
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: contains(matrix.leg, 'b')
-        run: ./bin/test
+        shell: bash
+        run: |
+          set -euo pipefail
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          rm -f "$timing_receipt"
+          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
+            exit 1
+          fi
+          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
+          ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
       # check fails, naming the first opener, on any socket() call
@@ -358,13 +393,52 @@ jobs:
 
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
+        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
-          set -o pipefail
+          set -euo pipefail
           ./bin/functional | tee functional-pinned.log
           grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          if [[ ! -f "$timing_receipt" ]]; then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=missing_start"
+            exit 1
+          fi
+          if ! read -r timing_run_id timing_run_attempt timing_start_ns timing_extra < "$timing_receipt"; then
+            rm -f "$timing_receipt"
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
+            exit 1
+          fi
+          timing_record="$timing_run_id $timing_run_attempt $timing_start_ns"
+          timing_bytes=$(wc -c < "$timing_receipt" | tr -d '[:space:]')
+          rm -f "$timing_receipt"
+          if [[ -n "${timing_extra:-}" ]] || [[ "$timing_run_id" != "$GITHUB_RUN_ID" ]] || \
+             [[ "$timing_run_attempt" != "$GITHUB_RUN_ATTEMPT" ]] || [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]] || \
+             [[ ! "$timing_bytes" =~ ^[0-9]+$ ]] || (( timing_bytes != ${#timing_record} + 1 )); then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
+            exit 1
+          fi
+          timing_end_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
+            exit 1
+          fi
+          timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
+          printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s/%s/%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
+            "$RUNNER_OS" '${{ matrix.build_type }}' '${{ matrix.leg }}' \
+            "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
+          if (( timing_elapsed_ms >= 120000 )); then
+            echo "CI_UNIT_FUNCTIONAL_BUDGET=FAIL"
+            exit 1
+          fi
+          if (( timing_elapsed_ms <= 60000 )); then
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MET"
+          else
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MISSED"
+          fi
+          echo "CI_UNIT_FUNCTIONAL_BUDGET=PASS"
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard

@@ -155,6 +155,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | test | status |
 |---|:---:|
+| Combined required unit and functional CI timing configured, execution unqualified: every required row records one fail-closed monotonic interval, parallel rows qualify by their maximum, passing is below 120000 milliseconds and 60000 milliseconds or less is the ideal | ❌ |
 | Lean CI configured, execution unqualified: configuration resolution and refusal with test_create_reports_status_config_refusals; exact public-create statuses followed by valid create and destroy | ❌ |
 | Lean CI configured, execution unqualified: authenticated token handling with test_token_time_refusals_are_distinct; signed requests refuse expiry and future creation and accept both boundaries | ❌ |
 | Lean CI configured, execution unqualified: sequence, ACK and replay with test_small_in_order_exactly_once_under_loss_and_reorder; bidirectional ACKs suppress replayed duplicates and drain exactly once | ❌ |
