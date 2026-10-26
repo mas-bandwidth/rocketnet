@@ -24,7 +24,9 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -3074,6 +3076,7 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // The helpers set and unset the unit environment table on every platform.
 
+#if ROCKETNET_DEV
 static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
 static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
 
@@ -3097,6 +3100,7 @@ static void test_send_budget_message_env_is_not_read()
     mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
     mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the object's update clamps a bad time through rocketnet_clamp_update_time
@@ -3465,6 +3469,7 @@ static void test_previous_connection_ack_dropped_after_reconnect()
 // from 1000.0. The server's slot is reset for the new connection and announces
 // its CONFIG to it, so the two exchange messages from a fresh start.
 
+#if ROCKETNET_DEV
 #define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 #define RECONNECT_CLIENT_ID 0x5107ULL
 
@@ -3637,6 +3642,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
         rn_test_client_stop_and_destroy( world.clients[i] );
     rn_test_server_stop_and_destroy( world.server );
 }
+#endif // #if ROCKETNET_DEV
 
 
 // ---------------------------------------------------------------------------
@@ -3971,7 +3977,9 @@ REGISTER_UNIT_TEST( test_send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( test_send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( test_send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( test_set_send_kbps_zero_or_negative_uncaps );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_budget_message_env_is_not_read );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_rnslots_witness_replays );
 REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );
@@ -4044,7 +4052,9 @@ REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
+#endif // #if ROCKETNET_DEV
 
 // A reset increments the carve counter once and clears session metadata.
 // That counter counts invocations. It is not a measure of bytes visited.

@@ -36,7 +36,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -55,6 +57,7 @@
 // the cases set struct transport lists, so a CI leg's env pin is set aside
 // for their duration and put back after: the env pin wins over the struct
 
+#if ROCKETNET_DEV
 struct transport_oom_env_pin_t
 {
     bool was_set;
@@ -72,6 +75,7 @@ static void transport_oom_env_put_back( const char * name, const transport_oom_e
     if ( saved->was_set )
         rocketnet_test_env_setenv( name, saved->value, 1 );
 }
+#endif // #if ROCKETNET_DEV
 
 struct transport_oom_allocator_t
 {
@@ -274,6 +278,7 @@ static void test_transport_open_reports_out_of_memory()
 
 // ---- the server ladder ---------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void transport_oom_production_server_config( struct rocketnet_server_transport_config_t * config, const char * transport )
 {
     rocketnet_server_transport_default_config( config );
@@ -401,6 +406,7 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
     transport_oom_env_put_back( "ROCKETNET_CLIENT_TRANSPORT", &pin );
     printf( "test_transport_create_client_ladder_stops_on_out_of_memory\n" );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---- the connection-type buffer loop -----------------------------------------
 
@@ -546,7 +552,9 @@ static void test_platform_init_survives_a_refusing_allocator()
 }
 
 REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory );
 REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_adapters_fetch_is_bounded );
 REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );

@@ -198,6 +198,7 @@ static void test_sequence_burn_receiver_block_skips_unopened()
 }
 REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 
+#if ROCKETNET_DEV
 // ---- real refused starts over the loopback transports --------------------
 //
 // A transport pair on the in-memory loopback transport, stepped from 1000.0 by
@@ -981,3 +982,4 @@ static void test_sequence_burn_server_reliable_and_resend_delay_unchanged() { se
 REGISTER_UNIT_TEST( test_sequence_burn_server_reliable_and_resend_delay_unchanged );
 static void test_sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
 REGISTER_UNIT_TEST( test_sequence_burn_client_reliable_and_resend_delay_unchanged );
+#endif // #if ROCKETNET_DEV

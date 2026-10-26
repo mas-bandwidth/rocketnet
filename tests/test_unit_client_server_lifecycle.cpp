@@ -11,7 +11,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_packet_builder.h"
@@ -25,6 +27,7 @@
 #define LIFECYCLE_PROTOCOL 0x7A11C1C1E5EED001ULL
 #define LIFECYCLE_MAX_CLIENTS 4
 
+#if ROCKETNET_DEV
 struct lifecycle_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -2162,3 +2165,56 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+#endif // #if ROCKETNET_DEV
+
+#if !ROCKETNET_DEV
+// Production keeps the public default and range oracle without compiling the
+// caller-stepped lifecycle fixture or its environment hooks.
+static void test_config_packets_per_update_range()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x31, 0x43, 0x59, 0x71 };
+    rocketnet_quiet( 1 );
+
+    rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    memcpy( client_config.packet_filter, packet_filter, sizeof( client_config.packet_filter ) );
+    check( client_config.packets_per_update == 256 );
+
+    rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = LIFECYCLE_PROTOCOL;
+    server_config.max_clients = 1;
+    memset( server_config.backend_public_key, 0x52, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.packet_filter, packet_filter, sizeof( server_config.packet_filter ) );
+    check( server_config.packets_per_update == 256 );
+
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client_config.packets_per_update = 1024;
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+    client_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    client_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+
+    server_config.packets_per_update = 1024;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_server_stop_and_destroy( server );
+    server_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    server_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+}
+REGISTER_UNIT_TEST( test_config_packets_per_update_range );
+#endif // #if !ROCKETNET_DEV

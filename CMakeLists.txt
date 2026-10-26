@@ -593,54 +593,22 @@ if(ROCKETNET_BUILD_TESTS)
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )
     # Caller-owned client I/O is a development-only deterministic scaffold.
-    # These translation units directly construct a transport around caller
-    # operations, so a production build does not compile or register them.
-    # The independently registered SDK, channel, ABI, refusal and
-    # shared-library cases remain. test_production_client_lifecycle below is
-    # the production-linked public create/start/connect/update/disconnect/
-    # destroy witness and uses an ordinary worker-owned client.
+    # Exclude only translation units whose every case depends on that scaffold;
+    # mixed files guard their dependent cases locally so their production ABI,
+    # refusal, protocol, ring and lifecycle oracles remain registered.
     if(NOT ROCKETNET_DEV)
         set(ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES
-            tests/test_unit_api_polish.cpp
-            tests/test_unit_client_bind_family.cpp
-            tests/test_unit_client_io_decrypt.cpp
-            tests/test_unit_client_io_step.cpp
-            tests/test_unit_client_io_stop.cpp
             tests/test_unit_client_io_transport.cpp
-            tests/test_unit_client_memory_plan.cpp
             tests/test_unit_client_receive_drop_counters.cpp
             tests/test_unit_client_receive_thread_quit.cpp
-            tests/test_unit_client_server_lifecycle.cpp
-            tests/test_unit_client_transport_ranking.cpp
-            tests/test_unit_client_trusts_only_server.cpp
-            tests/test_unit_config_resolve_once.cpp
-            tests/test_unit_connect_token_port_zero.cpp
-            tests/test_unit_connection_reset.cpp
             tests/test_unit_destroy_before_completion.cpp
             tests/test_unit_destroy_disconnect.cpp
-            tests/test_unit_dev_keys_warning.cpp
-            tests/test_unit_driver_create_out_of_memory.cpp
-            tests/test_unit_fake_client_driver.cpp
-            tests/test_unit_load_split_capture.cpp
-            tests/test_unit_loopback_loss_reorder.cpp
-            tests/test_unit_loopback_rtt.cpp
-            tests/test_unit_memory_plan_lifecycle.cpp
-            tests/test_unit_message_objects.cpp
-            tests/test_unit_public_link_simulator.cpp
-            tests/test_unit_public_message_limit.cpp
             tests/test_unit_public_not_released_counters.cpp
-            tests/test_unit_public_step_driven_client.cpp
-            tests/test_unit_secrets_wiped.cpp
             tests/test_unit_send_room_query.cpp
-            tests/test_unit_sequence_burn.cpp
-            tests/test_unit_sequence_wrap_session.cpp
-            tests/test_unit_server_disconnected_reason.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            tests/test_unit_server_send_cap_fair.cpp
-            tests/test_unit_server_serves_both_families.cpp
-            tests/test_unit_server_stats_no_worker.cpp
-            tests/test_unit_status_codes_reached.cpp
+            # This production-path clock test creates a real worker and is
+            # moving to the functional tier; it is not a deterministic unit.
             tests/test_unit_token_time_game_clock.cpp
             tests/test_unit_transport_pins_ignored.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")

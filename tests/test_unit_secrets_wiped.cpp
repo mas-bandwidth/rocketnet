@@ -37,7 +37,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
@@ -331,6 +333,7 @@ static void secrets_wiped_free( void * context, void * p )
     free( p );
 }
 
+#if ROCKETNET_DEV
 struct secrets_wiped_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -455,6 +458,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
     }
     check( at_server == 1 && at_client == 1 );
 }
+#endif // #if ROCKETNET_DEV
 
 // the allocator's block that holds p (rocketnet_malloc places the object
 // past its own header, inside the block the allocator returned)
@@ -466,6 +470,7 @@ static void * secrets_wiped_containing( const void * p )
     return NULL;
 }
 
+#if ROCKETNET_DEV
 static void secrets_wiped_watch( const void * object, int ( * spans )( size_t *, size_t *, int ) )
 {
     check( object != NULL );
@@ -490,6 +495,7 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
             nonzero += ( (const uint8_t *) watch->block )[watch->offsets[s] + i] != 0;
     return nonzero;
 }
+#endif // #if ROCKETNET_DEV
 
 // Owned memory, stopped and disconnected: the destroys wipe the server's
 // secret key in its header, the server transport's secret and cookie keys and
@@ -497,6 +503,7 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
 // arena included, has more than a handful of bytes (handles, mutex state)
 // written by a destroy. The planted message is still in the blocks: message
 // bytes are not secrets.
+#if ROCKETNET_DEV
 static void test_secrets_wiped_destroy_writes_only_keys()
 {
     rocketnet_term();
@@ -556,6 +563,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     check( watched_frees == 2 );
     check( watched_pattern > 0 );
 }
+#endif // #if ROCKETNET_DEV
 
 // how many times the user data occurs in the live blocks now
 static int secrets_wiped_user_data_live()
@@ -574,6 +582,7 @@ static int secrets_wiped_user_data_live()
 // before the server stopped (the mapping removed and the slot released) or
 // the server stopped and was destroyed with the client still connected (the
 // mapping live at destroy).
+#if ROCKETNET_DEV
 static void secrets_wiped_user_data_case( bool server_first )
 {
     rocketnet_term();
@@ -623,6 +632,7 @@ static void secrets_wiped_user_data_case( bool server_first )
     check( live_connected >= 2 );   // the mapping's copy and the slot's
     check( freed == 0 );
 }
+#endif // #if ROCKETNET_DEV
 
 // The slots and the map at their destroy, each holding the user data: the
 // server's paths release a slot and remove a mapping before destroy, so
@@ -662,6 +672,7 @@ static void test_secrets_wiped_user_data_at_slots_and_map_destroy()
     check( freed == 0 );
 }
 
+#if ROCKETNET_DEV
 static void test_secrets_wiped_user_data_after_client_leaves()
 {
     secrets_wiped_user_data_case( false );
@@ -671,6 +682,7 @@ static void test_secrets_wiped_user_data_with_client_connected()
 {
     secrets_wiped_user_data_case( true );
 }
+#endif // #if ROCKETNET_DEV
 
 static uint8_t * secrets_wiped_aligned( uint8_t * raw )
 {
@@ -763,6 +775,7 @@ static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
 // transport's rocketnet_client_transport_required_memory, and the two
 // loopback endpoints' create-time queues; plus a stated 64 MiB margin for
 // the process and the two block maps.
+#if ROCKETNET_DEV
 static long secrets_wiped_destroy_rss_bound_mb()
 {
     rocketnet_server_transport_config_t server_config;
@@ -783,13 +796,18 @@ static long secrets_wiped_destroy_rss_bound_mb()
     const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + 2 * endpoint ), 64 );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 SUITE_CASE_RSS_BOUND( test_secrets_wiped_destroy_writes_only_keys, secrets_wiped_destroy_rss_bound_mb );
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_secrets_wiped_destroy_writes_only_keys );
-REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_after_client_leaves );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_with_client_connected );
+#endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned_writes_nothing );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
@@ -799,6 +817,7 @@ REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 // the config parse's base64 staging (sdk/rocketnet_config.cpp)
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 extern void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes );
 
 static uint8_t secrets_wiped_staging[256];
@@ -883,6 +902,7 @@ static void test_secrets_wiped_config_staging_on_refused_parse()
 
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
@@ -1036,6 +1056,7 @@ static void test_client_slots_release_of_free_slot_is_refused()
 }
 REGISTER_UNIT_TEST( test_client_slots_release_of_free_slot_is_refused );
 
+#if ROCKETNET_DEV
 static int secrets_wiped_span_nonzero_bytes( const secrets_wiped_watch_t * watch, int span_index )
 {
     check( span_index >= 0 && span_index < watch->spans );
@@ -1054,7 +1075,9 @@ static int secrets_wiped_planted_message_live()
         found += secrets_wiped_count( (const uint8_t *) it->first, it->second, message );
     return found;
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing()
 {
     rocketnet_term();
@@ -1199,3 +1222,4 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
     check( client_secrets_second_disconnect == 0 );
 }
 REGISTER_UNIT_TEST( test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing );
+#endif // #if ROCKETNET_DEV

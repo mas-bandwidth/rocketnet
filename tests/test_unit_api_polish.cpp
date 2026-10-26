@@ -339,6 +339,7 @@ REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_disconnected );
 
 // --- a client index before CONNECTED is -1, never an assert --------------------
 
+#if ROCKETNET_DEV
 static int g_polish_asserts = 0;
 
 static void api_polish_count_assert( const char * condition, const char * function, const char * file, int line )
@@ -435,6 +436,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
+#endif // #if ROCKETNET_DEV
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 
 static void test_api_polish_server_abort_message_without_start_is_a_no_op()

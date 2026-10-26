@@ -86,6 +86,7 @@ static void reached_token( rocketnet_server_t * server, const reached_identity_t
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
+#if ROCKETNET_DEV
 static int refuse_platform_start( void )
 {
     return 1;
@@ -172,6 +173,7 @@ static void test_client_mutex_create_failed_reached()
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_client_mutex_create_failed_reached );
+#endif // #if ROCKETNET_DEV
 
 // the fault-injecting allocator: fails exactly the fail_at-th call
 struct reached_allocator_t
@@ -259,6 +261,7 @@ static void test_client_connect_thread_create_failed_reached()
 }
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 
+#if ROCKETNET_DEV
 static double reached_now = 1000.0;
 static double reached_clock( void * ) { return reached_now; }
 
@@ -343,3 +346,4 @@ static void test_client_connection_response_timed_out_state_reached()
     check( ended_at - stalled_at < REACHED_TIMEOUT_SECONDS + 1.0 );
 }
 REGISTER_UNIT_TEST( test_client_connection_response_timed_out_state_reached );
+#endif // #if ROCKETNET_DEV

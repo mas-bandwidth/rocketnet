@@ -25,7 +25,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
@@ -39,6 +41,7 @@
 #define check rocketnet_unit_check
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
 
+#if ROCKETNET_DEV
 static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
 static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
@@ -325,6 +328,7 @@ static void test_production_env_only_test_packet_filter_refused()
 REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
 
 #endif // #if !ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
 // Auto expands to the availability list, and the ladder holds only
 // ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more

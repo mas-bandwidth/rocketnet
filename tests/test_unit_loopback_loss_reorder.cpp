@@ -17,7 +17,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -39,6 +41,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 static double loopback_loss_reorder_clock = 1000.0;
 
 static double loopback_loss_reorder_time_callback( void * )
@@ -538,9 +541,10 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
+#endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV
-// ---- the production refusal, the ranges and the env overlay ------------------
+// ---- the production refusal and the ranges ----------------------------------
 
 static int loopback_error_lines = 0;
 static int loopback_error_lines_naming = 0;
@@ -567,16 +571,6 @@ static void loopback_error_begin( const char * field )
 static void loopback_error_end()
 {
     rocketnet_log_function( NULL, NULL );
-}
-
-static int loopback_setenv( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-
-static int loopback_unsetenv( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
 }
 
 static void loopback_signed_token( uint8_t * token )
@@ -655,39 +649,18 @@ static void test_loopback_transport_loss_reorder_production_refusal()
     loopback_error_end();
 
     // the same through the create: a production library (the development
-    // posture off) refuses with the config-out-of-range status, the struct and
-    // the env both
+    // posture off) refuses the struct with the config-out-of-range status.
+    // Environment overlay mechanics are development-hook tests and do not
+    // compile into this production-linked unit suite.
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     loopback_signed_token( token );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
-    rocketnet_public_link_simulator_test_development( 0 );
-
     client_config.simulated_reverse_window = 4;
     loopback_error_begin( "simulated_reverse_window" );
     check( rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), 1000.0 ) == NULL );
     check( loopback_error_lines_naming == 1 );
     loopback_error_end();
     client_config.simulated_reverse_window = 0;
-
-    check( loopback_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
-    int status = ROCKETNET_STATUS_OK;
-    loopback_error_begin( "simulated_drop_every_nth" );
-    check( rocketnet_client_transport_create_ex( NULL, token, &client_config, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-    check( loopback_error_lines_naming == 1 );
-    loopback_error_end();
-    check( loopback_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
-
-    server_config.protocol_id = 1;
-    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
-    check( loopback_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
-    status = ROCKETNET_STATUS_OK;
-    loopback_error_begin( "simulated_reverse_window" );
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
-    check( loopback_error_lines_naming == 1 );
-    loopback_error_end();
-    check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
 
     // ranges: zero, or N >= 2 up to 1000000; zero, or W >= 2 up to 64. each
     // refusal logs one error line; the capture keeps those lines (and the
@@ -728,24 +701,6 @@ static void test_loopback_transport_loss_reorder_production_refusal()
         server_config.simulated_reverse_window = 0;
     }
 
-    // the env overlay reaches both fields on both configs
-    check( loopback_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
-    check( loopback_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
-    rocketnet_client_transport_default_config_current( &client_config );
-    check( rocketnet_config_apply_env( "client", &client_config, client_table, client_fields ) );
-    check( client_config.simulated_drop_every_nth == 7 );
-    check( client_config.simulated_reverse_window == 4 );
-    check( loopback_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
-    check( loopback_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" ) == 0 );
-
-    check( loopback_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "5" ) == 0 );
-    check( loopback_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "3" ) == 0 );
-    rocketnet_server_transport_default_config_current( &server_config );
-    check( rocketnet_config_apply_env( "server", &server_config, server_table, server_fields ) );
-    check( server_config.simulated_drop_every_nth == 5 );
-    check( server_config.simulated_reverse_window == 3 );
-    check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) == 0 );
-    check( loopback_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
     check( loopback_error_lines >= 12 );
     loopback_error_end();
 

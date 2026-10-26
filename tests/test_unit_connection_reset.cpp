@@ -5,7 +5,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -31,6 +33,7 @@
 // a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
 // the struct by design, so a CI leg pinned to a real transport would replace it. Each
 // create sets its pin aside and puts it back, as test_unit_status_server_transport_create_ex.cpp does.
+#if ROCKETNET_DEV
 struct reset_env_pin_t
 {
     const char * name;
@@ -51,6 +54,7 @@ static void reset_env_pin_put_back( const reset_env_pin_t * pin )
         return;
     rocketnet_test_env_setenv( pin->name, pin->value, 1 );
 }
+#endif // #if ROCKETNET_DEV
 
 #define check rocketnet_unit_check
 
@@ -495,6 +499,7 @@ REGISTER_UNIT_TEST( test_connection_reset_client_slots_stale_handle_cannot_relea
 
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
@@ -1853,3 +1858,4 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
     }
 }
 REGISTER_UNIT_TEST( test_reliable_timeout_fires_while_send_pass_starved );
+#endif // #if ROCKETNET_DEV
