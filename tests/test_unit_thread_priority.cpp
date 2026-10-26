@@ -35,6 +35,7 @@
 #include <sched.h>
 #endif
 
+#if ROCKETNET_DEV
 enum
 {
     PRIORITY_FAKE_SET_SCHED = 1,
@@ -295,7 +296,6 @@ static void test_thread_priority_windows_timer_refusal_counts_and_logs_once()
 // holds priority, and nothing reaches the call table. The step runs on a
 // frame sync that is never created: no timer, no thread, no wait.
 
-extern int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns );
 
 static int priority_frame_sync_lines;
 
@@ -322,6 +322,7 @@ static void test_thread_priority_off_frame_sync_takes_no_priority()
 }
 
 REGISTER_UNIT_TEST( test_thread_priority_off_frame_sync_takes_no_priority );
+#endif // #if ROCKETNET_DEV
 
 // The time constraint policy values (rocketnet_frame_sync_time_constraint) for
 // the macOS and iOS priority step: a period that does not fit the uint32_t
@@ -473,6 +474,7 @@ static void test_frame_sync_advance_accumulation_oracle()
 
 REGISTER_UNIT_TEST( test_frame_sync_advance_accumulation_oracle );
 
+#if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 REGISTER_UNIT_TEST( test_thread_priority_windows_timer_period_at_init_and_term );
 REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_once );
@@ -483,3 +485,16 @@ REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );
 REGISTER_UNIT_TEST( test_thread_priority_refusal_counts_and_logs_once );
+
+#endif // #if ROCKETNET_DEV
+
+static void test_thread_priority_enable_disable_policy()
+{
+    const bool previous = rocketnet_platform_thread_priority_enabled();
+    rocketnet_thread_priority( false );
+    rocketnet_unit_check( !rocketnet_platform_thread_priority_enabled() );
+    rocketnet_thread_priority( true );
+    rocketnet_unit_check( rocketnet_platform_thread_priority_enabled() );
+    rocketnet_thread_priority( previous );
+}
+REGISTER_UNIT_TEST( test_thread_priority_enable_disable_policy );

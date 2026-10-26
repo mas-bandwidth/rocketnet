@@ -901,15 +901,23 @@ void rocketnet_client_io_wipe( void * data, size_t bytes )
 // tla/RNClientIoDecrypt.tla PublishKeys: the protocol's hook at the challenge
 static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
 {
-    rocketnet_client_io_publish_keys( (rocketnet_client_io_t *) context, client->keys.session_server_to_client,
+    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) context;
+    rocketnet_client_io_publish_keys( &client_transport->client_io, client->keys.session_server_to_client,
                                       client->signed_fields.protocol_id, client->connection_salt, client->packet_filter,
                                       &client->server_address );
 }
 
-// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state
+// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state.
+// When no background I/O thread owns the open block, take the retired epoch
+// immediately so sodium_memzero erases session_server_to_client and salt at the
+// terminal transition instead of leaving the retired copy in memory until the
+// next update step or stop.
 static void rocketnet_client_transport_retire_keys( void * context )
 {
-    rocketnet_client_io_retire_keys( (rocketnet_client_io_t *) context );
+    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) context;
+    rocketnet_client_io_retire_keys( &client_transport->client_io );
+    if ( !client_transport->thread )
+        rocketnet_client_io_take_keys( &client_transport->client_io );
 }
 
 bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport_io_operations_t * operations )
@@ -2043,7 +2051,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         // terminal state; destroy retires it too
         client_transport->protocol.publish_keys = rocketnet_client_transport_publish_keys;
         client_transport->protocol.retire_keys = rocketnet_client_transport_retire_keys;
-        client_transport->protocol.keys_context = &client_transport->client_io;
+        client_transport->protocol.keys_context = client_transport;
 
         if ( client_transport->step_driven || client_transport->step_in_update )
             return client_transport;

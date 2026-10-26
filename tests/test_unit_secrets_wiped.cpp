@@ -801,6 +801,7 @@ REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
 extern void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes );
 
+#if ROCKETNET_DEV
 static uint8_t secrets_wiped_staging[256];
 static int secrets_wiped_staging_bytes = -1;
 
@@ -883,6 +884,7 @@ static void test_secrets_wiped_config_staging_on_refused_parse()
 
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
@@ -1183,3 +1185,166 @@ REGISTER_UNIT_TEST( test_encryption_map_flat_index_collisions_and_churn_are_boun
 REGISTER_UNIT_TEST( test_encryption_map_stale_generation_reset_and_secret_ownership );
 
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+static int secrets_wiped_span_nonzero_bytes( const secrets_wiped_watch_t * watch, int span_index )
+{
+    check( span_index >= 0 && span_index < watch->spans );
+    int nonzero = 0;
+    for ( size_t i = 0; i < watch->bytes[span_index]; i++ )
+        nonzero += ( (const uint8_t *) watch->block )[watch->offsets[span_index] + i] != 0;
+    return nonzero;
+}
+
+static int secrets_wiped_planted_message_live()
+{
+    uint8_t message[SECRETS_WIPED_MESSAGE_BYTES];
+    secrets_wiped_message( message );
+    int found = 0;
+    for ( std::map<void *, size_t>::iterator it = secrets_wiped_sizes->begin(); it != secrets_wiped_sizes->end(); ++it )
+        found += secrets_wiped_count( (const uint8_t *) it->first, it->second, message );
+    return found;
+}
+
+static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing()
+{
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+    secrets_wiped_user_data_freed = 0;
+
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    secrets_wiped_user_data( user_data );
+    secrets_wiped_pair_t pair;
+    secrets_wiped_pair_exchange( &pair, user_data );
+
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_watch( rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) ),
+                         rocketnet_client_transport_secret_spans_for_test );
+    check( secrets_wiped_watches[0].spans == 5 );
+
+    const int keys_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 0 );
+    const int token_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 1 );
+    const int ephemeral_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 2 );
+    const int io_open_key_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int user_data_connected = secrets_wiped_user_data_live();
+    const int planted_connected = secrets_wiped_planted_message_live();
+
+    rocketnet_client_disconnect( pair.client );
+    const int client_secrets_at_disconnect = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
+    const int io_open_key_at_disconnect = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+
+    for ( int i = 0; i < 100 && rocketnet_server_client_connected( pair.server, 0 ); i++ )
+        secrets_wiped_pump( &pair );
+    check( !rocketnet_server_client_connected( pair.server, 0 ) );
+    rn_test_client_wait_disconnected( pair.client );
+
+    const int user_data_after_disconnect = secrets_wiped_user_data_live();
+    const int planted_after_disconnect = secrets_wiped_planted_message_live();
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x5E ^ i );
+    secrets_wiped_identity_t identity;
+    check( rocketnet_generate_backend_keypair_from_seed( seed, identity.backend_public, identity.backend_secret ) ==
+           ROCKETNET_STATUS_OK );
+    rocketnet_server_public_key( pair.server, identity.server_public );
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( pair.server ) );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( identity.backend_secret, identity.server_public,
+                                                     SECRETS_WIPED_PROTOCOL, addresses, 1, 0x5EEE,
+                                                     (uint64_t) pair.time, 1ULL << 40, 300, NULL, token,
+                                                     ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) ==
+           ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    sodium_memzero( token, sizeof( token ) );
+    sodium_memzero( &identity, sizeof( identity ) );
+
+    check( rocketnet_client_connect( pair.client, token_string ) == ROCKETNET_STATUS_OK );
+    sodium_memzero( token_string, sizeof( token_string ) );
+    for ( int i = 0; i < 400 && rocketnet_client_state( pair.client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        secrets_wiped_pump( &pair );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_server_client_connected( pair.server, 0 ) != 0 );
+
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_watch( rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) ),
+                         rocketnet_client_transport_secret_spans_for_test );
+    const int client_secrets_reconnected = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
+    const int io_open_key_reconnected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+
+    uint8_t fresh_message[32];
+    for ( size_t i = 0; i < sizeof( fresh_message ); i++ )
+        fresh_message[i] = (uint8_t) ( 0xA5U ^ (uint8_t) i );
+    uint8_t * out =
+        rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( fresh_message ) );
+    check( out != NULL );
+    memcpy( out, fresh_message, sizeof( fresh_message ) );
+    check( rocketnet_client_finish_message( pair.client, (int) sizeof( fresh_message ) ) != 0 );
+    out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+                                          (int) sizeof( fresh_message ) );
+    check( out != NULL );
+    memcpy( out, fresh_message, sizeof( fresh_message ) );
+    check( rocketnet_server_finish_message( pair.server, (int) sizeof( fresh_message ) ) != 0 );
+
+    int fresh_at_server = 0;
+    int fresh_at_client = 0;
+    int stale_delivered = 0;
+    for ( int step = 0; step < 400 && ( fresh_at_server < 1 || fresh_at_client < 1 ); step++ )
+    {
+        secrets_wiped_pump( &pair );
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; i++ )
+            {
+                if ( batch->bytes[i] == (int) sizeof( fresh_message ) &&
+                     memcmp( batch->data[i], fresh_message, sizeof( fresh_message ) ) == 0 )
+                    fresh_at_server++;
+                else
+                    stale_delivered++;
+            }
+        }
+        while ( ( batch = rocketnet_client_receive_messages( pair.client ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; i++ )
+            {
+                if ( batch->bytes[i] == (int) sizeof( fresh_message ) &&
+                     memcmp( batch->data[i], fresh_message, sizeof( fresh_message ) ) == 0 )
+                    fresh_at_client++;
+                else
+                    stale_delivered++;
+            }
+        }
+    }
+
+    rocketnet_client_disconnect( pair.client );
+    const int client_secrets_second_disconnect = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
+    rn_test_client_wait_disconnected( pair.client );
+    rocketnet_client_destroy( pair.client );
+    rocketnet_server_stop( pair.server );
+    rn_test_server_wait_stopped( pair.server );
+    rocketnet_server_destroy( pair.server );
+
+    secrets_wiped_sizes = NULL;
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
+    check( keys_connected > 0 );
+    check( token_connected > 0 );
+    check( ephemeral_connected == 0 );
+    check( io_open_key_connected > 0 );
+    check( user_data_connected >= 2 );
+    check( planted_connected > 0 );
+    check( client_secrets_at_disconnect == 0 );
+    check( io_open_key_at_disconnect == 0 );
+    check( user_data_after_disconnect == 0 );
+    check( planted_after_disconnect == planted_connected );
+    check( client_secrets_reconnected > 0 );
+    check( io_open_key_reconnected > 0 );
+    check( fresh_at_server == 1 && fresh_at_client == 1 && stale_delivered == 0 );
+    check( client_secrets_second_disconnect == 0 );
+}
+REGISTER_UNIT_TEST( test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing );
