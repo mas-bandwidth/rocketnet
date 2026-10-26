@@ -91,7 +91,7 @@ It contains the complete compiler output and explicit
 dry expansion was intentionally redirected because it includes no checker
 result.
 
-## Smallest grounded next step
+## Attempt-1 next step and recovery
 
 A follow-up must remain in the existing `proofs/cbmc` framework and keep the
 same full 1..4095 domain. The smallest source-faithful decomposition is to
@@ -99,5 +99,7 @@ split `harness_replay_near` into the production range-clear's non-wrapping and
 wrapping paths while retaining the arbitrary selected word, then run both
 full-domain subproperties with CBMC and its already-installed CaDiCaL external
 SAT solver. That changes solver decomposition only: no bound, assumption,
-production source, assertion, or property may be weakened. It is proposed
-work, not a completed proof or authorization to ignore this HOLD.
+production source, assertion, or property may be weakened. That decomposition
+was independently reviewed and executed in the recovery attempt; it also
+timed out. See `full-bounds-recovery-results.md` for the exact receipt and the
+current HOLD disposition.

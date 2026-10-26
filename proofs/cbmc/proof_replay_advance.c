@@ -14,10 +14,11 @@
     The near harness is the smaller-delta claim. The quick default target
     admits deltas 1..3 and labels that reduced bound. The explicit
     replay-near-4096 target admits every delta 1..4095 (strictly less than the
-    4096-bit window). The production range-clear implementation visits at
-    most 64 words, so unwind 65 covers the full declared near range. The far
-    harness is the whole-window claim: a delta of at least 4096 clears every
-    word, then sets the new sequence bit.
+    4096-bit window), split only on the production range-clear branch:
+    end <= 4096 and end > 4096. The two predicates are disjoint and exhaustive
+    at the full delta bound. The production implementation visits at most 64
+    words, so unwind 65 covers either path. The far harness is the whole-window
+    claim: a delta of at least 4096 clears every word, then sets the new bit.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
@@ -98,18 +99,34 @@ static uint64_t reference_near_word( uint64_t old_word, uint64_t old_high,
     return result;
 }
 
-int harness_replay_near( void )
+static int harness_replay_near_path( int wrapping )
 {
     struct rocketnet_replay_protection_t replay;
     uint64_t old_word;
     uint64_t expected_word;
     uint64_t sequence;
     uint64_t old_high;
+    uint64_t delta;
     uint64_t chosen_word;
+    int begin;
+    int end;
     int w;
 
+#if defined(REPLAY_REACHABILITY_WITNESS)
+    if ( wrapping > 0 )
+    {
+        replay.highest_opened = 4094;
+        sequence = 4097;
+    }
+    else
+    {
+        replay.highest_opened = 1;
+        sequence = 3;
+    }
+#else
     sequence = nondet_uint64();
     replay.highest_opened = nondet_uint64();
+#endif
     for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
         replay.window[w] = nondet_uint64();
 
@@ -117,10 +134,21 @@ int harness_replay_near( void )
     __CPROVER_assume( sequence > replay.highest_opened );
     __CPROVER_assume( sequence - replay.highest_opened < REPLAY_DELTA_BOUND );
     __CPROVER_assume( REPLAY_DELTA_BOUND <= ROCKETNET_REPLAY_WINDOW_BITS );
+#if defined(REPLAY_REACHABILITY_WITNESS)
+    chosen_word = 0;
+#else
     chosen_word = nondet_uint64();
+#endif
     __CPROVER_assume( chosen_word < ROCKETNET_REPLAY_WINDOW_WORDS );
 
     old_high = replay.highest_opened;
+    delta = sequence - old_high;
+    begin = (int) ( ( old_high + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
+    end = begin + (int) delta - 1;
+    if ( wrapping > 0 )
+        __CPROVER_assume( end > ROCKETNET_REPLAY_WINDOW_BITS );
+    else if ( wrapping == 0 )
+        __CPROVER_assume( end <= ROCKETNET_REPLAY_WINDOW_BITS );
     old_word = replay.window[chosen_word];
 
     rocketnet_replay_advance( &replay, sequence );
@@ -130,7 +158,25 @@ int harness_replay_near( void )
                       "highest_opened advances to the received sequence" );
     __CPROVER_assert( replay.window[chosen_word] == expected_word,
                       "a smaller delta clears exactly the vacated bits in every chosen word" );
+#if defined(REPLAY_REACHABILITY_WITNESS)
+    __CPROVER_assert( 0, "replay path reachability negative control" );
+#endif
     return 0;
+}
+
+int harness_replay_near( void )
+{
+    return harness_replay_near_path( -1 );
+}
+
+int harness_replay_near_nonwrapping( void )
+{
+    return harness_replay_near_path( 0 );
+}
+
+int harness_replay_near_wrapping( void )
+{
+    return harness_replay_near_path( 1 );
 }
 
 int harness_replay_far( void )
