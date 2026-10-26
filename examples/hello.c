@@ -27,10 +27,15 @@ int main( void )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
-        printf( "FAIL: server start\n" );
+        printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
 
@@ -48,10 +53,33 @@ int main( void )
     {
         // a backend mints the token in production; this one expires in 30 seconds
         char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, client_id, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+        const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, client_id, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+        if ( token_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+            rn_cli_server_stop_and_destroy( server );
+            rocketnet_term();
+            return 1;
+        }
 
-        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
-        rocketnet_client_connect( client, connect_token );
+        enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+        if ( !client || create_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: client create: %s\n", rocketnet_status_name( create_status ) );
+            rn_cli_server_stop_and_destroy( server );
+            rocketnet_term();
+            return 1;
+        }
+        const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, connect_token );
+        if ( connect_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: client connect: %s\n", rocketnet_status_name( connect_status ) );
+            rn_cli_client_stop_and_destroy( client );
+            rn_cli_server_stop_and_destroy( server );
+            rocketnet_term();
+            return 1;
+        }
 
         const int messages = client_id == 1 ? 1 : 0;     // the second client only connects
         int sent = 0, received = 0, frame = 0;
@@ -72,9 +100,16 @@ int main( void )
             {
                 // write the message straight into the buffer start returns
                 const char message[] = "hello from the client";
-                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
-                memcpy( p, message, strlen( message ) );
-                sent += rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+                // reliable: defer to a later frame when there is no room; the frame bound above diagnoses a stuck defer
+                if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) ) )
+                {
+                    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
+                    if ( p )
+                    {
+                        memcpy( p, message, strlen( message ) );
+                        sent += rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+                    }
+                }
             }
 
             // send last, so the messages queued this frame leave this frame

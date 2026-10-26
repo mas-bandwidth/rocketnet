@@ -74,14 +74,27 @@ int main( int argc, char ** argv )
     // the client; this stub mints a development token, stamped with Unix time
     const uint64_t protocol_id = EXAMPLE_PROTOCOL_ID + ( wrong_protocol ? 1 : 0 );
     char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull, protocol_id, (uint64_t) time( NULL ), NULL, connect_token );
+    const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull, protocol_id, (uint64_t) time( NULL ), NULL, connect_token );
+    if ( token_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+        rocketnet_term();
+        return 1;
+    }
 
     struct rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "portable";
     config.state_change_callback = state_changed;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
-    rocketnet_client_connect( client, connect_token );
+    enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &client_status );
+    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rocketnet_term();
+        return 1;
+    }
 
     int sent = 0, received = 0;
     const double start = rocketnet_time();
@@ -99,9 +112,15 @@ int main( int argc, char ** argv )
         if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const char message[] = "hello from the client";
-            uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
-            memcpy( p, message, strlen( message ) );
-            sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+            if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) ) )
+            {
+                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
+                if ( p )
+                {
+                    memcpy( p, message, strlen( message ) );
+                    sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+                }
+            }
         }
 
         rocketnet_client_send_packets( client );

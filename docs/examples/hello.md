@@ -17,7 +17,7 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 4. Create a client pinned to `loopback`, then update both ends until the
    client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
-   server with `rocketnet_client_start_message`, checking that the returned pointer is
+   server with `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, checking that the returned pointer is
    non-`NULL` (`if ( out )`) before writing the text straight into the returned buffer
    and calling `rocketnet_client_finish_message` with the bytes written inside that
    branch (calling `finish_message` without a successful outstanding `start_message`

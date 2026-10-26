@@ -37,6 +37,11 @@
 #include <string>
 #include <vector>
 
+// The example send-safety audit lives in its own translation unit; it runs
+// as part of this case so the registered source-audit binary executes it
+// without a second manifest of case names.
+void rocketnet_example_send_safety_audit_run();
+
 static std::string ascii_lower( const std::string & text )
 {
     std::string out = text;
@@ -270,6 +275,7 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
 
 static void test_client_server_say_messages_not_packets()
 {
+    rocketnet_example_send_safety_audit_run();
     std::vector<std::string> failures;
     std::vector<size_t> used_rows( allowlist_count, 0 );
     std::vector<int> per_reason_hits( allowlist_count, 0 );

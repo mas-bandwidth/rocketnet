@@ -27,9 +27,16 @@ static void send_burst( struct rocketnet_client_t * client, int channel, enum ro
 {
     for ( int i = 0; i < count; i++ )
     {
+        // burst policy: skip a message when there is no room; the budget drop counters still show the over-budget burst
+        if ( !rocketnet_client_can_send_message( client, channel, reliability, MESSAGE_BYTES ) )
+            continue;
         uint8_t * p = rocketnet_client_start_message( client, channel, reliability, MESSAGE_BYTES );
-        memset( p, 'A' + i % 26, MESSAGE_BYTES );
-        rocketnet_client_finish_message( client, MESSAGE_BYTES );
+        if ( p )
+        {
+            memset( p, 'A' + i % 26, MESSAGE_BYTES );
+            const uint32_t serial = rocketnet_client_finish_message( client, MESSAGE_BYTES );
+            (void) serial;
+        }
     }
 }
 
@@ -46,10 +53,15 @@ int main( void )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
-        printf( "FAIL: server start\n" );
+        printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
 
@@ -58,15 +70,30 @@ int main( void )
     char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) );
     rocketnet_server_public_key( server, server_public_key );
-    rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    if ( token_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.send_kbps = CLIENT_SEND_KBPS;
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
-    rocketnet_client_connect( client, connect_token );
+    enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
+    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     int bursts_sent = 0, reliable_received = 0;
     const double start = rocketnet_time();
@@ -88,7 +115,7 @@ int main( void )
         {
             // the runtime call needs a connected client; the config set the starting rate
             const enum rocketnet_status_t status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
-            printf( "runtime set-send-kbps returned %d\n", (int) status );
+            printf( "runtime set-send-kbps returned %s\n", rocketnet_status_name( status ) );
 
             // over budget, unreliable messages are dropped and counted; reliable messages wait
             send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT );

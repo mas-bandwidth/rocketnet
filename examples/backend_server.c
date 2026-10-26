@@ -74,11 +74,13 @@ int main( int argc, char ** argv )
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &status );
-    if ( server )
+    if ( server && status == ROCKETNET_STATUS_OK )
         status = rocketnet_server_start( server );
-    if ( status != ROCKETNET_STATUS_OK )
+    if ( !server || status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server start: %s\n", rocketnet_status_name( status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
     printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_server_transport_name( server ) );
@@ -92,6 +94,13 @@ int main( int argc, char ** argv )
     rocketnet_server_public_key( server, server_public_key );
     write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
     FILE * env = fopen( ENV_FILE, "w" );
+    if ( !env )
+    {
+        printf( "FAIL: could not write %s\n", ENV_FILE );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
     fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
     fclose( env );
 
@@ -115,11 +124,16 @@ int main( int argc, char ** argv )
             {
                 const int client_index = batch->client_index[i];
                 printf( "server received from client %llx: %.*s\n", (unsigned long long) rocketnet_server_client_id( server, client_index ), batch->bytes[i], (const char *) batch->data[i] );
-                uint8_t * p = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-                if ( !p )
-                    continue;
-                memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-                echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+                // echo: skip this message when there is no room
+                if ( rocketnet_server_can_send_message( server, client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
+                {
+                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
+                    if ( p )
+                    {
+                        memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+                        echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+                    }
+                }
             }
         }
 

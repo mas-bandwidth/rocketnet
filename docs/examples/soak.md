@@ -65,14 +65,14 @@ xctrace record --template 'Time Profiler' --output soak.trace --launch -- ./bin/
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
   `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_num_connected_clients`,
-  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
+  `rocketnet_server_can_send_message`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`, `rocketnet_server_receipts`,
   `rocketnet_server_stats`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_connect`, `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
   `rocketnet_client_disconnect`, `rocketnet_client_state`,
-  `rocketnet_client_index`, `rocketnet_client_start_message`,
+  `rocketnet_client_index`, `rocketnet_client_can_send_message`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`,
   `rocketnet_client_receipts`
 - `rocketnet_client_network_simulator`, `rocketnet_server_network_simulator`

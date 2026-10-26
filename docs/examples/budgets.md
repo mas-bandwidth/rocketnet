@@ -60,7 +60,7 @@ must report every queued reliable message.
   `rocketnet_client_connect`, `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
   `rocketnet_client_state`, `rocketnet_client_index`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
+  `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
   `rocketnet_client_receive_messages`, `rocketnet_client_set_send_kbps`,
   `rocketnet_client_stats`
 - `rocketnet_create_dev_connect_token` and
