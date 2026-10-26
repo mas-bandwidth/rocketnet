@@ -27,6 +27,13 @@
 
 #include <math.h>
 #include <errno.h>
+#include <stdio.h>
+
+#if defined(__APPLE__)
+#include <sys/ioctl.h>
+#elif defined(__linux__)
+#include <linux/sock_diag.h>
+#endif
 
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
@@ -2036,123 +2043,85 @@ void rocketnet_test_transport_packet_loss_stats()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+static void rocketnet_test_wait_socket_readable( rocketnet_platform_socket_t * socket, const char * phase )
+{
+    const double deadline = rocketnet_platform_time() + 30.0;
+    for ( ;; )
+    {
+        fd_set readable;
+        FD_ZERO( &readable );
+        FD_SET( socket->handle, &readable );
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 10000;
+        const int ready = select( (int) socket->handle + 1, &readable, NULL, NULL, &tv );
+        if ( ready > 0 )
+            return;
+        if ( ready < 0 && errno == EINTR )
+            continue;
+        if ( ready < 0 )
+        {
+            fprintf( stderr, "harness error: %s select failed (errno=%d)\n", phase, errno );
+            rocketnet_check( 0 );
+            return;
+        }
+        if ( rocketnet_platform_time() >= deadline )
+        {
+            fprintf( stderr, "harness timeout: %s did not become readable within the 30 s watchdog; this is a hung harness, not a transport performance failure\n", phase );
+            rocketnet_check( 0 );
+            return;
+        }
+    }
+}
+
+static void rocketnet_test_platform_socket_exchange( const char * address, int mode, float timeout )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, address );
+    rocketnet_address_parse( &local_address, address );
+
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, mode, timeout, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+    local_address.port = bind_address.port;
+
+    uint8_t sent[256];
+    uint8_t received[256];
+    for ( int i = 0; i < (int) sizeof(sent); i++ )
+        sent[i] = (uint8_t) ( i * 37 + 11 );
+    memset( received, 0, sizeof(received) );
+
+    // The wrapper's send returns void by design (errors are dropped by
+    // the platform layer), so a successful send is proven by the exact
+    // receipt asserted below: length, source and byte-exact payload.
+    rocketnet_platform_socket_send_packet( socket, &local_address, sent, (int) sizeof(sent) );
+
+    // Every mode, including blocking with no timeout, first observes
+    // readiness under the shared harness watchdog, so a missing datagram
+    // fails as a harness timeout instead of hanging in the receive. The
+    // blocking/no-timeout wrapper is still created and exercised by the
+    // one receive below; readiness does not change its mode.
+    rocketnet_address_t from;
+    rocketnet_test_wait_socket_readable( socket, address );
+    const int got = rocketnet_platform_socket_receive_packet( socket, &from, received, (int) sizeof(received) );
+    rocketnet_check( got == (int) sizeof(sent) );
+
+    rocketnet_check( from.type == bind_address.type );
+    rocketnet_check( from.port == local_address.port );
+    rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
+    rocketnet_check( memcmp( received, sent, sizeof(sent) ) == 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
 void rocketnet_test_platform_socket()
 {
-    // non-blocking socket (ipv4)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "127.0.0.1" );
-        rocketnet_address_parse( &local_address, "127.0.0.1" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        while ( rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) ) )
-        {
-            rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        }
-        rocketnet_platform_socket_destroy( socket );
-    }
-
-    // blocking socket with timeout (ipv4)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "127.0.0.1" );
-        rocketnet_address_parse( &local_address, "127.0.0.1" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        while ( rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) ) )
-        {
-            rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        }
-        rocketnet_platform_socket_destroy( socket );
-    }
-
-    // blocking socket with no timeout (ipv4)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "127.0.0.1" );
-        rocketnet_address_parse( &local_address, "127.0.0.1" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
-        rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        rocketnet_platform_socket_destroy( socket );
-    }
-
-    // non-blocking socket (ipv6)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::1]" );
-        rocketnet_address_parse( &local_address, "[::1]" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        while ( rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) ) )
-        {
-            rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        }
-        rocketnet_platform_socket_destroy( socket );
-    }
-
-    // blocking socket with timeout (ipv6)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::1]" );
-        rocketnet_address_parse( &local_address, "[::1]" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        while ( rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) ) )
-        {
-            rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        }
-        rocketnet_platform_socket_destroy( socket );
-    }
-
-    // blocking socket with no timeout (ipv6)
-    {
-        rocketnet_address_t bind_address;
-        rocketnet_address_t local_address;
-        rocketnet_address_parse( &bind_address, "[::1]" );
-        rocketnet_address_parse( &local_address, "[::1]" );
-        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f, 64*1024, 64*1024 );
-        local_address.port = bind_address.port;
-        rocketnet_check( socket );
-        uint8_t packet[256];
-        memset( packet, 0, sizeof(packet) );
-        rocketnet_platform_socket_send_packet( socket, &local_address, packet, sizeof(packet) );
-        rocketnet_address_t from;
-        rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
-        rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
-        rocketnet_platform_socket_destroy( socket );
-    }
+    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
+    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
+    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
+    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
+    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
+    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -2191,6 +2160,8 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
                 break;
             rocketnet_platform_sleep( 0.001 );
         }
+        if ( packet_bytes == 0 )
+            fprintf( stderr, "harness timeout: darwin oversize datagram (%s, %d bytes) did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n", pump, sizes[i] );
         rocketnet_check( packet_bytes == sizes[i] );
         rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
         rocketnet_check( memcmp( receive.data, send_data, sizeof(receive.data) ) == 0 );
@@ -2242,27 +2213,98 @@ void rocketnet_test_receive_drops_oversize_datagram()
         rocketnet_platform_sleep( 0.001 );
     }
 
+    if ( packet_bytes == 0 )
+        fprintf( stderr, "harness timeout: oversize datagram did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
+
     // the datagram is reported whole, not truncated to the ceiling
     rocketnet_check( packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 );
 
-    // the transport's prefilter counts it as too large, before any
-    // sealed-packet or integrity work
-    struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
-    struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-    server.counters = &counters;
+#if ROCKETNET_DEV && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
+    // Live portable server + real token client, public CONNECTED handshake.
+    // The private socket registry identifies the sole new client socket; the
+    // over-ceiling datagram is sent through that admitted client socket. No
+    // OS connect and no new seam. This leg exists only in the DEV functional
+    // target; the raw-wrapper production coverage above always runs.
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+    snprintf( server_config.transport, sizeof(server_config.transport), "portable" );
 
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
-    int payload_bytes = 0;
-    int payload_client_index = -1;
-    rocketnet_server_protocol_process_packet( &server, &from, receive_data, packet_bytes,
-                                              0, 0.0, response, &response_bytes,
-                                              payload, &payload_bytes, &payload_client_index );
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "portable" ) == 0 );
+
+    char token_address[64];
+    snprintf( token_address, sizeof(token_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_test_connect_token( token_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.transport, sizeof(client_config.transport), "portable" );
+
+    struct rocketnet_platform_socket_t * before[64];
+    const int num_before = rocketnet_platform_sockets_for_testing( before, 64 );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    struct rocketnet_platform_socket_t * after[64];
+    const int num_after = rocketnet_platform_sockets_for_testing( after, 64 );
+    struct rocketnet_platform_socket_t * client_socket = NULL;
+    for ( int i = 0; i < num_after; i++ )
+    {
+        bool old = false;
+        for ( int j = 0; j < num_before; j++ )
+            old = old || before[j] == after[i];
+        if ( !old )
+        {
+            rocketnet_check( client_socket == NULL );
+            client_socket = after[i];
+        }
+    }
+    rocketnet_check( client_socket != NULL );
+
+    rocketnet_address_t server_address;
+    rocketnet_address_parse( &server_address, "127.0.0.1" );
+    server_address.port = rocketnet_server_transport_port( server );
+
+    const double connect_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - connect_start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || rocketnet_server_transport_num_connected_clients( server ) != 1 )
+        fprintf( stderr, "harness timeout: live oversize handshake did not connect within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+    const uint64_t before_too_large = server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, send_data, (int) sizeof(send_data) );
+
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] > before_too_large )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    if ( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before_too_large )
+        fprintf( stderr, "harness timeout: live server did not count the oversize datagram within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before_too_large + 1 );
+    rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 0 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+#endif
 
     rocketnet_platform_socket_destroy( socket );
 
@@ -2419,6 +2461,117 @@ void rocketnet_test_platform_batch_pump_degraded()
 // also proves the msgx compaction memmove, since kept packets after a
 // mid-chunk skip must move down a slot.
 
+// Completion observation, per injected datagram. On Linux,
+// SK_MEMINFO_RMEM_ALLOC is socket-buffer allocation accounting (each
+// queued datagram adds its skb truesize, overhead included), never a
+// payload byte count: it is used only as a strict-growth signal, waited
+// on after each individual send before the next send, so a growth is
+// attributable to that one datagram. On macOS, FIONREAD is waited on
+// until it reaches the cumulative payload of the real datagrams sent
+// so far; zero-length chaff adds no payload there, and its arrival is
+// carried by the single injector's FIFO order once the following real
+// datagram is observed. Neither value is compared across platforms,
+// and elapsed time is never a pass criterion: one shared 30 s watchdog
+// only ends a hung harness and says so.
+static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket )
+{
+#if defined(__APPLE__)
+    int queued = 0;
+    if ( ioctl( socket->handle, FIONREAD, &queued ) != 0 )
+        return -1;
+    return queued;
+#elif defined(__linux__)
+    uint32_t mem[SK_MEMINFO_VARS];
+    socklen_t len = sizeof(mem);
+    if ( getsockopt( socket->handle, SOL_SOCKET, SO_MEMINFO, mem, &len ) != 0 )
+        return -1;
+    return (int) mem[SK_MEMINFO_RMEM_ALLOC];
+#else
+    (void) socket;
+    return -1;
+#endif
+}
+
+struct rocketnet_test_queue_wait_t
+{
+    int accounting;
+    int payload_bytes;
+    double deadline;
+};
+
+static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
+{
+    wait->accounting = rocketnet_test_queue_accounting( socket );
+    wait->payload_bytes = 0;
+    wait->deadline = rocketnet_platform_time() + 30.0;
+    if ( wait->accounting < 0 )
+    {
+        fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
+        rocketnet_check( 0 );
+    }
+}
+
+static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, int datagram_bytes, const char * phase )
+{
+    wait->payload_bytes += datagram_bytes;
+    const int target_payload = wait->payload_bytes;
+#if defined(__linux__)
+    const int target_accounting = wait->accounting;
+    (void) target_payload;
+#elif defined(__APPLE__)
+    if ( datagram_bytes == 0 )
+        return;
+#else
+    fprintf( stderr, "harness error: %s has no queue completion observation on this platform\n", phase );
+    rocketnet_check( 0 );
+    return;
+#endif
+    for ( ;; )
+    {
+        const int queued = rocketnet_test_queue_accounting( socket );
+        if ( queued < 0 )
+        {
+            fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
+            rocketnet_check( 0 );
+            return;
+        }
+#if defined(__linux__)
+        if ( queued > target_accounting )
+        {
+            wait->accounting = queued;
+            return;
+        }
+#else
+        if ( queued >= target_payload )
+        {
+            wait->accounting = queued;
+            return;
+        }
+#endif
+        fd_set readable;
+        FD_ZERO( &readable );
+        FD_SET( socket->handle, &readable );
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 10000;
+        const int ready = select( socket->handle + 1, &readable, NULL, NULL, &tv );
+        if ( ready < 0 && errno == EINTR )
+            continue;
+        if ( ready < 0 )
+        {
+            fprintf( stderr, "harness error: %s select failed (errno=%d)\n", phase, errno );
+            rocketnet_check( 0 );
+            return;
+        }
+        if ( rocketnet_platform_time() >= wait->deadline )
+        {
+            fprintf( stderr, "harness timeout: %s did not complete within the 30 s watchdog; this is a hung harness, not a transport performance failure\n", phase );
+            rocketnet_check( 0 );
+            return;
+        }
+    }
+}
+
 static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NULL )
 {
     rocketnet_address_t bind_address;
@@ -2443,7 +2596,10 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     const int num_real = 48;
     uint8_t real_packet[256];
     int sent_real = 0;
+    rocketnet_test_queue_wait_t batch_wait;
+    rocketnet_test_queue_wait_init( socket, &batch_wait, "batch chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
     for ( int i = 0; i < num_real; i++ )
     {
         const int bytes = 24 + i;
@@ -2451,39 +2607,26 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
         for ( int j = 1; j < bytes; j++ )
             real_packet[j] = (uint8_t) ( 3 * i + j );
         rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr*) &to, sizeof(to) ) == bytes );
+        rocketnet_test_queue_wait_datagram( socket, &batch_wait, bytes, "batch chaff exchange" );
         sent_real++;
         if ( ( i % 2 ) == 1 )
+        {
             rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+            rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
+        }
     }
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
 
     // drain through the batch pump: every real packet, in order, intact --
     // and in ONE receive_packets call, because a retry loop here greens
     // over the exact bug this test names (the review measured it: an
     // unfixed path consumes chaff between calls, so retries make
     // progress). loopback arrival is asynchronous (also measured: a
-    // recvfrom immediately after sendto answers EAGAIN), so the wait is
-    // on ARRIVAL -- readability, then a settle window orders of magnitude
-    // past loopback flight time -- and never on the drain itself. the
-    // injector socket's FIFO means readability plus the settle has every
-    // datagram above queued before the one drain call runs.
-
-    {
-        double deadline = rocketnet_platform_time() + 5.0;
-        for ( ;; )
-        {
-            fd_set readable;
-            FD_ZERO( &readable );
-            FD_SET( socket->handle, &readable );
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 100000;
-            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
-                break;
-            rocketnet_check( rocketnet_platform_time() < deadline );
-        }
-        usleep( 200000 );
-    }
+    // recvfrom immediately after sendto answers EAGAIN), so each send
+    // above is waited on individually before the next: on Linux by
+    // queue-accounting growth for that datagram, on macOS by cumulative
+    // real payload (chaff carried by the injector's FIFO). No settle sleep.
 
     static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
     static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
@@ -2503,35 +2646,34 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
             rocketnet_check( packet[j] == (uint8_t) ( 3 * i + j ) );
     }
 
+    // Drain only trailing zero-length chaff. The 48 real packets are already
+    // validated above; this is not a retry of the batch oracle and does not
+    // accumulate partial receives. It gives the per-packet phase a clean queue.
+
+    uint8_t cleanup[ROCKETNET_TEST_PUMP_STRIDE];
+    rocketnet_address_t cleanup_from;
+    while ( rocketnet_platform_socket_receive_packet( socket, &cleanup_from, cleanup, sizeof(cleanup) ) > 0 )
+    {
+    }
+
     // and the per-packet primitive itself skips chaff: one zero-length
     // then one real packet, and the FIRST single-packet call must hand
     // back the real one -- a retry loop here would green over a
     // per-packet path that still reads chaff as drain-end
 
+    rocketnet_test_queue_wait_t single_wait;
+    rocketnet_test_queue_wait_init( socket, &single_wait, "single-packet chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, 0, "single-packet chaff exchange" );
     uint8_t single[64];
     memset( single, 0x5a, sizeof(single) );
     rocketnet_check( sendto( injector, single, sizeof(single), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(single) );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, (int) sizeof(single), "single-packet chaff exchange" );
 
-    // the same arrival wait, then the FIRST per-packet call must hand
-    // back the real packet through the chaff
-
-    {
-        double deadline = rocketnet_platform_time() + 5.0;
-        for ( ;; )
-        {
-            fd_set readable;
-            FD_ZERO( &readable );
-            FD_SET( socket->handle, &readable );
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 100000;
-            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
-                break;
-            rocketnet_check( rocketnet_platform_time() < deadline );
-        }
-        usleep( 200000 );
-    }
+    // completion-driven arrival for the per-packet call: each datagram
+    // above was observed queued before the next was sent, so the chaff
+    // is ahead of the real datagram and the FIRST call below must skip
+    // it, not a retry.
 
     uint8_t single_received[ROCKETNET_TEST_PUMP_STRIDE];
     rocketnet_address_t single_from;

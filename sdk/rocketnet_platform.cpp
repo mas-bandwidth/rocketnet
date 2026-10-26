@@ -1878,7 +1878,6 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                     rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
                     rocketnet_platform_note_send_failure( socket );
                 }
-                sent = count;
                 break;
             }
 
