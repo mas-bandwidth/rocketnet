@@ -12,10 +12,10 @@
 #   replay-delta-1-3   the quick per-commit instance of harness_replay_near,
 #                      admitting deltas 1, 2, and 3.
 #   replay-near-4096   the full declared instance of the same source-bound
-#                      harness, admitting deltas 1..4095. The production
-#                      implementation clears at most 64 words rather than
-#                      walking the delta, but the retained exact-head run in
-#                      full-bounds-results.md still timed out in the solver.
+#                      harness, admitting deltas 1..4095. It proves the two
+#                      disjoint production range-clear paths separately and
+#                      requires an intended-failure reachability control for
+#                      each path before accepting either result.
 #   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1:
 #                      - rocketnet_reconstruct_near (k=32, 2^32 <= expected <
 #                        2^64 - 2^32): keeps wire low 32 bits, |result -
@@ -120,12 +120,57 @@ replay-delta-1-3: proof_replay_advance.c
 	    --function harness_replay_near proof_replay_advance.c
 
 # The full declared near-window instance. Unwind 65 initializes all 64
-# symbolic words and covers the production range-clear loop.
+# symbolic words and covers either production range-clear path. The path
+# predicates partition, but do not reduce, the full delta 1..4095 domain.
+CBMC_REPLAY_TIMEOUT ?= 1800
+CBMC_REPLAY_MEMORY_KB ?= 16000000
+CBMC_REPLAY_SOLVER ?= cadical
+
+define run_replay_near_path
+	@command -v $(CBMC) >/dev/null || { echo "replay-near-4096-$(1): $(CBMC) not on PATH" >&2; exit 1; }; \
+	command -v $(CBMC_REPLAY_SOLVER) >/dev/null || { echo "replay-near-4096-$(1): $(CBMC_REPLAY_SOLVER) not on PATH" >&2; exit 1; }; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	status=0; \
+	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
+	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
+	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
+	    --function $(2) proof_replay_advance.c ) \
+	    > "$$work/proof.log" 2>&1 || status=$$?; \
+	cat "$$work/proof.log"; \
+	if [ $$status -eq 124 ]; then echo "replay-near-4096-$(1) HOLD timeout after $(CBMC_REPLAY_TIMEOUT)s"; exit 1; fi; \
+	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD out of memory"; exit 1; fi; \
+	if grep -q 'UNKNOWN' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD UNKNOWN"; exit 1; fi; \
+	if grep -Eqi 'unwinding assertion.*FAILURE|FAILURE.*unwinding assertion' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD unwinding assertion failed"; exit 1; fi; \
+	if [ $$status -ne 0 ] || ! grep -q '^VERIFICATION SUCCESSFUL' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD exit=$$status"; exit 1; fi; \
+	echo "replay-near-4096-$(1) VERIFICATION SUCCESSFUL full-domain=1..$$(expr $(REPLAY_WINDOW_BITS) - 1) partition=$(1) unwind=65"; \
+	status=0; \
+	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
+	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
+	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) -DREPLAY_REACHABILITY_WITNESS=1 \
+	    --function $(2) proof_replay_advance.c ) \
+	    > "$$work/reachability.log" 2>&1 || status=$$?; \
+	cat "$$work/reachability.log"; \
+	if [ $$status -eq 124 ]; then echo "replay-near-4096-$(1)-reachability HOLD timeout after $(CBMC_REPLAY_TIMEOUT)s"; exit 1; fi; \
+	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/reachability.log"; then echo "replay-near-4096-$(1)-reachability HOLD out of memory"; exit 1; fi; \
+	if grep -q 'UNKNOWN' "$$work/reachability.log"; then echo "replay-near-4096-$(1)-reachability HOLD UNKNOWN"; exit 1; fi; \
+	if grep -Eqi 'unwinding assertion.*FAILURE|FAILURE.*unwinding assertion' "$$work/reachability.log"; then echo "replay-near-4096-$(1)-reachability HOLD unwinding assertion failed"; exit 1; fi; \
+	failures=$$(grep -c ': FAILURE$$' "$$work/reachability.log" || true); \
+	if [ $$status -eq 10 ] && [ $$failures -eq 1 ] && \
+	   grep -q '^VERIFICATION FAILED' "$$work/reachability.log" && \
+	   grep -q 'replay path reachability negative control' "$$work/reachability.log"; then \
+	  echo "replay-near-4096-$(1)-reachability EXPECTED FAILURE"; \
+	else \
+	  echo "replay-near-4096-$(1)-reachability HOLD: expected assertion did not fail alone (exit=$$status failures=$$failures)"; exit 1; \
+	fi
+endef
+
 replay-near-4096: proof_replay_advance.c
 	@echo "replay-near-4096 bound delta 1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
-	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
-	    --function harness_replay_near proof_replay_advance.c
+	$(call run_replay_near_path,nonwrapping,harness_replay_near_nonwrapping)
+	$(call run_replay_near_path,wrapping,harness_replay_near_wrapping)
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"

@@ -1,6 +1,7 @@
 # CBMC and ESBMC proof inventory
 
-Inventory base: RocketNet `ef0229e87240cadf6e3b2376d2f72782d5fd7c97`.
+Inventory recovery base: RocketNet `b8058dc3a7bf84eb9d7899315aed1b9d62ff7f53`
+(the first attempt ran at `ef0229e87240cadf6e3b2376d2f72782d5fd7c97`).
 This file distinguishes a harness that compiles the current SDK body from a
 copy of a body, and a retained historical result from an execution at this
 exact source. A timeout, resource exhaustion, `UNKNOWN`, failed unwinding
@@ -8,16 +9,17 @@ assertion, skipped property, or smaller diagnostic bound is not a pass.
 
 ## Exact-head execution status
 
-The full-bound completion run is recorded in `full-bounds-results.md` and its
-raw logs. Historical `results.md` files remain useful design evidence, but are
-not exact-head execution receipts when the included SDK translation unit
-changed after the recorded run.
+The first full-bound completion run is recorded in `full-bounds-results.md`.
+The reviewed recovery decomposition and its second timeout are recorded in
+`full-bounds-recovery-results.md`. Historical `results.md` files remain useful
+design evidence, but are not exact-head execution receipts when the included
+SDK translation unit changed after the recorded run.
 
 ## Harnesses and claims
 
 | Target / harness | Checker and source binding | Property and assumptions | Bound and unwind | Reachability / negative control | Exact-head status |
 | --- | --- | --- | --- | --- | --- |
-| `replay-near-4096` / `harness_replay_near` | CBMC; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Delta 1..4095; 64 window words; global unwind 65 covers 64-word initialization and the production range-clear loop. | The arbitrary word quantifies all 64 words, but no separate replay reachability/negative-control execution was retained. The timed-out run supplies no reachability verdict. | **HOLD** in `full-bounds-results.md`: timeout, no checker verdict. |
+| `replay-near-4096` / `harness_replay_near_nonwrapping`, `harness_replay_near_wrapping` | CBMC; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. The wrappers partition only the production `end <= 4096` / `end > 4096` branch. `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Full delta 1..4095 across the disjoint/exhaustive partitions; 64 window words; global unwind 65 covers 64-word initialization and either production range-clear path. | Each wrapper has a reviewed concrete intended-failure control after the production call and common assertions. Neither control ran because the first partition timed out. | **HOLD** in `full-bounds-recovery-results.md`: nonwrapping timed out in CaDiCaL; wrapping and both controls did not start. |
 | `replay-far` / `harness_replay_far` | CBMC; includes current `sdk/rocketnet_replay.cpp` | For delta at least 4096, the production advance clears every word, sets only the received bit, and advances the high mark. The high mark is restricted only enough to make the subtraction defined. | Full far range; 64 words; unwind 65. | All 64 result words are asserted. | Historical default-target result only until rerun at this head. |
 | `reconstruct` | CBMC; copied arithmetic leaves from `sdk/rocketnet_protocol.cpp`, not the current SDK body | 32-bit and 24-bit reconstruction keeps the wire low bits, selects the documented nearest candidate, and round-trips an in-window value. | One arithmetic step; unwind 1. | Direct assertions, no loop assumptions. | Not a source-specific proof; current SDK changed after the harness was written. |
 | `ack-run-bound-8`, `ack-run-full-4096` / `harness_ack_apply_run` | ESBMC C++17; includes current `sdk/rocketnet_ack.cpp` and calls its static production leaf | A symbolic in-window run has matching live records and exact `sent_written`, `sent_held`, and `sent_unacked` identities; each record's prior ack state is symbolic. Records carry no packet or aggregate id and use a negative RTT sample. The production bitmap walk must count every and only newly acked record, visit it once, retain live identity, clear unacked identity, produce no unknown/batch-full result, and update `largest_acked_sequence`. | Required run 1..8, then declared retained-window run 1..4096. Run-8 unwind 65; full unwind 4097. | `ack-run-negative-control` requires a newly unacked record and negates the observed production visit count after the call. It must fail on the named assertion. | Source-binding syntax passed; all three checker executions were not started after the replay stop condition. |
