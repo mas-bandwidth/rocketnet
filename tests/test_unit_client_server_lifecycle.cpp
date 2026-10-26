@@ -1869,7 +1869,115 @@ static void lifecycle_drain_client_counts( rocketnet_client_t * client, uint8_t 
     }
 }
 
-static void lifecycle_check_budget_matches_oracle( const rn_message_connection_t * conn, const rocketnet_send_budget_t * oracle )
+struct lifecycle_expected_budget_t
+{
+    uint32_t kbps;
+    double bytes_per_second;
+    double depth;
+    double tokens;
+    double last_time;
+    int reliable_waiting;
+    uint64_t bytes_spent;
+    uint64_t unreliable_dropped;
+    uint64_t unreliable_dropped_bytes;
+};
+
+static lifecycle_expected_budget_t lifecycle_expected_budget_capture( const rn_message_connection_t * conn )
+{
+    lifecycle_expected_budget_t exp;
+    memset( &exp, 0, sizeof( exp ) );
+    check( conn != NULL );
+    if ( !conn )
+        return exp;
+    exp.kbps = conn->budget.kbps;
+    exp.bytes_per_second = conn->budget.bytes_per_second;
+    exp.depth = conn->budget.depth;
+    exp.tokens = conn->budget.tokens;
+    exp.last_time = conn->budget.last_time;
+    exp.reliable_waiting = conn->budget.reliable_waiting;
+    exp.bytes_spent = conn->budget.bytes_spent;
+    exp.unreliable_dropped = conn->budget.unreliable_dropped;
+    exp.unreliable_dropped_bytes = conn->budget.unreliable_dropped_bytes;
+    return exp;
+}
+
+static void lifecycle_expected_budget_apply_rate( lifecycle_expected_budget_t * exp, uint32_t kbps )
+{
+    exp->kbps = kbps;
+    exp->bytes_per_second = (double) kbps * ( 1000.0 / 8.0 );
+    const double window_bytes = exp->bytes_per_second * 0.1;
+    exp->depth = window_bytes < (double) ROCKETNET_SEND_BUDGET ? (double) ROCKETNET_SEND_BUDGET : window_bytes;
+}
+
+static void lifecycle_expected_budget_init( lifecycle_expected_budget_t * exp, uint32_t kbps, double now )
+{
+    memset( exp, 0, sizeof( *exp ) );
+    lifecycle_expected_budget_apply_rate( exp, kbps );
+    exp->tokens = exp->depth;
+    exp->last_time = now;
+}
+
+static void lifecycle_expected_budget_refill( lifecycle_expected_budget_t * exp, double now )
+{
+    if ( now > exp->last_time )
+    {
+        exp->tokens += exp->bytes_per_second * ( now - exp->last_time );
+        if ( exp->tokens > exp->depth )
+            exp->tokens = exp->depth;
+        exp->last_time = now;
+    }
+}
+
+static void lifecycle_expected_budget_set_kbps( lifecycle_expected_budget_t * exp, uint32_t kbps, double now )
+{
+    lifecycle_expected_budget_refill( exp, now );
+    lifecycle_expected_budget_apply_rate( exp, kbps );
+    if ( exp->tokens > exp->depth )
+        exp->tokens = exp->depth;
+}
+
+static void lifecycle_expected_budget_begin_update( lifecycle_expected_budget_t * exp, double now )
+{
+    lifecycle_expected_budget_refill( exp, now );
+    exp->reliable_waiting = 0;
+}
+
+static int lifecycle_expected_budget_max_wire_bytes( int payload_bytes )
+{
+    const int head_and_payload = ROCKETNET_PACKET_OVERHEAD_BYTES + payload_bytes;
+    const int room = ROCKETNET_SEND_BUDGET - head_and_payload;
+    const int ack_bytes = room < ROCKETNET_ACK_BLOCK_MAX_BYTES ? ( room > 0 ? room : 0 ) : ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    return head_and_payload + ack_bytes;
+}
+
+static void lifecycle_expected_budget_reliable_send( lifecycle_expected_budget_t * exp, int admitted_wire_bytes, int actual_wire_bytes )
+{
+    check( exp->reliable_waiting == 0 );
+    check( (double) admitted_wire_bytes <= exp->tokens );
+    exp->tokens -= (double) admitted_wire_bytes;
+    exp->bytes_spent += (uint64_t) admitted_wire_bytes;
+    const int refund = admitted_wire_bytes - actual_wire_bytes;
+    check( refund >= 0 );
+    exp->tokens += (double) refund;
+    if ( exp->tokens > exp->depth )
+        exp->tokens = exp->depth;
+    exp->bytes_spent -= (uint64_t) refund;
+}
+
+static void lifecycle_expected_budget_reliable_wait( lifecycle_expected_budget_t * exp, int admitted_wire_bytes )
+{
+    check( exp->reliable_waiting != 0 || (double) admitted_wire_bytes > exp->tokens );
+    exp->reliable_waiting = 1;
+}
+
+static void lifecycle_expected_budget_unreliable_drop( lifecycle_expected_budget_t * exp, int admitted_wire_bytes )
+{
+    check( exp->reliable_waiting != 0 || (double) admitted_wire_bytes > exp->tokens );
+    exp->unreliable_dropped += 1;
+    exp->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
+}
+
+static void lifecycle_check_budget_matches_oracle( const rn_message_connection_t * conn, const lifecycle_expected_budget_t * oracle )
 {
     check( conn != NULL && oracle != NULL );
     if ( !conn || !oracle )
@@ -1961,7 +2069,7 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
         lifecycle_pump( &world );
 
     // Negative values while connected return INVALID_ARGUMENT without changing budget state.
-    const rocketnet_send_budget_t saved_budget = conn->budget;
+    const lifecycle_expected_budget_t saved_budget = lifecycle_expected_budget_capture( conn );
     check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_client_set_send_kbps( client, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_api_misuse_count() == misuse );
@@ -1983,15 +2091,15 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     check( stats_after.messages_dropped_over_budget == stats_before.messages_dropped_over_budget );
     check( rel_got == 4 && unrel_got == 2 );
 
-    // Connected UNLIMITED -> finite 1 kbps (minimum finite limit) and 90 kbps (11250 B/s, depth ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES):
-    // matches independent oracle and admits 1 reliable packet per update while deferring remaining reliable work.
+    // Connected UNLIMITED -> finite 1 kbps (minimum finite limit) and 90 kbps (11250 B/s, depth ROCKETNET_SEND_BUDGET):
+    // matches independent arithmetic oracle and admits 1 reliable packet per update while deferring remaining reliable work.
     rocketnet_message_client_t * mc = rocketnet_client_message_client( client );
     check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
-    rocketnet_send_budget_t oracle;
-    check( rocketnet_send_budget_init( &oracle, 1, mc->object.time ) );
+    lifecycle_expected_budget_t oracle;
+    lifecycle_expected_budget_init( &oracle, 1, mc->object.time );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( rocketnet_client_set_send_kbps( client, 90 ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_send_budget_set_kbps( &oracle, 90, mc->object.time ) );
+    lifecycle_expected_budget_set_kbps( &oracle, 90, mc->object.time );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
 
     for ( int i = 0; i < 3; i++ )
@@ -2005,14 +2113,13 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     stats_after = rn_client_stats_of( client );
     lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
 
-    const int rel_admitted = rocketnet_send_budget_max_wire_bytes( (int) conn->ordered.builder.packet[0].payload_bytes );
+    const int rel_admitted = lifecycle_expected_budget_max_wire_bytes( (int) conn->ordered.builder.packet[0].payload_bytes );
     const int wire_1 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
     check( wire_1 > 1000 && wire_1 <= rel_admitted );
-    rocketnet_send_budget_begin_update( &oracle, update_1_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_NEW_RELIABLE, rel_admitted ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle, rel_admitted, wire_1 );
-    rocketnet_send_budget_begin_update( &oracle, update_1_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted ) == ROCKETNET_SEND_BUDGET_WAIT );
+    lifecycle_expected_budget_begin_update( &oracle, update_1_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_1 );
+    lifecycle_expected_budget_begin_update( &oracle, update_1_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->written == 1 );
     check( stats_after.packets_sent - stats_before.packets_sent == 1 );
@@ -2025,8 +2132,8 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     lifecycle_pump( &world, 0.085 ); // runs update at update_2_time (t + 0.01s), advances world.time by 0.085s (+956.25 B at 90 kbps)
     stats_after = rn_client_stats_of( client );
     lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
-    rocketnet_send_budget_begin_update( &oracle, update_2_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted ) == ROCKETNET_SEND_BUDGET_WAIT );
+    lifecycle_expected_budget_begin_update( &oracle, update_2_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->written == 0 );
     check( rel_got == 0 && unrel_got == 0 );
@@ -2039,11 +2146,10 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
     const int wire_2 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
     check( wire_2 > 1000 && wire_2 <= rel_admitted );
-    rocketnet_send_budget_begin_update( &oracle, update_3_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle, rel_admitted, wire_2 );
-    rocketnet_send_budget_begin_update( &oracle, update_3_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted ) == ROCKETNET_SEND_BUDGET_WAIT );
+    lifecycle_expected_budget_begin_update( &oracle, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_2 );
+    lifecycle_expected_budget_begin_update( &oracle, update_3_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->written == 1 );
     check( stats_after.packets_sent - stats_before.packets_sent == 1 );
@@ -2051,7 +2157,7 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
 
     // Setting kbps to 0 while connected restores the directional default (1000 kbps = 125000 B/s, depth 12500 B).
     check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_send_budget_set_kbps( &oracle, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, mc->object.time ) );
+    lifecycle_expected_budget_set_kbps( &oracle, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, mc->object.time );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     check( conn->budget.depth == 12500.0 );
@@ -2063,16 +2169,15 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     stats_after = rn_client_stats_of( client );
     lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
     const int wire_3 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
-    rocketnet_send_budget_begin_update( &oracle, update_4_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle, rel_admitted, wire_3 );
+    lifecycle_expected_budget_begin_update( &oracle, update_4_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_3 );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->budget.reliable_waiting == 0 );
     check( rel_got == 1 && unrel_got == 0 );
 
     // Also test when reliable work finishes without deferral, an over-budget unreliable packet is dropped by the builder.
     check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_send_budget_set_kbps( &oracle, 1, mc->object.time ) );
+    lifecycle_expected_budget_set_kbps( &oracle, 1, mc->object.time );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x32, 0 );
     lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x32, 0 );
@@ -2081,11 +2186,10 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     lifecycle_pump( &world, 0.01 );
     stats_after = rn_client_stats_of( client );
     lifecycle_drain_server_counts( world.server, slot, 0x32, &rel_got, &unrel_got, -1, 0, NULL, NULL );
-    const int unrel_admitted = rocketnet_send_budget_max_wire_bytes( 900 + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
-    rocketnet_send_budget_begin_update( &oracle, update_5_time );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_NEW_RELIABLE, rel_admitted ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle, rel_admitted, wire_1 );
-    check( rocketnet_send_budget_admit( &oracle, ROCKETNET_SEND_CLASS_UNRELIABLE, unrel_admitted ) == ROCKETNET_SEND_BUDGET_DROP );
+    const int unrel_admitted = lifecycle_expected_budget_max_wire_bytes( 900 + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
+    lifecycle_expected_budget_begin_update( &oracle, update_5_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_1 );
+    lifecycle_expected_budget_unreliable_drop( &oracle, unrel_admitted );
     lifecycle_check_budget_matches_oracle( conn, &oracle );
     check( conn->written == 1 );
     check( conn->budget.reliable_waiting == 0 );
@@ -2093,7 +2197,7 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     check( stats_after.messages_dropped_over_budget - stats_before.messages_dropped_over_budget == 1 );
     check( rel_got == 1 && unrel_got == 0 );
 
-    // Finite maximum ROCKETNET_SEND_KBPS_UNLIMITED - 1 (ROCKETNET_SEND_BUDGET_MAX_KBPS) is accepted as a finite rate.
+    // Finite maximum ROCKETNET_SEND_KBPS_UNLIMITED - 1 is accepted as a finite rate.
     check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) == ROCKETNET_STATUS_OK );
     check( conn->send_budget_enabled == 1 );
     check( conn->budget.kbps == (uint32_t) ( ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) );
@@ -2120,7 +2224,7 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
     for ( int i = 0; i < 12; i++ )
         lifecycle_pump( &world, 1.0 ); // refill 1 kbps bucket after CONFIG exchange
     conn = lifecycle_client_connection( client );
-    check( conn->send_budget_enabled == 1 && conn->budget.kbps == 1 && conn->budget.tokens == (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES );
+    check( conn->send_budget_enabled == 1 && conn->budget.kbps == 1 && conn->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
     for ( int i = 0; i < 3; i++ )
         lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x33, (uint8_t) i );
     lifecycle_pump( &world, 0.01 );
@@ -2213,8 +2317,8 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( conn_b->send_budget_enabled == 1 && conn_b->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && conn_b->budget.depth == 125000.0 );
 
     // Invalid calls while both slots are connected do not alter either slot.
-    const rocketnet_send_budget_t saved_a = conn_a->budget;
-    const rocketnet_send_budget_t saved_b = conn_b->budget;
+    const lifecycle_expected_budget_t saved_a = lifecycle_expected_budget_capture( conn_a );
+    const lifecycle_expected_budget_t saved_b = lifecycle_expected_budget_capture( conn_b );
     check( rocketnet_server_set_send_kbps( server, slot_a, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, slot_b, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_api_misuse_count() == misuse );
@@ -2228,9 +2332,9 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     // Cap slot_a at 1 kbps while slot_b stays at 10000 kbps: only slot_a defers/drops in the next update.
     rocketnet_message_server_t * ms = rocketnet_server_message_server( server );
     check( rocketnet_server_set_send_kbps( server, slot_a, 1 ) == ROCKETNET_STATUS_OK );
-    rocketnet_send_budget_t oracle_a = saved_a;
-    rocketnet_send_budget_t oracle_b = saved_b;
-    check( rocketnet_send_budget_set_kbps( &oracle_a, 1, ms->object.time ) );
+    lifecycle_expected_budget_t oracle_a = saved_a;
+    lifecycle_expected_budget_t oracle_b = saved_b;
+    lifecycle_expected_budget_set_kbps( &oracle_a, 1, ms->object.time );
     lifecycle_check_budget_matches_oracle( conn_a, &oracle_a );
     lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
 
@@ -2258,13 +2362,12 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     lifecycle_drain_client_counts( world.clients[0], 0x41, &rel_a, &unrel_a );
     lifecycle_drain_client_counts( world.clients[1], 0x42, &rel_b, &unrel_b );
 
-    const int rel_admitted_a = rocketnet_send_budget_max_wire_bytes( (int) conn_a->ordered.builder.packet[0].payload_bytes );
+    const int rel_admitted_a = lifecycle_expected_budget_max_wire_bytes( (int) conn_a->ordered.builder.packet[0].payload_bytes );
     const int wire_a_1 = (int) ( stats_a_after.bytes_sent - stats_a_before.bytes_sent ) - 28;
-    rocketnet_send_budget_begin_update( &oracle_a, update_1_time );
-    check( rocketnet_send_budget_admit( &oracle_a, ROCKETNET_SEND_CLASS_NEW_RELIABLE, rel_admitted_a ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle_a, rel_admitted_a, wire_a_1 );
-    rocketnet_send_budget_begin_update( &oracle_a, update_1_time );
-    check( rocketnet_send_budget_admit( &oracle_a, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted_a ) == ROCKETNET_SEND_BUDGET_WAIT );
+    lifecycle_expected_budget_begin_update( &oracle_a, update_1_time );
+    lifecycle_expected_budget_reliable_send( &oracle_a, rel_admitted_a, wire_a_1 );
+    lifecycle_expected_budget_begin_update( &oracle_a, update_1_time );
+    lifecycle_expected_budget_reliable_wait( &oracle_a, rel_admitted_a );
     lifecycle_check_budget_matches_oracle( conn_a, &oracle_a );
 
     check( conn_a->written == 1 );
@@ -2283,9 +2386,9 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( rocketnet_server_set_send_kbps( server, slot_b, 1 ) == ROCKETNET_STATUS_OK );
     lifecycle_check_budget_unlimited( conn_a );
     check( conn_b->send_budget_enabled == 1 && conn_b->budget.kbps == 1 &&
-           conn_b->budget.depth == (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES &&
-           conn_b->budget.tokens == (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES );
-    oracle_b = conn_b->budget;
+           conn_b->budget.depth == (double) ROCKETNET_SEND_BUDGET &&
+           conn_b->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
+    oracle_b = lifecycle_expected_budget_capture( conn_b );
 
     for ( int i = 0; i < 2; i++ )
     {
@@ -2313,13 +2416,12 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( rel_a == 4 && unrel_a == 2 );
 
     // slot_b (1 kbps) admitted 1 reliable packet, deferred 2, and dropped 2 unreliable messages.
-    const int rel_admitted_b = rocketnet_send_budget_max_wire_bytes( (int) conn_b->ordered.builder.packet[0].payload_bytes );
+    const int rel_admitted_b = lifecycle_expected_budget_max_wire_bytes( (int) conn_b->ordered.builder.packet[0].payload_bytes );
     const int wire_b_1 = wire_a_1;
-    rocketnet_send_budget_begin_update( &oracle_b, update_2_time );
-    check( rocketnet_send_budget_admit( &oracle_b, ROCKETNET_SEND_CLASS_NEW_RELIABLE, rel_admitted_b ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle_b, rel_admitted_b, wire_b_1 );
-    rocketnet_send_budget_begin_update( &oracle_b, update_2_time );
-    check( rocketnet_send_budget_admit( &oracle_b, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted_b ) == ROCKETNET_SEND_BUDGET_WAIT );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_2_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_2_time );
+    lifecycle_expected_budget_reliable_wait( &oracle_b, rel_admitted_b );
     lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
     check( conn_b->written == 1 );
     check( srv_after.messages_dropped_over_budget - srv_before.messages_dropped_over_budget == 2 );
@@ -2327,7 +2429,7 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
 
     // Setting slot_b to 0 restores the server directional default (10000 kbps = 1250000 B/s, depth 125000 B) without changing slot_a.
     check( rocketnet_server_set_send_kbps( server, slot_b, 0 ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_send_budget_set_kbps( &oracle_b, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, update_2_time ) );
+    lifecycle_expected_budget_set_kbps( &oracle_b, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, update_2_time );
     lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
     lifecycle_check_budget_unlimited( conn_a );
 
@@ -2338,18 +2440,16 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     stats_b_after = rn_server_client_stats_of( server, slot_b );
     lifecycle_drain_client_counts( world.clients[1], 0x43, &rel_b, &unrel_b );
     check( stats_b_after.packets_sent - stats_b_before.packets_sent == 2 );
-    rocketnet_send_budget_begin_update( &oracle_b, update_3_time );
-    check( rocketnet_send_budget_admit( &oracle_b, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted_b ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle_b, rel_admitted_b, wire_b_1 );
-    rocketnet_send_budget_begin_update( &oracle_b, update_3_time );
-    check( rocketnet_send_budget_admit( &oracle_b, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, rel_admitted_b ) == ROCKETNET_SEND_BUDGET_SEND );
-    rocketnet_send_budget_settle( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
     lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
     check( conn_b->budget.reliable_waiting == 0 );
     check( rel_b == 2 && unrel_b == 0 );
 
     // Finite maximum ROCKETNET_SEND_KBPS_UNLIMITED - 1 on slot_a is accepted as a finite rate without changing slot_b.
-    const rocketnet_send_budget_t saved_b_after = conn_b->budget;
+    const lifecycle_expected_budget_t saved_b_after = lifecycle_expected_budget_capture( conn_b );
     check( rocketnet_server_set_send_kbps( server, slot_a, ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) == ROCKETNET_STATUS_OK );
     check( conn_a->send_budget_enabled == 1 );
     check( conn_a->budget.kbps == (uint32_t) ( ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) );
@@ -2387,7 +2487,7 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     for ( int i = 0; i < 12; i++ )
         lifecycle_pump( &world, 1.0 );
     conn_a = lifecycle_server_connection( server, slot );
-    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == 1 && conn_a->budget.tokens == (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES );
+    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == 1 && conn_a->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
     for ( int i = 0; i < 3; i++ )
         lifecycle_queue_server_message( server, slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x44, (uint8_t) i );
     lifecycle_server_pump( &world, 0.01 );
