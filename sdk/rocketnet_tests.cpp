@@ -496,7 +496,6 @@ void rocketnet_test_bounded_reader_refuses_past_end()
     rocketnet_check( r == before );
 
     r = buffer + 7;
-    before = r;
     v8 = 0;
     rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 1 );
     rocketnet_check( v8 == 8 );
@@ -7106,8 +7105,6 @@ void rocketnet_test_packet_loss_tracker()
     rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
 
     rocketnet_packet_loss_tracker_reset( &tracker );
-
-    sequence = 0;
 
     rocketnet_packet_loss_tracker_packet_received( &tracker, 200 + ROCKETNET_PACKET_LOSS_TRACKER_SAFETY - 1 );
 
