@@ -285,6 +285,37 @@ static void test_config_env_step_driven_is_zero_or_one()
 }
 REGISTER_UNIT_TEST( test_config_env_step_driven_is_zero_or_one );
 
+static bool env_names_disconnect_allowance_resolves( const char * value, int * resolved_value )
+{
+    env_names_setenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE", value );
+    struct rocketnet_server_transport_config_t transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps = 0;
+    const bool resolved = rocketnet_server_config_resolve( NULL, true, &transport, &message, &kbps );
+    env_names_unsetenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" );
+    *resolved_value = transport.disconnect_packets_per_update;
+    int num_fields = 0;
+    const rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    return resolved && rocketnet_config_validate( "server", &transport, fields, num_fields );
+}
+
+static void test_config_env_disconnect_allowance_range()
+{
+    const int values[] = { 1, 9, 64, 1024 };
+    for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
+    {
+        char text[16];
+        snprintf( text, sizeof( text ), "%d", values[i] );
+        int resolved = 0;
+        check( env_names_disconnect_allowance_resolves( text, &resolved ) );
+        check( resolved == values[i] );
+    }
+    int resolved = -1;
+    check( !env_names_disconnect_allowance_resolves( "0", &resolved ) );
+    check( !env_names_disconnect_allowance_resolves( "1025", &resolved ) );
+}
+REGISTER_UNIT_TEST( test_config_env_disconnect_allowance_range );
+
 
 // ---------------------------------------------------------------------------
 // the development simulator variables (rn_dev_env_int, sdk/rocketnet_api.cpp)

@@ -1630,6 +1630,8 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_UPDATE_OK;
+    if ( server->object.link.destroy == rn_server_link_destroy )
+        rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     return rn_message_object_update( &server->object, time );
 }
 

@@ -12513,6 +12513,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] =
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_min_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, disconnect_packets_per_update ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
