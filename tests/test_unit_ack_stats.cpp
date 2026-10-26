@@ -617,7 +617,7 @@ static void test_ack_received_stats_blocks_match_scan_edges()
     const uint64_t S = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     const uint64_t sent_half = S / 2;
     rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, 1, 500, 0, 0, 0, 900.0 ) );
-    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 1, 100, 0, 0, 0, 1000.00 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( endpoint, S + 1, 100, 0, 0, 0, 1000.00 ) == ROCKETNET_ACK_SENT_EVICTED_UNKNOWN );
     rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 2, 200, 0, 0, 0, 1000.25 ) );
     rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 3, 300, 0, 0, 0, 1000.50 ) );
     rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + sent_half + 3, 400, 0, 0, 0, 1001.00 ) );
