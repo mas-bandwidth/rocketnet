@@ -12,12 +12,17 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_address.h"
+#include "rocketnet_config.h"
+#include "rocketnet_base64.h"
+#include <time.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
 #include <chrono>
+#include <string>
 
 static void rocketnet_platform_primitives_check_handler( const char * condition, const char * function, const char * file, int line )
 {
@@ -343,3 +348,460 @@ void rocketnet_test_ack_endpoints_independent_across_threads()
     rocketnet_check( results[0].acked == rounds * 16 );
     rocketnet_check( results[1].acked == rounds * 16 );
 }
+
+#if defined(ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE)
+
+static const char * const rocketnet_platform_environment_probe = "ROCKETNET_PLATFORM_ENVIRONMENT_PROBE";
+
+static void rocketnet_platform_primitives_set_environment( const char * value )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_check( _putenv_s( rocketnet_platform_environment_probe, value ? value : "" ) == 0 );
+#else
+    rocketnet_check( value ? setenv( rocketnet_platform_environment_probe, value, 1 ) == 0 :
+                            unsetenv( rocketnet_platform_environment_probe ) == 0 );
+#endif
+}
+
+static void rocketnet_platform_primitives_environment()
+{
+    std::string saved;
+    bool saved_present = false;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    char * original = NULL;
+    size_t original_bytes = 0;
+    rocketnet_check( _dupenv_s( &original, &original_bytes, rocketnet_platform_environment_probe ) == 0 );
+    if ( original )
+    {
+        saved_present = true;
+        saved = original;
+        free( original );
+    }
+#else
+    const char * original = getenv( rocketnet_platform_environment_probe );
+    if ( original )
+    {
+        saved_present = true;
+        saved = original;
+    }
+#endif
+
+    char value[32];
+    rocketnet_platform_primitives_set_environment( NULL );
+    rocketnet_check( rocketnet_platform_getenv( rocketnet_platform_environment_probe, value, sizeof(value) ) == 0 );
+    rocketnet_check( value[0] == '\0' );
+    rocketnet_platform_primitives_set_environment( "native-platform-path" );
+    rocketnet_check( rocketnet_platform_getenv( rocketnet_platform_environment_probe, value, sizeof(value) ) == 1 );
+    rocketnet_check( strcmp( value, "native-platform-path" ) == 0 );
+    char short_value[4];
+    rocketnet_check( rocketnet_platform_getenv( rocketnet_platform_environment_probe, short_value, sizeof(short_value) ) == -1 );
+    rocketnet_check( short_value[0] == '\0' );
+    rocketnet_platform_primitives_set_environment( saved_present ? saved.c_str() : NULL );
+}
+
+// These guards change the real process environment only in this functional
+// executable. They restore exact values and never enter a library artifact.
+class rocketnet_platform_real_environment_t
+{
+public:
+    explicit rocketnet_platform_real_environment_t( const char * variable ) : name( variable ), present( false )
+    {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        char * value = NULL;
+        size_t bytes = 0;
+        rocketnet_check( _dupenv_s( &value, &bytes, name.c_str() ) == 0 );
+        if ( value ) { present = true; saved = value; free( value ); }
+#else
+        const char * value = getenv( name.c_str() );
+        if ( value ) { present = true; saved = value; }
+#endif
+    }
+    ~rocketnet_platform_real_environment_t() { set( present ? saved.c_str() : NULL ); }
+    void set( const char * value )
+    {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        rocketnet_check( _putenv_s( name.c_str(), value ? value : "" ) == 0 );
+#else
+        rocketnet_check( value ? setenv( name.c_str(), value, 1 ) == 0 : unsetenv( name.c_str() ) == 0 );
+#endif
+    }
+private:
+    std::string name;
+    std::string saved;
+    bool present;
+};
+
+#if !ROCKETNET_DEV
+static int rocketnet_platform_primitives_setenv( const char * name, const char * value )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return _putenv_s( name, value );
+#else
+    return setenv( name, value, 1 );
+#endif
+}
+static int rocketnet_platform_primitives_unsetenv( const char * name )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return _putenv_s( name, "" );
+#else
+    return unsetenv( name );
+#endif
+}
+#endif // #if !ROCKETNET_DEV
+
+static const char * rocketnet_platform_primitives_capture_prefix;
+static int rocketnet_platform_primitives_matching_lines;
+static rocketnet_log_level_t rocketnet_platform_primitives_capture_level;
+static rocketnet_log_level_t rocketnet_platform_primitives_saved_level;
+static void rocketnet_platform_primitives_capture( void *, rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == rocketnet_platform_primitives_capture_level && rocketnet_platform_primitives_capture_prefix &&
+         strstr( message, rocketnet_platform_primitives_capture_prefix ) )
+        ++rocketnet_platform_primitives_matching_lines;
+}
+static void rocketnet_platform_primitives_capture_begin( const char * prefix, rocketnet_log_level_t level = ROCKETNET_LOG_LEVEL_ERROR )
+{
+    rocketnet_platform_primitives_capture_prefix = prefix;
+    rocketnet_platform_primitives_capture_level = level;
+    rocketnet_platform_primitives_matching_lines = 0;
+    rocketnet_platform_primitives_saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( rocketnet_platform_primitives_capture, NULL );
+}
+static void rocketnet_platform_primitives_capture_end()
+{
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( rocketnet_platform_primitives_saved_level );
+}
+
+static void rocketnet_platform_primitives_key_warning_environment()
+{
+    rocketnet_platform_real_environment_t transport( "ROCKETNET_SERVER_TRANSPORT" );
+    transport.set( NULL );
+    rocketnet_platform_real_environment_t budget( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+    budget.set( "1" );
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
+    config.protocol_id = 1;
+    // a private filter: DEV=0 refuses the published test filter before the ladder
+    {
+        const uint8_t private_filter[4] = { 0xA1, 0xB2, 0xC3, 0xD4 };
+        memcpy( config.packet_filter, private_filter, sizeof( private_filter ) );
+    }
+    snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
+    int status = -1;
+    rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    rocketnet_check( rocketnet_platform_primitives_matching_lines == 0 );
+    rocketnet_platform_primitives_capture_end();
+}
+
+static void rocketnet_platform_primitives_public_config_environment()
+{
+    rocketnet_platform_real_environment_t client_env( "ROCKETNET_CLIENT_SEND_KBPS" );
+    rocketnet_platform_real_environment_t server_env( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_client_config_t client;
+    rocketnet_check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    client_env.set( "not-a-number" );
+    rocketnet_check( rocketnet_client_create( NULL, &client, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    client_env.set( NULL );
+    rocketnet_server_config_t server;
+    rocketnet_check( rocketnet_server_default_config( &server ) == ROCKETNET_STATUS_OK );
+    server_env.set( "not-a-number" );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+}
+
+#if !ROCKETNET_DEV
+static void rocketnet_platform_primitives_production_config( rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_default_config( config );
+    memset( config->backend_public_key, 0x42, 32 );
+    memset( config->server_public_key, 0x43, 32 );
+    memset( config->server_secret_key, 0x44, 32 );
+    config->protocol_id = 1;
+    {
+        const uint8_t private_filter[4] = { 0xA1, 0xB2, 0xC3, 0xD4 };
+        memcpy( config->packet_filter, private_filter, sizeof( private_filter ) );
+    }
+    config->max_clients = 1;
+    snprintf( config->transport, sizeof(config->transport), "%s", "portable" );
+}
+
+static const char * rocketnet_platform_primitives_native_transport()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    return "gso";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    return "msgx";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return "iocp";
+#else
+    return "portable";
+#endif
+}
+
+static void rocketnet_platform_primitives_production_status_environment()
+{
+    rocketnet_platform_real_environment_t transport( "ROCKETNET_SERVER_TRANSPORT" );
+    transport.set( NULL );
+    rocketnet_platform_real_environment_t maximum( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_platform_real_environment_t budget( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+    maximum.set( "not-a-number" );
+    int status = -1;
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    maximum.set( NULL );
+    rocketnet_server_transport_config_t config;
+    rocketnet_platform_primitives_production_config( &config );
+    budget.set( "not-a-number" );
+    status = -1;
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    budget.set( "1" );
+    const char * const transports[] = { rocketnet_platform_primitives_native_transport(), "portable" };
+    for ( int i = 0; i < 2; ++i )
+    {
+        snprintf( config.transport, sizeof(config.transport), "%s", transports[i] );
+        status = -1;
+        rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    }
+}
+
+static void rocketnet_platform_primitives_production_simulator_environment()
+{
+    rocketnet_platform_real_environment_t client_drop( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
+    rocketnet_platform_real_environment_t client_reverse( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" );
+    rocketnet_platform_real_environment_t server_drop( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" );
+    rocketnet_platform_real_environment_t server_reverse( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" );
+    client_drop.set( NULL ); client_reverse.set( NULL ); server_drop.set( NULL ); server_reverse.set( NULL );
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    snprintf( client_config.transport, sizeof(client_config.transport), "%s", "portable" );
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_platform_primitives_production_config( &server_config );
+    int client_fields = 0;
+    const rocketnet_config_field_t * client_table = rocketnet_client_transport_config_fields( &client_fields );
+    int server_fields = 0;
+    const rocketnet_config_field_t * server_table = rocketnet_server_transport_config_fields( &server_fields );
+    rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = 1;
+    signed_fields.create_timestamp = 1;
+    signed_fields.expire_timestamp = UINT64_C(1) << 40;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127; signed_fields.ipv4_address[3] = 1;
+    signed_fields.ipv4_address[4] = 0x40; signed_fields.ipv4_address[5] = 0x9c;
+    memset( signed_fields.server_public_key, 0x43, sizeof(signed_fields.server_public_key) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    memset( token, 0, sizeof(token) );
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_platform_primitives_capture_begin( "simulated_drop_every_nth" );
+    rocketnet_check( rocketnet_client_transport_create_ex( NULL, token, &client_config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
+    rocketnet_platform_primitives_capture_end();
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
+
+    server_config.protocol_id = 1;
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_platform_primitives_capture_begin( "simulated_reverse_window" );
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
+    rocketnet_platform_primitives_capture_end();
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
+
+    // the env overlay reaches both fields on both configs
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
+    rocketnet_client_transport_default_config_current( &client_config );
+    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_table, client_fields ) );
+    rocketnet_check( client_config.simulated_drop_every_nth == 7 );
+    rocketnet_check( client_config.simulated_reverse_window == 4 );
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" ) == 0 );
+
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "5" ) == 0 );
+    rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "3" ) == 0 );
+    rocketnet_server_transport_default_config_current( &server_config );
+    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_table, server_fields ) );
+    rocketnet_check( server_config.simulated_drop_every_nth == 5 );
+    rocketnet_check( server_config.simulated_reverse_window == 3 );
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) == 0 );
+    rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) == 0 );
+}
+
+static void rocketnet_platform_primitives_stop_pair( rocketnet_client_t * client, rocketnet_server_t * server )
+{
+    rocketnet_client_disconnect( client );
+    rocketnet_server_stop( server );
+    const double deadline = rocketnet_platform_time() + 10.0;
+    while ( ( !rocketnet_client_disconnected( client ) || !rocketnet_server_stopped( server ) ) && rocketnet_platform_time() < deadline )
+    {
+        const double now = rocketnet_platform_time();
+        rocketnet_client_update( client, now );
+        rocketnet_server_update( server, now );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_disconnected( client ) && rocketnet_server_stopped( server ) );
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
+static void rocketnet_platform_primitives_production_filter_environment()
+{
+    rocketnet_platform_real_environment_t client_filter( "ROCKETNET_CLIENT_PACKET_FILTER" );
+    rocketnet_platform_real_environment_t server_filter( "ROCKETNET_SERVER_PACKET_FILTER" );
+    rocketnet_platform_real_environment_t client_transport( "ROCKETNET_CLIENT_TRANSPORT" );
+    rocketnet_platform_real_environment_t server_transport( "ROCKETNET_SERVER_TRANSPORT" );
+    client_transport.set( "portable" );
+    server_transport.set( "portable" );
+    const uint8_t private_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
+    char encoded_filter[16];
+    rocketnet_check( rocketnet_base64_encode_data( private_filter, sizeof(private_filter), encoded_filter, sizeof(encoded_filter) ) > 0 );
+    client_filter.set( encoded_filter );
+    server_filter.set( encoded_filter );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    uint8_t seed[32];
+    memset( seed, 0x3C, sizeof(seed) );
+    rocketnet_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    rocketnet_server_config_t server_config;
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = UINT64_C(0x2E50C0FFEE0A11CE);
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public, sizeof(backend_public) );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    // a fixed port: the served address is the create address, and the token
+    // writer refuses a port of 0
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:48123", NULL, &server_config, &status );
+    rocketnet_check( server && status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    rocketnet_client_config_t client_config;
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    rocketnet_check( client && status == ROCKETNET_STATUS_OK );
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    rocketnet_check( rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV4, address, sizeof(address) ) );
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_public );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const char * addresses[] = { address };
+    const time_t wall_now = time( NULL );
+    rocketnet_check( wall_now != (time_t) -1 );
+    rocketnet_check( rocketnet_write_production_connect_token( backend_secret, server_public, server_config.protocol_id,
+        addresses, 1, 0x3000, (uint64_t) wall_now, (uint64_t) wall_now + 60, 15, NULL, token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+    char token_text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    rocketnet_check( rocketnet_base64_encode_data( token, sizeof(token), token_text, sizeof(token_text) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+    rocketnet_check( rocketnet_client_connect( client, token_text ) == ROCKETNET_STATUS_OK );
+    const double deadline = rocketnet_platform_time() + 10.0;
+    while ( ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server, 0 ) ) &&
+            rocketnet_platform_time() < deadline )
+    {
+        const double now = rocketnet_platform_time();
+        rocketnet_client_update( client, now );
+        rocketnet_server_update( server, now );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_client_connected( server, 0 ) );
+    rocketnet_platform_primitives_stop_pair( client, server );
+
+    const uint8_t test_filter[ROCKETNET_PACKET_FILTER_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_check( rocketnet_base64_encode_data( test_filter, sizeof(test_filter), encoded_filter, sizeof(encoded_filter) ) > 0 );
+    client_filter.set( encoded_filter );
+    server_filter.set( encoded_filter );
+    memcpy( server_config.packet_filter, private_filter, sizeof(private_filter) );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+    memcpy( client_config.packet_filter, private_filter, sizeof(private_filter) );
+    status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+}
+#endif // #if !ROCKETNET_DEV
+
+struct rocketnet_platform_primitives_priority_thread_t
+{
+    rocketnet_platform_wake_t * wake;
+    bool signaled;
+};
+
+static void rocketnet_platform_primitives_priority_thread( void * context )
+{
+    rocketnet_platform_primitives_priority_thread_t * state =
+        (rocketnet_platform_primitives_priority_thread_t *) context;
+    state->signaled = rocketnet_platform_wake_wait( state->wake, false, 30.0 );
+}
+
+static void rocketnet_platform_primitives_priority()
+{
+    rocketnet_platform_primitives_priority_thread_t state = { rocketnet_platform_wake_create( NULL, NULL ), false };
+    rocketnet_check( state.wake );
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_platform_primitives_priority_thread, &state );
+    rocketnet_check( thread );
+    const uint64_t refusals = rocketnet_platform_thread_priority_refusals();
+    rocketnet_platform_client_thread_priority( thread );
+    rocketnet_platform_server_thread_priority( thread );
+    const uint64_t after_priority = rocketnet_platform_thread_priority_refusals();
+    rocketnet_check( after_priority >= refusals && after_priority - refusals <= 2 );
+    rocketnet_platform_wake_set( state.wake );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+    rocketnet_platform_wake_destroy( state.wake );
+    rocketnet_check( state.signaled );
+}
+
+int main()
+{
+    const bool priority_enabled = rocketnet_platform_thread_priority_enabled();
+    rocketnet_thread_priority( true );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_platform_primitives_environment();
+    rocketnet_platform_primitives_public_config_environment();
+    rocketnet_platform_primitives_key_warning_environment();
+#if !ROCKETNET_DEV
+    rocketnet_platform_primitives_production_status_environment();
+    rocketnet_platform_primitives_production_simulator_environment();
+    rocketnet_platform_primitives_production_filter_environment();
+#endif // #if !ROCKETNET_DEV
+
+    rocketnet_address_t address;
+    memset( &address, 0, sizeof(address) );
+    rocketnet_check( rocketnet_platform_hostname_resolve( "localhost", "40000", &address ) );
+    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV4 || address.type == ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_check( address.port == 40000 );
+    const bool ipv6_available = rocketnet_platform_client_ipv6_available();
+
+    rocketnet_test_platform_thread();
+    rocketnet_platform_primitives_priority();
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_check( rocketnet_frame_sync_create_ex( NULL, 0.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_test_frame_sync_wait();
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_thread_priority( priority_enabled );
+    printf( "platform primitives OK: DEV=%d, real environment/lookup/thread/frame sync, IPv6=%d\n",
+            ROCKETNET_DEV, ipv6_available ? 1 : 0 );
+    return 0;
+}
+
+#endif // #if defined(ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE)
