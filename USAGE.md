@@ -850,16 +850,47 @@ Three calls fill caller-owned structs:
 `rocketnet_client_stats` fills `struct rocketnet_client_stats_t`,
 `rocketnet_server_stats` fills `struct rocketnet_server_stats_t`, and
 `rocketnet_server_client_stats` fills `struct rocketnet_server_client_stats_t`
-for one slot. Public fields, units and meanings are unchanged. Cumulative
-counts such as `packets_sent`, `bytes_received`, `messages_resent`,
-`receipts_lost`, `messages_dropped_over_budget` and
-`messages_dropped_not_connected` remain monotonic over their documented object
-or connection lifetime. The measured values are doubles: `rtt_ms` and
-`jitter_ms` in milliseconds, `packet_loss_percent` as a percentage, and
-trailing rates such as `bandwidth_sent_kbps`. Per-client fields cover the
-slot's current connection and reset when a new connection takes the slot. The
-client and server structs also carry the process-wide counts `api_misuses` and
-`thread_priority_refusals`.
+for one slot. Public fields, units and meanings are unchanged:
+
+- **Client stats (`rocketnet_client_stats_t`)**: packet, byte, payload, resend,
+  duplicate, receipt and budget counts (`packets_sent`, `packets_received`,
+  `bytes_sent`, `bytes_received`, `payloads_received`, `messages_resent`,
+  `messages_duplicated`, `receipts_acked`, `receipts_lost`, `receipts_dropped`
+  and `messages_dropped_over_budget`) are connection-lifetime counters for the
+  connection the client currently holds. They start at `0` when each connection
+  starts (including a reconnect to the same or a different server) and read `0`
+  when no connection is held, including after `rocketnet_client_disconnect`
+  while the old connection is still retiring. `messages_dropped_not_connected`
+  is the handle-lifetime exception on `rocketnet_client_stats_t`: it stays on
+  the client handle and accumulates monotonically across connections until
+  `rocketnet_client_destroy`. Client quality and rate fields (`rtt_ms`,
+  `jitter_ms`, `packet_loss_percent`, `packets_sent_per_second`,
+  `packets_received_per_second`, `bandwidth_sent_kbps` and
+  `bandwidth_received_kbps`) share the same current-connection boundary and
+  read `0.0` when no connection is held.
+- **Server aggregate stats (`rocketnet_server_stats_t`)**: server-wide counts
+  (`packets_sent`, `packets_received`, `bytes_sent`, `bytes_received`,
+  `connections_accepted`, `connections_denied_full`,
+  `handshakes_dropped_over_budget`, `payloads_received`, `messages_resent`,
+  `messages_duplicated`, `receipts_acked`, `receipts_lost`, `receipts_dropped`,
+  `messages_dropped_over_budget` and `messages_dropped_not_connected`) are
+  server-object lifetime totals that start at `0` at `rocketnet_server_create`
+  and accumulate monotonically across `rocketnet_server_start` and
+  `rocketnet_server_stop` cycles until `rocketnet_server_destroy`. Server
+  trailing-second rates (`packets_sent_per_second`,
+  `packets_received_per_second`, `bandwidth_sent_kbps` and
+  `bandwidth_received_kbps`) cover the whole server while running and read `0.0`
+  while the server is stopped.
+- **Server per-slot stats (`rocketnet_server_client_stats_t`)**: per-client
+  counts (`packets_sent`, `packets_received`, `bytes_sent`, `bytes_received`),
+  quality measurements (`rtt_ms`, `jitter_ms`, `packet_loss_percent`) and
+  trailing-second bandwidth rates (`bandwidth_sent_kbps`,
+  `bandwidth_received_kbps`, `bandwidth_acked_kbps`) cover the slot's current
+  connection, reset to `0` when a new connection takes the slot, and read `0`
+  when the slot has no connected client or the server is stopped.
+- **Process-wide counts**: `api_misuses` and `thread_priority_refusals` on both
+  `rocketnet_client_stats_t` and `rocketnet_server_stats_t` are process-wide
+  totals and do not reset with a connection or endpoint object.
 
 Client quality stats are computed synchronously when `rocketnet_client_stats`
 is called. Server-wide totals are copied from the server's current counters.
