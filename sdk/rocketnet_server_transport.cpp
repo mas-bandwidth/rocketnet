@@ -212,7 +212,6 @@ struct rocketnet_server_disconnect_burst_t
 {
     rocketnet_address_t to;
     uint64_t first_sequence;
-    int client_index;
     int plaintext_bytes;
     int sealed;
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
@@ -3341,7 +3340,6 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     burst->plaintext_bytes = rocketnet_ack_block_build( burst->plaintext, block_capacity, &mapping->accepted_session );
     burst->to = *client_address;
     burst->first_sequence = mapping->send_sequence_session;
-    burst->client_index = client_index;
     burst->sealed = 0;
     memcpy( burst->connection_salt, mapping->connection_salt, sizeof( burst->connection_salt ) );
     memcpy( server_transport->disconnect_burst_keys[index], mapping->keys.session_server_to_client, ROCKETNET_KEY_BYTES );
@@ -3374,7 +3372,11 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
         if ( !frame_data )
             break;
-        frame.client_index = burst->client_index;
+        // The connection ended before this deferred frame was sealed. Its
+        // slot may already name another connection, so the datagram belongs
+        // only to the server-lifetime wire totals. The immediate path still
+        // charges its slot because it commits before releasing that slot.
+        frame.client_index = -1;
         const int bytes = rocketnet_write_sealed_packet( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                          protocol->packet_filter, burst->first_sequence + (uint64_t) burst->sealed,
                                                          NULL, burst->plaintext, burst->plaintext_bytes,
@@ -3413,6 +3415,23 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     return server_transport->disconnect_seals;
+}
+
+// The burst key lives at a ring index, the same index drain wipes
+// (disconnect_burst_keys[disconnect_burst_head]), not at the client slot.
+// Copies ROCKETNET_KEY_BYTES from that ring slot. head and count may be NULL.
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport, int index, uint8_t * out, int out_bytes, int * head, int * count )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( out );
+    if ( index < 0 || index >= ROCKETNET_MAX_CLIENTS || out_bytes < ROCKETNET_KEY_BYTES )
+        return 0;
+    memcpy( out, server_transport->disconnect_burst_keys[index], ROCKETNET_KEY_BYTES );
+    if ( head )
+        *head = server_transport->disconnect_burst_head;
+    if ( count )
+        *count = server_transport->disconnect_burst_count;
+    return 1;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
 
@@ -3812,4 +3831,3 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     return result;
 }
 #endif
-

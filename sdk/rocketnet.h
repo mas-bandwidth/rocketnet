@@ -614,9 +614,14 @@ enum rocketnet_client_state_t
 
 
 /// rocketnet_client_stats fills this struct.
-/// Per-client counts start at 0 on create and accumulate across connections.
-/// Byte counts include the IP and UDP headers of the connection's address
-/// family. Rates cover the trailing second.
+/// Packet, byte, payload, resend, duplicate, receipt and budget counts are
+/// the connection that is held. They start at 0 when that connection starts,
+/// including a reconnect to the same or a different server, and they read 0
+/// when no connection is held. Disconnect clears the held connection, so
+/// they read 0 while the old connection is still finishing.
+/// messages_dropped_not_connected stays on the
+/// client handle. Byte counts include the IP and UDP headers of the
+/// connection's address family. Rates cover the trailing second.
 /// Connection measurements are 0 without a connection.
 
 struct rocketnet_client_stats_t
@@ -2048,10 +2053,13 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct 
 
 /// Fills stats with the client's current stats.
 ///
-/// Callable in every client state. Counts cover the client's whole life,
-/// across connections. Rates, round trip time, jitter and loss are zero
-/// before the first connect and after disconnect. Thread: not thread-safe; the caller owns the client one thread at
-/// a time.
+/// Callable in every client state. Packet, byte, payload, resend, duplicate,
+/// receipt and budget counts cover only the connection that is held and read
+/// zero without one, including while an ended connection is retiring.
+/// messages_dropped_not_connected remains on the client handle across
+/// connections. Rates, round trip time, jitter and loss have the same session
+/// boundary and read zero without a held connection. Thread: not thread-safe;
+/// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and fills only
 /// api_misuses and thread_priority_refusals.

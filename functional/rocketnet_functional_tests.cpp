@@ -10382,6 +10382,21 @@ static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_tran
 
 extern void rocketnet_test_server_stats_creates_no_thread();
 extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+extern void rocketnet_test_session_reconnect_isolation_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_session_reconnect_isolation_gso();
+extern void rocketnet_test_session_reconnect_isolation_io_uring();
+#if ROCKETNET_XDP
+extern void rocketnet_test_session_reconnect_isolation_xdp();
+#endif
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_session_reconnect_isolation_msgx();
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_session_reconnect_isolation_iocp();
+extern void rocketnet_test_session_reconnect_isolation_rio();
+#endif
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -10720,6 +10735,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
     { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
+    { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
+    { "test_session_reconnect_isolation_io_uring", rocketnet_test_session_reconnect_isolation_io_uring, rocketnet_server_uring_available },
+#if ROCKETNET_XDP
+    { "test_session_reconnect_isolation_xdp", rocketnet_test_session_reconnect_isolation_xdp, rocketnet_test_xdp_veth_runs_here },
+#endif
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_session_reconnect_isolation_msgx", rocketnet_test_session_reconnect_isolation_msgx, NULL },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_session_reconnect_isolation_iocp", rocketnet_test_session_reconnect_isolation_iocp, NULL },
+    { "test_session_reconnect_isolation_rio", rocketnet_test_session_reconnect_isolation_rio, NULL },
+#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
