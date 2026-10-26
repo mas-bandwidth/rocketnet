@@ -575,7 +575,7 @@ static void check_component_create_sweeps( allocator_state & state )
 
 // a valid connect token with future timestamps, minted with the production
 // test backend secret (the library's non-development build has no dev minting)
-static void make_valid_token( uint8_t * token )
+static void write_valid_token( uint8_t * token, uint64_t create, uint64_t expire )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
@@ -583,9 +583,8 @@ static void make_valid_token( uint8_t * token )
     memset( &private_fields, 0, sizeof(private_fields) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = 1;
-    const uint64_t now = (uint64_t) time( NULL );
-    signed_fields.create_timestamp = now - 100;
-    signed_fields.expire_timestamp = now + 100000;
+    signed_fields.create_timestamp = create;
+    signed_fields.expire_timestamp = expire;
     signed_fields.timeout_seconds = 60;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     signed_fields.ipv4_address[0] = 127;
@@ -601,10 +600,33 @@ static void make_valid_token( uint8_t * token )
     memset( signed_fields.server_public_key, 0x43, 32 );
     private_fields.client_id = 1;
     private_fields.protocol_id = 1;
-    private_fields.expire_timestamp = signed_fields.expire_timestamp;
+    private_fields.expire_timestamp = expire;
     memset( private_fields.client_to_server_key, 0x11, 32 );
     memset( private_fields.server_to_client_key, 0x22, 32 );
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
+}
+
+static void make_valid_token( uint8_t * token )
+{
+    const uint64_t now = (uint64_t) time( NULL );
+    write_valid_token( token, now - 100, now + 100000 );
+}
+
+static void check_game_clock_client_create()
+{
+    const uint64_t epoch = 1700000000ULL;
+    const uint64_t create = epoch + 1000;
+    const uint64_t expire = create + 10;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    write_valid_token( token, create, expire );
+
+    rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    config.game_clock_epoch = epoch;
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( NULL, token, &config, 1000.0, NULL );
+    check( client != NULL );
+    rn_native_client_transport_stop_and_destroy( client );
 }
 
 static void check_server_memory_budget( allocator_state & state )
@@ -768,6 +790,7 @@ int main()
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
     check_client_memory_budget( state );
+    check_game_clock_client_create();
     check( state.live == baseline );
 
     for ( int failure = 1; failure <= expected_platform_thread_allocations; ++failure )
