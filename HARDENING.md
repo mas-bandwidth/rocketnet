@@ -33,12 +33,67 @@ See [tests](tests/README.md), [fuzzing](fuzz/README.md),
 for the existing tools. A model result needs a correspondence review against
 its implementation; a configured fuzz job needs execution evidence.
 
+## Source audits and executed verification passes
+
+Source inspections and executed campaigns serve different roles and are recorded
+separately under `docs/audits/`:
+
+- **Source-reading area and sweep audits** inspect code paths and record
+  findings for follow-up repair, but do not by themselves constitute an executed
+  pass gate:
+  [config and API](docs/audits/2026-10-24-area-config-api.md),
+  [connect tokens and handshake](docs/audits/2026-10-24-area-connect-tokens-handshake.md),
+  [encryption, keys and replay](docs/audits/2026-10-24-area-encryption-keys-replay.md),
+  [acks and fragments](docs/audits/2026-10-24-area-protocol-acks-fragments.md),
+  [channels and messages](docs/audits/2026-10-24-area-protocol-channels-messages.md),
+  [Linux AF_XDP](docs/audits/2026-10-24-area-transports-linux-af-xdp.md),
+  [Linux portable, GSO and io_uring](docs/audits/2026-10-24-area-transports-linux-portable-gso-uring.md),
+  [macOS transports](docs/audits/2026-10-24-area-transports-macos.md),
+  [Windows transports](docs/audits/2026-10-24-area-transports-windows.md),
+  [code quality A](docs/audits/2026-10-24-code-quality-a.md),
+  [code quality B](docs/audits/2026-10-24-code-quality-b.md),
+  [assert-only guards](docs/audits/2026-10-24-sweep-assert-only-guards.md),
+  [monotonic clock](docs/audits/2026-10-24-sweep-clock-monotonic.md),
+  [count-before-success](docs/audits/2026-10-24-sweep-count-before-success.md),
+  [integer narrowing](docs/audits/2026-10-24-sweep-int-narrowing.md), and
+  [silent discard](docs/audits/2026-10-24-sweep-silent-discard.md).
+- **Executed verification and static-analysis records** document the exact
+  tested commit, tool invocation, observed outcome, and remaining limits:
+  - [Release-build (`-DNDEBUG`) fuzz campaign](docs/audits/2026-10-24-fuzz-ndebug.md)
+    at `6ac80bfb59eb3b9e3e6f748c1973c6b6c8f0b228`: ran all 11 `fuzz/` harnesses
+    on Linux with `-DNDEBUG`, AddressSanitizer, and UndefinedBehaviorSanitizer
+    for 600 seconds each so bounds enforced only by debug assertions are tested
+    under release compilation.
+  - [Core protocol mutation testing](docs/audits/2026-10-24-mutation-testing.md)
+    at `44ab971773c8a05dd00f63e77b7159d6b489a76c`: ran `tools/mutation/run_mutants.py`
+    with `./bin/test` as the oracle on Linux Release across ack, fragment,
+    protocol, window, and quality-tracker units to identify surviving mutants
+    and oracle gaps.
+  - [Deterministic simulation fault schedules](docs/audits/2026-10-24-dst-fault-schedules.md)
+    at `b0e281c4126c43f268b5129ee29539b416b17a9c`: ran `./bin/dst --seeds 1-1000`
+    across named fault schedules on Linux Release, recording passing schedules
+    and replaying failing seeds (`clock-back`, `reorder-burst`, `dup-storm`, etc.)
+    for targeted fixes.
+  - [Production-path line coverage](docs/audits/2026-10-24-coverage-production-paths.md)
+    at `aa193eb3bab05b0f384ecdd1f0229c1ccbe41774`: measured `sdk/` line coverage
+    via `tools/coverage_split.py`, separating production-exercised lines from
+    unit-only and unreached guards (and recording an `example_game_loop` failure
+    during the run).
+  - [Static-analysis baseline triage](docs/audits/2026-10-24-static-analysis.md)
+    at `53cbafcf843fc9f08b7a5de5325c254cd47f9a5d`,
+    [zero-unresolved static-analysis triage](docs/audits/2026-10-26-static-analysis-triage.md),
+    and [workflow and shell lint](docs/audits/2026-10-26-workflow-shell-lint.md):
+    dispositioned GCC `-fanalyzer`, `clang-tidy`, `cppcheck`, `actionlint`, and
+    `shellcheck` diagnostics on Linux without claiming that source triage alone
+    replaces runtime gates.
+
 ## Red-team engagement: October 2026
 
 Alex led protocol red teaming, with independent review of the retained source
 and execution evidence. The work exercised malformed traffic, handshake and
-replay behavior, session lifetime, hostile peers and recovery after adverse
-traffic. It included native socket transports and Linux guest AF_XDP runs.
+replay behavior, session lifetime, hostile clients or servers, and recovery
+after adverse traffic. It included native socket transports and Linux guest
+AF_XDP runs.
 
 The transport campaign reviewed source revision
 `acc4d77b1834a403f45f9ae7450b81c9c06808c2`; earlier core work used
@@ -66,16 +121,17 @@ We keep security-sensitive reports private under [SECURITY.md](SECURITY.md).
 Public regression tests and release notes should describe corrected behavior
 without exposing an unresolved vulnerability.
 
-## Two separate load questions
+## Two separate load questions and recorded evidence
 
 **Can a game server sustain the intended 1,000-player workload?** Run the server
 on its own machine and generate representative player traffic remotely. Check
 received payloads, connection progress, loss and recovery, memory use, and frame
 latency under that workload. A load generator simulates the clients; it need not
-run 1,000 complete game clients. The [split load guide](docs/LOAD_SPLIT.md)
-explains the dedicated-server topology. The
-[same-process load harness](docs/LOAD.md) is useful for correctness, but its
-colocated timings do not qualify dedicated-server performance.
+run 1,000 complete game clients. The [split load guide](docs/LOAD_SPLIT.md) and
+[LAN proof orchestration guide](docs/LAN-PROOF.md) explain the dedicated-server
+topology. The [same-process load harness](docs/LOAD.md) is useful for
+correctness, but its colocated timings do not qualify dedicated-server
+performance.
 
 **Can a transport sustain a 10 Gb/s packet workload?** This is a separate
 physical-link measurement. The [AF_XDP packet blaster](docs/XDP-PACKET-BLASTER.md)
@@ -91,6 +147,56 @@ correctness and security testing, but is not expected to meet the 1,000-player
 performance target. Profile support or a successful tool build is not a passed
 load test. Physical 10 Gb/s and final integrated 1,000-player qualification
 remain outstanding in this record.
+
+Recorded load, soak, and dataplane runs establish the following specific results
+and limits:
+
+- **Dedicated-host 1,000-client LAN proof ([summary table](docs/runs/lan-1000-proof.md)):**
+  - [Linux `gso` and `io_uring` cells](docs/runs/lan-1000-proof-linux.md) at
+    `1ca477339e150220f90e96bbe7c61be5b175eb51`: 1,000 clients in four 250-client
+    shards across two client hosts for 600s over LAN passed connection and
+    delivery checks.
+  - [macOS `msgx` cell](docs/runs/lan-1000-proof-macos.md) at
+    `813b4adbe3dec2eee496577e3da2c0d7d66b8063`: 1,000 clients across two Linux
+    client hosts to the dedicated macOS server over LAN for 600s passed after
+    superseding an earlier send-buffer failure.
+  - [Linux `xdp` cell](docs/runs/lan-1000-proof-xdp.md) at `534cce2e`: ran 1,000
+    clients for 300s against a bare-metal server on its shared 10G uplink
+    (`--xdp-uplink`); connection and payload delivery passed, while the merger's
+    timing verdict failed. Windows `iocp` and `rio` LAN cells remain unmade in
+    [docs/runs/lan-1000-proof.md](docs/runs/lan-1000-proof.md).
+- **AF_XDP dataplane and guest runs:**
+  - [AF_XDP zero-copy qualification](docs/runs/xdp-zero-copy.md) at
+    `010c8167de062d24dafcdf9153577b2b8e078760`: **HOLD** — the available Intel
+    X540-AT2 NIC refused `XDP_ZEROCOPY` bind, so zero-copy operation is not
+    qualified on that hardware.
+  - [XDP IPv4 and IPv6 max-size end-to-end run](docs/runs/xdp-ipv6-end-to-end.md)
+    at `3a04ed7a224b4567fc729b575b662fa275372dec`: passed inside a `virtme-ng`
+    guest over a `veth` pair in copy mode (establishes guest/shim packet framing,
+    not physical NIC throughput).
+- **30-minute impaired loopback soaks (correctness under simulated latency,
+  jitter, loss, and duplication; same-host loopback, not physical NIC proof):**
+  - [Linux per-transport 30-minute soak](docs/runs/linux-soak-30min-per-transport.md)
+    at `adca4345bf963c7bcb5396ce5cd80a5111793533`: all five cells passed with
+    link impairment applied (superseding earlier unimpaired runs).
+  - [macOS per-transport 30-minute soak](docs/runs/macos-soak-per-transport.md)
+    at `31ad78624a5d46f873678ecaaeb884bdbe1af72f`: `portable` and `msgx` cells
+    passed on loopback under applied impairment.
+  - [Windows native (`iocp`, `rio`) soak](docs/runs/windows-soak-native-server.md)
+    at `3f900fa1254d938e50150bcb3386a5a0bb857e1a` and
+    [Windows `portable` soak](docs/runs/windows-soak-portable.md): 1,800s
+    same-host loopback runs passed `--assert-flat`.
+- **Historical and custom-capacity qualification records:**
+  - [Preview-2 qualification](docs/QUALIFICATION-v1.0.0-preview-2.md) at
+    `c1a63ac978c0389f97e2d37e9ab61c8139191e34` /
+    `2f88961a0b42713b832478df257d30e15c0944e6`: records the manual Linux, macOS,
+    and Windows suite results for `v1.0.0-preview-2` and the items carried
+    forward.
+  - [10,000-client custom build qualification](docs/QUALIFICATION-max-clients-10000.md)
+    at `09395b079957938538af5e36c67479e938b1293b`: verifies that a custom
+    `-DROCKETNET_MAX_CLIENTS=10000` build compiles warning-free and completes a
+    bounded same-host loopback load test on Linux (`ROCKETNET_MAX_CLIENTS`
+    remains 1,000 by default).
 
 Preserve the established 1,000-player XDP configuration, including 4096-byte
 frames. Follow the [Linux deployment guide](docs/LINUX.md) and
@@ -113,5 +219,5 @@ Necessary test-only hooks belong behind `ROCKETNET_DEV` in private code, with
 production builds checked separately.
 
 This work continues until the required release gates pass. Neither this page nor
-an individual review approves a production release. Thanks to the
-[people and models](CREDITS.md) doing the careful work behind those results.
+an individual review approves a production release. See [Credits](CREDITS.md)
+for project authorship and sponsorship.
