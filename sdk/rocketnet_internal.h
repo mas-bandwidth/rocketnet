@@ -646,6 +646,10 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+#if ROCKETNET_DEV
+uint64_t rocketnet_sleep_platform_dispatch_count_for_test( void );
+void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double seconds ) );
+#endif // #if ROCKETNET_DEV
 
 // Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
 // buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
