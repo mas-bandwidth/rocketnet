@@ -167,9 +167,10 @@ Init ==
 
 \* Every path out of a slot's connection: the one Reset(i). sendDisc says
 \* whether the path sends the disconnect burst to a connected client. The
-\* reset keeps the used-token history (rocketnet_server_connection_reset,
-\* sdk/rocketnet_connection_reset.cpp:61, touches no history); the defect
-\* "resetclearshistory" empties it.
+\* reset keeps the used-token history: rocketnet_server_connection_reset
+\* (sdk/rocketnet_connection_reset.cpp:71-104) removes the slot's encryption
+\* mapping and resets its slot-owned ACK/reassembly state, but never accesses
+\* protocol.used_token_history. The defect "resetclearshistory" empties it.
 EndSlot(v, i, why, sendDisc) ==
     LET w == Reset(v, i, why)
     IN /\ slot' = w
@@ -179,9 +180,12 @@ EndSlot(v, i, why, sendDisc) ==
        /\ silentEnd' = (silentEnd \/ (~sendDisc /\ slot[i].st = "CONNECTED"
                                        /\ why \in {"SERVER_DISCONNECTED", "SERVER_STOPPED"}))
 
-\* rocketnet_server_create: STOPPED, no transport bound, a fresh object
-\* with no used-token history (sdk/rocketnet_api.cpp:1111; the history
-\* exists only with a running transport).
+\* rocketnet_server_create: STOPPED, no transport bound, a fresh object. The
+\* server struct is zeroed before it is filled (sdk/rocketnet_api.cpp:1794-1795),
+\* so the new object holds no running and no retiring message server
+\* (sdk/rocketnet_api.cpp:1383-1384): the transport exists only with the
+\* message server, and the used-token history is constructed only with the
+\* transport at Start (sdk/rocketnet_server_transport.cpp:1871).
 Create ==
     /\ state = "NONE" /\ creates < MaxCreates
     /\ state' = "STOPPED" /\ slot' = FreshSlots
@@ -192,9 +196,17 @@ Create ==
     /\ UNCHANGED <<link, nextSess, home, tokOf, doubleTok, observed, crossDelivered,
                    collateral, silentEnd, startFrom, queuedIn, readmitted>>
 
-\* Destroy from any state (sdk/rocketnet_api.cpp:1198, which stops first,
-\* destroying the history with the transport). Client packets in flight
-\* outlive the object.
+\* Destroy models the successful completion branch of rocketnet_server_destroy
+\* (sdk/rocketnet_api.cpp:1971-2006). The API's normal precondition is STOPPED;
+\* the Release misuse path stops first and performs bounded updates, but keeps
+\* the object if the worker has not exited
+\* (sdk/rocketnet_api.cpp:1976-1995). Once stopped, rn_server_finish_stop
+\* destroys the message server (sdk/rocketnet_api.cpp:1934-1949) and with it
+\* the transport and its used-token history
+\* (sdk/rocketnet_message_server.cpp:398-399;
+\* sdk/rocketnet_server_transport.cpp:1950-1971). The model coarsens the
+\* successful request/wait/free path into this one action. Client packets in
+\* flight outlive the object.
 Destroy ==
     /\ state # "NONE"
     /\ state' = "NONE" /\ slot' = FreshSlots /\ kept' = NoKept
@@ -206,13 +218,15 @@ Destroy ==
                    readmitted>>
 
 \* start: refused with a status code unless STOPPED (a stutter). A start
-\* builds a new message server and server transport (sdk/rocketnet_api.cpp:1149,
-\* sdk/rocketnet_message_server.cpp:1035), and the transport creates an empty
-\* used-token history (sdk/rocketnet_server_transport.cpp:1439): the run
-\* begins with a fresh history; the previous run's tokens become priorTokens.
-\* The new message server zeroes its block and sets every connection's
-\* reason to NONE (sdk/rocketnet_message_server.cpp:246, :285): every slot's
-\* reason is NONE at start.
+\* builds a new message server (sdk/rocketnet_api.cpp:1842-1865), which creates
+\* the server transport (sdk/rocketnet_message_server.cpp:1597-1601); that
+\* transport creates an empty used-token history
+\* (sdk/rocketnet_server_transport.cpp:1871). The run therefore begins
+\* with a fresh history; the previous run's tokens become priorTokens. The new
+\* message object zeroes its state (sdk/rocketnet_message_server.cpp:263-264)
+\* and initializes every connection's reason to NONE
+\* (sdk/rocketnet_message_server.cpp:300-311): every slot's reason is NONE
+\* at start.
 Start ==
     /\ state = "STOPPED" /\ starts < MaxStarts
     /\ state' = "RUNNING" /\ starts' = starts + 1
@@ -227,20 +241,24 @@ Start ==
                    collateral, silentEnd, queuedIn, readmitted>>
 
 \* stop: one call, RUNNING to STOPPING (rocketnet_server_stop,
-\* sdk/rocketnet_api.cpp:1685). Each connected client is kicked, the running
-\* block moves to retiring, server->running becomes NULL, and
-\* rocketnet_server_transport_stop sets the transport STOPPING
-\* (sdk/rocketnet_server_transport.cpp:2087, the store at :2091). Every slot
-\* is cleaned in this step. rocketnet_server_stopped (:1713) becomes true
-\* only once the transport's workers have exited; StopCompletes is that step,
+\* sdk/rocketnet_api.cpp:1896-1922). Each connected client is disconnected at
+\* the transport and kicked, the running block moves to retiring and
+\* server->running becomes NULL (sdk/rocketnet_api.cpp:1918-1919), and
+\* rocketnet_server_transport_stop stores STOPPING
+\* (sdk/rocketnet_server_transport.cpp:2004-2011). Every slot
+\* is cleaned in this step. rocketnet_server_stopped
+\* (sdk/rocketnet_api.cpp:1926-1932) becomes true
+\* only once the retiring transport's I/O has stopped; StopCompletes is that step,
 \* STOPPING to STOPPED. Start stays refused until STOPPED
 \* (rocketnet_server_start returns SERVER_NOT_STOPPED). While STOPPED,
 \* rocketnet_server_disconnect_reason returns NONE for every slot, so every
 \* slot's reason is NONE. The code destroys the history with the transport
 \* at the end of stop; no step reads it while STOPPING or STOPPED, so the
 \* model keeps it until the next Start empties it. Destroy stays enabled
-\* from any state but NONE: rocketnet_server_destroy (:1756) is a request
-\* plus a bounded wait of transport updates, not a guard of STOPPED only.
+\* from any state but NONE: the Release misuse path of rocketnet_server_destroy
+\* (sdk/rocketnet_api.cpp:1976-1995) is a request plus a bounded wait of
+\* transport updates; its non-completing retained-object branch is outside this
+\* action's successful-completion abstraction.
 StopReason(i) ==
     IF Defect = "reasonacrossrestart"
     THEN IF slot[i].st = "FREE" THEN slot[i].reason ELSE "SERVER_STOPPED"
@@ -257,16 +275,33 @@ Stop ==
     /\ lastEnd' = [i \in Slots |-> "NONE"]
     /\ UNCHANGED <<kept, env, established, ghosts>>
 
-\* The workers have exited: rocketnet_server_stopped is true and the
-\* transport's update stores STOPPED (sdk/rocketnet_server_transport.cpp:2388).
+\* The workers have exited: rocketnet_server_stopped reports true through
+\* rocketnet_server_transport_stopped (sdk/rocketnet_api.cpp:1926-1932;
+\* sdk/rocketnet_server_transport.cpp:2013-2018), and the transport update
+\* canonicalizes the stored state to STOPPED
+\* (sdk/rocketnet_server_transport.cpp:2174-2177). The model coarsens those
+\* observations into this transition.
 StopCompletes ==
     /\ state = "STOPPING"
     /\ state' = "STOPPED"
     /\ UNCHANGED <<slot, kept, env, lastEnd, established, ghosts>>
 
 \* disconnect_all_clients: one call, every CONNECTED slot is sent its
-\* disconnect burst and reset with reason SERVER_DISCONNECTED in the same step;
-\* a slot still in HANDSHAKE is left as it is (sdk/rocketnet_api.cpp:1253-1265).
+\* disconnect burst and reset in the same step, and the model gives the ended
+\* slot the reason SERVER_DISCONNECTED; a slot still in HANDSHAKE is left as it
+\* is (rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp:1878-1891).
+\* HOLD: the current code does not record that reason. The loop kicks every
+\* slot with ROCKETNET_DISCONNECT_REASON_NONE (sdk/rocketnet_api.cpp:1887) and
+\* rn_message_object_kick stores that reason in the slot
+\* (sdk/rocketnet_message_server.cpp:488-505), so
+\* rocketnet_server_disconnect_reason reads NONE for the ended slot
+\* (sdk/rocketnet_api.cpp:2150-2158;
+\* sdk/rocketnet_message_server.cpp:1736-1741). The action keeps
+\* SERVER_DISCONNECTED because this change may touch comments and citations
+\* only: the value is a known divergence from the code, not a verified
+\* correspondence. The transport half of the call is
+\* rocketnet_server_transport_disconnect_client
+\* (sdk/rocketnet_server_transport.cpp:3463-3536).
 EndsInDisconnectAll(i) ==
     slot[i].st = "CONNECTED"
     /\ ~(Defect = "disconnectallleavesclient" /\ i = 1)
@@ -309,7 +344,7 @@ DisconnectAll ==
 \* session, the slot's token, client id, user data, timeouts and session keys
 \* written. A token in the used-token history is refused (every request in
 \* this model comes from its own address, so a used token is a replay;
-\* rocketnet_used_token_history_check, sdk/rocketnet_server_protocol.cpp:508).
+\* rocketnet_used_token_history_check, sdk/rocketnet_server_protocol.cpp:552).
 ClientConnects(i, t) ==
     /\ (state = "RUNNING" \/ (Defect = "admitwhilestopping" /\ state = "STOPPING"))
     /\ slot[i].st = "FREE"
@@ -324,7 +359,7 @@ ClientConnects(i, t) ==
                    ghosts>>
 
 \* The response opens: the token is bound in the used-token history
-\* (rocketnet_used_token_history_record, sdk/rocketnet_server_protocol.cpp:743),
+\* (rocketnet_used_token_history_record, sdk/rocketnet_server_protocol.cpp:853),
 \* the slot is established, and its disconnect reason is cleared.
 Establish(i) ==
     /\ droppedIn' = {}
@@ -376,7 +411,15 @@ ClientLeaves(i) ==
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
 
-\* disconnect_client(i): the disconnect burst, then Reset(i).
+\* disconnect_client(i): the disconnect burst, then Reset(i), and the model
+\* gives the ended slot the reason SERVER_DISCONNECTED.
+\* HOLD: the current code does not record that reason.
+\* rocketnet_server_disconnect_client kicks the slot with
+\* ROCKETNET_DISCONNECT_REASON_NONE (sdk/rocketnet_api.cpp:2139-2148) and ends
+\* it at the transport (sdk/rocketnet_server_transport.cpp:3463-3536), so
+\* rocketnet_server_disconnect_reason reads NONE for the slot
+\* (sdk/rocketnet_api.cpp:2150-2158). The action keeps SERVER_DISCONNECTED
+\* because this change may touch comments and citations only.
 DisconnectClient(i) ==
     /\ state = "RUNNING" /\ slot[i].st = "CONNECTED"
     /\ EndSlot([slot EXCEPT ![i].rec = Write(@, DisconnectFields, slot[i].sess)], i,
@@ -594,7 +637,9 @@ StopDisconnectsAll ==
     /\ ~silentEnd
 
 \* disconnect_all_clients is one step: after it no slot is CONNECTED, every
-\* slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED, and every
+\* slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED (the
+\* model's value; the current code records NONE for it, HOLD as the
+\* DisconnectAll comment says), and every
 \* slot it found in HANDSHAKE still holds that HANDSHAKE and session.
 \* MCServerSessionDisconnectAllLeavesClient expects TLC to violate it.
 DisconnectAllIsAtomic ==
