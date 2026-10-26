@@ -651,6 +651,11 @@ REGISTER_UNIT_TEST( test_claim_released_when_response_binds_token );
 // A response may arrive after its token expires: opening it still proves the
 // pending request's keys, so establishing the slot releases that request
 // claim, but expiry prevents the response from adding a token binding.
+// Oracle sensitivity verified: suppressing rocketnet_used_token_history_claim_release
+// in rocketnet_server_protocol.cpp when mapping->token_expire_timestamp <= current_timestamp
+// fails the claim_free_count / claim_check assertions here while leaving the unexpired
+// binding (test_claim_released_when_response_binds_token) and expired-request refusal
+// (test_standard_handshake_server_vectors) controls green.
 static void test_claim_released_when_response_crosses_token_expiry()
 {
     struct handshake_server_t test;
