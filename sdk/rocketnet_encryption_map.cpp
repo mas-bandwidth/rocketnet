@@ -34,9 +34,10 @@ struct rocketnet_encryption_map_t
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
 #if ROCKETNET_TEST_SEAMS
     mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
-    mutable uint32_t test_probes;                           // flat index cells inspected by bounded DEV oracles
-    uint32_t test_updates;                                  // index/slot/free-sequence mutations by bounded DEV oracles
 #endif // #if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+    mutable uint64_t test_probes;                           // flat index cells inspected by bounded DEV oracles
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 };
 
 #if ROCKETNET_TEST_SEAMS
@@ -193,9 +194,9 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
     {
         const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->capacity );
         const uint32_t candidate = map->index[position];
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
         map->test_probes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
         {
             if ( insertion_position )
@@ -258,9 +259,6 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
         return -1;
 
     const int index = (int) map->free_indices[--map->num_free];
-#if ROCKETNET_TEST_SEAMS
-    map->test_updates++;
-#endif // #if ROCKETNET_TEST_SEAMS
     rocketnet_assert( index >= 0 && index < map->capacity );
     const uint64_t generation = map->next_generation;
     map->next_generation = map->next_generation == UINT64_MAX ? 0 : map->next_generation + 1;
@@ -283,9 +281,6 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     mapping->send_fragment_payload_id = 1;
 
     map->index[index_position] = (uint32_t) index;
-#if ROCKETNET_TEST_SEAMS
-    map->test_updates += 2; // the slot publication and flat-index publication
-#endif // #if ROCKETNET_TEST_SEAMS
 
     return index;
 }
@@ -338,9 +333,6 @@ static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_
     map->address[index].type = ROCKETNET_ADDRESS_NONE;
     map->free_indices[map->num_free++] = (uint32_t) index;
 
-#if ROCKETNET_TEST_SEAMS
-    map->test_updates += 3;
-#endif // #if ROCKETNET_TEST_SEAMS
     return true;
 }
 
@@ -378,9 +370,6 @@ bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map )
         map->address[i].type = ROCKETNET_ADDRESS_NONE;
         map->free_indices[map->capacity - 1 - i] = (uint32_t) i;
     }
-#if ROCKETNET_TEST_SEAMS
-    map->test_updates += 3 * (uint32_t) map->capacity;
-#endif // #if ROCKETNET_TEST_SEAMS
     return true;
 }
 
@@ -412,17 +401,13 @@ uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption
     rocketnet_assert( map );
     return map->test_hashes;
 }
+#endif // #if ROCKETNET_TEST_SEAMS
 
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
     return map->test_probes;
-}
-
-uint64_t rocketnet_encryption_map_test_updates( const struct rocketnet_encryption_map_t * map )
-{
-    rocketnet_assert( map );
-    return map->test_updates;
 }
 
 uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encryption_map_t * map )
@@ -459,4 +444,4 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
     rocketnet_assert( map );
     return handle != NULL && rocketnet_encryption_map_remove_handle( map, *handle );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS

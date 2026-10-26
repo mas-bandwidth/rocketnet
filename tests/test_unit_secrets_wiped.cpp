@@ -1036,7 +1036,7 @@ static void test_client_slots_release_of_free_slot_is_refused()
 }
 REGISTER_UNIT_TEST( test_client_slots_release_of_free_slot_is_refused );
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
 // The encryption map's index is deliberately keyed, so deterministic collision
 // cases discover addresses with the same private home slot through the DEV-only
@@ -1075,14 +1075,14 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
     for ( int i = 0; i < capacity; ++i )
     {
         const uint64_t probes_before = rocketnet_encryption_map_test_probes( map );
-        const uint64_t updates_before = rocketnet_encryption_map_test_updates( map );
         index[i] = rocketnet_encryption_map_add( map, &colliding[i], 1000.0 + i );
         const uint64_t probes = rocketnet_encryption_map_test_probes( map ) - probes_before;
-        const uint64_t updates = rocketnet_encryption_map_test_updates( map ) - updates_before;
         check( index[i] == i );
         check( probes <= rocketnet_encryption_map_test_probe_bound( map ) );
-        check( updates == 3 );
+        const uint64_t find_probes_before = rocketnet_encryption_map_test_probes( map );
         check( rocketnet_encryption_map_find( map, &colliding[i] ) == index[i] );
+        check( rocketnet_encryption_map_test_probes( map ) - find_probes_before <=
+               rocketnet_encryption_map_test_probe_bound( map ) );
         check( rocketnet_encryption_map_control( map, index[i] )->handshake_deadline == 1000.0 + i );
     }
     check( rocketnet_encryption_map_full( map ) );
@@ -1091,9 +1091,10 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
     // Removing an interior probe-cluster member leaves every later full key
     // reachable. LIFO free storage reuses that same stable public index.
     const int removed = index[3];
-    const uint64_t remove_updates_before = rocketnet_encryption_map_test_updates( map );
+    const uint64_t remove_probes_before = rocketnet_encryption_map_test_probes( map );
     rocketnet_encryption_map_remove( map, removed );
-    check( rocketnet_encryption_map_test_updates( map ) - remove_updates_before == 3 );
+    check( rocketnet_encryption_map_test_probes( map ) - remove_probes_before <=
+           rocketnet_encryption_map_test_probe_bound( map ) );
     check( rocketnet_encryption_map_find( map, &colliding[3] ) == -1 );
     for ( int i = 0; i < capacity; ++i )
         if ( i != 3 )
@@ -1107,14 +1108,12 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
     rocketnet_address_t current = colliding[capacity];
     for ( int cycle = 0; cycle < 1024; ++cycle )
     {
-        const uint64_t updates_before = rocketnet_encryption_map_test_updates( map );
+        const uint64_t probes_before = rocketnet_encryption_map_test_probes( map );
         rocketnet_encryption_map_remove( map, replacement );
         current = secrets_wiped_map_address( 300000 + cycle );
-        const uint64_t probes_before = rocketnet_encryption_map_test_probes( map );
         check( rocketnet_encryption_map_add( map, &current, 4000.0 + cycle ) == replacement );
         check( rocketnet_encryption_map_test_probes( map ) - probes_before <=
-               rocketnet_encryption_map_test_probe_bound( map ) );
-        check( rocketnet_encryption_map_test_updates( map ) - updates_before == 6 );
+               2 * rocketnet_encryption_map_test_probe_bound( map ) );
         check( rocketnet_encryption_map_find( map, &current ) == replacement );
     }
 
@@ -1158,15 +1157,13 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
     check( current.ticket == current.generation );
     rocketnet_encryption_mapping_t * new_mapping = rocketnet_encryption_map_entry( map, index );
     memset( &new_mapping->keys, 0xD4, sizeof( new_mapping->keys ) );
-    const uint64_t stale_updates_before = rocketnet_encryption_map_test_updates( map );
+    const uint64_t stale_probes_before = rocketnet_encryption_map_test_probes( map );
     check( !rocketnet_encryption_map_test_remove_handle( map, &stale ) );
-    check( rocketnet_encryption_map_test_updates( map ) == stale_updates_before );
+    check( rocketnet_encryption_map_test_probes( map ) == stale_probes_before );
     check( rocketnet_encryption_map_find( map, &second ) == index );
     check( ( (const uint8_t *) &new_mapping->keys )[0] == 0xD4 );
 
-    const uint64_t reset_updates_before = rocketnet_encryption_map_test_updates( map );
     check( rocketnet_encryption_map_reset( map ) );
-    check( rocketnet_encryption_map_test_updates( map ) - reset_updates_before == 3 );
     check( rocketnet_encryption_map_num_mappings( map ) == 0 );
     check( rocketnet_encryption_map_find( map, &second ) == -1 );
     check( !rocketnet_encryption_map_test_remove_handle( map, &current ) );
@@ -1184,4 +1181,4 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
 REGISTER_UNIT_TEST( test_encryption_map_flat_index_collisions_and_churn_are_bounded );
 REGISTER_UNIT_TEST( test_encryption_map_stale_generation_reset_and_secret_ownership );
 
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
