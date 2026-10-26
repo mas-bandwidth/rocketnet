@@ -700,3 +700,65 @@ jobs:
           name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
           if-no-files-found: ignore
+
+  # Nightly validation of the six validation-tool self-test suites
+  # (defense in depth: ci.yml runs them every commit; nightly re-runs them
+  # against the current ref so a runner drift that only shows up on the
+  # nightly host is caught there). Same shape as the per-commit job: each
+  # suite its own step, full output printed, nonzero exit fails the step,
+  # and a zero-discovered-tests pass fails the count line.
+  validation-tool-selftests:
+    name: validation tool selftests
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Test the frame-budget checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the server-calls checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the split-load checker's receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the test-environment checker's inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the 1000-client load profiler's provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the release-version block and workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
