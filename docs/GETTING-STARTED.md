@@ -37,7 +37,7 @@ lists the production settings. Most examples link the development library,
 Initialize the library once, fill a server config from its defaults, give it
 the protocol id and the backend public key, then create and start the server.
 From [examples/client_server_server.c](../examples/client_server_server.c),
-lines 38 to 56:
+lines 43 to 61:
 
 ```c
 rocketnet_init( NULL, NULL, NULL );
@@ -52,8 +52,11 @@ memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_ke
 config.max_clients = 1;
 config.transport = "portable";
 
-struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, NULL );
-if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &server_status );
+if ( server && server_status == ROCKETNET_STATUS_OK )
+    server_status = rocketnet_server_start( server );
+if ( !server || server_status != ROCKETNET_STATUS_OK )
 {
     // the example runner reads this line as a port already taken, and retries on another
     printf( "FAIL: server != NULL\n" );
@@ -74,24 +77,28 @@ token names the server, carries the keys and is the credential. In a
 development build a program can mint its own token from the server's address
 and public key. From
 [examples/client_server_client.c](../examples/client_server_client.c), lines
-76 to 84:
+76 to 98:
 
 ```c
 char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull, protocol_id, (uint64_t) time( NULL ), NULL, connect_token );
+const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull, protocol_id, (uint64_t) time( NULL ), NULL, connect_token );
+if ( token_status != ROCKETNET_STATUS_OK )
+    return 1;
 
 struct rocketnet_client_config_t config;
 rocketnet_client_default_config( &config );
 config.transport = "portable";
 config.state_change_callback = state_changed;
-struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
-rocketnet_client_connect( client, connect_token );
+enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &client_status );
+if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    return 1;
 ```
 
 The server reads its address and public key with
 `rocketnet_server_ipv4_address` and `rocketnet_server_public_key`
 ([examples/client_server_server.c](../examples/client_server_server.c), lines
-60 to 63); the example passes them to the client process in a file that holds
+67 to 68); the example passes them to the client process in a file that holds
 no secret.
 
 Production tokens come from the game's backend, never from the client. The
@@ -115,7 +122,7 @@ Each endpoint runs the same five steps once per frame, in this order:
 
 The server's frame, from
 [examples/client_server_server.c](../examples/client_server_server.c), lines
-79 to 96. It has one receive queue across every client, and each message names
+90 to 110. It has one receive queue across every client, and each message names
 the client that sent it:
 
 ```c
@@ -128,11 +135,14 @@ while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     for ( int i = 0; i < batch->num_messages; i++ )
     {
         printf( "server received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
-        uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-        if ( p )
+        if ( rocketnet_server_can_send_message( server, batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
         {
-            memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-            echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+            uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
+            if ( p )
+            {
+                memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+                echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+            }
         }
     }
 }
@@ -142,7 +152,7 @@ rocketnet_server_send_packets( server );
 
 The client's frame, from
 [examples/client_server_client.c](../examples/client_server_client.c), lines
-90 to 107, with the canonical non-`NULL` `start_message` guard around
+103 to 125, with the canonical non-`NULL` `start_message` guard around
 `finish_message`:
 
 ```c
@@ -158,11 +168,14 @@ while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
 if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
 {
     const char message[] = "hello from the client";
-    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
-    if ( p )
+    if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) ) )
     {
-        memcpy( p, message, strlen( message ) );
-        sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+        uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
+        if ( p )
+        {
+            memcpy( p, message, strlen( message ) );
+            sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+        }
     }
 }
 
@@ -202,7 +215,7 @@ What each step requires:
 
 [examples/game_loop.c](../examples/game_loop.c) is the whole loop at scale: a
 server and up to 1000 clients over `loopback`, the steps numbered (1) to (5)
-on lines 152 to 170, and `--wrong-order` to show the frame of latency an early
+on lines 166 to 203, and `--wrong-order` to show the frame of latency an early
 send costs. [USAGE.md, "Frame loop"](../USAGE.md#frame-loop),
 ["Sending messages"](../USAGE.md#sending-messages),
 ["Receiving messages"](../USAGE.md#receiving-messages) and
@@ -224,26 +237,31 @@ common split:
 The channel is the ordering scope. Ordered and sequenced modes hold order only
 within their channel, so a lost chat message holds back later chat on its
 channel and never the positions on another. From
-[examples/channels.c](../examples/channels.c), lines 103 to 115, with the
+[examples/channels.c](../examples/channels.c), lines 124 to 152, with the
 canonical non-`NULL` `start_message` guards:
 
 ```c
 if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
 {
     position_sent++;
-    uint8_t * p = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, sizeof( position_sent ) );
-    if ( p )
+    if ( rocketnet_client_can_send_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (int) sizeof( position_sent ) ) )
     {
-        memcpy( p, &position_sent, sizeof( position_sent ) );
-        rocketnet_client_finish_message( client, sizeof( position_sent ) );
-    }
-    if ( chat_sent < NUM_CHAT )
-    {
-        p = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+        uint8_t * p = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (int) sizeof( position_sent ) );
         if ( p )
         {
-            p[0] = ++chat_sent;
-            rocketnet_client_finish_message( client, 1 );
+            memcpy( p, &position_sent, sizeof( position_sent ) );
+            const uint32_t serial = rocketnet_client_finish_message( client, (int) sizeof( position_sent ) );
+            (void) serial;
+        }
+    }
+    if ( chat_sent < NUM_CHAT && rocketnet_client_can_send_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 ) )
+    {
+        uint8_t * p = rocketnet_client_start_message( client, CHAT_CHANNEL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+        if ( p )
+        {
+            p[0] = (uint8_t) ( chat_sent + 1 );
+            if ( rocketnet_client_finish_message( client, 1 ) )
+                chat_sent++;
         }
     }
 }
@@ -338,8 +356,9 @@ why destroy comes after completion.
 Sections 2 through 4 started with the development build (`ROCKETNET_DEV=1`),
 where `examples/client_server_server.c` uses `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`,
 `examples/client_server_client.c` calls `rocketnet_create_dev_connect_token`,
-and the server loop guards `rocketnet_server_start_message` (`if ( !p ) continue;`)
-before writing payload bytes and calling `rocketnet_server_finish_message`.
+and the server loop preflights `rocketnet_server_can_send_message`, then guards
+`rocketnet_server_start_message` with `if ( p )` before writing payload bytes
+and calling `rocketnet_server_finish_message` inside that branch.
 (Every caller of `rocketnet_client_start_message` and
 `rocketnet_server_start_message` in production code must check `p != NULL`
 before writing to `p`.)
@@ -422,15 +441,15 @@ secret key never leaves the server object and is wiped by
 `rocketnet_server_destroy`. After `rocketnet_server_start` succeeds, the server
 exports its bound UDP address and 32-byte X25519 public key
 (`rocketnet_server_public_key`) so the backend can seal tokens to it. From
-[examples/backend_server.c](../examples/backend_server.c), lines 75 to 84 and
-88 to 96:
+[examples/backend_server.c](../examples/backend_server.c), lines 75 to 86 and
+90 to 105:
 
 ```c
 enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
 struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &status );
-if ( server )
+if ( server && status == ROCKETNET_STATUS_OK )
     status = rocketnet_server_start( server );
-if ( status != ROCKETNET_STATUS_OK )
+if ( !server || status != ROCKETNET_STATUS_OK )
 {
     printf( "FAIL: server start: %s\n", rocketnet_status_name( status ) );
     return 1;
@@ -446,6 +465,8 @@ rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) 
 rocketnet_server_public_key( server, server_public_key );
 write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
 FILE * env = fopen( ENV_FILE, "w" );
+if ( !env )
+    return 1;
 fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
 fclose( env );
 ```
@@ -513,7 +534,7 @@ The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
   `signed_connect_data` signed by `ROCKETNET_BACKEND_PRIVATE_KEY`.
 
 Pass the opaque base64 token to `rocketnet_client_connect`. From
-[examples/backend_client.c](../examples/backend_client.c), lines 44 to 60:
+[examples/backend_client.c](../examples/backend_client.c), lines 44 to 68:
 
 ```c
 const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
@@ -522,7 +543,10 @@ rocketnet_client_default_config( &config );
 config.transport = "portable";
 memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
 config.state_change_callback = state_changed;
-struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
+enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
+if ( !client || create_status != ROCKETNET_STATUS_OK )
+    return 1;
 
 // connect checks the token first: a string that does not parse, or one
 // already expired, is refused here

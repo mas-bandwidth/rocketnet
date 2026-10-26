@@ -103,17 +103,22 @@ cmake --build build --target example_client_server_server example_client_server_
 ```
 
 In `examples/client_server_server.c` and `examples/backend_server.c`, the send
-path checks the pointer returned by `rocketnet_server_start_message` (and in
-production code, every caller of `rocketnet_client_start_message` or
-`rocketnet_server_start_message` must guard `p != NULL`) before writing payload
-bytes and calling `finish_message`:
+path preflights `rocketnet_server_can_send_message`, then checks the pointer
+returned by `rocketnet_server_start_message` (and in production code, every
+caller of `rocketnet_client_start_message` or `rocketnet_server_start_message`
+must guard `p != NULL`) before writing payload bytes and calling
+`finish_message` inside that branch:
 
 ```c
-uint8_t * p = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-if ( !p )
-    continue;
-memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+if ( rocketnet_server_can_send_message( server, client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
+{
+    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
+    if ( p )
+    {
+        memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+        echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+    }
+}
 ```
 
 Run the development pair or the backend example runner to confirm the baseline

@@ -138,7 +138,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 2 — Receive:** Drain the one receive queue with `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`. Each call returns one `rocketnet_message_batch_t`; keep calling until it returns `NULL`. Process each entry's client index, channel, reliability, byte count and data pointer before the next receive or update on that endpoint. Draining is required: a message still in the queue at the next update is API misuse, which asserts in a debug build, counts `MESSAGE_NOT_RECEIVED`, and ends that connection (`ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED` for the server's slot, `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED` for the client). Calling receive once per frame is not enough: one update can deliver more than one batch. Read ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, check that the returned pointer is non-`NULL`, write the message bytes directly into the returned pointer inside that branch, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`) inside the same non-`NULL` branch:
-     ```c uint8_t * out = rocketnet_client_start_message( client, channel, reliability, max_bytes ); if ( out ) { /* write 1 .. max_bytes into out */ uint32_t serial = rocketnet_client_finish_message( client, bytes_written ); (void) serial; } ```
+     ```c if ( rocketnet_client_can_send_message( client, channel, reliability, max_bytes ) ) { uint8_t * out = rocketnet_client_start_message( client, channel, reliability, max_bytes ); if ( out ) { /* write 1 .. max_bytes into out */ uint32_t serial = rocketnet_client_finish_message( client, bytes_written ); (void) serial; } } /* else skip or defer by application policy */ ```
      Calling `finish_message` without a successful outstanding `start_message` is an error and returns `0`. Optional preflight with `rocketnet_client_can_send_message` / `rocketnet_server_can_send_message` answers whether `start_message` would be granted room now without ending the connection on `MESSAGE_MEMORY_EXHAUSTED`, while `start_message` remains the authoritative reservation result (always keep the `if ( out )` check). What the application does when `can_send_message` returns `false`—skipping, deferring, dropping, or coalescing a send—is application policy, not library behavior. To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and run a guarded `start_message` / `finish_message` for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
 4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` (stepping `rocketnet_client_update` on step-driven clients) and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object (and before reconnecting a client, wait until `rocketnet_client_disconnected` is true so the new connection starts with fresh session keys, replay window, sequence numbers, and message queues). Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
@@ -225,6 +225,8 @@ int main( void )
         /* Simulate the game here, then queue outgoing messages. */
         if ( reply_index >= 0 )
         {
+            if ( !rocketnet_server_can_send_message( server, reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) )
+                goto cleanup;
             uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( out )
             {
@@ -240,6 +242,8 @@ int main( void )
         }
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
+            if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) )
+                goto cleanup;
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( out )
             {
@@ -549,6 +553,8 @@ static int write_f32(uint8_t * p, float value)
 }
 
 const int max_bytes = 1 + 4 + 2 * 4;
+if (!rocketnet_client_can_send_message(client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, max_bytes))
+    return 0; // skip this replaceable update
 uint8_t * out = rocketnet_client_start_message(client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, max_bytes);
 if (out)
 {

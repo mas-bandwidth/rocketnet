@@ -692,7 +692,18 @@ if(ROCKETNET_BUILD_TESTS)
         tests/source_audit_client_server_say_messages.cpp
         tests/source_audit_config_env_names.cpp
         tests/source_audit_counter_classes.cpp
+        tests/source_audit_example_send_safety.cpp
         tests/source_audit_xdp_filter_host.cpp)
+    file( GLOB ROCKETNET_EXAMPLE_MANIFEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/*.md"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/go/main.go" "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/csharp/Backend/Program.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/*.md" )
+    list( APPEND ROCKETNET_EXAMPLE_MANIFEST_SOURCES "AGENTS.md" "README.md" "docs/GETTING-STARTED.md" "docs/CHANNELS.md" "docs/FLOWS.md" "docs/ERRORS-AND-LOGGING.md" )
+    string( REPLACE ";" "|" ROCKETNET_EXAMPLE_MANIFEST_LIST "${ROCKETNET_EXAMPLE_MANIFEST_SOURCES}" )
+    set_property( SOURCE tests/source_audit_example_send_safety.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+        "ROCKETNET_EXAMPLE_MANIFEST=\"${ROCKETNET_EXAMPLE_MANIFEST_LIST}\"" )
     set_property( SOURCE tests/source_audit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS

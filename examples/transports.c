@@ -28,9 +28,13 @@ static int create_and_prove( const char * label, const char * transport )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = transport;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
+        printf( "%s: server start refused: %s\n", label, rocketnet_status_name( server_status ) );
         rn_cli_server_stop_and_destroy( server );
         return 0;
     }
@@ -41,14 +45,27 @@ static int create_and_prove( const char * label, const char * transport )
     char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) );
     rocketnet_server_public_key( server, server_public_key );
-    rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    if ( token_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        return 0;
+    }
 
     // the client is portable; the server may be any transport
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
-    rocketnet_client_connect( client, connect_token );
+    enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
+    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rn_cli_server_stop_and_destroy( server );
+        return 0;
+    }
 
     int sent = 0, received = 0;
     const double start = rocketnet_time();
@@ -65,9 +82,16 @@ static int create_and_prove( const char * label, const char * transport )
 
         if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 );
-            memcpy( p, "transports", 10 );
-            sent = rocketnet_client_finish_message( client, 10 ) != 0;
+            // reliable: defer to a later frame when there is no room
+            if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 ) )
+            {
+                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 );
+                if ( p )
+                {
+                    memcpy( p, "transports", 10 );
+                    sent = rocketnet_client_finish_message( client, 10 ) != 0;
+                }
+            }
         }
 
         rocketnet_client_send_packets( client );

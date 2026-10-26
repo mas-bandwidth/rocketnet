@@ -46,10 +46,15 @@ int main( void )
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_message_buffer_bytes = LIMIT_BYTES;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
-        printf( "FAIL: server start\n" );
+        printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
 
@@ -58,15 +63,30 @@ int main( void )
     char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) );
     rocketnet_server_public_key( server, server_public_key );
-    rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    if ( token_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.max_message_bytes = LIMIT_BYTES;
     client_config.receive_message_buffer_bytes = LIMIT_BYTES;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
-    rocketnet_client_connect( client, connect_token );
+    enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
+    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     int big_sent = 0, big_arrived = 0, oversize_sent = 0;
     uint64_t acked_before = 0;
@@ -106,9 +126,16 @@ int main( void )
         {
             if ( !big_sent )
             {
-                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, BIG_BYTES );
-                memcpy( p, pattern, BIG_BYTES );
-                big_sent = rocketnet_client_finish_message( client, BIG_BYTES ) != 0;
+                // reliable: defer to a later frame when there is no room
+                if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, BIG_BYTES ) )
+                {
+                    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, BIG_BYTES );
+                    if ( p )
+                    {
+                        memcpy( p, pattern, BIG_BYTES );
+                        big_sent = rocketnet_client_finish_message( client, BIG_BYTES ) != 0;
+                    }
+                }
             }
             else if ( big_arrived && !oversize_sent )
             {
@@ -116,9 +143,15 @@ int main( void )
                 // promoted, where one without a receipt is refused
                 acked_before = receipts_acked( client );
                 printf( "promotion counter before: %llu\n", (unsigned long long) acked_before );
-                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
-                memset( p, 0x5a, OVERSIZE_BYTES );
-                oversize_sent = rocketnet_client_finish_message( client, OVERSIZE_BYTES ) != 0;
+                if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES ) )
+                {
+                    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, OVERSIZE_BYTES );
+                    if ( p )
+                    {
+                        memset( p, 0x5a, OVERSIZE_BYTES );
+                        oversize_sent = rocketnet_client_finish_message( client, OVERSIZE_BYTES ) != 0;
+                    }
+                }
             }
         }
 

@@ -18,7 +18,7 @@ The example then pins a name no transport has. The library refuses it with one
 error line listing the valid names, and the program prints that the refusal was
 expected. Every successful server is proved with a client that connects, sends
 one reliable-ordered message (guarded by checking the non-`NULL` pointer from
-`rocketnet_client_start_message` before calling `rocketnet_client_finish_message`
+`rocketnet_client_can_send_message`, `rocketnet_client_start_message` before calling `rocketnet_client_finish_message`
 inside that branch), and disconnects.
 Each frame runs the calls in the order a game does: update, drain the one
 receive queue until `NULL`, simulate, queue, then send last. Sending last is what makes this

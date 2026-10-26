@@ -57,7 +57,7 @@ conditions held.
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_connect`, `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_start_message`,
+  `rocketnet_client_state`, `rocketnet_client_can_send_message`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`,
   `rocketnet_client_network_simulator`
 - `rocketnet_create_dev_connect_token` and
