@@ -379,9 +379,10 @@ Each command prints two base64 environment assignments:
   never pass it to game servers, and never commit `backend-keys.env` or log its
   value. The long-running Go and C# services retain this key in their
   configuration so they can sign successive tokens; protect the service process
-  and its environment, and restart it when rotating the key. Key-generation
-  mode zeroes its temporary generated private-key buffer after printing, and
-  each token mint zeroes its temporary per-token session-key buffers.
+  and its environment, and restart it when rotating the key. The Go and C#
+  backend `--keygen` modes zero their temporary generated private-key buffers
+  after printing, and each token mint zeroes its temporary per-token session-key
+  buffers.
 - `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` (32-byte Ed25519 public verification
   key): given to every game server via `config.backend_public_key` or the
   `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` environment variable (read once at

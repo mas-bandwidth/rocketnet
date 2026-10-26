@@ -208,10 +208,10 @@ without starting a network listener:
 The long-running Go and C# services retain the backend private signing key in
 their configuration for the service lifetime so they can sign successive
 tokens. Protect the service process and its environment accordingly, and
-restart it when rotating the key. Key-generation mode zeroes its temporary
-generated private-key buffer after printing the environment assignments, and
-each token mint zeroes its two temporary per-token session-key buffers after
-the token has been written.
+restart it when rotating the key. The Go and C# backend `--keygen` modes zero
+their temporary generated private-key buffers after printing the environment
+assignments, and each token mint zeroes its two temporary per-token session-key
+buffers after the token has been written.
 
 ### Step 4: Start the production server and backend, then register the server
 
