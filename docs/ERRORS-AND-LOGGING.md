@@ -563,9 +563,9 @@ disconnects under load:
         `rocketnet_client_connect(client, fresh_token)`. Never spin in a
         blocking same-frame retry loop on `CLIENT_NOT_DISCONNECTED`.
 3. **Generational isolation and lazy server slot reset**:
-   - **Client side**: when `rocketnet_client_disconnect(client)` runs (or the
-     connection ends) and moves the old connection to retirement,
-     `rocketnet_client_stats` immediately reads `0` for session counters
+   - **Client side**: when `rocketnet_client_disconnect(client)` runs and moves
+     the old connection to retirement, `rocketnet_client_stats` immediately
+     reads `0` for session counters
      (`packets_sent`, `packets_received`, `bytes_sent`, `bytes_received`,
      `payloads_received`, `messages_resent`, `messages_duplicated`,
      `receipts_acked`, `receipts_lost`, `receipts_dropped`, and
