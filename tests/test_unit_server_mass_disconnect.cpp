@@ -293,7 +293,9 @@ static void mass_disconnect_assert_hook( const char *, const char *, const char 
 // allowance, rather than the transport phase refilling it in the middle.
 static void test_server_disconnect_prelink_kicks_share_update_allowance()
 {
+#if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     static mass_disconnect_population_t population;
     const int allowance = 64; // independent expected default, not the implementation constant
@@ -504,7 +506,9 @@ static int mass_disconnect_key_nonzero( const uint8_t * key )
 // redundant wire copies while the full ring remains owned by older sessions.
 static void test_server_disconnect_full_queue_never_bypasses_budget()
 {
+#if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     static mass_disconnect_population_t population;
     const int allowance = 9;
