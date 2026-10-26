@@ -81,9 +81,25 @@ int main( int argc, char ** argv )
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
     CHECK( client != NULL );
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, text );
+    rocketnet_client_disconnect( client );
+    const double shutdown_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() < shutdown_deadline )
+    {
+        // A generous failure watchdog, not a performance threshold. The
+        // portable client normally owns an asynchronous worker, while update
+        // also completes an explicitly step-driven client.
+        rocketnet_client_update( client, 1000.0 );
+        rocketnet_sleep( 0.001 );
+    }
+    if ( !rocketnet_client_disconnected( client ) )
+    {
+        printf( "FAIL: client shutdown did not complete\n" );
+        return 1;
+    }
     rocketnet_client_destroy( client );
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
     CHECK( connect_status == ROCKETNET_STATUS_OK );
+    CHECK( term_status == ROCKETNET_STATUS_OK );
 
     printf( "token for client %llx, protocol id 0x%llx, address flags %d, expires %llu s after create, timeout %d s\n",
             (unsigned long long) private_fields.client_id, (unsigned long long) signed_fields.protocol_id, signed_fields.address_flags,
