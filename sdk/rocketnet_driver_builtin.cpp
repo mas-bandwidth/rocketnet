@@ -1403,7 +1403,7 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
-{ return rocketnet_server_rio_create( context, bind, 0 ); }
+{ return rocketnet_server_rio_create( context, bind ); }
 static void rio_destroy( void * transport ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t*) transport ); }
 static void rio_stop( void * transport )
 {

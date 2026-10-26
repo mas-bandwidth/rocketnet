@@ -4732,13 +4732,15 @@ void rocketnet_test_server_rio_probe()
     // them, the drain accounts for every one, then the region is freed
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 
-    // each constructor stage refuses cleanly and unwinds what it built
+#if ROCKETNET_DEV
+    // each development constructor stage refuses cleanly and unwinds what it built
     for ( int stage = 1; stage <= 6; stage++ )
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
         rocketnet_check( rocketnet_server_rio_create( NULL, &address, stage ) == NULL );
     }
+#endif
 
     // and a create after the refusals still works
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
@@ -5209,6 +5211,7 @@ void rocketnet_test_server_iocp_uso_uro_probe()
     rocketnet_test_iocp_exchange( iocp, &bind_address );
     rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 
+#if ROCKETNET_DEV
     rocketnet_address_t plain_address;
     rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1:0" ) );
     rocketnet_server_iocp_t * plain = rocketnet_server_iocp_create( NULL, &plain_address, 2, 0,
@@ -5221,6 +5224,7 @@ void rocketnet_test_server_iocp_uso_uro_probe()
     rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] == 0 );
     rocketnet_check( counters[ROCKETNET_IOCP_URO_BATCHES] == 0 );
     rn_native_backend_stop_and_destroy( plain, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+#endif
 }
 
 void rocketnet_test_server_iocp_uso_wire()

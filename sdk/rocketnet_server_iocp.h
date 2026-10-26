@@ -46,10 +46,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCK
 #define ROCKETNET_IOCP_URO_BUFFER_BYTES 16384
 #define ROCKETNET_IOCP_URO_MAX_SEGMENTS 64
 
-// create flags: skip a probe, so the fallback path is testable on a host
-// that has the feature
+#if ROCKETNET_DEV
+// Development create flags: skip a probe, so the fallback path is testable
+// on a host that has the feature. Production does not carry these controls.
 #define ROCKETNET_IOCP_DISABLE_USO 1
 #define ROCKETNET_IOCP_DISABLE_URO 2
+#endif
 
 // rocketnet_server_iocp_features bits
 #define ROCKETNET_IOCP_FEATURE_USO 1
@@ -59,11 +61,14 @@ struct rocketnet_server_iocp_t;
 
 // bind_address is updated with the actual port. IPv6 sockets accept both
 // families and normalize mapped IPv4 sources. Zero workers selects the default.
-// fail_stage is a constructor test control: 1 after socket, 2 after port,
-// 3 after first worker, 4 after first posted receive. Production passes zero.
-// flags is ROCKETNET_IOCP_DISABLE_USO and ROCKETNET_IOCP_DISABLE_URO, or zero.
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
-    rocketnet_address_t * bind_address, int num_workers, int fail_stage = 0, int flags = 0 );
+    rocketnet_address_t * bind_address, int num_workers
+#if ROCKETNET_DEV
+    // Development constructor controls: fail after socket, port, first worker
+    // or first receive, and optionally force the per-datagram fallback paths.
+    , int fail_stage = 0, int flags = 0
+#endif
+    );
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp );
 bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp );
@@ -100,12 +105,14 @@ int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 
-// A test control: flags every later create ORs into its own (the
+#if ROCKETNET_DEV
+// A development test control: flags every later create ORs into its own (the
 // ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
 // transport on the per-datagram path. Zero, the default, changes nothing.
 void rocketnet_server_iocp_test_force_flags( int flags );
+#endif
 
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
@@ -122,7 +129,6 @@ int rocketnet_server_iocp_test_ready_banks( rocketnet_server_iocp_t * iocp, int 
 bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
 bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
 int rocketnet_server_iocp_test_packet_bytes( rocketnet_server_iocp_t * iocp, uint64_t packet_id );
-#if ROCKETNET_DEV
 struct rocketnet_server_iocp_test_queue_stats_t
 {
     uint64_t free_pushes;
@@ -136,7 +142,6 @@ struct rocketnet_server_iocp_test_queue_stats_t
 };
 void rocketnet_server_iocp_test_queue_stats( rocketnet_server_iocp_t * iocp,
     rocketnet_server_iocp_test_queue_stats_t * stats );
-#endif
 
 // The fault seam. The next count events at a fault point fail with status, as
 // the host fails them: a send or receive completion reports status as its

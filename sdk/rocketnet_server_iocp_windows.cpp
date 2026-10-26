@@ -333,7 +333,7 @@ struct rocketnet_server_iocp_t
     // bytes (zero for an aborted or empty slot) and destination.
     int run_bytes[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
     rocketnet_address_t run_to[ROCKETNET_IOCP_SEND_QUEUE_SIZE];
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
     std::atomic<int> test_faults[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
     std::atomic<bool> test_hold_tx{false};
@@ -351,7 +351,7 @@ static std::atomic<uint64_t> rocketnet_iocp_next_owner_epoch{1};
 // The fault seam (rocketnet_server_iocp_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the
 // production paths carry no test branch.
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
 static bool rocketnet_iocp_test_fault( rocketnet_server_iocp_t * iocp, int fault, int * status )
 {
     int left = iocp->test_faults[fault].load( std::memory_order_acquire );
@@ -788,7 +788,7 @@ static void rocketnet_iocp_worker( void * argument )
         if ( count )
             iocp->counters[ROCKETNET_IOCP_COMPLETION_BATCHES].fetch_add( 1, std::memory_order_relaxed );
 
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
         for ( ;; )
         {
             while ( iocp->test_hold_completions.load( std::memory_order_acquire ) )
@@ -890,7 +890,7 @@ static void rocketnet_iocp_worker( void * argument )
         }
         if ( !iocp->stopping.load( std::memory_order_acquire ) )
             rocketnet_iocp_publish_receive_bank( worker );
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
         iocp->test_active_completion_batches.fetch_sub( 1, std::memory_order_release );
 #endif
     }
@@ -1002,16 +1002,24 @@ uint64_t rocketnet_server_iocp_allocation_bytes(int workers)
 
 static void rocketnet_iocp_send_worker( void * argument );
 
+#if ROCKETNET_DEV
 static std::atomic<int> rocketnet_iocp_test_forced_flags{0};
 
 void rocketnet_server_iocp_test_force_flags( int flags )
 {
     rocketnet_iocp_test_forced_flags.store( flags, std::memory_order_relaxed );
 }
+#endif
 
-rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage, int flags )
+rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers
+#if ROCKETNET_DEV
+    , int fail_stage, int flags
+#endif
+    )
 {
+#if ROCKETNET_DEV
     flags |= rocketnet_iocp_test_forced_flags.load( std::memory_order_relaxed );
+#endif
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
     if ( num_workers == 0 ) num_workers = ROCKETNET_IOCP_DEFAULT_WORKERS;
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
@@ -1081,7 +1089,11 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( iocp->socket != INVALID_SOCKET )
         iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );
 #endif
-    if ( iocp->socket == INVALID_SOCKET || fail_stage == 1 ) goto failed;
+    if ( iocp->socket == INVALID_SOCKET
+#if ROCKETNET_DEV
+         || fail_stage == 1
+#endif
+       ) goto failed;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &enabled, sizeof(enabled) ) == SOCKET_ERROR ) goto failed;
     if ( iocp->ipv6 && setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &v6_only, sizeof(v6_only) ) == SOCKET_ERROR ) goto failed;
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
@@ -1104,7 +1116,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     // learn.microsoft.com): a DWORD; non-zero makes the stack break each sent
     // buffer into messages of that size, the last one possibly shorter; zero,
     // the default, is no segmentation. The probe writes zero.
+#if ROCKETNET_DEV
     if ( ( flags & ROCKETNET_IOCP_DISABLE_USO ) == 0 )
+#endif
     {
         DWORD zero = 0;
         if ( setsockopt( iocp->socket, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char*) &zero, sizeof(zero) ) != SOCKET_ERROR )
@@ -1115,7 +1129,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     // at most that many bytes, all the same size but a shorter last one; the
     // stride reaches the application only through a receive with control
     // data (WSARecvMsg) as the DWORD control message UDP_COALESCED_INFO.
+#if ROCKETNET_DEV
     if ( ( flags & ROCKETNET_IOCP_DISABLE_URO ) == 0 )
+#endif
     {
         GUID guid = WSAID_WSARECVMSG;
         DWORD maximum = ROCKETNET_IOCP_URO_BUFFER_BYTES;
@@ -1134,7 +1150,11 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( iocp->port )
         iocp->port_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_IOCP, (uintptr_t) iocp->port, "iocp completion port" );
 #endif
-    if ( !iocp->port || fail_stage == 2 ) goto failed;
+    if ( !iocp->port
+#if ROCKETNET_DEV
+         || fail_stage == 2
+#endif
+       ) goto failed;
     iocp->send_wake = rocketnet_platform_wake_create( context, NULL );
     if ( !iocp->send_wake ) goto failed;
     iocp->send_exited.store( false, std::memory_order_relaxed );
@@ -1160,14 +1180,18 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         // each worker takes the server thread priority from this thread,
         // right after its create, as the GSO queue threads do
         rocketnet_platform_server_thread_priority( worker->thread );
+#if ROCKETNET_DEV
         if ( fail_stage == 3 ) goto failed;
+#endif
     }
     for ( int i = 0; i < num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
     {
         if ( iocp->uro_buffers )
             iocp->receives[i].uro_data = iocp->uro_buffers + (size_t) i * ROCKETNET_IOCP_URO_BUFFER_BYTES;
         if ( !rocketnet_iocp_post_receive( iocp, &iocp->receives[i] ) ) goto failed;
+#if ROCKETNET_DEV
         if ( fail_stage == 4 ) goto failed;
+#endif
     }
     if ( !rocketnet_iocp_address_read( &address, address_bytes, iocp->ipv6, bind_address ) ) goto failed;
     rocketnet_info( "iocp transport: %d completion workers and one TX worker on port %d, USO %s, URO %s", num_workers, bind_address->port,
@@ -1176,7 +1200,11 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     return iocp;
 
 failed:
+#if ROCKETNET_DEV
     rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+#else
+    rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
+#endif
     rocketnet_server_iocp_stop( iocp );
     while ( !rocketnet_server_iocp_stopped( iocp ) ) rocketnet_platform_sleep( 0.001 );
     rocketnet_server_iocp_destroy( iocp );
@@ -1435,7 +1463,7 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
     iocp->send_producer = iocp->send_free[--iocp->send_free_count];
     iocp->send_ready[( iocp->send_ready_head + iocp->send_ready_count ) % ROCKETNET_IOCP_SEND_BANKS] = producer;
     iocp->send_ready_count++;
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
     iocp->test_pending_tx_banks.fetch_add( 1, std::memory_order_release );
 #endif
     rocketnet_platform_mutex_release( &iocp->send_mutex );
@@ -1449,7 +1477,7 @@ static void rocketnet_iocp_send_worker( void * argument )
     rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t*) argument;
     for ( ;; )
     {
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
         for ( ;; )
         {
             while ( iocp->test_hold_tx.load( std::memory_order_acquire ) &&
@@ -1477,7 +1505,7 @@ static void rocketnet_iocp_send_worker( void * argument )
             rocketnet_platform_mutex_acquire( &iocp->send_mutex );
             iocp->send_free[iocp->send_free_count++] = index;
             rocketnet_platform_mutex_release( &iocp->send_mutex );
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
             iocp->test_pending_tx_banks.fetch_sub( 1, std::memory_order_release );
 #endif
         }
@@ -1488,7 +1516,7 @@ static void rocketnet_iocp_send_worker( void * argument )
             // mutex before advertising that no later post is possible.
             rocketnet_iocp_send_bank( iocp, &iocp->send_banks[iocp->send_producer] );
         }
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
         iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
 #endif
         if ( finish ) break;
@@ -1567,7 +1595,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
     return iocp->features.load( std::memory_order_relaxed );
 }
 
-#if defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp )
 {
     return (uintptr_t) iocp->socket;
