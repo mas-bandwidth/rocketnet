@@ -272,6 +272,13 @@ REGISTER_UNIT_TEST( test_config_env_log_level_applies_before_init_logs );
 // (3) ROCKETNET_CLIENT_STEP_DRIVEN is 0 or 1: any other value is out of range
 // ---------------------------------------------------------------------------
 
+#if !ROCKETNET_DEV
+// DEV=0 has no in-memory overlay: this case exercises the real environment
+// read through the shared shim (tests/test_env_source.h).
+static void env_names_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
+static void env_names_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
+#endif // #if !ROCKETNET_DEV
+
 static bool env_names_step_driven_valid( const char * value )
 {
     int num_fields = 0;

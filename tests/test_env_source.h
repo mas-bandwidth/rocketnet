@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdlib.h>
 #include "../sdk/rocketnet.h"
 
 // Keep this helper independent of rocketnet_platform.h. On Windows that
@@ -68,6 +69,35 @@ static inline int rocketnet_test_env_unsetenv( const char * name )
 static inline void rocketnet_test_env_restore()
 {
     rocketnet_platform_test_environment_reset();
+}
+
+#else // #if ROCKETNET_DEV
+
+// DEV=0 has no in-memory overlay: cases that exercise the real environment
+// read set the process environment directly. The runner clears every config
+// name before each case (tests/test.cpp), so cases stay isolated.
+static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
+{
+    if ( !overwrite && getenv( name ) )
+        return 0;
+#if defined(_WIN32)
+    return _putenv_s( name, value );
+#else
+    return setenv( name, value, 1 );
+#endif
+}
+
+static inline int rocketnet_test_env_unsetenv( const char * name )
+{
+#if defined(_WIN32)
+    return _putenv_s( name, "" );
+#else
+    return unsetenv( name );
+#endif
+}
+
+static inline void rocketnet_test_env_restore()
+{
 }
 
 #endif // #if ROCKETNET_DEV

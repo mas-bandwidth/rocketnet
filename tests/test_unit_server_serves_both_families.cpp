@@ -157,6 +157,7 @@ static void test_server_refuses_an_unparseable_second_address()
 }
 REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
+#if ROCKETNET_DEV
 // creates a stopped server with the IPv4 and IPv6 addresses. Nothing binds.
 static struct rocketnet_server_t * both_families_create( const both_families_identity_t * identity, const char * ipv4, const char * ipv6 )
 {
@@ -168,6 +169,7 @@ static struct rocketnet_server_t * both_families_create( const both_families_ide
     check( create_status == ROCKETNET_STATUS_OK );
     return server;
 }
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 static void both_families_check_served( const struct rocketnet_server_t * server, const char * ipv4, const char * ipv6 )

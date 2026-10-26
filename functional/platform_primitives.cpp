@@ -487,6 +487,11 @@ static void rocketnet_platform_primitives_key_warning_environment()
     memset( config.server_public_key, 0x43, 32 );
     memset( config.server_secret_key, 0x44, 32 );
     config.protocol_id = 1;
+    // a private filter: DEV=0 refuses the published test filter before the ladder
+    {
+        const uint8_t private_filter[4] = { 0xA1, 0xB2, 0xC3, 0xD4 };
+        memcpy( config.packet_filter, private_filter, sizeof( private_filter ) );
+    }
     snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
     int status = -1;
     rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
@@ -523,6 +528,10 @@ static void rocketnet_platform_primitives_production_config( rocketnet_server_tr
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
+    {
+        const uint8_t private_filter[4] = { 0xA1, 0xB2, 0xC3, 0xD4 };
+        memcpy( config->packet_filter, private_filter, sizeof( private_filter ) );
+    }
     config->max_clients = 1;
     snprintf( config->transport, sizeof(config->transport), "%s", "portable" );
 }
@@ -679,7 +688,9 @@ static void rocketnet_platform_primitives_production_filter_environment()
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, backend_public, sizeof(backend_public) );
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
+    // a fixed port: the served address is the create address, and the token
+    // writer refuses a port of 0
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:48123", NULL, &server_config, &status );
     rocketnet_check( server && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     rocketnet_client_config_t client_config;
