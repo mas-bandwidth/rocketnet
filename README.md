@@ -135,6 +135,8 @@ A passing unit suite is not a throughput or player-count measurement.
 - [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
 - [ROADMAP.md](ROADMAP.md) — the releases and the work planned.
 - [TESTING.md](TESTING.md) — test scope and recorded release qualification.
+- [HARDENING.md](HARDENING.md) — red teaming, verification methods, load testing and evidence limits.
+- [CREDITS.md](CREDITS.md) — the people and models helping build rocketnet.
 - [CLAUDE.md](CLAUDE.md) — contributor guide.
 
 Private repository. License: [AGPL-3.0](LICENSE).

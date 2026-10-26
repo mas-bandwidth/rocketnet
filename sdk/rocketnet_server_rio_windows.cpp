@@ -154,12 +154,12 @@ struct rocketnet_server_rio_t
 
     std::atomic<uint64_t> counters[ROCKETNET_RIO_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
     bool test_hold_send = false;
     std::atomic<int> test_faults[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
 #endif
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     bool test_try_fails = false;                // main's next tries fail, as under contention
 #endif
 };
@@ -169,7 +169,7 @@ static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's
 // The fault seam (rocketnet_server_rio_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the
 // production paths carry no test branch.
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
 static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, int * status )
 {
     int left = rio->test_faults[fault].load( std::memory_order_acquire );
@@ -185,7 +185,7 @@ static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, i
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) ( (void) (status), false )
 #endif
 
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
 
 // This table exists only in test builds, compiled into the library like the
 // filter-epoch seam. The worker pass substitutes dequeue, receive repost and
@@ -211,7 +211,7 @@ static const rocketnet_rio_test_function_table_t * rocketnet_rio_test_functions 
 // seam installed one.
 static ULONG rocketnet_rio_dequeue( rocketnet_server_rio_t * rio, RIO_CQ cq, RIORESULT * results, ULONG max_results )
 {
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     if ( rocketnet_rio_test_functions )
         return rocketnet_rio_test_functions->dequeue( cq, results, max_results );
 #endif
@@ -220,7 +220,7 @@ static ULONG rocketnet_rio_dequeue( rocketnet_server_rio_t * rio, RIO_CQ cq, RIO
 
 static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * data, RIO_BUF * address, DWORD flags, void * request_context )
 {
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     if ( rocketnet_rio_test_functions && rocketnet_rio_test_functions->send )
         return rocketnet_rio_test_functions->send( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
 #endif
@@ -369,7 +369,7 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     int injected = 0;
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_POST, &injected ) )
         return false;
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     if ( rocketnet_rio_test_functions )
     {
         if ( !rocketnet_rio_test_functions->receive( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
@@ -497,7 +497,7 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
     if ( rio->mutex.ok )
     {
         rocketnet_platform_mutex_acquire( &rio->mutex );
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
         if ( rio->test_hold_send )
         {
             rocketnet_platform_mutex_release( &rio->mutex );
@@ -709,7 +709,11 @@ bool rocketnet_server_rio_available()
 
 static void rocketnet_rio_worker( void * argument );
 
-rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address, int fail_stage )
+rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address
+#if ROCKETNET_DEV
+    , int fail_stage
+#endif
+    )
 {
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) ) return NULL;
     void * storage = rocketnet_malloc( context, sizeof(rocketnet_server_rio_t) );
@@ -758,7 +762,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( rio->socket != INVALID_SOCKET )
         rio->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) rio->socket, "rio socket" );
 #endif
-    if ( rio->socket == INVALID_SOCKET || fail_stage == 1 ) goto failed;
+    if ( rio->socket == INVALID_SOCKET
+#if ROCKETNET_DEV
+         || fail_stage == 1
+#endif
+       ) goto failed;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &enabled, sizeof(enabled) ) == SOCKET_ERROR ) goto failed;
     if ( rio->ipv6 && setsockopt( rio->socket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &v6_only, sizeof(v6_only) ) == SOCKET_ERROR ) goto failed;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (const char*) &buffer_bytes, sizeof(buffer_bytes) ) == SOCKET_ERROR ) goto failed;
@@ -776,7 +784,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     if ( !rocketnet_rio_load_table( rio->socket, &rio->rio ) ) goto failed;
     rio->have_table = true;
+#if ROCKETNET_DEV
     if ( fail_stage == 2 ) goto failed;
+#endif
 
     // one region, carved only by the layout, registered once
     if ( !rocketnet_rio_layout_plan( ROCKETNET_RIO_SEND_FRAMES, ROCKETNET_RIO_RECEIVES, ROCKETNET_FRAME_STRIDE,
@@ -794,7 +804,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )
         rio->buffer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_BUFFER, (uintptr_t) rio->buffer_id, "rio buffer registration" );
 #endif
-    if ( rio->buffer_id == RIO_INVALID_BUFFERID || fail_stage == 3 ) goto failed;
+    if ( rio->buffer_id == RIO_INVALID_BUFFERID
+#if ROCKETNET_DEV
+         || fail_stage == 3
+#endif
+       ) goto failed;
 
     // both completion queues notify the worker's one event after RIONotify
     rio->send_cq = rio->rio.RIOCreateCompletionQueue( ROCKETNET_RIO_SEND_FRAMES, &notification );
@@ -808,7 +822,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( rio->receive_cq != RIO_INVALID_CQ )
         rio->receive_cq_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->receive_cq, "rio receive completion queue" );
 #endif
-    if ( rio->receive_cq == RIO_INVALID_CQ || fail_stage == 4 ) goto failed;
+    if ( rio->receive_cq == RIO_INVALID_CQ
+#if ROCKETNET_DEV
+         || fail_stage == 4
+#endif
+       ) goto failed;
 
     // the request queue holds every send of every phase plus every receive
     rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, ROCKETNET_RIO_RECEIVES, 1, ROCKETNET_RIO_SEND_FRAMES, 1,
@@ -817,13 +835,19 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( rio->request_queue != RIO_INVALID_RQ )
         rio->request_queue_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_RQ, (uintptr_t) rio->request_queue, "rio socket-owned request queue" );
 #endif
-    if ( rio->request_queue == RIO_INVALID_RQ || fail_stage == 5 ) goto failed;
+    if ( rio->request_queue == RIO_INVALID_RQ
+#if ROCKETNET_DEV
+         || fail_stage == 5
+#endif
+       ) goto failed;
 
     // RNRioDriver Init: every receive slice is posted
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVES; ++i )
     {
         if ( !rocketnet_rio_post_receive( rio, i ) ) goto failed;
+#if ROCKETNET_DEV
         if ( fail_stage == 6 ) goto failed;
+#endif
     }
 
     if ( !rocketnet_rio_address_read( &address, rio->ipv6, bind_address ) ) goto failed;
@@ -837,7 +861,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     return rio;
 
 failed:
+#if ROCKETNET_DEV
     rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+#else
+    rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
+#endif
     // Partial construction remains private to this synchronous create call.
     rocketnet_server_rio_stop( rio );
     while ( !rocketnet_server_rio_stopped( rio ) ) rocketnet_platform_sleep( 0.001 );
@@ -909,7 +937,7 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
     int count = rio->next[phase].load( std::memory_order_relaxed );
     if ( count <= 0 ) return;                  // nothing staged
     if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE ) count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     if ( rio->test_try_fails ) return;
 #endif
     if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) ) return;
@@ -1107,7 +1135,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
     int count = 0;
     rocketnet_platform_mutex_acquire( &rio->mutex );
     if ( rio->send_ready_count > 0
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
          && !rio->test_hold_send
 #endif
        )
@@ -1206,7 +1234,7 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 {
     rio->process.num_packets = 0;
     if ( rio->stopping.load( std::memory_order_acquire ) ) return;
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
     if ( rio->test_try_fails ) return;
 #endif
     if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) ) return;
@@ -1240,7 +1268,7 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
     }
 }
 
-#if defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && ( defined(ROCKETNET_RIO_OVERFLOW_TEST_HOOKS) || defined(ROCKETNET_RIO_TESTS) )
 
 struct rocketnet_rio_overflow_test_state_t
 {
@@ -1599,7 +1627,7 @@ int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
     return rocketnet_rio_outstanding_sends( rio ) + rio->posted_receives.load( std::memory_order_relaxed );
 }
 
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio )
 {
     return (uintptr_t) rio->socket;
