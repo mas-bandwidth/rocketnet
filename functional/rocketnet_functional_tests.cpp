@@ -1982,11 +1982,10 @@ void rocketnet_test_transport_update_time_clamped()
 
 void rocketnet_test_transport_packet_loss_stats()
 {
-    // packet loss measured under a lossy sequence, deterministically: the
-    // server assigns a sequence only when finish commits the payload, so an
-    // aborted start leaves no gap and the client sees zero loss over a
-    // perfect wire. clean traffic proves zero first, and the aborts stay
-    // at zero.
+    // The client's packet_loss is outbound ACK loss: eligible retained sends
+    // not yet acknowledged, and 0 when none are eligible. The server assigns
+    // a session sequence only when finish commits the payload, so an aborted
+    // start takes none. Clean traffic reads 0, and the aborts stay at 0.
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -2032,9 +2031,9 @@ void rocketnet_test_transport_packet_loss_stats()
     uint8_t payload_data[64];
     memset( payload_data, 0xA5, sizeof(payload_data) );
 
-    // clean traffic: no gaps, so no loss. 45 frames on purpose: enough session
-    // packets that the tracker's sweep crosses its safety margin, which is where
-    // a phantom loss from a mis-based sequence feed becomes visible.
+    // Clean traffic. packet_loss is outbound ACK loss, not a receive-gap
+    // count. These updates do not fill the newest half-window, so no send is
+    // eligible and the published loss is 0.
 
     for ( int i = 0; i < 45; i++ )
     {
@@ -2050,9 +2049,10 @@ void rocketnet_test_transport_packet_loss_stats()
     rocketnet_client_transport_stats( client, &client_stats );
     rocketnet_check( client_stats.packet_loss == 0.0f );
 
-    // abort ten starts on the server: each takes no sequence, then enough
-    // delivered traffic carries the loss tracker's sweep past its safety
-    // margin
+    // Abort ten starts on the server. Each takes no session sequence. The
+    // client's packet_loss is outbound ACK loss, and it stays 0: this run
+    // still has no eligible retained send. 30 + 20 keeps the old iteration
+    // count and is not a live safety margin.
 
     for ( int i = 0; i < 10; i++ )
     {
@@ -2061,7 +2061,8 @@ void rocketnet_test_transport_packet_loss_stats()
         rocketnet_server_transport_abort_packet( server, &context );
     }
 
-    for ( int i = 0; i < ROCKETNET_PACKET_LOSS_TRACKER_SAFETY + 20; i++ )
+    const int outbound_ack_loss_check_packets = 30 + 20;
+    for ( int i = 0; i < outbound_ack_loss_check_packets; i++ )
     {
         game_time += 1.0 / 60.0;
         rocketnet_client_transport_update( client, game_time );

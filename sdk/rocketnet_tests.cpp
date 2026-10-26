@@ -21,8 +21,6 @@
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
-#include "rocketnet_packet_loss_tracker.h"
-#include "rocketnet_jitter_tracker.h"
 #include "../tests/rocketnet_value_tracker.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
@@ -7075,141 +7073,6 @@ void rocketnet_test_platform_inet6_round_trip()
     uint16_t round_trip[8];
     rocketnet_check( rocketnet_platform_inet_pton6( address_string, round_trip ) );
     rocketnet_check( memcmp( address, round_trip, sizeof(address) ) == 0 );
-}
-
-void rocketnet_test_packet_loss_tracker()
-{
-    rocketnet_packet_loss_tracker_t tracker;
-    rocketnet_packet_loss_tracker_reset( &tracker );
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-
-    uint64_t sequence = 0;
-
-    for ( int i = 0; i < ROCKETNET_PACKET_LOSS_TRACKER_SAFETY; ++i )
-    {
-        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-
-    for ( int i = 0; i < 200; ++i )
-    {
-        rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
-        sequence++;
-    }
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-
-    for ( int i = 0; i < 200; ++i )
-    {
-        if ( sequence & 1 )
-        {
-            rocketnet_packet_loss_tracker_packet_received( &tracker, sequence );
-        }
-        sequence++;
-    }
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ( 200 - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY ) / 2 );
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 0 );
-
-    rocketnet_packet_loss_tracker_reset( &tracker );
-
-    rocketnet_packet_loss_tracker_packet_received( &tracker, 200 + ROCKETNET_PACKET_LOSS_TRACKER_SAFETY - 1 );
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == 200 );
-
-    rocketnet_packet_loss_tracker_packet_received( &tracker, 1000 );
-
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) > 500 );
-
-    rocketnet_packet_loss_tracker_packet_received( &tracker, 0xFFFFFFFFFFFFFFFULL );
-
-    // a sequence jump this far beyond the last judged one cannot be a packet
-    // stream at the assumed 1500-byte MTU: the update reports its documented
-    // per-update loss cap, not a saturated INT_MAX and not zero
-    rocketnet_check( rocketnet_packet_loss_tracker_update( &tracker ) == ROCKETNET_PACKET_LOSS_TRACKER_MAX_LOST_PER_UPDATE );
-}
-
-void rocketnet_test_jitter_tracker()
-{
-    rocketnet_jitter_tracker_t tracker;
-    rocketnet_jitter_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.jitter == 0.0 );
-
-    uint64_t sequence = 0;
-
-    double t = 0.0;
-    double dt = 1.0 / 60.0;
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        rocketnet_jitter_tracker_packet_received( &tracker, sequence, t );
-        sequence++;
-        t += dt;
-    }
-
-    rocketnet_check( tracker.jitter < 0.000001 );
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        t = i * dt;
-        if ( (i%3) == 0 )
-        {
-            t += 2;
-        }
-        if ( (i%5) == 0 )
-        {
-            t += 5;
-        }
-        if ( (i%6) == 0 )
-        {
-            t -= 10;
-        }
-        rocketnet_jitter_tracker_packet_received( &tracker, sequence, t );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.jitter > 1.0 );
-
-    rocketnet_jitter_tracker_reset( &tracker );
-
-    rocketnet_check( tracker.jitter == 0.0 );
-
-    for ( int i = 0; i < 1000; ++i )
-    {
-        t = i * dt;
-        if ( (i%3) == 0 )
-        {
-            t += (double) 0.01f;
-        }
-        if ( (i%5) == 0 )
-        {
-            t += 0.05;
-        }
-        if ( (i%6) == 0 )
-        {
-            t -= (double) 0.1f;
-        }
-        rocketnet_jitter_tracker_packet_received( &tracker, sequence, t );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.jitter > 0.05 );
-    rocketnet_check( tracker.jitter < 0.1 );
-
-    for ( int i = 0; i < 10000; ++i )
-    {
-        t = i * dt;
-        rocketnet_jitter_tracker_packet_received( &tracker, sequence, t );
-        sequence++;
-    }
-
-    rocketnet_check( tracker.jitter >= 0.0 );
-    rocketnet_check( tracker.jitter <= 0.000001 );
 }
 
 void rocketnet_test_frame_sync_advance()
@@ -14862,8 +14725,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
     { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
-    { "test_packet_loss_tracker", rocketnet_test_packet_loss_tracker },
-    { "test_jitter_tracker", rocketnet_test_jitter_tracker },
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
