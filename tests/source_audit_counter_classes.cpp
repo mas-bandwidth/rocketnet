@@ -127,8 +127,12 @@ static void counters_collect_names( const std::string & text, std::set<std::stri
     }
 }
 
-// the counters that no test source names. this file is the audit and is not
-// a witness: a name that appears only here is not tested.
+// The counter identifiers present in the test sources built by this
+// configuration. This is only an identifier inventory, not an execution or
+// branch-coverage claim: a zero-only check or an unreachable mention can
+// satisfy it. This file is the audit and is not a witness; counters whose
+// coverage depends on an executed positive delta keep that witness in the
+// unit registry (test_unit_counter_classes.cpp).
 
 static std::set<std::string> counters_named_by_tests()
 {
