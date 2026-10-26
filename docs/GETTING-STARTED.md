@@ -332,7 +332,8 @@ backend token service only — RocketNet has no C# client API**).
 ### Step 1: Build the production library and backend examples (`ROCKETNET_DEV=0`)
 
 Configure a production build with `-DROCKETNET_DEV=OFF` and build the portable
-backend server, client, token checker, and `keygen` utility:
+backend server, client, `keygen` utility, and the development-server-key token
+checker used by the functional harness:
 
 ```sh
 cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
@@ -376,8 +377,11 @@ Each command prints two base64 environment assignments:
 - `ROCKETNET_BACKEND_PRIVATE_KEY` (64-byte Ed25519 secret signing key): stays
   **strictly on the backend token service**. Never ship it with game clients,
   never pass it to game servers, and never commit `backend-keys.env` or log its
-  value. Both the Go and C# backends zero the secret key buffer and per-token
-  session keys in memory after signing.
+  value. The long-running Go and C# services retain this key in their
+  configuration so they can sign successive tokens; protect the service process
+  and its environment, and restart it when rotating the key. Key-generation
+  mode zeroes its temporary generated private-key buffer after printing, and
+  each token mint zeroes its temporary per-token session-key buffers.
 - `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` (32-byte Ed25519 public verification
   key): given to every game server via `config.backend_public_key` or the
   `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` environment variable (read once at
@@ -522,9 +526,12 @@ python3 tools/run_backend_examples.py --build build-production --production
     an unsigned 64-bit decimal integer.
   - `PUT /servers/{serverID}` returns `HTTP 400 Bad Request` (or `HTTP 413` in
     C# when the body exceeds 4096 bytes) if `serverID` is empty or `> 128`
-    bytes, JSON is malformed or has unknown fields, `addresses` is empty, has
-    `> 2` entries, repeats an IP family, uses a hostname instead of a literal
-    IP, uses port `0`, or `public_key` is not 32-byte base64.
+    bytes, JSON is malformed, `addresses` is empty, has `> 2` entries, repeats
+    an IP family, uses a hostname instead of a literal IP, uses port `0`, or
+    `public_key` is not 32-byte base64.
+  - For unknown JSON fields, the Go backend returns `HTTP 400 Bad Request`; the
+    C# backend currently accepts and ignores them. Send only the documented
+    `addresses` and `public_key` fields, and do not rely on that C# behavior.
 - **Synchronous pre-send refusals at `rocketnet_client_connect(client, token)`:**
   - `NULL` pointer -> `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`).
   - Empty string, length `!= 1024`, invalid base64, wrong `wire_version`, bad

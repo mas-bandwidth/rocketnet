@@ -205,10 +205,13 @@ without starting a network listener:
 | Server X25519 public key (`rocketnet_server_public_key`) | 32 bytes (base64) | Exported by each live server and registered with the backend | Not secret (public sealing key) |
 | Per-token session keys (`client_to_server_key`, `server_to_client_key`) | 2 x 32 bytes | Minted per token, sealed to the server, included in the token for the client, then wiped in backend memory | Logs, persistent storage, or other clients |
 
-Both the Go backend (`clear(secretKey)`) and the C# backend
-(`CryptographicOperations.ZeroMemory(secretKey)`) zero the in-memory private
-key and per-token secret buffers as soon as key generation or token signing
-finishes.
+The long-running Go and C# services retain the backend private signing key in
+their configuration for the service lifetime so they can sign successive
+tokens. Protect the service process and its environment accordingly, and
+restart it when rotating the key. Key-generation mode zeroes its temporary
+generated private-key buffer after printing the environment assignments, and
+each token mint zeroes its two temporary per-token session-key buffers after
+the token has been written.
 
 ### Step 4: Start the production server and backend, then register the server
 
@@ -283,20 +286,17 @@ backend authenticates the player, selects a registered server, and mints a fresh
   `client_to_server_key`, `server_to_client_key`, and 256-byte `user_data`) is
   sealed with `crypto_box_seal`.
 
-Optionally verify a freshly minted token offline with `backend_check_token`
-(which checks the Ed25519 signature, opens the sealed private block, verifies
-inner/outer field consistency, and runs `rocketnet_client_protocol_connect`):
+`backend_check_token` is a development-server-key functional-test fixture, not
+an inspector for a token sealed to a live production server. It opens the
+sealed block with the published development server secret key and therefore
+requires a separately minted token whose `server_public_key` is the published
+development server public key. The harness described below supplies that
+fixture token on standard input and passes the expected client ID, protocol ID,
+and optional backend public key on the command line.
 
-```sh
-. ./backend.env
-export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
-TOKEN="$(curl -sSf http://localhost:8080/match/42)"
-./bin/backend_check_token "${TOKEN}" "${ROCKETNET_BACKEND_SERVER_PUBLIC_KEY}" 42
-```
-
-Now request a fresh token (tokens expire after 30 seconds by default, so fetch
-immediately before connecting) and pass the opaque base64 string to the
-production C client:
+To exercise the supported production path, request a fresh token (tokens expire
+after 30 seconds by default, so fetch immediately before connecting) and pass
+the opaque base64 string to the production C client:
 
 ```sh
 ./bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
@@ -371,7 +371,8 @@ pre-send check (`rocketnet_client_connect`), and the server handshake
 | --- | --- | --- |
 | `GET /match/{clientID}` when no servers have registered | `503 Service Unavailable` | Register at least one live server via `PUT /servers/{serverID}` (or wait for fleet registration) before matching players. |
 | `GET /match/{clientID}` with a non-decimal or out-of-range `uint64` `clientID` | `400 Bad Request` | Pass a valid unsigned 64-bit integer derived by the backend's player authentication layer. |
-| `PUT /servers/{serverID}` with empty or `> 128`-byte `serverID`, malformed JSON, unknown JSON fields, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export literal bound IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
+| `PUT /servers/{serverID}` with empty or `> 128`-byte `serverID`, malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export literal bound IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
+| `PUT /servers/{serverID}` contains an unknown JSON field | `400 Bad Request` (Go); accepted and ignored (C#) | Send only the documented `addresses` and `public_key` fields. Do not rely on the C# backend ignoring additional fields. |
 | `PUT /servers/{serverID}` body exceeds 4096 bytes | `400 Bad Request` (Go) / `413 Payload Too Large` (C#) | Keep registration payload within the 4096-byte bound (1–2 literal address strings and one base64 public key). |
 
 ### 3. Client pre-send token refusals (`rocketnet_client_connect` fails synchronously)
@@ -432,11 +433,14 @@ way a server does, and exercise every configuration, registration (`HTTP 204`,
 The end-to-end functional harness builds and exercises both the Go and C#
 backends against `example_backend_server`, `example_backend_client`, and
 `backend_check_token`. Each backend's `--keygen` generates a fresh Ed25519
-keypair in memory (never written to the test receipt), starts the backend with
-an empty registry to verify HTTP `503`, registers the live server over
-`PUT /servers/local` (`HTTP 204`), verifies a minted token with
-`backend_check_token`, and runs a full client-server message exchange. Passing
-`--production` requires both `example_backend_server` and
+keypair in memory (never written to the test receipt). The harness first mints a
+separate token sealed to the published development server key and passes it on
+standard input to `backend_check_token`, with the expected client ID and
+protocol ID as arguments. It then starts the backend with an empty registry to
+verify HTTP `503`, registers the live server over `PUT /servers/local` (`HTTP
+204`), obtains a fresh token from the HTTP match route, and runs the production
+client-server message exchange without passing that live-server token to the
+checker. Passing `--production` requires both `example_backend_server` and
 `example_backend_client` to report `mode=production transport=portable`:
 
 ```sh
