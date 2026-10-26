@@ -286,13 +286,18 @@ The generic counter introspection functions (`rocketnet_num_counters`,
 `rocketnet_counter_value` and `rocketnet_counter_name`) are internal to the
 SDK (`sdk/rocketnet_layers.h`).
 
-Client counts are lifetime totals across connections; server aggregate counts
-are lifetime totals across starts and stops. Both begin at zero at object
-creation. Process-wide `api_misuses` and `thread_priority_refusals` do not reset
-with an object. Client measurements cover the current connection, and client
-and server rates cover the trailing second; these read as zero without an
-active connection or while the server is stopped. Per-slot statistics
-describe the current connection and reset when a slot is reused.
+Client packet, byte, payload, resend, duplicate, receipt and budget counts
+describe only the connection the client currently holds. They start at zero
+for each connection and read as zero without one, including after disconnect
+while the ended connection is still retiring. Rates, RTT, jitter and loss have
+the same session boundary. `messages_dropped_not_connected` is the exception:
+it is a client-handle diagnostic and remains monotonic across connections.
+Server aggregate counts are lifetime totals across starts and stops and begin
+at zero at object creation. Process-wide `api_misuses` and
+`thread_priority_refusals` do not reset with an object. Client and server rates
+cover the trailing second and read as zero without an active connection or
+while the server is stopped. Per-slot statistics describe the current
+connection and reset when a slot is reused.
 
 `rocketnet_client_receipts` and `rocketnet_server_receipts` copy outcomes from
 the most recent update. Re-reading does not consume them; the copied entries
