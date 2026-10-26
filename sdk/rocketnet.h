@@ -614,9 +614,12 @@ enum rocketnet_client_state_t
 
 
 /// rocketnet_client_stats fills this struct.
-/// Per-client counts start at 0 on create and accumulate across connections.
-/// Byte counts include the IP and UDP headers of the connection's address
-/// family. Rates cover the trailing second.
+/// Packet, byte, payload, resend, duplicate, receipt and budget counts are
+/// the connection that is held. They start at 0 when that connection starts,
+/// including a reconnect to the same or a different server, and they read 0
+/// when no connection is held. messages_dropped_not_connected stays on the
+/// client handle. Byte counts include the IP and UDP headers of the
+/// connection's address family. Rates cover the trailing second.
 /// Connection measurements are 0 without a connection.
 
 struct rocketnet_client_stats_t

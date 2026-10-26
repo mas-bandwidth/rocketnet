@@ -411,9 +411,11 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 // token parses, so a client that connects to an IPv4 server and then an IPv6
 // one needs a socket of each.
 
-// The counts each public stats struct carries, indexed so a connection's
-// counts move into the lifetime counts in one loop. Internal: the public form
-// is struct rocketnet_client_stats_t and struct rocketnet_server_stats_t.
+// The counts each public stats struct carries. A client connection's packet
+// and message totals stay on that connection. Not-connected drops are the
+// one count copied onto the handle when the connection object goes. Internal:
+// the public form is struct rocketnet_client_stats_t and struct
+// rocketnet_server_stats_t.
 enum rn_client_count_t
 {
     RN_CLIENT_PACKETS_SENT,
@@ -464,7 +466,7 @@ struct rocketnet_client_t
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
-    uint64_t lifetime[RN_CLIENT_COUNT];                 // the counts of every ended connection
+    uint64_t lifetime[RN_CLIENT_COUNT];                 // not-connected drops that outlived their connection
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
 };
 
@@ -858,10 +860,10 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
 // left owning its memory rather than freed under it.
 static const int RN_DESTROY_STOP_UPDATES = 32;
 
-// End then Reset (tla/ClientSession.tla): the connection's counters move into
-// the lifetime counters, its reason is kept, and its destroy -- which sends
-// the redundant disconnects from a live state and runs the connection reset
-// -- leaves the block holding nothing of it.
+// The retiring connection is destroyed. Its packet, byte and message totals
+// belong to that connection and are not kept. Not-connected drops have no
+// other home once the object is gone, so that one count moves onto the
+// handle. The next connect creates its connection fresh in the same block.
 static void rn_client_end_connection( struct rocketnet_client_t * client )
 {
     if ( !client->retiring )
@@ -869,10 +871,7 @@ static void rn_client_end_connection( struct rocketnet_client_t * client )
     rocketnet_assert( rocketnet_client_disconnected( client ) );
     uint64_t counts[RN_CLIENT_COUNT];
     rn_client_connection_counts( client->retiring, counts, NULL );
-    for ( int i = 0; i < RN_CLIENT_COUNT; i++ )
-        client->lifetime[i] += counts[i];
-    // no connection reset: the object goes, and the next connect creates its
-    // connection fresh in the same block
+    client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS] += counts[RN_CLIENT_NOT_CONNECTED_DROPS];
     rocketnet_message_client_destroy( client->retiring );
     client->retiring = NULL;
 }
@@ -1310,7 +1309,12 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
     if ( null_client )
         return;
     uint64_t counts[RN_CLIENT_COUNT];
-    memcpy( counts, client->lifetime, sizeof( counts ) );
+    memset( counts, 0, sizeof( counts ) );
+    // Session totals are only the connection that is held. An ended
+    // connection's packets, bytes and messages are not added, including
+    // after a reconnect to the same or a different server. Not-connected
+    // drops stay on the handle and stay visible with or without a connection.
+    counts[RN_CLIENT_NOT_CONNECTED_DROPS] = client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS];
     struct rocketnet_message_client_t * held = client->connection ? client->connection : client->retiring;
     if ( held )
     {

@@ -19,7 +19,7 @@ naming `<struct>.<member>`.
 
 | Struct | Field | What it is | Decision | Reason |
 |---|---|---|---|---|
-| `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and lifetime counter owner | KEEP | public counters are monotonic over the client life |
+| `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and this connection's counters | KEEP | the object is destroyed with the connection; public session counters are read from the connection that is held |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
@@ -39,7 +39,7 @@ naming `<struct>.<member>`.
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
 | | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
-| | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction and public monotonic statistics |
+| | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction state of this transport object; public session counters are the connection that is held |
 | | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
 | `rn_message_connection_t` / `rn_endpoint_t` | endpoint region; ordered/reliable queues; descriptors; receive ring; send store; packet, delivery, hold, receipt and resend rings | channel and allocator state | RESET | `rn_endpoint_reset` carves the region fresh |
@@ -154,16 +154,18 @@ material is overwritten in place with `sodium_memzero`:
   wire totals when a new connection claims the slot; and deferred disconnect
   bursts drained after slot release carry `client_index = -1` so they charge
   server-lifetime wire totals without charging a reused slot.
-- **Public client whole-life counters (`rocketnet_client_stats`)**: Under the
-  current public contract (`sdk/rocketnet.h` and `tla/ClientSession.tla` `End`
-  `UNCHANGED <<counters>>`), `packets_sent`, `packets_received`, `bytes_sent`,
-  `bytes_received`, `messages_sent`, and `messages_received` on a
-  `rocketnet_client_t` are monotonic over the lifetime of the client handle,
-  while rate and quality gauges (`rtt_ms`, `jitter_ms`, `packet_loss_percent`,
-  `send_kbps`, `receive_kbps`, `ack_kbps`) are session-scoped and reset across
-  reconnects. Whether to split per-session packet/byte/message counters from
-  handle-lifetime counters in `rocketnet_client_stats_t` is preserved as an
-  explicit owner contract decision rather than altered silently.
+- **Public client session counters (`rocketnet_client_stats`)**: `packets_sent`,
+  `packets_received`, `bytes_sent`, `bytes_received`, `payloads_received`,
+  `messages_resent`, `messages_duplicated`, `receipts_acked`, `receipts_lost`,
+  `receipts_dropped`, and `messages_dropped_over_budget` are the connection
+  that is held. A new connect, including a reconnect to the same or a different
+  server, does not carry the ended connection's totals. With no connection
+  held they read 0. `messages_dropped_not_connected` stays on the client handle
+  and remains monotonic across connections. Rate and quality gauges stay
+  session-scoped and read 0 without a connection. The public struct is
+  unchanged. `tla/ClientSession.tla` `End` leaves `kept` unchanged, and
+  `kept` includes `lifetime`. `HandshakeStep` into `CONNECTED` increments
+  `kept.lifetime`. That model text does not describe this getter.
 
 ## Reset state without clearing bulk storage
 

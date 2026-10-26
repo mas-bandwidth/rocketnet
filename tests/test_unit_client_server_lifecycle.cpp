@@ -330,7 +330,9 @@ static void test_client_reconnects_with_a_second_token()
     lifecycle_connect( &world, 0, 0x1001 );
     lifecycle_exchange( &world, 0, 0xA1, 3 );
     const uint64_t sent_first = rn_client_stats_of( client ).packets_sent;
+    const uint64_t payloads_first = rn_client_stats_of( client ).payloads_received;
     check( sent_first > 0 );
+    check( payloads_first > 0 );
     lifecycle_disconnect( &world, 0 );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_index( client ) == -1 );
@@ -338,10 +340,16 @@ static void test_client_reconnects_with_a_second_token()
 
     // a second token with another client id: sequences and channels start
     // fresh, so the second exchange's values count from 0 again in order, and
-    // nothing tagged by the first connection arrives
+    // nothing tagged by the first connection arrives. The new connection's
+    // receive totals do not keep the ended connection's.
     lifecycle_connect( &world, 0, 0x2002 );
+    const uint64_t sent_second = rn_client_stats_of( client ).packets_sent;
+    const uint64_t payloads_second = rn_client_stats_of( client ).payloads_received;
+    check( sent_second > 0 );
+    check( payloads_second < payloads_first );
     lifecycle_exchange( &world, 0, 0xB2, 3 );
-    check( rn_client_stats_of( client ).packets_sent > sent_first );
+    check( rn_client_stats_of( client ).packets_sent > sent_second );
+    check( rn_client_stats_of( client ).payloads_received > payloads_second );
     check( rn_server_stats_of( world.server ).connections_accepted == 2 );
     lifecycle_world_destroy( &world );
 }
@@ -1241,9 +1249,11 @@ static void test_config_packets_per_update_range()
 }
 REGISTER_UNIT_TEST( test_config_packets_per_update_range );
 
-// A connection the server ends leaves the client DISCONNECTED with its
-// connection object still held; connect straight after (no disconnect call)
-// ends it first, and the lifetime counters only grow.
+// A connection the server ends leaves the client SERVER_DISCONNECTED with its
+// connection object still held. Connect straight after (no disconnect call)
+// ends that connection first. The new connection's packet, byte and payload
+// counts do not include the ended connection. Not-connected drops stay on
+// the handle.
 static void test_client_reconnects_after_server_stop_without_disconnect()
 {
     lifecycle_world_t world;
@@ -1259,23 +1269,23 @@ static void test_client_reconnects_after_server_stop_without_disconnect()
     struct rocketnet_client_stats_t before;
     rocketnet_client_stats( client, &before );
     check( before.packets_sent > 0 );
+    check( before.payloads_received > 0 );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_connect( &world, 0, 0x1C02 );      // connect, no disconnect first
     struct rocketnet_client_stats_t after;
     rocketnet_client_stats( client, &after );
-    check( after.packets_sent >= before.packets_sent );
-    check( after.packets_received >= before.packets_received );
-    check( after.bytes_sent >= before.bytes_sent );
-    check( after.bytes_received >= before.bytes_received );
-    check( after.payloads_received >= before.payloads_received );
-    check( after.messages_resent >= before.messages_resent );
-    check( after.messages_duplicated >= before.messages_duplicated );
-    check( after.receipts_acked >= before.receipts_acked );
-    check( after.receipts_lost >= before.receipts_lost );
-    check( after.messages_dropped_over_budget >= before.messages_dropped_over_budget );
+    // The new handshake has its own packets. The ended session also carried
+    // messages, so its receive totals stay strictly above this handshake.
+    check( after.packets_sent > 0 );
+    check( before.packets_received > after.packets_received );
+    check( before.bytes_received > after.bytes_received );
+    check( before.payloads_received > after.payloads_received );
     check( after.messages_dropped_not_connected >= before.messages_dropped_not_connected );
     lifecycle_exchange( &world, 0, 0x82, 3 );
-    check( rn_client_stats_of( client ).packets_sent > before.packets_sent );
+    struct rocketnet_client_stats_t exchanged;
+    rocketnet_client_stats( client, &exchanged );
+    check( exchanged.packets_sent > after.packets_sent );
+    check( exchanged.payloads_received > after.payloads_received );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect );
