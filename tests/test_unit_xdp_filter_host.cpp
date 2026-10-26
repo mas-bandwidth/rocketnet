@@ -478,13 +478,20 @@ static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
 
     const char host_prefix[] = "test_xdp_transport_host_";
     const char filter_prefix[] = "test_xdp_filter_host_";
-    for ( struct rocketnet_unit_file_test_t * test = *rocketnet_unit_file_head(); test != NULL; test = test->next )
+    const int test_count = rocketnet_unit_tests_count();
+    for ( int i = 0; i < test_count; i++ )
     {
-        const bool host_case = strncmp( test->name, host_prefix, sizeof(host_prefix) - 1 ) == 0;
-        const bool filter_case = strncmp( test->name, filter_prefix, sizeof(filter_prefix) - 1 ) == 0;
+        const char * test_name = rocketnet_unit_tests_name( i );
+        rocketnet_unit_check( test_name != NULL );
+        const bool host_case = strncmp( test_name, host_prefix, sizeof(host_prefix) - 1 ) == 0;
+        const bool filter_case = strncmp( test_name, filter_prefix, sizeof(filter_prefix) - 1 ) == 0;
         if ( ( host_case || filter_case ) &&
-             strcmp( test->name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
+             strcmp( test_name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
+        {
+            struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( test_name );
+            rocketnet_unit_check( test != NULL );
             test->function();
+        }
     }
 
     const uint64_t expected_mask = ( (uint64_t) 1 << ROCKETNET_SERVER_XDP_NUM_COUNTERS ) - 1;
