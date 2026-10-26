@@ -606,6 +606,9 @@ static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_tr
 }
 static void rocketnet_server_transport_io_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
+    rocketnet_assert( transport && frame && id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING );
+    if ( !transport || !frame || id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE || bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
     transport->io.operations->finish_packet( transport->io.instance, id, frame, bytes );
 }
 static void rocketnet_server_transport_io_abort_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame )
@@ -912,9 +915,12 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
                                                           struct rocketnet_server_frame_t * frame,
                                                           int packet_bytes )
 {
-    rocketnet_assert( frame->data );
+    rocketnet_assert( server_transport );
+    rocketnet_assert( frame && frame->data );
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    if ( !server_transport || !frame || !frame->data || packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
 
     // every commit through this seam -- responses, keep-alives, disconnect
     // bursts -- runs on the main thread, so it lands in the current stats
@@ -2897,6 +2903,9 @@ static void rocketnet_server_charge_staged_frame( struct rocketnet_server_transp
 static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
 {
+    rocketnet_assert( server_transport && frame && frame->data && wire_bytes > 0 && wire_bytes <= ROCKETNET_RECEIVE_CEILING );
+    if ( !server_transport || !frame || !frame->data || wire_bytes <= 0 || wire_bytes > ROCKETNET_RECEIVE_CEILING )
+        return false;
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         if ( rocketnet_server_link_active( server_transport ) )
@@ -3091,9 +3100,14 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
+    if ( !server_transport || !context )
+        return 0;
 
     if ( !context->frame )
+    {
+        rocketnet_assert( context->frame != NULL );
         return 0;
+    }
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
@@ -3168,6 +3182,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     uint64_t backend_id;
     if ( !server_transport->packet_leases.take(*context, trusted, backend_id) )
     {
+        rocketnet_assert( false );
         context->frame = NULL;
         return 0;
     }

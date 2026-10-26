@@ -312,6 +312,8 @@ uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * cl
     return rn_message_object_start( &client->object, 0, channel, reliability, bytes );
 }
 
+// finishes the open message reservation on connection 0; asserts in a debug
+// build and returns 0 in a release build when no reservation is open
 uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )

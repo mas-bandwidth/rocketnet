@@ -2449,7 +2449,9 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
 static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
 {
-    rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    rocketnet_assert( client_transport && packet_data && packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    if ( !client_transport || !packet_data || packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
 
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
 
@@ -3048,9 +3050,14 @@ static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( context );
+    if ( !client_transport || !context )
+        return 0;
 
     if ( !context->frame )
+    {
+        rocketnet_assert( context->frame != NULL );
         return 0;
+    }
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
@@ -3092,6 +3099,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     uint64_t backend_id;
     if ( !client_transport->packet_leases.take(*context, trusted, backend_id) )
     {
+        rocketnet_assert( false );
         context->frame = NULL;
         return 0;
     }

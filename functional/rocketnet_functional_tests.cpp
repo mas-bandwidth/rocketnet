@@ -1059,6 +1059,17 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
 
 }
 
+static int rocketnet_test_shape_asserts = 0;
+
+static void rocketnet_test_shape_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_test_shape_asserts++;
+}
+
 void rocketnet_test_transport_start_finish_shape()
 {
     // the acquire/commit surface, proven over loopback: aligned roots, the
@@ -1129,7 +1140,11 @@ void rocketnet_test_transport_start_finish_shape()
         auto aborted = changed;
         rocketnet_server_transport_abort_packet(server, &aborted);
         rocketnet_check(aborted.frame == NULL);
+        rocketnet_test_shape_asserts = 0;
+        rocketnet_assert_function( rocketnet_test_shape_assert_hook );
         rocketnet_check(rocketnet_server_transport_finish_packet(server, &changed, 1) == 0);
+        rocketnet_assert_function( NULL );
+        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     }
     rocketnet_check(rocketnet_server_transport_packet_payload(server, &context, &checked_capacity) == frame + context.payload_index);
     auto expired = context;
@@ -1138,7 +1153,11 @@ void rocketnet_test_transport_start_finish_shape()
 
     rocketnet_server_transport_finish_packet( server, &context, context.payload_capacity + 1 );
     rocketnet_check(rocketnet_server_transport_packet_payload(server, &expired, &checked_capacity) == NULL);
+    rocketnet_test_shape_asserts = 0;
+    rocketnet_assert_function( rocketnet_test_shape_assert_hook );
     rocketnet_check(rocketnet_server_transport_finish_packet(server, &expired, 1) == 0);
+    rocketnet_assert_function( NULL );
+    rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
 
     // an aborted packet is harmless
 

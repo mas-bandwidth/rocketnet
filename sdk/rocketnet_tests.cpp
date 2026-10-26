@@ -13084,8 +13084,13 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     rocketnet_check( rn_message_object_finish( object, 0, 9 ) == 0 );
     rocketnet_check( object->pending_connection == -1 );
 
-    // a finish with nothing pending is 0 and changes nothing
+    // a finish with nothing pending asserts in a debug build and returns 0 in a release build
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rn_assert_function;
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
+    rocketnet_test_null_asserts = 0;
     rocketnet_check( rn_message_object_finish( object, 0, 8 ) == 0 );
+    rocketnet_assert_function( saved_assert );
+    rocketnet_check( rocketnet_test_null_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
 
     // and the next start and a valid finish send
     pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );

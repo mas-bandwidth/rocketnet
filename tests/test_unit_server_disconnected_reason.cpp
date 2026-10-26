@@ -473,7 +473,13 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
     server_disconnect_now_check( object->in_place == 0 );
     server_disconnect_now_check( object->pending_connection == -1 );
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    static int disconnect_now_finish_asserts = 0;
+    disconnect_now_finish_asserts = 0;
+    rocketnet_assert_function( []( const char *, const char *, const char *, int ) { disconnect_now_finish_asserts++; } );
     server_disconnect_now_check( rocketnet_server_finish_message( server, 16 ) == 0 );
+    rocketnet_assert_function( saved_assert );
+    server_disconnect_now_check( disconnect_now_finish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
     server_disconnect_now_check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
