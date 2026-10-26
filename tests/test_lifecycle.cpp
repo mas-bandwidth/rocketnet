@@ -88,12 +88,8 @@ static void * refuse_allocation( void *, size_t ) { return NULL; }
 static void refuse_free( void *, void * ) { check(false); }
 static void thread_body( void * ) {}
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-// The Linux thread and shim share one custom-allocator-backed record.
+// The platform thread and shim share one custom-allocator-backed record.
 static const int expected_platform_thread_allocations = 1;
-#else
-static const int expected_platform_thread_allocations = 2;
-#endif
 
 struct ack_writer
 {
