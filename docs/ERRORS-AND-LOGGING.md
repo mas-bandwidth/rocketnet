@@ -563,12 +563,22 @@ disconnects under load:
         `rocketnet_client_connect(client, fresh_token)`. Never spin in a
         blocking same-frame retry loop on `CLIENT_NOT_DISCONNECTED`.
 3. **Generational isolation and lazy server slot reset**:
-   - **Client side**: when `rocketnet_client_disconnected(client)` becomes
-     `true` and the next `rocketnet_client_connect` runs, the retired
-     connection's counters are folded into the client's lifetime totals, the
-     old message/transport objects are destroyed, and the new session is
-     constructed fresh inside `client->block` with new keys, sequence numbers,
-     and reliability windows.
+   - **Client side**: when `rocketnet_client_disconnect(client)` runs and moves
+     the old connection to retirement, `rocketnet_client_stats` immediately
+     reads `0` for session counters
+     (`packets_sent`, `packets_received`, `bytes_sent`, `bytes_received`,
+     `payloads_received`, `messages_resent`, `messages_duplicated`,
+     `receipts_acked`, `receipts_lost`, `receipts_dropped`, and
+     `messages_dropped_over_budget`) as well as RTT, jitter, packet loss, and
+     trailing rates, while `messages_dropped_not_connected` remains visible.
+     When `rocketnet_client_disconnected(client)` becomes `true` and the next
+     `rocketnet_client_connect` runs (`rn_client_end_connection`), only
+     `messages_dropped_not_connected` is carried forward onto the client handle
+     (`client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS]`); the retired
+     connection's session counters are not folded into handle totals, the old
+     message/transport objects are destroyed, and the new session is constructed
+     fresh inside `client->block` with zeroed session counters and new keys,
+     sequence numbers, and reliability windows.
    - **Server side**: when a client disconnects or is kicked via
      `rocketnet_server_disconnect_client(server, client_index)`,
      `rocketnet_server_client_connected(server, client_index)` immediately
