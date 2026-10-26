@@ -36,7 +36,8 @@ static_assert( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) == 1
 static_assert( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) + 2 * sizeof(uint32_t) == 1440, "a hold with its free-stack and delivered-list indices is the 1440Ru region term (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
 static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
-static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 9, "layer 3 keeps its first_send and its flag byte in reserved (6.4)" );
+static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 6, "a send descriptor keeps six spare bytes inside the pinned 64 (14)" );
+static_assert( sizeof(rn_store_class_t) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
 static uint64_t rn_align64( uint64_t value )
@@ -124,7 +125,9 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     {
         const uint64_t payload_bytes = typical_payload[c];
         const uint64_t count = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
-        if ( count >= 0x3FFFFFFFu )
+        // a chunk's meta packs its next-chunk reference in 20 bits, so a class
+        // holds at most 2^20 chunks; a config past that is refused whole
+        if ( count >= ( 1u << 20 ) )
             return false;
         chunks[c] = (uint32_t) count;
         S += rn_align64( count * ( chunk_bytes[c] + sizeof(uint32_t) ) );
@@ -178,13 +181,18 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 //                          the send store
 // ----------------------------------------------------------------
 
-// A chunk's link (CHANNELS section 4): free, the next free chunk; allocated,
-// IN_USE, HEAD on a chain's first chunk, and the next chunk of its chain.
+// A chunk's meta (CHANNELS section 4), one u32 per chunk in the class's meta
+// array: a live bit, a chain-head bit, the slot's generation tag (bumped on
+// every take of the chunk) and a 20-bit index reference -- the next chunk of
+// its block in allocation order while live, the next free chunk while free.
 
-#define RN_LINK_IN_USE          0x80000000u
-#define RN_LINK_HEAD            0x40000000u
-#define RN_LINK_INDEX           0x3FFFFFFFu
-#define RN_LINK_END             RN_LINK_INDEX
+#define RN_META_LIVE            0x80000000u
+#define RN_META_HEAD            0x40000000u
+#define RN_META_GEN_SHIFT       20
+#define RN_META_GEN_MASK        0x3FFu
+#define RN_META_NEXT_MASK       0xFFFFFu
+#define RN_META_END             RN_META_NEXT_MASK
+#define RN_HANDLE_INDEX         0x3FFFFFFFu
 
 static const uint32_t rn_class_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
 
@@ -230,11 +238,11 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
         rn_store_class_t * cls = &store->classes[c];
         cls->chunk_bytes = rn_class_bytes[c];
         cls->num_chunks = rn_send_store_chunks_for( bytes, c );
-        rocketnet_assert( cls->num_chunks < RN_LINK_END );
+        rocketnet_assert( cls->num_chunks <= RN_META_END );
         cls->data = memory + (uint64_t) c * third;
-        cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        // tla/RNLazyPool.tla Reset: nothing taken, no link written
-        cls->free_head = RN_LINK_END;
+        cls->meta = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
+        // tla/RNLazyPool.tla Reset: nothing taken, no meta written
+        cls->free_head = RN_META_END;
         cls->free_count = cls->num_chunks;
         cls->fresh = 0;
     }
@@ -251,9 +259,9 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
         cls->chunk_bytes = rn_class_bytes[c];
         cls->num_chunks = counts[c];
         cls->data = memory + offset;
-        cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        // tla/RNLazyPool.tla Reset: nothing taken, no link written
-        cls->free_head = RN_LINK_END;
+        cls->meta = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
+        // tla/RNLazyPool.tla Reset: nothing taken, no meta written
+        cls->free_head = RN_META_END;
         cls->free_count = cls->num_chunks;
         cls->fresh = 0;
         offset += rn_align64( (uint64_t) cls->num_chunks * ( cls->chunk_bytes + sizeof(uint32_t) ) );
@@ -284,34 +292,37 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     if ( !rn_send_store_fits( store, bytes ) )
         return RN_CHUNK_NONE;
 
-    uint32_t first = RN_LINK_END;
-    uint32_t previous = RN_LINK_END;
+    uint32_t first = RN_META_END;
+    uint32_t previous = RN_META_END;
     for ( uint32_t n = 0; n < needed; n++ )
     {
-        // tla/RNLazyPool.tla Take: the free list first, then the first chunk
-        // never taken
+        // tla/RNLazyPool.tla Take: the free chain first, then the first chunk
+        // never taken; the slot's generation tag bumps on every take
         uint32_t i;
-        if ( cls->free_head != RN_LINK_END )
+        uint32_t gen;
+        if ( cls->free_head != RN_META_END )
         {
             i = cls->free_head;
             rocketnet_assert( i < cls->fresh );
-            rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
-            cls->free_head = cls->link[i];
+            rocketnet_assert( ( cls->meta[i] & RN_META_LIVE ) == 0 );
+            gen = ( ( cls->meta[i] >> RN_META_GEN_SHIFT ) & RN_META_GEN_MASK ) + 1;
+            cls->free_head = cls->meta[i] & RN_META_NEXT_MASK;
         }
         else
         {
             i = cls->fresh++;
             rocketnet_assert( i < cls->num_chunks );
+            gen = 1;
         }
-        cls->link[i] = RN_LINK_IN_USE | RN_LINK_END;
-        if ( previous == RN_LINK_END )
+        cls->meta[i] = RN_META_LIVE | ( ( gen & RN_META_GEN_MASK ) << RN_META_GEN_SHIFT ) | RN_META_END;
+        if ( previous == RN_META_END )
         {
             first = i;
-            cls->link[i] |= RN_LINK_HEAD;
+            cls->meta[i] |= RN_META_HEAD;
         }
         else
         {
-            cls->link[previous] = ( cls->link[previous] & ~RN_LINK_INDEX ) | i;
+            cls->meta[previous] = ( cls->meta[previous] & ~RN_META_NEXT_MASK ) | i;
         }
         previous = i;
     }
@@ -331,23 +342,26 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
     if ( c >= RN_STORE_NUM_CLASSES )
         return false;
     rn_store_class_t * cls = &store->classes[c];
-    uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->fresh )                  // never taken: its link is unwritten, and it is not held
+    uint32_t i = handle & RN_HANDLE_INDEX;
+    if ( i >= cls->fresh )                  // never taken: its meta is unwritten, and it is not held
         return false;
 
     // only a chain's head, still allocated, frees (CHANNELS section 4):
-    // a second free of the same chain finds the flag already cleared and refuses
-    if ( ( cls->link[i] & ( RN_LINK_IN_USE | RN_LINK_HEAD ) ) != ( RN_LINK_IN_USE | RN_LINK_HEAD ) )
+    // a second free of the same chain finds the live bit already cleared and refuses
+    if ( ( cls->meta[i] & ( RN_META_LIVE | RN_META_HEAD ) ) != ( RN_META_LIVE | RN_META_HEAD ) )
         return false;
 
-    while ( i != RN_LINK_END )
+    // O(the block's fragment count): only the block's own allocation-order
+    // references are followed, never a numeric gap between chunk indices
+    for ( uint32_t steps = 0; i != RN_META_END && steps <= cls->num_chunks; steps++ )
     {
-        rocketnet_assert( i < cls->num_chunks && ( cls->link[i] & RN_LINK_IN_USE ) != 0 );
-        const uint32_t next = cls->link[i] & RN_LINK_INDEX;
-        // the in-use flag clears in the same store that pushes the chunk:
+        rocketnet_assert( i < cls->num_chunks && ( cls->meta[i] & RN_META_LIVE ) != 0 );
+        const uint32_t next = cls->meta[i] & RN_META_NEXT_MASK;
+        const uint32_t gen = cls->meta[i] & ( RN_META_GEN_MASK << RN_META_GEN_SHIFT );
+        // the live bit clears in the same store that pushes the chunk:
         // no state where a chunk is both free-listed and in use
-        // (tla/RNLazyPool.tla Release: the chunk pushed on the free list head)
-        cls->link[i] = cls->free_head;
+        // (tla/RNLazyPool.tla Release: the chunk pushed on the free chain head)
+        cls->meta[i] = gen | cls->free_head;
         cls->free_head = i;
         cls->free_count++;
         i = next;
@@ -375,7 +389,7 @@ uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t hand
     if ( c >= RN_STORE_NUM_CLASSES )
         return NULL;
     const rn_store_class_t * cls = &store->classes[c];
-    const uint32_t i = handle & RN_LINK_INDEX;
+    const uint32_t i = handle & RN_HANDLE_INDEX;
     if ( i >= cls->fresh )                 // never taken: its data is unwritten
         return NULL;
     return cls->data + (uint64_t) i * cls->chunk_bytes;
@@ -393,11 +407,24 @@ uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handl
     if ( c >= RN_STORE_NUM_CLASSES )
         return RN_CHUNK_NONE;
     const rn_store_class_t * cls = &store->classes[c];
-    const uint32_t i = handle & RN_LINK_INDEX;
-    if ( i >= cls->fresh )                  // never taken: its link is unwritten
+    const uint32_t i = handle & RN_HANDLE_INDEX;
+    if ( i >= cls->fresh )                  // never taken: its meta is unwritten
         return RN_CHUNK_NONE;
-    const uint32_t next = cls->link[i] & RN_LINK_INDEX;
-    return next == RN_LINK_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
+    const uint32_t next = cls->meta[i] & RN_META_NEXT_MASK;
+    return next == RN_META_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
+}
+
+uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle )
+{
+    rocketnet_assert( store );
+    const int c = rn_send_store_chunk_class( handle );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return 0;
+    const rn_store_class_t * cls = &store->classes[c];
+    const uint32_t i = handle & RN_HANDLE_INDEX;
+    if ( i >= cls->fresh )
+        return 0;
+    return ( cls->meta[i] >> RN_META_GEN_SHIFT ) & RN_META_GEN_MASK;
 }
 
 uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index )
@@ -504,10 +531,11 @@ void rn_region_carve( rn_region_t * region )
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof(rn_held_entry_t) * region->held_entries );
 
-    // the send descriptor pool: an intrusive LIFO free list through next,
-    // lazy (tla/RNLazyPool.tla Reset): nothing taken, no descriptor written.
-    // A take initializes its descriptor whole.
-    region->descriptors_free_head = RN_DESCRIPTOR_NONE;
+    // the send descriptor pool: a LIFO free-handle stack (entry `i` lives in
+    // descriptor `i`'s free_handle slot), lazy (tla/RNLazyPool.tla Reset):
+    // nothing taken, no descriptor written. A take initializes its descriptor
+    // whole, preserving its generation tag and any live stack slot it holds.
+    region->descriptors_free_top = 0;
     region->descriptors_free = region->queue;
     region->descriptors_fresh = 0;
 
@@ -522,6 +550,7 @@ void rn_region_carve( rn_region_t * region )
     region->span_tail = 0;
     region->span_first = RN_DESCRIPTOR_NONE;
     region->span_last = RN_DESCRIPTOR_NONE;
+    region->span_ticket_next = 1;
 
     memset( region->sent_packets, 0, sizeof(rn_sent_packet_t) * region->packets );
     memset( region->sent_index, 0, sizeof(rn_sent_index_t) * region->sent_index_entries );
@@ -598,27 +627,51 @@ int rn_connection_memory_decide( const rn_region_t * region )
     return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
-// tla/RNLazyPool.tla Take: a descriptor off the free list, or the first one
-// never taken since the carve. The caller checked descriptors_free and
-// initializes the descriptor whole.
+// tla/RNLazyPool.tla Take: a descriptor off the free stack, or the first one
+// never taken since the carve. The caller checked descriptors_free. The take
+// initializes the descriptor whole, preserving its generation tag (bumped
+// here) and the free-stack slot this descriptor's bytes may still hold.
 static uint32_t rn_region_descriptor_take( rn_region_t * region )
 {
     rocketnet_assert( region->descriptors_free > 0 );
     uint32_t d;
-    if ( region->descriptors_free_head != RN_DESCRIPTOR_NONE )
+    bool fresh_take = false;
+    if ( region->descriptors_free_top > 0 )
     {
-        d = region->descriptors_free_head;
+        region->descriptors_free_top--;
+        d = region->send_descriptors[region->descriptors_free_top].free_handle;
         rocketnet_assert( d < region->descriptors_fresh );
         rocketnet_assert( !region->send_descriptors[d].in_use );
-        region->descriptors_free_head = region->send_descriptors[d].next;
     }
     else
     {
         d = region->descriptors_fresh++;
         rocketnet_assert( d < region->queue );
+        fresh_take = true;
     }
     region->descriptors_free--;
+
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    const uint32_t generation = fresh_take ? 1 : descriptor->generation + 1;
+    const uint32_t stack_slot = fresh_take ? 0 : descriptor->free_handle;
+    const bool holds_stack_slot = !fresh_take && d < region->descriptors_free_top;
+    memset( descriptor, 0, sizeof(*descriptor) );
+    descriptor->generation = generation;
+    if ( holds_stack_slot )
+        descriptor->free_handle = stack_slot;
     return d;
+}
+
+// tla/RNLazyPool.tla Release for a descriptor: push its handle on the free
+// stack (the slot at the stack's depth, in that descriptor's free_handle).
+static void rn_region_descriptor_release( rn_region_t * region, uint32_t d )
+{
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    descriptor->in_use = 0;
+    descriptor->chunk = RN_CHUNK_NONE;
+    region->send_descriptors[region->descriptors_free_top].free_handle = d;
+    region->descriptors_free_top++;
+    region->descriptors_free++;
 }
 
 int rn_region_send_fit_store( const rn_region_t * region, int bytes )
@@ -692,7 +745,6 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 
     const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = chunk;
     descriptor->bytes = (uint32_t) bytes;
     descriptor->next = RN_DESCRIPTOR_NONE;
@@ -763,17 +815,52 @@ static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t 
     return false;
 }
 
+// Live spans order by allocation ticket, not by a linked list: each span's
+// descriptor carries the ticket its allocation took, span_first/span_last
+// name the smallest/largest live tickets, and span_head is the reclaim floor
+// (the oldest live span's start). A freed interior span's bytes stay retained
+// behind the floor; they are never overwritten while any older span lives.
+
+// renumber live tickets to 1..live in ticket order, on ticket wraparound
+static void rn_span_renumber_tickets( rn_region_t * region )
+{
+    uint32_t assigned = 1;
+    uint32_t previous = 0;
+    for ( ;; )
+    {
+        uint32_t best = RN_DESCRIPTOR_NONE;
+        uint32_t best_ticket = 0;
+        for ( uint32_t i = 0; i < region->descriptors_fresh; i++ )
+        {
+            const rn_send_descriptor_t * candidate = &region->send_descriptors[i];
+            if ( !candidate->in_use || !( candidate->flags & RN_SEND_FLAG_SPAN ) )
+                continue;
+            if ( candidate->span_ticket <= previous )
+                continue;
+            if ( best == RN_DESCRIPTOR_NONE || candidate->span_ticket < best_ticket )
+            {
+                best = i;
+                best_ticket = candidate->span_ticket;
+            }
+        }
+        if ( best == RN_DESCRIPTOR_NONE )
+            break;
+        region->send_descriptors[best].span_ticket = assigned++;
+        previous = best_ticket;
+    }
+    region->span_ticket_next = assigned;
+}
+
 // tla/RNSendSpans.tla, Alloc (FloorAtOldest: head moves only for the first span)
 static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint64_t len16 )
 {
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     descriptor->flags |= RN_SEND_FLAG_SPAN;
     descriptor->span_start = start;
-    descriptor->span_prev = region->span_last;
-    descriptor->span_next = RN_DESCRIPTOR_NONE;
-    if ( region->span_last != RN_DESCRIPTOR_NONE )
-        region->send_descriptors[region->span_last].span_next = d;
-    else
+    if ( region->span_ticket_next == 0 )
+        rn_span_renumber_tickets( region );
+    descriptor->span_ticket = region->span_ticket_next++;
+    if ( region->span_first == RN_DESCRIPTOR_NONE )
     {
         region->span_first = d;
         region->span_head = start;
@@ -792,30 +879,48 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     if ( !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
         return;
 
-    const uint32_t prev = descriptor->span_prev;
-    const uint32_t next = descriptor->span_next;
-    if ( prev != RN_DESCRIPTOR_NONE )
-        region->send_descriptors[prev].span_next = next;
-    else
-        region->span_first = next;
-    if ( next != RN_DESCRIPTOR_NONE )
-        region->send_descriptors[next].span_prev = prev;
-    else
-        region->span_last = prev;
+    const bool was_first = region->span_first == d;
+    const bool was_last = region->span_last == d;
+    descriptor->flags &= (uint8_t) ~RN_SEND_FLAG_SPAN;
+    descriptor->span_ticket = 0;
 
-    if ( region->span_first == RN_DESCRIPTOR_NONE )
+    if ( was_first && was_last )
     {
+        region->span_first = RN_DESCRIPTOR_NONE;
+        region->span_last = RN_DESCRIPTOR_NONE;
         region->span_head = 0;                              // empty: the floor is the start
         region->span_tail = 0;
-    }
-    else if ( prev == RN_DESCRIPTOR_NONE )
-    {
-        region->span_head = region->send_descriptors[region->span_first].span_start;
+        return;
     }
 
-    descriptor->flags &= (uint8_t) ~RN_SEND_FLAG_SPAN;
-    descriptor->span_prev = RN_DESCRIPTOR_NONE;
-    descriptor->span_next = RN_DESCRIPTOR_NONE;
+    if ( was_first || was_last )
+    {
+        // the new edge is the live span with the smallest (or largest) ticket;
+        // the scan is bounded by the descriptors taken since the carve
+        uint32_t edge = RN_DESCRIPTOR_NONE;
+        uint32_t edge_ticket = was_first ? UINT32_MAX : 0;
+        for ( uint32_t i = 0; i < region->descriptors_fresh; i++ )
+        {
+            const rn_send_descriptor_t * candidate = &region->send_descriptors[i];
+            if ( !candidate->in_use || !( candidate->flags & RN_SEND_FLAG_SPAN ) )
+                continue;
+            if ( was_first ? candidate->span_ticket < edge_ticket : candidate->span_ticket > edge_ticket )
+            {
+                edge = i;
+                edge_ticket = candidate->span_ticket;
+            }
+        }
+        rocketnet_assert( edge != RN_DESCRIPTOR_NONE );
+        if ( was_first )
+        {
+            region->span_first = edge;
+            region->span_head = region->send_descriptors[edge].span_start;
+        }
+        else
+        {
+            region->span_last = edge;
+        }
+    }
 }
 
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start )
@@ -877,7 +982,6 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 
     const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    memset( descriptor, 0, sizeof(*descriptor) );
     descriptor->chunk = RN_CHUNK_NONE;
     descriptor->bytes = (uint32_t) bytes;
     descriptor->next = RN_DESCRIPTOR_NONE;
@@ -955,11 +1059,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
         rn_span_unlink( region, d );
     if ( descriptor->chunk != RN_CHUNK_NONE )
         rn_send_store_free( &region->store, descriptor->chunk );
-    descriptor->in_use = 0;
-    descriptor->chunk = RN_CHUNK_NONE;
-    descriptor->next = region->descriptors_free_head;
-    region->descriptors_free_head = d;
-    region->descriptors_free++;
+    rn_region_descriptor_release( region, d );
 }
 
 void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t chain_index )
@@ -979,38 +1079,41 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
         const int c = rn_send_store_chunk_class( descriptor->chunk );
         rocketnet_assert( c >= 0 && c < RN_STORE_NUM_CLASSES );
         rn_store_class_t * cls = &region->store.classes[c];
-        uint32_t head = descriptor->chunk & RN_LINK_INDEX;
+        uint32_t head = descriptor->chunk & RN_HANDLE_INDEX;
         rocketnet_assert( head < cls->num_chunks );
-        rocketnet_assert( ( cls->link[head] & ( RN_LINK_IN_USE | RN_LINK_HEAD ) ) == ( RN_LINK_IN_USE | RN_LINK_HEAD ) );
+        rocketnet_assert( ( cls->meta[head] & ( RN_META_LIVE | RN_META_HEAD ) ) == ( RN_META_LIVE | RN_META_HEAD ) );
 
-        uint32_t prev = RN_LINK_END;
+        // O(chain_index), bounded by the block's own fragment count: only
+        // allocation-order references are followed, never a numeric gap
+        uint32_t prev = RN_META_END;
         uint32_t cur = head;
-        for ( uint32_t step = 0; step < chain_index && cur != RN_LINK_END; step++ )
+        for ( uint32_t step = 0; step < chain_index && cur != RN_META_END; step++ )
         {
             prev = cur;
-            cur = cls->link[cur] & RN_LINK_INDEX;
+            cur = cls->meta[cur] & RN_META_NEXT_MASK;
         }
-        if ( cur != RN_LINK_END )
+        if ( cur != RN_META_END )
         {
-            rocketnet_assert( cur < cls->num_chunks && ( cls->link[cur] & RN_LINK_IN_USE ) != 0 );
-            const uint32_t next = cls->link[cur] & RN_LINK_INDEX;
-            if ( prev == RN_LINK_END )
+            rocketnet_assert( cur < cls->num_chunks && ( cls->meta[cur] & RN_META_LIVE ) != 0 );
+            const uint32_t next = cls->meta[cur] & RN_META_NEXT_MASK;
+            const uint32_t gen = cls->meta[cur] & ( RN_META_GEN_MASK << RN_META_GEN_SHIFT );
+            if ( prev == RN_META_END )
             {
-                if ( next == RN_LINK_END )
+                if ( next == RN_META_END )
                 {
                     descriptor->chunk = RN_CHUNK_NONE;
                 }
                 else
                 {
-                    cls->link[next] |= RN_LINK_HEAD;
+                    cls->meta[next] |= RN_META_HEAD;
                     descriptor->chunk = ( (uint32_t) c << 30 ) | next;
                 }
             }
             else
             {
-                cls->link[prev] = ( cls->link[prev] & ~RN_LINK_INDEX ) | next;
+                cls->meta[prev] = ( cls->meta[prev] & ~RN_META_NEXT_MASK ) | next;
             }
-            cls->link[cur] = cls->free_head;
+            cls->meta[cur] = gen | cls->free_head;
             cls->free_head = cur;
             cls->free_count++;
         }
@@ -1024,11 +1127,7 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
             rn_span_unlink( region, d );
         if ( descriptor->chunk != RN_CHUNK_NONE )
             rn_send_store_free( &region->store, descriptor->chunk );
-        descriptor->in_use = 0;
-        descriptor->chunk = RN_CHUNK_NONE;
-        descriptor->next = region->descriptors_free_head;
-        region->descriptors_free_head = d;
-        region->descriptors_free++;
+        rn_region_descriptor_release( region, d );
     }
 }
 
