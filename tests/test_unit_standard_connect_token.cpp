@@ -28,6 +28,31 @@ static const uint8_t rn_test_wrong_server_public_key[32] =
     0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x01
 };
 
+static void rn_test_fill_signed( struct rocketnet_signed_connect_data_t * sf )
+{
+    memset( sf, 0, sizeof( *sf ) );
+    sf->version = ROCKETNET_WIRE_VERSION;
+    sf->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    sf->create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    sf->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    sf->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    sf->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    sf->ipv4_address[0] = 127; sf->ipv4_address[1] = 0;
+    sf->ipv4_address[2] = 0; sf->ipv4_address[3] = 1;
+    sf->ipv4_address[4] = 0x40; sf->ipv4_address[5] = 0x9c;
+    memcpy( sf->server_public_key, rocketnet_test_server_public_key, 32 );
+}
+
+static void rn_test_fill_private( struct rocketnet_connect_token_private_t * pf )
+{
+    memset( pf, 0, sizeof( *pf ) );
+    pf->client_id = ROCKETNET_TEST_CLIENT_ID;
+    memcpy( pf->client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( pf->server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+}
+
+#if ROCKETNET_DEV
+
 static const rn_standard_vector_t standard_connect_token_table[] =
 {
     RN_STANDARD_VECTOR( "t6.frozen-token", "931a7c4e887766554433221100f9ac68000000002cfaac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801cb310fdd303d6aad8c7900dfc4252d94d2134f1e6e17320f4c5b1bd4f2879da3ce2f287720861887378edf01de9befc09f1bf01fd3df19e2a79e60859e896346eb60c08f686721d81946e781e1ae2c3716a465880a3a5f068ede0b039cf5281a97cd36717766b5bb13869838ecb333d9eeb1042bf7a7b8f62f9cbb020ddbda6cb5f44e4def43666642ff8e6f835a5f295dd8d7bf2268684b2a93ec17ac8fdc4c4f05e5b09927b6afac3ec0f00508e9d43316600c6b745d6dbb9c68f12d569a19573d460ba34e801d744d6db6a0a01bd35b4e08d5203bbbd44367ef89bcbb3827fd80295f2b9404cdd2979e3aa17513ff9f42b6706248ea762282028d4fe0cf71156554f26bf90cb2bfcfef438b5e68ad2501f9e3be24bc0b33651ec756f60f423f324d90323adc9f6c8f1762b02ba31c7e79626067fe7f109594a803d330502feb03f61e9297ec11aadebcd69bac0bfd05c1c5c144ae23bcd114c35322e797843e95ccb8bc9748fda08197ce6d5a10c83bcb0eb7ff471d738a742f68fa3eb77dfadd320a11a55420e3ccd03f15efc183a5dd35cf8657fa712b7c97496000e6a5468d800d49d1345ce185dc0f7bc7147a9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006b3692b49d36b7a276303340ab8399b98561ac6881fc7aa2bb60ffe07732ea7121fe5044ebb5f53dbe768b800c30d75370eb9beb4914ae133da64ea6b09e760d0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" ),
@@ -57,29 +82,6 @@ static int rn_test_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned
         return -1;
     memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
     return 0;
-}
-
-static void rn_test_fill_signed( struct rocketnet_signed_connect_data_t * sf )
-{
-    memset( sf, 0, sizeof( *sf ) );
-    sf->version = ROCKETNET_WIRE_VERSION;
-    sf->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    sf->create_timestamp = ROCKETNET_TEST_CREATE_TS;
-    sf->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
-    sf->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
-    sf->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    sf->ipv4_address[0] = 127; sf->ipv4_address[1] = 0;
-    sf->ipv4_address[2] = 0; sf->ipv4_address[3] = 1;
-    sf->ipv4_address[4] = 0x40; sf->ipv4_address[5] = 0x9c;
-    memcpy( sf->server_public_key, rocketnet_test_server_public_key, 32 );
-}
-
-static void rn_test_fill_private( struct rocketnet_connect_token_private_t * pf )
-{
-    memset( pf, 0, sizeof( *pf ) );
-    pf->client_id = ROCKETNET_TEST_CLIENT_ID;
-    memcpy( pf->client_to_server_key, rocketnet_test_token_c2s_key, 32 );
-    memcpy( pf->server_to_client_key, rocketnet_test_token_s2c_key, 32 );
 }
 
 static int standard_connect_token_generate( const char * id, uint8_t * out, int capacity )
@@ -157,18 +159,19 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     return -1;
 }
 
+#endif // #if ROCKETNET_DEV
+
 static void test_standard_connect_token_vectors()
 {
+#if ROCKETNET_DEV
     const int count = (int) ( sizeof( standard_connect_token_table ) / sizeof( standard_connect_token_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_connect_token_table, count, standard_connect_token_generate ) == count );
+#endif // #if ROCKETNET_DEV
 
     // the frozen token's identifier is the t3 twin
     uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     rocketnet_connect_token_identifier( identifier, rocketnet_test_frozen_token );
     rocketnet_unit_check( memcmp( identifier, rocketnet_test_token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 );
-
-    // the three refusals: build each negative vector's token and assert the
-    // server-side refusal that its vector names.
 
     struct rocketnet_signed_connect_data_t sf;
     struct rocketnet_connect_token_private_t pf;
@@ -176,12 +179,28 @@ static void test_standard_connect_token_vectors()
     struct rocketnet_connect_token_t parsed;
     struct rocketnet_connect_token_private_t opened;
 
+    // production fresh-ephemeral token minting opens and verifies cleanly
+    rn_test_fill_signed( &sf );
+    rn_test_fill_private( &pf );
+    rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
+    rocketnet_read_connect_token( &parsed, token );
+    rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
+    rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+    rocketnet_unit_check( rocketnet_connect_token_private_consistent( &opened, parsed.signed_connect_data ) );
+
+    // the three refusals: build each negative vector's token and assert the
+    // server-side refusal that its vector names.
+
     // bad address flags: the flag byte carries a bit beyond IPv4 and IPv6
     rn_test_fill_signed( &sf );
     sf.address_flags = 0x05;
     rn_test_fill_private( &pf );
+#if ROCKETNET_DEV
     rocketnet_unit_check( rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
                         rocketnet_test_token_vector_ephemeral_secret[1], token ) );
+#else
+    rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
+#endif
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] == 0x05 );
     rocketnet_unit_check( ( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 );
@@ -191,8 +210,12 @@ static void test_standard_connect_token_vectors()
     rn_test_fill_signed( &sf );
     memcpy( sf.server_public_key, rn_test_wrong_server_public_key, 32 );
     rn_test_fill_private( &pf );
+#if ROCKETNET_DEV
     rocketnet_unit_check( rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
                         rocketnet_test_token_vector_ephemeral_secret[2], token ) );
+#else
+    rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
+#endif
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
     rocketnet_unit_check( !rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
@@ -204,8 +227,13 @@ static void test_standard_connect_token_vectors()
     pf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
     rocketnet_write_connect_token_private( &pf, private_block );
+#if ROCKETNET_DEV
     rocketnet_unit_check( rn_test_seal_with_ephemeral( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                                        rocketnet_test_server_public_key, rocketnet_test_token_vector_ephemeral_secret[3] ) == 0 );
+#else
+    rocketnet_unit_check( crypto_box_seal( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
+                                           rocketnet_test_server_public_key ) == 0 );
+#endif
     uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
     rocketnet_write_signed_connect_data( &sf, signed_buffer );
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];

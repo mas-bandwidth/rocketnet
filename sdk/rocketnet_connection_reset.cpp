@@ -148,6 +148,8 @@ void rocketnet_server_connection_reset( struct rn_message_object_t * server, int
     rocketnet_message_connection_reset( server, client_index );
 }
 
+#if ROCKETNET_DEV
+
 static size_t rocketnet_reset_align_up( size_t value, size_t alignment )
 {
     return ( value + alignment - 1 ) & ~( alignment - 1 );
@@ -216,3 +218,5 @@ bool rocketnet_reset_inventory_matches( const char * structure,
     }
     return true;
 }
+
+#endif // #if ROCKETNET_DEV

@@ -446,16 +446,24 @@ production build sets `ROCKETNET_DEV` to 0, one setting:
     make ROCKETNET_DEV=OFF                      # the Makefile front door
 
 or `#define ROCKETNET_DEV 0` (`-DROCKETNET_DEV=0`) when compiling the sources
-into your own build. The CMake option sets the value on `rocketnet`,
-`rocketnet_shared` and the unit suite's hook library, and the targets hand it
-to every consumer, so the header a game compiles matches its library.
+into your own build. The CMake option sets the value on `rocketnet` and
+`rocketnet_shared`, and the targets hand it to every consumer, so the header a
+game compiles matches its library. `rocketnet_test_hooks` is built only when
+`ROCKETNET_DEV=ON`; in a production build (`-DROCKETNET_DEV=OFF`) no hook
+library is built, `./bin/test` links `rocketnet` directly to run the
+production-compatible unit suites, and enabling `ROCKETNET_TEST_SEAMS` or any
+`*_TEST_HOOKS` / `*_TESTS` macro is refused at both CMake configure time and
+C/C++ compile time ([docs/TEST-SCAFFOLDING.md](docs/TEST-SCAFFOLDING.md)).
 `rocketnet_dev` and `rocketnet_shared_dev` are `ROCKETNET_DEV=1` in every
-build, for the examples, the functional suite and the tools.
+build when `ROCKETNET_BUILD_DEV_LIBRARIES=ON`, for the examples, the functional
+suite and the tools.
 
 A production library contains no network simulator, no test seam, no
+deterministic connect-token fixture writer, no reset-inventory walker, no
 `rocketnet_server_transport_dev_config`, no development token minting and no
-development server secret key (`tools/check_exports.py` checks the archive and
-the shared library). It refuses the development values: the published test
+development server secret key (`tools/check_exports.py` and
+`tools/check_test_scaffolding_boundary.py` check the headers, build tree,
+static archive, shared library and Windows import library). It refuses the development values: the published test
 packet filter at client and server create
 (`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`), the published
 development keys at server start (`ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`),

@@ -84,6 +84,12 @@ DEVELOPMENT_SYMBOL_PARTS = (
     "test_stall_destroy", "test_bound_port", "create_step_driven_at_timestamp",
     "create_dev_connect_token", "write_test_connect_token", "ack_visit_count",
     "rocketnet_server_iocp_test_", "rocketnet_server_rio_test_",
+    "write_connect_token_deterministic", "box_seal_with_ephemeral",
+    "reset_inventory_matches", "dev_session_sequence_start",
+    "rn_message_payload_copy_count", "rocketnet_portable_rx_test_",
+    "rocketnet_portable_tx_test_", "rocketnet_platform_socket_set_receive_hook",
+    "rocketnet_platform_socket_send_error_hook", "rocketnet_xdp_test_",
+    "rocketnet_windows_lifecycle_ledger",
 )
 
 
