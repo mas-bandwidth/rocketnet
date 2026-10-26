@@ -309,6 +309,7 @@ static void test_config_env_step_driven_is_absent_in_production()
 REGISTER_UNIT_TEST( test_config_env_step_driven_is_absent_in_production );
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static bool env_names_disconnect_allowance_resolves( const char * value, int * resolved_value )
 {
     env_names_setenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE", value );
@@ -339,6 +340,7 @@ static void test_config_env_disconnect_allowance_range()
     check( !env_names_disconnect_allowance_resolves( "1025", &resolved ) );
 }
 REGISTER_UNIT_TEST( test_config_env_disconnect_allowance_range );
+#endif // #if ROCKETNET_DEV
 
 
 // ---------------------------------------------------------------------------
