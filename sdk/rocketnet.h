@@ -2053,10 +2053,13 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct 
 
 /// Fills stats with the client's current stats.
 ///
-/// Callable in every client state. Counts cover the client's whole life,
-/// across connections. Rates, round trip time, jitter and loss are zero
-/// before the first connect and after disconnect. Thread: not thread-safe; the caller owns the client one thread at
-/// a time.
+/// Callable in every client state. Packet, byte, payload, resend, duplicate,
+/// receipt and budget counts cover only the connection that is held and read
+/// zero without one, including while an ended connection is retiring.
+/// messages_dropped_not_connected remains on the client handle across
+/// connections. Rates, round trip time, jitter and loss have the same session
+/// boundary and read zero without a held connection. Thread: not thread-safe;
+/// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and fills only
 /// api_misuses and thread_priority_refusals.
