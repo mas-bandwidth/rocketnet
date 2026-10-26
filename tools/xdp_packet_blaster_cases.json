@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "description": "Bounded deterministic RocketNet server-ingress robustness cases. Expectations are server-side oracles to correlate with the controlled server receipt; silence or survival alone is never success.",
+  "cases": [
+    {
+      "name": "prefilter-too-short",
+      "source": "fuzz/corpus/prefilter_too_short",
+      "operation": "truncate",
+      "argument": 5,
+      "expected_delta": 1,
+      "expected_stage": "xdp-prefilter",
+      "expected_counter": "XDP_KERNEL_DROPPED_TOO_SMALL",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "prefilter-too-large",
+      "source": "fuzz/corpus/prefilter_too_large",
+      "operation": "oversize",
+      "argument": 1453,
+      "expected_delta": 1,
+      "expected_stage": "xdp-prefilter",
+      "expected_counter": "XDP_KERNEL_DROPPED_TOO_LARGE",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "wrong-filter-epoch",
+      "source": "sdk/rocketnet_wire.h:ROCKETNET_FILTER_EPOCH_UNKEYED",
+      "operation": "wrong_epoch",
+      "argument": 1,
+      "expected_delta": 1,
+      "expected_stage": "xdp-prefilter",
+      "expected_counter": "XDP_KERNEL_DROPPED_WRONG_EPOCH",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "wrong-filter-value",
+      "source": "fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292",
+      "operation": "wrong_filter",
+      "argument": 128,
+      "expected_delta": 1,
+      "expected_stage": "xdp-prefilter",
+      "expected_counter": "XDP_KERNEL_DROPPED_WRONG_FILTER",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "reserved-packet-type",
+      "source": "sdk/rocketnet_wire.h:reserved-types-10-through-255",
+      "operation": "reserved_type",
+      "argument": 10,
+      "expected_delta": 1,
+      "expected_stage": "xdp-type-filter",
+      "expected_counter": "XDP_KERNEL_DROPPED_INVALID_TYPE",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "session-replay",
+      "source": "fuzz/corpus/prefilter_payload",
+      "operation": "replay",
+      "argument": 2,
+      "expected_delta": 2,
+      "expected_stage": "server-replay-window",
+      "expected_counter": "PAYLOAD_ALREADY_RECEIVED",
+      "expected_recovery": "next-sequence-authenticated-payload-accepted",
+      "sequence_state": "accepted"
+    },
+    {
+      "name": "bad-session-tag",
+      "source": "fuzz/corpus/prefilter_payload_full",
+      "operation": "bad_tag",
+      "argument": 1,
+      "expected_delta": 1,
+      "expected_stage": "server-aead-open",
+      "expected_counter": "PAYLOAD_DID_NOT_OPEN",
+      "expected_recovery": "fresh-authenticated-payload-accepted",
+      "sequence_state": "fresh"
+    }
+  ]
+}

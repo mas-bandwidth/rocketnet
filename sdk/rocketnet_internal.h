@@ -646,6 +646,10 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+#if ROCKETNET_DEV
+uint64_t rocketnet_sleep_platform_dispatch_count_for_test( void );
+void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double seconds ) );
+#endif // #if ROCKETNET_DEV
 
 // Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
 // buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
@@ -664,6 +668,12 @@ int rocketnet_server_receive_buffer_request( int max_clients );
 // raise (net.core.rmem_max on Linux, kern.ipc.maxsockbuf on macOS and BSD);
 // a grant at or above the request is an information line.
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
+
+#if ROCKETNET_DEV
+// Test-only decision override. The production socket grant is still observed;
+// this changes only the requested-versus-granted warning branch.
+void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int granted_bytes );
+#endif // ROCKETNET_DEV
 
 // The receive buffer the kernel granted a socket, in the bytes requested
 // (Linux reports double its grant; this halves it); 0 when unreadable.

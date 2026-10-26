@@ -766,15 +766,43 @@ int rocketnet_server_receive_buffer_request( int max_clients )
     return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ );
 }
 
+#if ROCKETNET_DEV
+static thread_local int rocketnet_server_receive_buffer_warning_grant_override = 0;
+
+void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int granted_bytes )
+{
+    rocketnet_server_receive_buffer_warning_grant_override = granted_bytes;
+}
+#endif // ROCKETNET_DEV
+
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes )
 {
+#if ROCKETNET_DEV
+    int warning_granted_bytes = granted_bytes;
+    bool warning_grant_overridden = false;
+    if ( rocketnet_server_receive_buffer_warning_grant_override > 0 )
+    {
+        rocketnet_info( "server %s: socket receive buffer actual grant %d of %d requested bytes; DEV test warning grant override %d bytes %s",
+                        name ? name : "socket", granted_bytes, requested_bytes,
+                        rocketnet_server_receive_buffer_warning_grant_override,
+                        granted_bytes >= requested_bytes ? "applied" : "not needed" );
+        if ( granted_bytes >= requested_bytes )
+        {
+            warning_granted_bytes = rocketnet_server_receive_buffer_warning_grant_override;
+            warning_grant_overridden = true;
+        }
+        rocketnet_server_receive_buffer_warning_grant_override = 0;
+    }
+#else
+    const int warning_granted_bytes = granted_bytes;
+#endif
     // one line per server socket: what the kernel granted and what was asked
     // for. A grant below the request is a warning that names the limit to
     // raise, because the kernel drops what arrives past the grant.
-    if ( granted_bytes >= requested_bytes )
+    if ( warning_granted_bytes >= requested_bytes )
     {
         rocketnet_info( "server %s: socket receive buffer granted %d of %d requested bytes",
-                        name ? name : "socket", granted_bytes, requested_bytes );
+                        name ? name : "socket", warning_granted_bytes, requested_bytes );
         return;
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -784,8 +812,15 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 #else
     const char * limit = "kern.ipc.maxsockbuf";
 #endif
-    rocketnet_warn( "server %s: socket receive buffer granted %d of %d requested bytes; packets arriving between updates past the grant are dropped by the kernel: raise %s",
-                    name ? name : "socket", granted_bytes, requested_bytes, limit );
+#if ROCKETNET_DEV
+    const char * warning_reason = warning_grant_overridden ?
+        "DEV test warning grant override; actual socket grant was reported above" :
+        "packets arriving between updates past the grant are dropped by the kernel";
+#else
+    const char * warning_reason = "packets arriving between updates past the grant are dropped by the kernel";
+#endif
+    rocketnet_warn( "server %s: socket receive buffer granted %d of %d requested bytes; %s: raise %s",
+                    name ? name : "socket", warning_granted_bytes, requested_bytes, warning_reason, limit );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
@@ -1843,7 +1878,6 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                     rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
                     rocketnet_platform_note_send_failure( socket );
                 }
-                sent = count;
                 break;
             }
 

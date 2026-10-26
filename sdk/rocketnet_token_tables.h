@@ -23,9 +23,12 @@
 // claim pressure cannot consume or evict response-binding capacity. Each
 // table is fixed-capacity with bound-first eviction for bindings, no
 // eviction of a live claim, and entries that expire with their deadlines.
-// Lookup is constant time in the number of clients: chained buckets under a
-// per-run SipHash of the identifier, so an attacker cannot craft identifiers
-// that collide. The one-live-connection rule needs no table of its own: the
+// Lookup uses a full-identifier open-addressed index under a per-run SipHash,
+// with at most twice capacity probes. Free slots are a dense array stack; the
+// claim table also keeps a generation-tagged chronological array, so its
+// common free-or-expired capacity query reads only the stack or oldest claim.
+// Removing an interior claim may shift at most capacity tagged entries. The
+// one-live-connection rule needs no table of its own: the
 // claim and the history refuse a token from a second address before the
 // signature verify, a connected address is refused at the top of the request
 // path, and the client-id check refuses a second live connection for a

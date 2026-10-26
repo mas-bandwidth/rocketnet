@@ -592,6 +592,13 @@ if(ROCKETNET_BUILD_TESTS)
     # Every tests/test_unit_<topic>.cpp registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )
+    # This file drives the development-only server writer fault. A production
+    # unit build excludes the translation unit itself, rather than compiling
+    # a test that can only mention or observe an absent seam.
+    if(NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_connection_internal_error_counters.cpp")
+    endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
     # an archive member as soon as an earlier object references one of its
@@ -630,6 +637,10 @@ if(ROCKETNET_BUILD_TESTS)
     # directory, so the audit never walks a directory itself.
     file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/functional/*.cpp" )
+    if(NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
+            "tests/test_unit_connection_internal_error_counters.cpp")
+    endif()
     list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
     file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
@@ -922,6 +933,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/corpus_consistency.cpp
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
+        functional/session_reconnect_isolation.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -965,6 +977,30 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
+    # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
+    # installed, and reaches no shipped SDK/API surface. The required .c path
+    # is compiled as C++ so it can compose the private protocol and AF_XDP
+    # compatibility layers without copying either implementation.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+        set_source_files_properties(tools/xdp_packet_blaster.c PROPERTIES LANGUAGE CXX)
+        add_executable(xdp_packet_blaster tools/xdp_packet_blaster.c)
+        target_compile_features(xdp_packet_blaster PRIVATE cxx_std_11)
+        target_include_directories(xdp_packet_blaster PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_definitions(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        rocketnet_use_sodium(xdp_packet_blaster)
+        rocketnet_warning_floor(xdp_packet_blaster)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_custom_target(test_xdp_packet_blaster
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
+                "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
+            DEPENDS xdp_packet_blaster
+            VERBATIM)
+    endif()
     # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
     # against each candidate's static library (bench/transport_fill.md,
     # bench/lease_cost.py), so neither is a target here.

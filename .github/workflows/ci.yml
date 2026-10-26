@@ -230,6 +230,39 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
           cmake --build build --parallel
 
+      # A rapid signal through the existing binaries, not a substitute for
+      # the full suites below.  Each exact-name case runs once per selected
+      # build, in this order, with no retry: set -e preserves the first
+      # nonzero result and its Actions step log.  Linux Release (a) is a real
+      # DEV=0 build and does not run the full suites, so every selected name
+      # executes exactly once without adding a job or runner.
+      - name: Lean shipped-behavior signal (no retries)
+        if: runner.os == 'Linux' && matrix.leg == 'a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit_cases=(
+            test_create_reports_status_config_refusals
+            test_token_time_refusals_are_distinct
+            test_small_in_order_exactly_once_under_loss_and_reorder
+            test_ordered_receipt_after_all_chunks
+            test_message_config_never_received_is_reliable_timeout
+            test_production_client_refuses_dev_connect_token
+          )
+          for case in "${unit_cases[@]}"; do
+            echo "LEAN unit $case"
+            ./bin/test --run "$case"
+          done
+          functional_cases=(
+            test_session_reconnect_isolation_portable
+            test_transport_ring_exhaustion
+          )
+          for case in "${functional_cases[@]}"; do
+            echo "LEAN functional $case"
+            ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+              ./bin/functional --run "$case"
+          done
+
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
         run: |
@@ -2088,6 +2121,76 @@ jobs:
 
       - name: Run the cachegrind instruction gate
         run: python3 tools/check_instructions.py --bin ./build/instruction_count
+
+  # The six validation-tool self-test suites the repository ships
+  # (tools/test_check_frame_budget.py, test_check_server_calls.py,
+  # test_check_split_load.py, test_check_test_environment.py,
+  # test_profile_1000_load.py, test_release_version.py). Each is
+  # self-contained -- fixtures only, no build, no network, no third-party
+  # Python packages -- so every commit runs all six, which covers their
+  # tools, their dependencies and this file's own callers changing without
+  # per-job path filters (this workflow does not filter jobs by path; its
+  # header explains why). Each suite runs in its own step so no shell
+  # pipeline can mask a refusal: the suite's own nonzero exit fails the
+  # step, its full output is printed either way, and a suite that passes
+  # having discovered no tests fails here too -- the runner's "Ran N tests"
+  # line (the release-version suite's own count line) must name a positive
+  # count. Seconds of wall time; the per-commit tier keeps it.
+  validation-tool-selftests:
+    name: validation tool selftests
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Test the frame-budget checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the server-calls checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the split-load checker's receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the test-environment checker's inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the 1000-client load profiler's provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the release-version block and workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
   runs-on-lint:
     # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
