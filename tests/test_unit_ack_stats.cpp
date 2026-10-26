@@ -180,6 +180,23 @@ REGISTER_UNIT_TEST( test_ack_stats_loss_excludes_newest_half );
 
 #include "rocketnet_layers.h"
 extern void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint_t *, rocketnet_client_transport_stats_t * );
+extern struct rocketnet_client_t * rocketnet_client_ack_stats_public_client_for_test( const rocketnet_ack_endpoint_t * );
+extern void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_client_t * );
+
+// rocketnet_client_stats is the public assignment. A hardcoded 0 there fails
+// these checks. The seam result is the same ACK history, not a second formula.
+static void stats_public_matches_ack_history( const rocketnet_ack_endpoint_t * endpoint, rocketnet_client_stats_t * pub )
+{
+    rocketnet_client_transport_stats_t seam;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &seam );
+    struct rocketnet_client_t * client = rocketnet_client_ack_stats_public_client_for_test( endpoint );
+    rocketnet_unit_check( client );
+    rocketnet_client_stats( client, pub );
+    rocketnet_client_ack_stats_public_client_for_test_free( client );
+    rocketnet_unit_check( fabs( pub->packet_loss_percent - (double) seam.packet_loss ) < 0.001 );
+    rocketnet_unit_check( fabs( pub->rtt_ms - (double) seam.rtt ) < 0.001 );
+    rocketnet_unit_check( fabs( pub->jitter_ms - (double) seam.jitter ) < 0.001 );
+}
 
 static void test_ack_stats_client_uses_outbound_history()
 {
@@ -196,7 +213,7 @@ static void test_ack_stats_client_uses_outbound_history()
     rocketnet_unit_check( fabsf( stats.rtt - 20.0f ) < 0.001f );
     rocketnet_unit_check( fabsf( stats.jitter - 10.0f ) < 0.001f );
     rocketnet_unit_check( fabsf( stats.packet_loss - 100.0f / 3.0f ) < 0.001f );
-    // A later ACK lowers outgoing loss without changing the receive trackers.
+    // A later ACK lowers the client's outbound loss estimate.
     stats_ack( endpoint, 3, 1000.050 );
     rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
     rocketnet_unit_check( stats.packet_loss == 0 );
@@ -207,6 +224,208 @@ static void test_ack_stats_client_uses_outbound_history()
 }
 
 REGISTER_UNIT_TEST( test_ack_stats_client_uses_outbound_history );
+
+// The getter copies the ACK recompute. The history scan is the oracle the
+// other tests in this file already compare against. No second loss formula.
+static void stats_client_getter_matches_ack_history( const rocketnet_ack_endpoint_t * endpoint )
+{
+    rocketnet_ack_stats_result_t result;
+    stats_history_result( endpoint, &result );
+    rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( stats.rtt == result.rtt );
+    rocketnet_unit_check( stats.jitter == result.jitter );
+    rocketnet_unit_check( stats.packet_loss == result.packet_loss );
+}
+
+// First-ACK samples are keyed by sequence. Acknowledging 3, then 1, then 2
+// is the same sample set as acknowledging them in send order at those times.
+static void test_ack_stats_client_getter_reorder()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1, 1000.0 );
+    stats_sent( endpoint, 2, 1000.0 );
+    stats_sent( endpoint, 3, 1000.020 );
+    stats_ack( endpoint, 3, 1000.060 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_sent( endpoint, half + 3, 1000.060 );
+    stats_client_getter_matches_ack_history( endpoint );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( stats.jitter - 10.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( stats.packet_loss - 100.0f / 3.0f ) < 0.001f );
+    stats_ack( endpoint, 2, 1000.050 );
+    stats_client_getter_matches_ack_history( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( stats.jitter - 50.0f / 3.0f ) < 0.001f );
+    rocketnet_unit_check( stats.packet_loss == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_client_getter_reorder );
+
+// A second block naming an already acknowledged sequence adds no sample.
+static void test_ack_stats_client_getter_duplicate_ack()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 );
+    stats_sent( endpoint, 3 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_ack( endpoint, 2, 1000.040 );
+    stats_sent( endpoint, half + 3, 1000.040 );
+    stats_client_getter_matches_ack_history( endpoint );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_stats_t before;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &before );
+    rocketnet_unit_check( fabsf( before.rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( before.jitter - 10.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( before.packet_loss - 100.0f / 3.0f ) < 0.001f );
+    stats_ack( endpoint, 1, 1100.0 );
+    stats_ack( endpoint, 2, 1100.0 );
+    stats_client_getter_matches_ack_history( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_stats_t after;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &after );
+    rocketnet_unit_check( after.rtt == before.rtt );
+    rocketnet_unit_check( after.jitter == before.jitter );
+    rocketnet_unit_check( after.packet_loss == before.packet_loss );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_client_getter_duplicate_ack );
+
+// Sequence holes are not sends. A jump that evicts the ring is not a loss.
+static void test_ack_stats_client_getter_sparse_jump()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1, 1000.0 );
+    stats_sent( endpoint, 50, 1000.010 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_sent( endpoint, half + 50, 1000.040 );
+    stats_client_getter_matches_ack_history( endpoint );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( stats.jitter == 0 );
+    rocketnet_unit_check( fabsf( stats.packet_loss - 50.0f ) < 0.001f );
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 * half + 1, 1000.1 );
+    stats_ack( endpoint, 2 * half + 1, 1000.2 );
+    stats_sent( endpoint, 3 * half + 1, 1000.2 );
+    stats_client_getter_matches_ack_history( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( stats.packet_loss == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_client_getter_sparse_jump );
+
+// Reset drops the old history. The next session's samples are the only ones.
+static void test_ack_stats_client_getter_reconnect()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 );
+    stats_sent( endpoint, 3 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_ack( endpoint, 2, 1000.040 );
+    stats_sent( endpoint, half + 3, 1000.040 );
+    stats_client_getter_matches_ack_history( endpoint );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.packet_loss - 100.0f / 3.0f ) < 0.001f );
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_client_getter_matches_ack_history( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( stats.rtt == 0 && stats.jitter == 0 && stats.packet_loss == 0 );
+
+    stats_sent( endpoint, 4, 2000.0 );
+    stats_sent( endpoint, 8, 2000.010 );
+    stats_ack( endpoint, 4, 2000.050 );
+    stats_sent( endpoint, half + 8, 2000.050 );
+    stats_client_getter_matches_ack_history( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_client_transport_ack_stats_for_test( endpoint, &stats );
+    rocketnet_unit_check( fabsf( stats.rtt - 50.0f ) < 0.001f );
+    rocketnet_unit_check( stats.jitter == 0 );
+    rocketnet_unit_check( fabsf( stats.packet_loss - 50.0f ) < 0.001f );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_client_getter_reconnect );
+
+// Public packet_loss_percent for a partial ACK. Hardcoding it to 0 fails.
+static void test_ack_stats_public_getter_positive_loss()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 );
+    stats_sent( endpoint, 3 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_ack( endpoint, 2, 1000.040 );
+    stats_sent( endpoint, half + 3, 1000.040 );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_unit_check( fabs( pub.packet_loss_percent - 100.0 / 3.0 ) < 0.001 );
+    rocketnet_unit_check( fabs( pub.rtt_ms - 20.0 ) < 0.001 );
+    rocketnet_unit_check( fabs( pub.jitter_ms - 10.0 ) < 0.001 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_public_getter_positive_loss );
+
+// Reset clears the public getter. The next session's samples are the only ones.
+static void test_ack_stats_public_getter_reset_new_session()
+{
+    auto * endpoint = stats_endpoint();
+    const uint64_t half = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
+    stats_sent( endpoint, 1 );
+    stats_sent( endpoint, 2 );
+    stats_sent( endpoint, 3 );
+    stats_ack( endpoint, 1, 1000.020 );
+    stats_ack( endpoint, 2, 1000.040 );
+    stats_sent( endpoint, half + 3, 1000.040 );
+    rocketnet_client_stats_t pub;
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_unit_check( pub.packet_loss_percent > 0.0 );
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_unit_check( pub.rtt_ms == 0.0 && pub.jitter_ms == 0.0 && pub.packet_loss_percent == 0.0 );
+
+    stats_sent( endpoint, 4, 2000.0 );
+    stats_sent( endpoint, 8, 2000.010 );
+    stats_ack( endpoint, 4, 2000.050 );
+    stats_sent( endpoint, half + 8, 2000.050 );
+    stats_public_matches_ack_history( endpoint, &pub );
+    rocketnet_unit_check( fabs( pub.packet_loss_percent - 50.0 ) < 0.001 );
+    rocketnet_unit_check( fabs( pub.rtt_ms - 50.0 ) < 0.001 );
+    rocketnet_unit_check( pub.jitter_ms == 0.0 );
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_public_getter_reset_new_session );
 
 static void test_ack_stats_direct_history_uint64_high_water()
 {
@@ -645,3 +864,124 @@ static void test_ack_received_stats_blocks_match_scan_edges()
 REGISTER_UNIT_TEST( test_ack_received_stats_blocks_match_scan_edges );
 
 #endif // ROCKETNET_DEV
+
+// A send record is written only for a sequence newer than the one its slot
+// holds and within one buffer of the highest sent, at a finite time; anything
+// else is refused and changes nothing. rocketnet_ack_endpoint_record_sent_
+// classified (sdk/rocketnet_ack.cpp) returns ROCKETNET_ACK_SENT_REFUSED_STALE
+// and leaves the endpoint byte-identical when the slot already holds this or a
+// newer sequence, when the sequence fell more than one buffer behind the
+// highest sent, or when the time is not finite. Sequence 0 is an assert, not a
+// refusal. The snapshot compares only initialized record fields, not padding
+// or unwritten storage.
+struct ack_sent_state_t
+{
+    bool written;
+    struct rocketnet_sent_packet_record_t record;
+};
+
+static ack_sent_state_t sent_state( const struct rocketnet_ack_endpoint_t * endpoint, uint64_t slot )
+{
+    ack_sent_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.written = ( endpoint->sent_written[slot >> 6] >> ( slot & 63 ) ) & 1;
+    if ( state.written )
+    {
+        const struct rocketnet_sent_packet_record_t * record = &endpoint->sent[slot];
+        state.record.sequence = record->sequence;
+        state.record.packet_id = record->packet_id;
+        state.record.aggregate_id = record->aggregate_id;
+        state.record.send_time = record->send_time;
+        state.record.wire_bytes = record->wire_bytes;
+        state.record.acked = record->acked;
+        state.record.has_packet_id = record->has_packet_id;
+        state.record.was_keep_alive = record->was_keep_alive;
+    }
+    return state;
+}
+
+static bool sent_state_equal( const ack_sent_state_t & a, const ack_sent_state_t & b )
+{
+    return memcmp( &a, &b, sizeof( a ) ) == 0;
+}
+
+static void test_ack_record_sent_refuses_stale_and_nonfinite()
+{
+    const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+
+    struct rocketnet_server_acks_t * acks = rocketnet_server_acks_create( NULL, 1 );
+    rocketnet_unit_check( acks );
+    struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[0];
+
+    // (a) the same sequence twice: the first is recorded, the second (the
+    // same slot, not newer) is refused and leaves the record and high-water
+    // mark untouched.
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        endpoint, 5, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = endpoint->highest_sequence;
+        const ack_sent_state_t before = sent_state( endpoint, 5 % N );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            endpoint, 5, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( endpoint->highest_sequence == highest_before );
+        rocketnet_unit_check( sent_state_equal( before, sent_state( endpoint, 5 % N ) ) );
+    }
+
+    // (b) a new high is recorded; the older sequence in the same slot is
+    // refused.
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        endpoint, N + 10, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = endpoint->highest_sequence;
+        const ack_sent_state_t before = sent_state( endpoint, 10 % N );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            endpoint, 10, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( endpoint->highest_sequence == highest_before );
+        rocketnet_unit_check( sent_state_equal( before, sent_state( endpoint, 10 % N ) ) );
+    }
+
+    rocketnet_server_acks_destroy( acks );
+
+    // (c) on a fresh endpoint, a sequence more than one buffer behind the
+    // highest sent (in a different slot) is refused.
+    struct rocketnet_server_acks_t * acks_fresh = rocketnet_server_acks_create( NULL, 1 );
+    rocketnet_unit_check( acks_fresh );
+    struct rocketnet_ack_endpoint_t * fresh = &acks_fresh->endpoints[0];
+
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+        fresh, 2 * N, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        const ack_sent_state_t before = sent_state( fresh, ( N - 1 ) % N );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, N - 1, 100, 0, 0, 0, 1000.0 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( sent_state_equal( before, sent_state( fresh, ( N - 1 ) % N ) ) );
+    }
+
+    // (d) a non-finite time refuses before any state is touched.
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        const ack_sent_state_t before = sent_state( fresh, ( 2 * N + 1 ) % N );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, 2 * N + 1, 100, 0, 0, 0, (double) NAN ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( sent_state_equal( before, sent_state( fresh, ( 2 * N + 1 ) % N ) ) );
+    }
+    {
+        const uint64_t highest_before = fresh->highest_sequence;
+        const ack_sent_state_t before = sent_state( fresh, ( 2 * N + 2 ) % N );
+        rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified(
+            fresh, 2 * N + 2, 100, 0, 0, 0, (double) INFINITY ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+        rocketnet_unit_check( fresh->highest_sequence == highest_before );
+        rocketnet_unit_check( sent_state_equal( before, sent_state( fresh, ( 2 * N + 2 ) % N ) ) );
+    }
+
+    rocketnet_server_acks_destroy( acks_fresh );
+}
+
+
+REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );

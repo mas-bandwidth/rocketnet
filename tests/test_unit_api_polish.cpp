@@ -436,7 +436,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
-#endif // #if ROCKETNET_DEV
+
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 
 static void test_api_polish_server_abort_message_without_start_is_a_no_op()
@@ -463,6 +463,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
+#endif // #if ROCKETNET_DEV
 
 // --- the production minter refuses a token no server accepts -------------------
 

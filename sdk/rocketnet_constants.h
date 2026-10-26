@@ -257,9 +257,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 // Retained for historical benchmark comparisons; it does not cap live resends.
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
 
-#define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
-#define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30
-
 // ROCKETNET_IPV4_HEADER_BYTES and ROCKETNET_UDP_HEADER_BYTES live in
 // rocketnet_wire.h, beside the MTU they derive the packet size from
 
