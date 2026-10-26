@@ -127,6 +127,10 @@ struct spec_t
     uint16_t source_port;                       // the client's UDP source port
     uint16_t ipv4_frag_off;                     // IPv4 flags and fragment offset (RFC 791); 0 = a whole datagram
     int ipv6_fragment_field;                    // the fragment header's offset << 3 | M; -1 = 0x0001 (offset 0, more fragments)
+    int ipv6_after_fragment[5];                 // bounded extension chain after a fixed-header fragment
+    int ipv6_after_fragment_count;
+    int ipv6_after_fragment_next;               // protocol after that chain
+    int ipv6_first_extension_length;            // second byte of the first header in that chain
     int ipv4_ihl;                               // IPv4 header words, 5 to 15; the options are zero bytes
 };
 
@@ -147,6 +151,8 @@ static spec_t spec_default( bool ipv6 )
     spec.source_port = client_port;
     spec.ipv4_frag_off = 0;
     spec.ipv6_fragment_field = -1;
+    spec.ipv6_after_fragment_next = IP_UDP;
+    spec.ipv6_first_extension_length = -1;
     spec.ipv4_ihl = 5;
     return spec;
 }
@@ -190,7 +196,12 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     else
     {
         const uint8_t * destination = spec.destination_address ? spec.destination_address : server_ipv6;
-        const int extension_bytes = has_extension ? 8 : 0;
+        int extension_bytes = has_extension ? ( spec.next_header == IPV6_AH ? 12 : 8 ) : 0;
+        if ( spec.next_header == IPV6_FRAGMENT )
+        {
+            for ( int i = 0; i < spec.ipv6_after_fragment_count; i++ )
+                extension_bytes += spec.ipv6_after_fragment[i] == IPV6_AH ? 12 : 8;
+        }
         p[0] = 0x60;                            // version 6
         put16( p + 4, (uint16_t) ( extension_bytes + udp_bytes ) );
         p[6] = (uint8_t) ( spec.next_header >= 0 ? spec.next_header : IP_UDP );
@@ -200,13 +211,30 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         p += ROCKETNET_IPV6_HEADER_BYTES;
         if ( has_extension )
         {
-            p[0] = IP_UDP;                      // this header is followed by UDP
+            p[0] = spec.next_header == IPV6_FRAGMENT && spec.ipv6_after_fragment_count > 0 ? (uint8_t) spec.ipv6_after_fragment[0] : IP_UDP;
+            if ( spec.next_header == IPV6_AH )
+                p[1] = 1;                      // 12 bytes: (1 + 2) * 4
             if ( spec.next_header == IPV6_FRAGMENT )
             {
                 put16( p + 2, (uint16_t) ( spec.ipv6_fragment_field >= 0 ? spec.ipv6_fragment_field : 0x0001 ) );
                 p[7] = 0x2A;                    // identification
             }
-            p += extension_bytes;
+            p += spec.next_header == IPV6_AH ? 12 : 8;
+
+            if ( spec.next_header == IPV6_FRAGMENT )
+            {
+                for ( int i = 0; i < spec.ipv6_after_fragment_count; i++ )
+                {
+                    const int type = spec.ipv6_after_fragment[i];
+                    const int next = i + 1 < spec.ipv6_after_fragment_count ? spec.ipv6_after_fragment[i + 1] : spec.ipv6_after_fragment_next;
+                    if ( type != IPV6_ESP )
+                    {
+                        p[0] = (uint8_t) next;
+                        p[1] = i == 0 && spec.ipv6_first_extension_length >= 0 ? (uint8_t) spec.ipv6_first_extension_length : ( type == IPV6_AH ? 1 : 0 );
+                    }
+                    p += type == IPV6_AH ? 12 : 8;
+                }
+            }
         }
     }
 
@@ -527,7 +555,7 @@ static bool ipv6_extension_headers( filter_t * filter )
     const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION;
     bool ok = write_config( filter, NULL, server_ipv6 );
     char label[96];
-    for ( int i = 0; i < (int) ( sizeof(headers) / sizeof(headers[0]) ); i++ )
+    for ( int i = 0; i < (int) ( sizeof( headers ) / sizeof( headers[0] ) ); i++ )
     {
         spec_t spec = spec_default( true );
         spec.next_header = headers[i];
@@ -697,7 +725,89 @@ static bool ipv4_fragments( filter_t * filter )
 
 static bool ipv6_fragments( filter_t * filter )
 {
-    return fragment_rows( filter, true );
+    bool ok = fragment_rows( filter, true );
+    const int dropped = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT;
+    const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT;
+    static const int headers[] = { IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_DESTINATION_OPTIONS, IPV6_AH };
+    static const char * names[] = { "hop-by-hop", "routing", "destination options", "AH" };
+    char label[160];
+
+    ok &= write_config( filter, NULL, server_ipv6 );
+    for ( int i = 0; i < (int) ( sizeof( headers ) / sizeof( headers[0] ) ); i++ )
+    {
+        spec_t spec = fragment_spec( true, 0, true );
+        spec.ipv6_after_fragment[0] = headers[i];
+        spec.ipv6_after_fragment_count = 1;
+        snprintf( label, sizeof( label ), "ipv6 first fragment with %s to the server", names[i] );
+        ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
+    }
+
+    spec_t chain = fragment_spec( true, 0, true );
+    chain.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    chain.ipv6_after_fragment[1] = IPV6_DESTINATION_OPTIONS;
+    chain.ipv6_after_fragment[2] = IPV6_ROUTING;
+    chain.ipv6_after_fragment[3] = IPV6_AH;
+    chain.ipv6_after_fragment_count = 4;
+    ok &= run_frame( filter, "ipv6 first fragment with four extensions to the server", chain, XDP_DROP, dropped );
+
+    spec_t other_port = chain;
+    other_port.destination_port = 53;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions to another port", other_port, XDP_PASS, passed );
+
+    spec_t other_address = chain;
+    other_address.destination_address = other_ipv6;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions to another address", other_address, XDP_PASS, passed );
+
+    spec_t other_service = chain;
+    other_service.ipv6_after_fragment_next = IPV6_ICMPV6;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions carrying ICMPv6", other_service, XDP_PASS, passed );
+
+    spec_t middle = chain;
+    middle.ipv6_fragment_field = ( 185 << 3 ) | 1;
+    ok &= run_frame( filter, "ipv6 middle fragment with extension-looking bytes", middle, XDP_PASS, passed );
+
+    spec_t atomic = chain;
+    atomic.ipv6_fragment_field = 0;
+    ok &= run_frame( filter, "ipv6 atomic fragment with extensions", atomic, XDP_PASS, passed );
+
+    spec_t esp = fragment_spec( true, 0, true );
+    esp.ipv6_after_fragment[0] = IPV6_ESP;
+    esp.ipv6_after_fragment_count = 1;
+    ok &= run_frame( filter, "ipv6 first fragment followed by ESP", esp, XDP_PASS, passed );
+
+    spec_t nested = fragment_spec( true, 0, true );
+    nested.ipv6_after_fragment[0] = IPV6_FRAGMENT;
+    nested.ipv6_after_fragment_count = 1;
+    ok &= run_frame( filter, "ipv6 first fragment followed by another fragment header", nested, XDP_PASS, passed );
+
+    spec_t fragment_cut = fragment_spec( true, 0, true );
+    fragment_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 7;
+    ok &= run_frame( filter, "ipv6 fragment header cut by the frame end", fragment_cut, XDP_PASS, passed );
+
+    spec_t extension_cut = fragment_spec( true, 0, true );
+    extension_cut.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    extension_cut.ipv6_after_fragment_count = 1;
+    extension_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 8 + 1;
+    ok &= run_frame( filter, "ipv6 first fragment with its extension header cut", extension_cut, XDP_PASS, passed );
+
+    spec_t udp_cut = extension_cut;
+    udp_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 8 + 8 + 7;
+    ok &= run_frame( filter, "ipv6 first fragment with an extension and its UDP header cut", udp_cut, XDP_PASS, passed );
+
+    spec_t overlong = extension_cut;
+    overlong.truncate_to = -1;
+    overlong.ipv6_first_extension_length = 255;
+    ok &= run_frame( filter, "ipv6 first fragment with an extension length beyond the frame", overlong, XDP_PASS, passed );
+
+    spec_t walk_limit = fragment_spec( true, 0, true );
+    walk_limit.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    walk_limit.ipv6_after_fragment[1] = IPV6_DESTINATION_OPTIONS;
+    walk_limit.ipv6_after_fragment[2] = IPV6_ROUTING;
+    walk_limit.ipv6_after_fragment[3] = IPV6_DESTINATION_OPTIONS;
+    walk_limit.ipv6_after_fragment[4] = IPV6_AH;
+    walk_limit.ipv6_after_fragment_count = 5;
+    ok &= run_frame( filter, "ipv6 first fragment with five extension headers", walk_limit, XDP_PASS, passed );
+    return ok;
 }
 
 static bool ipv6_wrong_address_passes( filter_t * filter )
