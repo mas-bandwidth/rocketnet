@@ -86,7 +86,9 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] =
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+#if ROCKETNET_DEV
     { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof(uint64_t), 0, 1, 0 },
+#endif // #if ROCKETNET_DEV
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT

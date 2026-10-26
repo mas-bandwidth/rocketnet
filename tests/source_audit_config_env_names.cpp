@@ -172,6 +172,9 @@ static std::vector<std::string> env_names_documented( const char * relative_path
             end++;
         // Namespace prefixes are prose, not complete environment variable names.
         if ( end > begin && text[end - 1] != '_' &&
+#if !ROCKETNET_DEV
+             text.substr( begin, end - begin ) != "ROCKETNET_CLIENT_STEP_DRIVEN" &&
+#endif // #if !ROCKETNET_DEV
              std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
             names.push_back( text.substr( begin, end - begin ) );
     }
@@ -241,8 +244,10 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
     env_names_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "64" );
     set.push_back( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+#if ROCKETNET_DEV
     env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
     set.push_back( "ROCKETNET_CLIENT_STEP_DRIVEN" );
+#endif // #if ROCKETNET_DEV
     env_names_setenv( "ROCKETNET_CLIENT_TRANSPORT", "loopback" );
     set.push_back( "ROCKETNET_CLIENT_TRANSPORT" );
 
@@ -422,7 +427,11 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_NUM_CHANNELS" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
+#if ROCKETNET_DEV
     check( env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+#else
+    check( !env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+#endif // #if ROCKETNET_DEV
     check( env_names_contains( documented, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
@@ -478,13 +487,17 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_SEND_KBPS" ) );       // the passes ran and logged
     check( env_names_contains( overrides, "ROCKETNET_SERVER_NUM_CHANNELS" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
+#if ROCKETNET_DEV
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+#else
+    check( !env_names_contains( overrides, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+#endif // #if ROCKETNET_DEV
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == 67 );
+    check( documented.size() == ( ROCKETNET_DEV ? 67u : 66u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

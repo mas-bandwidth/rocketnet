@@ -24,7 +24,9 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -3621,6 +3623,7 @@ static void test_previous_connection_ack_dropped_after_reconnect()
 // from 1000.0. The server's slot is reset for the new connection and announces
 // its CONFIG to it, so the two exchange messages from a fresh start.
 
+#if ROCKETNET_DEV
 #define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 #define RECONNECT_CLIENT_ID 0x5107ULL
 
@@ -3793,6 +3796,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
         rn_test_client_stop_and_destroy( world.clients[i] );
     rn_test_server_stop_and_destroy( world.server );
 }
+#endif // #if ROCKETNET_DEV
 
 
 // ---------------------------------------------------------------------------
@@ -4202,7 +4206,9 @@ REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
+#endif // #if ROCKETNET_DEV
 
 // A reset increments the carve counter once and clears session metadata.
 // That counter counts invocations. It is not a measure of bytes visited.

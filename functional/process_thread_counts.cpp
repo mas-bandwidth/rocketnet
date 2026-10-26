@@ -6,7 +6,7 @@
 // The process thread-count cases, moved from the unit suite: reading the
 // process's real OS thread count from /proc/self/task is OS state, not unit
 // logic, so these run in the functional suite. They check that creating a
-// server or a step-driven client starts no thread of its own.
+// server or a development-only step-driven client starts no thread of its own.
 
 #include <stdio.h>
 #include <stdlib.h>

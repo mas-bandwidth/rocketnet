@@ -10,7 +10,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -55,7 +57,9 @@ struct both_families_identity_t
 };
 
 static double both_families_now = 1000.0;
+#if ROCKETNET_DEV
 static double both_families_clock( void * ) { return both_families_now; }
+#endif
 
 static void both_families_identity( both_families_identity_t * identity )
 {
@@ -75,6 +79,7 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->transport = "loopback";
 }
 
+#if ROCKETNET_DEV
 static void both_families_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
@@ -92,6 +97,7 @@ static void both_families_token( const both_families_identity_t * identity, uint
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
+#endif
 
 // creates with the IPv4 and IPv6 addresses, then starts; a refused create
 // returns its status with *out NULL
@@ -229,6 +235,7 @@ static void test_server_create_refuses_no_address()
 }
 REGISTER_UNIT_TEST( test_server_create_refuses_no_address );
 
+#if ROCKETNET_DEV
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {
     both_families_now = *time;
@@ -388,6 +395,7 @@ static void test_one_family_server_is_unchanged()
     both_families_stop( server );
 }
 REGISTER_UNIT_TEST( test_one_family_server_is_unchanged );
+#endif
 
 struct both_families_protocol_t
 {

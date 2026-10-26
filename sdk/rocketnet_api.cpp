@@ -258,7 +258,9 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     if ( testing )
     {
         transport->time_callback = testing->time_callback;
+#if ROCKETNET_DEV
         transport->step_driven = testing->step_driven ? 1 : 0;
+#endif // #if ROCKETNET_DEV
     }
     if ( memory_budget )
         *memory_budget = 0;

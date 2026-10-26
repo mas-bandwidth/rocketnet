@@ -120,7 +120,9 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_current(
 // the current-size creates with the section-2.1 code written to *status (NULL skips it)
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
+#if ROCKETNET_DEV
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
+#endif // #if ROCKETNET_DEV
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
 // the creates behind public connect and start: config is the one the public
 // create resolved (DEFAULT < STRUCT < ENV, rn_client_split and

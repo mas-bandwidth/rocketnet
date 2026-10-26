@@ -154,6 +154,7 @@ REGISTER_UNIT_TEST( test_fake_client_receive_batch_layout );
 REGISTER_UNIT_TEST( test_fake_client_wait_honors_readable );
 REGISTER_UNIT_TEST( test_fake_client_io_table_opens_with_wait_and_wake );
 
+#if ROCKETNET_DEV
 // ---------------------------------------------------------------------------
 // A deferred disconnect burst keeps the server address (docs/CLIENT-IO.md
 // _The protocol packet and disconnect_, tla/RNClientIo.tla SentToCommitted).
@@ -346,3 +347,4 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
 }
 
 REGISTER_UNIT_TEST( test_fake_client_disconnect_burst_keeps_server_address );
+#endif // #if ROCKETNET_DEV
