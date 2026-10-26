@@ -3063,6 +3063,513 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+
+struct lifecycle_pressure_allocator_t
+{
+    int fail_countdown;
+    int refused_count;
+    int active_allocations;
+};
+
+static void * lifecycle_pressure_malloc( void * context, size_t size )
+{
+    lifecycle_pressure_allocator_t * state = (lifecycle_pressure_allocator_t *) context;
+    if ( state->fail_countdown > 0 )
+    {
+        state->fail_countdown--;
+        if ( state->fail_countdown == 0 )
+        {
+            state->refused_count++;
+            return NULL;
+        }
+    }
+    void * ptr = malloc( size > 0 ? size : 1 );
+    if ( ptr )
+        state->active_allocations++;
+    return ptr;
+}
+
+static void lifecycle_pressure_free( void * context, void * ptr )
+{
+    if ( !ptr )
+        return;
+    lifecycle_pressure_allocator_t * state = (lifecycle_pressure_allocator_t *) context;
+    state->active_allocations--;
+    free( ptr );
+}
+
+struct lifecycle_delayed_ack_drop_link_t
+{
+    rn_message_link_t base;
+    bool hold_acks;
+    int held_count;
+    int held_clients[8];
+    uint64_t held_packets[8];
+    uint64_t held_connections[8];
+    bool release_held_acks;
+    bool drop_next_packet;
+    int dropped_packets;
+};
+
+static lifecycle_delayed_ack_drop_link_t * g_lifecycle_delayed_link = NULL;
+
+static int lifecycle_delayed_link_acked( void * transport, const int ** client_index, const uint64_t ** packet_ids )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    const int * base_clients = NULL;
+    const uint64_t * base_packets = NULL;
+    const int n = ctx->base.acked( transport, &base_clients, &base_packets );
+    if ( ctx->hold_acks )
+    {
+        for ( int k = 0; k < n && ctx->held_count < 8; ++k )
+        {
+            ctx->held_clients[ctx->held_count] = base_clients[k];
+            ctx->held_packets[ctx->held_count] = base_packets[k];
+            ctx->held_connections[ctx->held_count] = ctx->base.acked_connection
+                ? ctx->base.acked_connection( transport, k )
+                : 0;
+            ctx->held_count++;
+        }
+        *client_index = NULL;
+        *packet_ids = NULL;
+        return 0;
+    }
+    if ( ctx->release_held_acks && ctx->held_count > 0 )
+    {
+        *client_index = ctx->held_clients;
+        *packet_ids = ctx->held_packets;
+        return ctx->held_count;
+    }
+    *client_index = base_clients;
+    *packet_ids = base_packets;
+    return n;
+}
+
+static uint64_t lifecycle_delayed_link_acked_connection( void * transport, int index )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    if ( ctx->release_held_acks && ctx->held_count > 0 )
+    {
+        const uint64_t conn = ( index >= 0 && index < ctx->held_count ) ? ctx->held_connections[index] : 0;
+        if ( index + 1 >= ctx->held_count )
+        {
+            ctx->release_held_acks = false;
+            ctx->held_count = 0;
+        }
+        return conn;
+    }
+    return ctx->base.acked_connection ? ctx->base.acked_connection( transport, index ) : 0;
+}
+
+static int lifecycle_delayed_link_finish_packet( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    if ( ctx->drop_next_packet )
+    {
+        ctx->drop_next_packet = false;
+        ctx->dropped_packets++;
+        ctx->base.abort_packet( transport, context );
+        return 1;
+    }
+    return ctx->base.finish_packet( transport, context, payload_bytes );
+}
+
+// Single bounded lifecycle story integrating:
+//   1. Slot 0 reuse across generations while a Generation-1 reliable ACK is
+//      deliberately delayed on the server link and delivered after Generation 2
+//      occupies slot 0, proving the late ACK increments
+//      ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY and cannot alter
+//      Generation 2's window, counters, receipts, or delivery.
+//   2. Allocator-backed memory pressure during transition (custom allocator
+//      refusal returning ROCKETNET_STATUS_OUT_OF_MEMORY on reconnect and
+//      whole-message send-region refusal returning NULL / false via
+//      rocketnet_client_can_send_message and rocketnet_server_can_send_message
+//      with zero partial bytes or stale receipts, plus bounded recovery after
+//      ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED).
+//   3. Disconnect notification draining across bounded fake-clock updates with
+//      disconnect_packets_per_update = 2, proving each update seals at most 2
+//      packets while the reused session connects and remains usable.
+//   4. One fragmented reliable payload (2600 bytes, 3 fragments, ACK receipt)
+//      and a follow-up ordered message in the new generation with one fragment
+//      frame deliberately dropped; after bounded fake-clock retransmission and
+//      reassembly, asserts byte-exact payload, message order, ACK receipt
+//      identity, and ownership by the new session generation.
+static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack()
+{
+    rocketnet_quiet( 1 );
+    double now = 3000.0;
+    lifecycle_now = now;
+
+    lifecycle_pressure_allocator_t alloc_state;
+    memset( &alloc_state, 0, sizeof( alloc_state ) );
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &alloc_state, lifecycle_pressure_malloc, lifecycle_pressure_free ) == ROCKETNET_STATUS_OK );
+
+    lifecycle_identity_t identity;
+    lifecycle_identity( &identity );
+
+    rocketnet_server_config_t server_config;
+    lifecycle_server_config( &server_config, &identity, 1 );
+    server_config.disconnect_packets_per_update = 2;
+    server_config.message_resend_delay_initial_ms = 20;
+    server_config.message_resend_delay_max_ms = 20;
+    server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    server_config.send_queue_messages = 16;
+
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_server_t * server = rocketnet_server_create( &alloc_state, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL && create_status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_test_config_t client_config;
+    lifecycle_client_config( &client_config );
+    client_config.message_resend_delay_initial_ms = 20;
+    client_config.message_resend_delay_max_ms = 20;
+    client_config.send_kbps = 1;
+    client_config.send_queue_messages = 16;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_client_t * client = rocketnet_client_create( &alloc_state, &client_config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+
+    rn_message_object_t * server_msg_obj = &rocketnet_server_message_server( server )->object;
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
+    check( server_msg_obj != NULL && server_transport != NULL );
+
+    lifecycle_delayed_ack_drop_link_t delayed_link;
+    memset( &delayed_link, 0, sizeof( delayed_link ) );
+    delayed_link.base = server_msg_obj->link;
+    g_lifecycle_delayed_link = &delayed_link;
+    server_msg_obj->link.acked = lifecycle_delayed_link_acked;
+    server_msg_obj->link.acked_connection = lifecycle_delayed_link_acked_connection;
+    server_msg_obj->link.finish_packet = lifecycle_delayed_link_finish_packet;
+
+    // --- Generation 1 on slot 0 (client_id 0x5101, tag 0xD1) ---
+    char token_gen1[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5101, 300, token_gen1 );
+    check( rn_test_client_connect_after_completion( client, token_gen1 ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server, 0 ) ); ++i )
+    {
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        now += 0.01;
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server, 0 ) == 1 );
+    const uint64_t gen1_connection_id = server_msg_obj->hot_connections[0].connection_id;
+    check( gen1_connection_id != 0 );
+
+    // Hold transport ACKs on the server message link while Generation 1 sends a
+    // reliable message from server -> client and client ACKs it on the wire.
+    // Send two dummy unreceipted messages first so gen1_server_serial (3) is
+    // distinct from Generation 2's fresh serials (1 and 2).
+    (void) lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xD0, 1, 16 );
+    (void) lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xD0, 2, 16 );
+    delayed_link.hold_acks = true;
+    const uint32_t gen1_server_serial = lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xD1, 1, 64 );
+    check( gen1_server_serial == 3 );
+
+    int gen1_client_received = 0;
+    for ( int i = 0; i < 40 && ( gen1_client_received < 3 || delayed_link.held_count < 1 ); ++i )
+    {
+        now += 0.005;
+        lifecycle_now = now;
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                if ( gen1_client_received == 2 )
+                    check( batch->bytes[m] == 64 && batch->data[m][0] == 0xD1 && batch->data[m][1] == 1 );
+                gen1_client_received++;
+            }
+        }
+    }
+    check( gen1_client_received == 3 );
+    check( delayed_link.held_count >= 1 );
+    check( delayed_link.held_connections[0] == gen1_connection_id );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+    delayed_link.hold_acks = false;
+
+    // Exercise whole-message send-region pressure on Generation 1 before disconnect:
+    // filling all 17 send descriptors (send_queue_messages=16 + 1 reserve) causes
+    // rocketnet_client_can_send_message to report false before start_message, and
+    // start_message under pressure refuses the whole message (NULL) without partial
+    // bytes or stale receipts while transitioning the client to MESSAGE_MEMORY_EXHAUSTED.
+    int pre_exhaust_queued = 0;
+    while ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) )
+    {
+        const uint32_t s = lifecycle_send_tagged_message(
+            client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xD2, (uint8_t) pre_exhaust_queued, 900 );
+        check( s != 0 );
+        pre_exhaust_queued++;
+        check( pre_exhaust_queued <= 17 );
+    }
+    check( pre_exhaust_queued == 17 );
+    check( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == 0 );
+    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == NULL );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // Advance the client one tick so its region resets while retaining the
+    // MESSAGE_MEMORY_EXHAUSTED terminal state, and kick slot 0 on the server so
+    // the server queues its 10-packet disconnect burst regulated by
+    // disconnect_packets_per_update = 2.
+    now += 0.01;
+    lifecycle_now = now;
+    rocketnet_client_update( client, now );
+    rocketnet_client_send_packets( client );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+
+    const uint64_t seals_before_disconnect = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+    rocketnet_server_disconnect_client( server, 0 );
+
+    // First server update after disconnect_client drains at most disconnect_packets_per_update (2)
+    // disconnect packets while freeing slot 0 for reuse.
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_server_update( server, now );
+    rocketnet_server_send_packets( server );
+    uint64_t prev_seals = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+    check( prev_seals - seals_before_disconnect == 2 );
+    check( rocketnet_server_client_connected( server, 0 ) == 0 );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+
+    // --- Allocator-backed memory pressure and terminal-state recovery during transition ---
+    // From the terminal MESSAGE_MEMORY_EXHAUSTED state, the first connect requests
+    // transport retirement (returning ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED while
+    // retaining MESSAGE_MEMORY_EXHAUSTED); after bounded update completion,
+    // rocketnet_client_disconnected( client ) becomes true. Then force the custom
+    // allocator to refuse the reconnect allocation in rocketnet_client_connect,
+    // proving it returns ROCKETNET_STATUS_OUT_OF_MEMORY, leaves the client cleanly
+    // disconnected with zero partial state, and recovers when allocator pressure lifts.
+    char token_gen2[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5102, 300, token_gen2 );
+
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_client_update( client, now );
+    check( rocketnet_client_disconnected( client ) );
+
+    alloc_state.fail_countdown = 1;
+    const int refused_before = alloc_state.refused_count;
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( alloc_state.refused_count == refused_before + 1 );
+    check( rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // Lift allocator pressure and reconnect into slot 0 while the server's
+    // disconnect notification burst from Generation 1 is still draining across
+    // bounded fake-clock updates (at most 2 disconnect packets per update).
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OK );
+    int burst_active_updates_during_gen2 = 0;
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server, 0 ) || prev_seals - seals_before_disconnect < (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        const uint64_t cur_seals = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+        const uint64_t step_seals = cur_seals - prev_seals;
+        check( step_seals <= (uint64_t) server_config.disconnect_packets_per_update );
+        if ( step_seals > 0 )
+            burst_active_updates_during_gen2++;
+        prev_seals = cur_seals;
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server, 0 ) == 1 );
+    check( rocketnet_server_client_id( server, 0 ) == 0x5102 );
+    check( prev_seals - seals_before_disconnect == (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( burst_active_updates_during_gen2 >= 4 );
+
+    uint8_t wiped_burst_key[ROCKETNET_KEY_BYTES];
+    uint8_t zero_burst_key[ROCKETNET_KEY_BYTES];
+    int burst_head = -1;
+    int burst_count = -1;
+    memset( wiped_burst_key, 0xFF, sizeof( wiped_burst_key ) );
+    memset( zero_burst_key, 0, sizeof( zero_burst_key ) );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test(
+               server_transport, 0, wiped_burst_key, (int) sizeof( wiped_burst_key ), &burst_head, &burst_count ) != 0 );
+    check( burst_count == 0 );
+    check( memcmp( wiped_burst_key, zero_burst_key, sizeof( zero_burst_key ) ) == 0 );
+
+    const uint64_t gen2_connection_id = server_msg_obj->hot_connections[0].connection_id;
+    check( gen2_connection_id != 0 && gen2_connection_id != gen1_connection_id );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+
+    // --- Deliver the delayed Generation-1 ACK after slot 0 reuse ---
+    // Release the held Generation-1 ACK while Generation 2 occupies slot 0 and
+    // prove it increments ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY without
+    // touching Generation 2's window, receipts, counters, or delivery.
+    const uint64_t stale_conn_before = server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY];
+    const uint64_t acked_receipts_before = server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED];
+    const rocketnet_server_stats_t server_stats_before_late_ack = rn_server_stats_of( server );
+    struct rocketnet_delivery_capture_t server_capture_before;
+    memset( &server_capture_before, 0, sizeof( server_capture_before ) );
+    rocketnet_message_server_delivery_capture( rocketnet_server_message_server( server ), 0, &server_capture_before );
+
+    delayed_link.release_held_acks = true;
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_server_update( server, now );
+    check( !delayed_link.release_held_acks && delayed_link.held_count == 0 );
+    check( server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY] == stale_conn_before + 1 );
+    check( server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == acked_receipts_before );
+
+    const rocketnet_server_stats_t server_stats_after_late_ack = rn_server_stats_of( server );
+    check( server_stats_after_late_ack.receipts_acked == server_stats_before_late_ack.receipts_acked );
+    check( server_stats_after_late_ack.payloads_received == server_stats_before_late_ack.payloads_received );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+
+    struct rocketnet_delivery_capture_t server_capture_after;
+    memset( &server_capture_after, 0, sizeof( server_capture_after ) );
+    rocketnet_message_server_delivery_capture( rocketnet_server_message_server( server ), 0, &server_capture_after );
+    check( memcmp( &server_capture_before, &server_capture_after, sizeof( server_capture_before ) ) == 0 );
+
+    // --- Fragmented reliable payload + 1 deliberately dropped frame in Generation 2 ---
+    // Send a 2600-byte reliable ordered message (3 fragments: 1152 + 1152 + 296 bytes)
+    // with ACK receipt on channel 1, followed by a 48-byte ordered message on channel 1,
+    // and drop the first outbound packet frame on the server link so fragment 0 must
+    // be retransmitted after message_resend_delay_initial_ms.
+    const int frag_bytes = 2600;
+    const int tail_bytes = 48;
+    check( rocketnet_server_can_send_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, frag_bytes ) == 1 );
+    uint8_t * frag_out = rocketnet_server_start_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, frag_bytes );
+    check( frag_out != NULL );
+    for ( int i = 0; i < frag_bytes; ++i )
+        frag_out[i] = (uint8_t) ( 0xE1u ^ ( ( (unsigned int) i * 31u ) & 0xFFu ) );
+    frag_out[0] = 0xE1;
+    const uint32_t gen2_frag_serial = rocketnet_server_finish_message( server, frag_bytes );
+    check( gen2_frag_serial != 0 );
+
+    check( rocketnet_server_can_send_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, tail_bytes ) == 1 );
+    uint8_t * tail_out = rocketnet_server_start_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, tail_bytes );
+    check( tail_out != NULL );
+    for ( int i = 0; i < tail_bytes; ++i )
+        tail_out[i] = (uint8_t) ( 0xE2u ^ (uint8_t) i );
+    tail_out[0] = 0xE2;
+    const uint32_t gen2_tail_serial = rocketnet_server_finish_message( server, tail_bytes );
+    check( gen2_tail_serial != 0 && gen2_tail_serial != gen2_frag_serial );
+
+    // Also send a Generation-2 client->server reliable message with ACK receipt to confirm
+    // bidirectional ownership in the new generation.
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    const uint32_t gen2_client_serial = lifecycle_send_tagged_message(
+        client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xE3, 7, 40 );
+    check( gen2_client_serial != 0 );
+
+    delayed_link.drop_next_packet = true;
+    const uint64_t resends_before = rn_server_stats_of( server ).messages_resent;
+
+    int client_rx_order = 0;
+    int server_rx_count = 0;
+    bool got_frag_receipt = false;
+    bool got_tail_receipt = false;
+    bool got_client_receipt = false;
+
+    for ( int step = 0; step < 200 && ( client_rx_order < 2 || server_rx_count < 1 || !got_frag_receipt || !got_tail_receipt || !got_client_receipt ); ++step )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                check( batch->channel[m] == 1 );
+                if ( client_rx_order == 0 )
+                {
+                    check( batch->bytes[m] == frag_bytes );
+                    check( batch->data[m][0] == 0xE1 );
+                    for ( int b = 1; b < frag_bytes; ++b )
+                        check( batch->data[m][b] == (uint8_t) ( 0xE1u ^ ( ( (unsigned int) b * 31u ) & 0xFFu ) ) );
+                }
+                else if ( client_rx_order == 1 )
+                {
+                    check( batch->bytes[m] == tail_bytes );
+                    check( batch->data[m][0] == 0xE2 );
+                    for ( int b = 1; b < tail_bytes; ++b )
+                        check( batch->data[m][b] == (uint8_t) ( 0xE2u ^ (uint8_t) b ) );
+                }
+                client_rx_order++;
+            }
+        }
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                check( batch->client_index[m] == 0 );
+                check( batch->channel[m] == 1 );
+                check( batch->bytes[m] == 40 );
+                check( batch->data[m][0] == 0xE3 && batch->data[m][1] == 7 );
+                server_rx_count++;
+            }
+        }
+        struct rocketnet_receipt_t rcpts[8];
+        const int sr = rocketnet_server_receipts( server, 0, rcpts, 8 );
+        for ( int r = 0; r < sr; ++r )
+        {
+            check( rcpts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            check( rcpts[r].serial != gen1_server_serial );
+            if ( rcpts[r].serial == gen2_frag_serial )
+                got_frag_receipt = true;
+            else if ( rcpts[r].serial == gen2_tail_serial )
+                got_tail_receipt = true;
+            else
+                check( false );
+        }
+        const int cr = rocketnet_client_receipts( client, rcpts, 8 );
+        for ( int r = 0; r < cr; ++r )
+        {
+            check( rcpts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            check( rcpts[r].serial == gen2_client_serial );
+            got_client_receipt = true;
+        }
+    }
+
+    check( delayed_link.dropped_packets == 1 );
+    check( client_rx_order == 2 );
+    check( server_rx_count == 1 );
+    check( got_frag_receipt && got_tail_receipt && got_client_receipt );
+    check( rn_server_stats_of( server ).messages_resent > resends_before );
+    check( server_msg_obj->hot_connections[0].connection_id == gen2_connection_id );
+
+    g_lifecycle_delayed_link = NULL;
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( alloc_state.active_allocations == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack );
 #endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV
