@@ -306,8 +306,6 @@ static void test_connection_reset_inventory_covers_every_field()
     const rn_message_connection_hot_t fresh_hot = *connection->hot;
     connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     memset( connection->hot->views, 0xA5, connection->region->delivery_entries );
-    memset( connection->hot->cursors, 0xA5,
-            sizeof(uint32_t) * (size_t) connection->region->num_channels );
 #define POISON_ENDPOINT_RESET( field ) memset( &connection->field, 0xA5, sizeof(connection->field) );
 #define POISON_ENDPOINT_KEEP( field )
 #define POISON_ENDPOINT( decision, field ) POISON_ENDPOINT_##decision( field )
@@ -355,8 +353,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_HOT_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
         check( connection->hot->views[i] == 0 );
-    for ( uint32_t i = 0; i < connection->region->num_channels; i++ )
-        check( connection->hot->cursors[i] == 0 );
+    check( connection->hot->receive_cursor == 0 );
     rn_message_object_destroy( object );
 }
 REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
