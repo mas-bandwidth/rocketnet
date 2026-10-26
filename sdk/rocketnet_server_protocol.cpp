@@ -12,6 +12,11 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_token_tables.h"
+#include "rocketnet_client_slots.h"
+#include "rocketnet_ack.h"
+#include "rocketnet_counters.h"
 
 #include <sodium.h>
 #include <string.h>

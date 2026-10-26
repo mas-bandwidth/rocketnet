@@ -9,13 +9,11 @@
 #define ROCKETNET_CLIENT_PROTOCOL_H
 
 #include <stdint.h>
-#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_encryption_map.h"
-#include "rocketnet_counters.h"
 #include "rocketnet_ack.h"
 
 // The client state machine, per STANDARD.md: the machine steps forward or
@@ -27,7 +25,11 @@
 
 #define ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS             10
 
+// Pointer-only dependencies, deliberately incomplete here: the reassembly
+// set (rocketnet_fragment.h) and the counters (rocketnet_counters.h). The
+// implementation file includes the full definitions it consumes.
 struct rocketnet_reassembly_set_t;
+struct rocketnet_counters_t;
 
 // The verdict a client I/O thread records for each datagram it worked
 // (tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):

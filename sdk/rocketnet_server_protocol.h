@@ -11,11 +11,9 @@
 #include <stdint.h>
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet_encryption_map.h"
-#include "rocketnet_token_tables.h"
-#include "rocketnet_counters.h"
-#include "rocketnet_client_slots.h"
+#include "rocketnet_protocol.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_token_tables.h"
 #include "rocketnet_server.h"
 
 // Server-side connection request processing: the ladder from the standard,
@@ -24,7 +22,18 @@
 // the cheap ones. The library does not own sockets yet, so processing returns
 // what to send and the caller sends it.
 
+// Pointer-only dependencies, deliberately incomplete here: the reassembly
+// set (rocketnet_fragment.h), the encryption map
+// (rocketnet_encryption_map.h), the client slots
+// (rocketnet_client_slots.h) and the counters (rocketnet_counters.h). The
+// implementation file includes the full definitions it consumes. The ACK and
+// used-token-history types are pointer-only here too, but their headers stay
+// full includes: sdk/rocketnet_server_transport.cpp, the fuzz harness and
+// the soak harness consume those full definitions through this header.
 struct rocketnet_reassembly_set_t;
+struct rocketnet_encryption_map_t;
+struct rocketnet_client_slots_t;
+struct rocketnet_counters_t;
 
 #if ROCKETNET_DEV
 #define ROCKETNET_SERVER_TEST_FAIL_WRITER_NONE               0
