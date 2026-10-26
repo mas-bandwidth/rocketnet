@@ -44,6 +44,7 @@
 // by design, so a CI leg pinned by ROCKETNET_CLIENT_TRANSPORT would otherwise
 // never reach the struct's list
 
+#if ROCKETNET_DEV
 struct env_pin_saved
 {
     bool was_set;
@@ -63,6 +64,8 @@ static void env_pin_put_back( const env_pin_saved * saved )
 }
 
 
+
+#endif // #if ROCKETNET_DEV
 
 #define check rocketnet_unit_check
 
@@ -120,8 +123,10 @@ static void client_create_ex_expected_null_assert( const char *, const char *, c
 
 static void test_client_transport_create_ex_reports_every_status()
 {
+#if ROCKETNET_DEV
     env_pin_saved pin;
     env_pin_set_aside( &pin );
+#endif // #if ROCKETNET_DEV
 
     allocator_state state = { 0, 0, 0 };
     int status = -1;
@@ -151,6 +156,7 @@ static void test_client_transport_create_ex_reports_every_status()
     check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
+#if ROCKETNET_DEV
     // C2: an invalid environment overlay refuses at the env apply
     char prior[4096];
     const bool had_prior = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
@@ -161,6 +167,7 @@ static void test_client_transport_create_ex_reports_every_status()
     else
         rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
+#endif // #if ROCKETNET_DEV
     // C3: a config field out of range refuses at validation
     {
         struct rocketnet_client_transport_config_t config;
@@ -246,7 +253,9 @@ static void test_client_transport_create_ex_reports_every_status()
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 
+#if ROCKETNET_DEV
     env_pin_put_back( &pin );
+#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_client_transport_create_ex_reports_every_status );

@@ -3224,9 +3224,14 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // The helpers set and unset the unit environment table on every platform.
 
+#if ROCKETNET_DEV
 static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_send_budget_message_env_is_not_read()
 {
     rocketnet_message_config_t config;
@@ -3247,6 +3252,7 @@ static void test_send_budget_message_env_is_not_read()
     mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
     mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the object's update clamps a bad time through rocketnet_clamp_update_time
@@ -4121,7 +4127,9 @@ REGISTER_UNIT_TEST( test_send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( test_send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( test_send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( test_set_send_kbps_zero_or_negative_uncaps );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_budget_message_env_is_not_read );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_rnslots_witness_replays );
 REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );

@@ -1459,11 +1459,26 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
-    char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof(ipv4_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    snprintf( ipv6_address, sizeof(ipv6_address), "[::1]:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    const char * token_addresses[] = { ipv4_address, ipv6_address };
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() );
+    rocketnet_check( rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key,
+                     rocketnet_dev_server_public_key, ROCKETNET_DEV_PROTOCOL_ID, token_addresses, 2,
+                     rocketnet_random_uint64(), create_timestamp,
+                     create_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS,
+                     ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL,
+                     connect_token, sizeof(connect_token) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_connect_token_t parsed_token;
+    struct rocketnet_signed_connect_data_t signed_fields;
+    rocketnet_read_connect_token( &parsed_token, connect_token );
+    rocketnet_read_signed_connect_data( &signed_fields, parsed_token.signed_connect_data );
+    rocketnet_check( signed_fields.address_flags == ( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( false );
 
@@ -1494,7 +1509,9 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_transport_client_index( client ) == 0 );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+    rocketnet_check( rocketnet_server_transport_is_client_connected( server, 0 ) );
 
     int server_received = 0;
     int client_received = 0;
@@ -1544,8 +1561,10 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_check( server_received >= 10 );
-    rocketnet_check( client_received >= 10 );
+    rocketnet_check( sent_to_server == 10 );
+    rocketnet_check( sent_to_client == 10 );
+    rocketnet_check( server_received == 10 );
+    rocketnet_check( client_received == 10 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
@@ -5412,27 +5431,79 @@ void rocketnet_test_server_transport_io_pin_io_uring()
     rocketnet_test_env_restore( &transport_guard );
 }
 
+#if ROCKETNET_XDP
+bool rocketnet_test_xdp_veth_runs_here();
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes );
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
+#endif
+
+static enum rocketnet_log_level_t rocketnet_test_xdp_capture_begin()
+{
+    rocketnet_test_captured_log[0] = '\0';
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    return saved;
+}
+
+static void rocketnet_test_xdp_capture_end( enum rocketnet_log_level_t saved )
+{
+    rocketnet_log_level( saved );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+}
+
+#if ROCKETNET_XDP
+static void rocketnet_test_xdp_server_destroy( struct rocketnet_server_transport_t * server )
+{
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+// The admitted guest's natural provisioned path: the production create is
+// granted the requested xdp backend on the veth pair the guest cases build,
+// then the pair and its server are torn down. This is not a preflight call.
+
+static void rocketnet_test_xdp_natural_guest( const char * case_name )
+{
+    char natural_address[128];
+    struct rocketnet_server_transport_t * natural =
+        rocketnet_xdp_veth_start( false, case_name, natural_address, sizeof(natural_address) );
+    rocketnet_check( natural );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( natural ), "xdp" ) == 0 );
+    rocketnet_xdp_veth_pair_down( natural );
+}
+
+// The documented natural provisioned ladder result: a port-zero address has
+// the port-zero rule refuse xdp before its create, and the ladder grants gso,
+// which discovers the real port. The rule is named in the log.
+
+static void rocketnet_test_xdp_ladder_port_zero( const struct rocketnet_server_transport_config_t * config )
+{
+    enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", config );
+    rocketnet_test_xdp_capture_end( saved_level );
+
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "a port-zero public address asks the kernel for an ephemeral port" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_test_xdp_server_destroy( server );
+}
+#endif
+
 void rocketnet_test_server_transport_io_pin_xdp()
 {
-    // the pre-flight is called DIRECTLY here, as it also is in
-    // rocketnet_test_server_transport_io_ladder_fall below: those two direct
-    // calls are how the suite reaches it. Inside the xdp transport's create
-    // the pre-flight sits below the commit barrier (barrier at
-    // rocketnet_server_socket_linux.cpp:982, pre-flight at :1015), and the
-    // suite installs that barrier process-wide, so the in-create pre-flight
-    // is not reached under this suite. What create refuses with here is the
-    // BARRIER. That is the refusal the pin asserts: pin-refuses proven
-    // through create, no machine touched. On a box the pre-flight passes
-    // whole, this test asserts nothing more -- granting xdp attaches a data
-    // plane, which is not a unit test's act.
-    //
-    // THE ADDRESS CARRIES A REAL PORT DELIBERATELY (#109). A port-zero
-    // address is now refused by the ladder's port-zero rule before the xdp
-    // rung's create is called at all, which would make this test pass
-    // without entering the transport -- no barrier, nothing proven about the
-    // pin. A real port takes the rule out of the way so the refusal proven
-    // here is again the transport's own. Nothing binds: the barrier returns
-    // before create's first committing act.
+    // The pin is asserted through the production create in every branch:
+    // a natural pre-flight answer, a development-forced unavailable answer,
+    // and a development-forced available answer. An available answer is
+    // never paired with an allowed commit, so this case cannot attach a
+    // data plane on a host it has not been admitted to; the refusal it then
+    // proves is the suite's commit barrier, named in the log. On the
+    // admitted XDP guest the natural available answer runs the real create
+    // on the veth pair the guest cases build, and asserts the granted xdp
+    // backend, then tears the pair down.
 
     struct rocketnet_test_env_guard_t transport_guard;
     rocketnet_test_env_clear( &transport_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -5440,47 +5511,125 @@ void rocketnet_test_server_transport_io_pin_xdp()
     char real_port_address[64];
     rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
 
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1;
+    snprintf( config.transport, sizeof(config.transport), "xdp" );
+
 #if ROCKETNET_XDP
-    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
-#else
-    const bool provisioned = false; // no native XDP backend in this build
+#if ROCKETNET_DEV
+    rocketnet_server_socket_clear_preflight_test_result();
 #endif
 
-    if ( !provisioned )
-    {
-        struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config( &config );
-        snprintf( config.transport, sizeof(config.transport), "xdp" );
+    // the natural answer, read once; every later branch is either this
+    // outcome or an explicitly forced one
 
-        rocketnet_check( rocketnet_test_server_transport_create_on_free_port( &config ) == NULL );
+    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
+
+#if ROCKETNET_DEV
+    // FORCED UNAVAILABLE: the direct pre-flight says no, and the production
+    // pin reaches that same pre-flight because the barrier is lifted. The
+    // pre-flight is non-mutating and returns before create's first act, so
+    // no data plane can be attached.
+
+    rocketnet_server_socket_set_preflight_test_result( 0 );
+    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
+
+    rocketnet_server_socket_allow_commit();
+    enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+    struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
+    rocketnet_test_xdp_capture_end( saved_level );
+    rocketnet_server_socket_forbid_commit();
+
+    rocketnet_check( server == NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight: development control selects unavailable" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+
+    // FORCED AVAILABLE: the direct pre-flight says yes, while the barrier
+    // stays installed, so the production pin is refused by the barrier
+    // before any pre-flight and cannot attach. The refusal is asserted by
+    // its own name, not merely tolerated.
+
+    rocketnet_server_socket_set_preflight_test_result( 1 );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) );
+
+    saved_level = rocketnet_test_xdp_capture_begin();
+    server = rocketnet_test_server_transport_create_on_free_port( &config );
+    rocketnet_test_xdp_capture_end( saved_level );
+
+    rocketnet_check( server == NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+
+    rocketnet_server_socket_clear_preflight_test_result();
+#endif // ROCKETNET_DEV
+
+    if ( rocketnet_test_xdp_veth_runs_here() )
+    {
+        // THE ADMITTED GUEST LEG: the natural available answer runs the real
+        // production create on the guest's veth pair, and the requested xdp
+        // backend is the granted one. A guest that is not provisioned fails
+        // this leg by name rather than standing down.
+
+        rocketnet_test_xdp_natural_guest( "test_xdp_transport_server_io_pin" );
     }
+    else if ( naturally_provisioned )
+    {
+        // a provisioned host that is not the admitted guest: the production
+        // pin still runs and is refused by the barrier
+
+        enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
+        rocketnet_test_xdp_capture_end( natural_saved_level );
+
+        rocketnet_check( natural_server == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    }
+    else
+    {
+        // the natural unavailable answer drives the production pin, with
+        // the barrier lifted so the refusal is the pre-flight's own
+
+        rocketnet_server_socket_allow_commit();
+        enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
+        rocketnet_test_xdp_capture_end( natural_saved_level );
+        rocketnet_server_socket_forbid_commit();
+
+        rocketnet_check( natural_server == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    }
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_clear_preflight_test_result();
+#endif
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) == naturally_provisioned );
+#else
+    enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+    struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
+    rocketnet_test_xdp_capture_end( saved_level );
+
+    rocketnet_check( server == NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+#endif
 
     rocketnet_test_env_restore( &transport_guard );
 }
 
 void rocketnet_test_server_transport_io_ladder_fall()
 {
-    // THE FALL, proven to actually happen where it can be proven without
-    // mutating the host: the auto ladder must land on gso -- the next rung
-    // -- never portable, never failure. on a box the pre-flight passes
-    // whole, the ladder would grant xdp by attaching a real data plane, so
-    // the test stands down: the suite never commits the machine.
-    //
-    // WHY the xdp rung refuses here, stated exactly (#109): the address
-    // carries port zero -- it must, because the gso rung below binds it
-    // and a fixed port would race other processes on the box -- so the xdp
-    // rung here is refused by the port-zero rule, which is checked before
-    // the rung's create is called at all. The fall itself is what this
-    // test asserts and that is unchanged.
-    //
-    // Note what this does NOT reach, so the two comments agree: neither
-    // the commit barrier nor the in-create pre-flight runs on this path,
-    // because the rule refuses above both. The barrier is walked by
-    // rocketnet_test_server_transport_io_pin_xdp, which uses a real port for
-    // exactly that reason; the in-create pre-flight is below the barrier
-    // and so is not reached under this suite from either test. The direct
-    // pre-flight call just below is this test's own, and is what decides
-    // whether to stand down.
+    // The fall runs the production ladder in both pre-flight answers, not
+    // as a stand-down. With the pre-flight unavailable the xdp rung refuses
+    // and the next rung -- gso -- grants; with it available and the commit
+    // barrier installed the xdp rung refuses at the barrier and the same
+    // fall grants gso. The natural available answer on the admitted guest
+    // is the documented port-zero result: the rule refuses xdp before its
+    // create and gso discovers the granted port. No branch attaches a data
+    // plane outside the committed guest cases.
 
     struct rocketnet_test_env_guard_t transport_guard;
     rocketnet_test_env_clear( &transport_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -5488,25 +5637,109 @@ void rocketnet_test_server_transport_io_ladder_fall()
     char real_port_address[64];
     rocketnet_test_free_loopback_address( real_port_address, sizeof(real_port_address) );
 
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1;
+    snprintf( config.transport, sizeof(config.transport), "xdp,gso,portable" );
+
 #if ROCKETNET_XDP
-    const bool provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
-#else
-    const bool provisioned = false; // no native XDP backend in this build
+#if ROCKETNET_DEV
+    rocketnet_server_socket_clear_preflight_test_result();
 #endif
 
-    if ( !provisioned )
-    {
-        struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config( &config );
-        snprintf( config.transport, sizeof(config.transport), "xdp,gso,portable" );
+    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
-        rocketnet_check( server );
-        rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
-        rocketnet_server_transport_stop( server );
-        rocketnet_server_transport_update( server, rocketnet_platform_time() );
-        ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+#if ROCKETNET_DEV
+    // FORCED UNAVAILABLE: xdp refuses at its own pre-flight, the ladder
+    // falls to gso on a real port, and both the refusal and the grant are
+    // named.
+
+    rocketnet_server_socket_set_preflight_test_result( 0 );
+    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
+
+    rocketnet_server_socket_allow_commit();
+    enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+    struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
+    rocketnet_test_xdp_capture_end( saved_level );
+    rocketnet_server_socket_forbid_commit();
+
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_test_xdp_server_destroy( server );
+
+    // FORCED AVAILABLE: the direct answer is yes, the barrier stays
+    // installed, xdp refuses at the barrier, and the ladder still falls to
+    // gso rather than portable.
+
+    rocketnet_server_socket_set_preflight_test_result( 1 );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) );
+
+    saved_level = rocketnet_test_xdp_capture_begin();
+    server = rocketnet_test_server_transport_create_on_free_port( &config );
+    rocketnet_test_xdp_capture_end( saved_level );
+
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_test_xdp_server_destroy( server );
+
+    rocketnet_server_socket_clear_preflight_test_result();
+#endif // ROCKETNET_DEV
+
+    if ( rocketnet_test_xdp_veth_runs_here() )
+    {
+        // THE ADMITTED GUEST LEG: first prove the natural provisioned path
+        // grants the requested xdp backend, then the documented port-zero
+        // ladder result -- gso, with the port-zero rule naming xdp. A guest
+        // that is not provisioned fails the first leg by name, never skips.
+
+        rocketnet_test_xdp_natural_guest( "test_server_transport_io_ladder_fall" );
+        rocketnet_test_xdp_ladder_port_zero( &config );
     }
+    else if ( naturally_provisioned )
+    {
+        // the port-zero rule refuses xdp before its create, so the documented
+        // result is gso discovering the real port; the rule is named in the
+        // log. This is the natural provisioned ladder result.
+
+        rocketnet_test_xdp_ladder_port_zero( &config );
+    }
+    else
+    {
+        // the natural unavailable answer: xdp refuses at its pre-flight on a
+        // real port and the ladder falls to gso, with the refusal named
+
+        rocketnet_server_socket_allow_commit();
+        enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
+        rocketnet_test_xdp_capture_end( natural_saved_level );
+        rocketnet_server_socket_forbid_commit();
+
+        rocketnet_check( natural_server );
+        rocketnet_check( strcmp( rocketnet_server_transport_io_name( natural_server ), "gso" ) == 0 );
+        rocketnet_check( rocketnet_server_transport_port( natural_server ) != 0 );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+        rocketnet_test_xdp_server_destroy( natural_server );
+    }
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_clear_preflight_test_result();
+#endif
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) == naturally_provisioned );
+#else
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+#endif
 
     rocketnet_test_env_restore( &transport_guard );
 }

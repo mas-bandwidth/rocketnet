@@ -997,33 +997,6 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
-// The server's payload copy: type_data_bytes into out_payload only when the
-// caller's buffer is large enough. Above the capacity the payload is refused
-// whole, never truncated, and counted as RECEIVE_CURSOR_TOO_SMALL; a copy
-// that fits is counted as PAYLOAD_DELIVERED. The transport sizes the buffer,
-// so a caller that passes a smaller one is refused instead of overrun.
-
-int rocketnet_server_payload_copy( uint8_t * out_payload, int out_payload_capacity,
-                                   const uint8_t * type_data, int type_data_bytes,
-                                   int * out_payload_bytes, uint64_t * counters )
-{
-    rocketnet_assert( out_payload );
-    rocketnet_assert( type_data );
-    rocketnet_assert( out_payload_bytes );
-
-    if ( type_data_bytes > out_payload_capacity )
-    {
-        rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
-        counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
-        return 0;
-    }
-
-    memcpy( out_payload, type_data, (size_t) type_data_bytes );
-    *out_payload_bytes = type_data_bytes;
-    counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
-    return 1;
-}
-
 struct rocketnet_sealed_type_counters_t
 {
     int received;

@@ -43,6 +43,20 @@ void rocketnet_server_socket_forbid_commit();
 
 void rocketnet_server_socket_allow_commit();
 
+// Development-only, non-mutating pre-flight result control. The functional
+// suite uses it to drive the production pin and ladder decisions through
+// both pre-flight answers on a host that cannot provision either way; the
+// control changes only the answer, never an attachment. Not declared in a
+// production build, and absent from its archive.
+
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV && defined(ROCKETNET_XDP) && ROCKETNET_XDP
+
+void rocketnet_server_socket_set_preflight_test_result( int result );   // 0 unavailable, 1 available
+
+void rocketnet_server_socket_clear_preflight_test_result();             // natural
+
+#endif
+
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
 // bounded-token semantics -- '-' allowed before (transport-prefixed names
