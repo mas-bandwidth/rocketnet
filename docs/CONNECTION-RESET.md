@@ -38,7 +38,6 @@ naming `<struct>.<member>`.
 | `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
-| | packet-loss and jitter trackers | transport estimators | RESET | no samples from the ended session |
 | | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction state of this transport object; public session counters are the connection that is held |
 | | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
@@ -145,9 +144,9 @@ material is overwritten in place with `sodium_memzero`:
 - **Session-scoped quality and rate metrics (RESET)**: RTT (`rtt_ms`), jitter
   (`jitter_ms`), packet loss (`packet_loss_percent`), bandwidth estimates
   (`send_kbps`, `receive_kbps`, `ack_kbps`), and the underlying ACK history
-  rings, bitmaps, and loss/jitter trackers reset on every client connection reset
-  and every server slot reset (`rocketnet_ack_endpoint_reset`,
-  `rocketnet_packet_loss_tracker_reset`, `rocketnet_jitter_tracker_reset`).
+  rings and bitmaps reset on every client connection reset and every server
+  slot reset (`rocketnet_ack_endpoint_reset`). Client loss and jitter are
+  derived from its ACK history; no receive-gap or arrival-gap tracker is kept.
 - **Server per-client totals (`rocketnet_server_client_stats`)**: Scoped strictly
   to the currently connected occupant of `client_index`. Queries on an empty
   slot return all zeros; `rocketnet_server_wire_totals_assign` zeroes the slot's

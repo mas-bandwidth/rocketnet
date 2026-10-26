@@ -725,10 +725,11 @@ lease table or a ring or arena that cannot reserve the output frames. For a
 fragmented server payload, the sequence block is reserved after every fragment
 frame is ready.
 
-The client's packet loss stat counts gaps in the server's session sequence. A
-packet the server sends and the path loses leaves a gap; a server refusal or
-abort does not. The server's per-client packet loss stat counts packets it sent
-that the client never acknowledged.
+The client's packet loss stat, like the server's per-client packet loss stat,
+estimates outbound packet loss from sent packets that remain unacknowledged in
+the endpoint's ACK history. Server sequence allocation still keeps accepted
+session sequence numbers contiguous; it does not define the client's loss
+stat.
 
 ```c
 #include "rocketnet.h"

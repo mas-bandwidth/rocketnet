@@ -2667,8 +2667,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     // Reserve the frame and packet lease here, but leave the session sequence
     // untouched. finish_packet assigns it only after the caller's size is
-    // accepted and every wire frame is reserved, so an abort or refusal does
-    // not leave a gap in the client's receive-side loss stat.
+    // accepted and every wire frame is reserved, keeping accepted server
+    // sequence numbers contiguous. Client loss is measured from outbound ACKs.
 
     rocketnet_address_t to;
     if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, &to ) )

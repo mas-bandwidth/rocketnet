@@ -645,15 +645,15 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct 
 // both ways. The rates come from elapsed-time buckets (about 4 ms boundary
 // resolution) over the trailing second, so the cost per update is flat.
 // rtt seeds from the handshake's round trips and is continuously refreshed
-// by the acks; jitter is inter-arrival jitter over the session sequence;
-// packet loss is receive-side, from gaps in the session sequence. These
-// numbers feed time synchronization. The cumulative totals count every wire
-// datagram and byte over the client's current connection, handshake included.
+// by the acks; jitter and packet loss are computed from the ACK history.
+// These numbers feed time synchronization. The cumulative totals count every
+// wire datagram and byte over the client's current connection, handshake
+// included.
 
 struct rocketnet_client_transport_stats_t
 {
     float rtt;                                      // round trip time (milliseconds)
-    float jitter;                                   // inter-arrival jitter (milliseconds)
+    float jitter;                                   // ACK-history jitter (milliseconds)
     float packet_loss;                              // percent
     int packets_sent_per_second;
     int packets_received_per_second;
@@ -1136,8 +1136,8 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 // dropped instead (payload out of range, the connection gone, or a wire
 // frame it could not reserve). The server assigns its session sequence only
 // after finish accepts the payload and reserves every wire frame, so a
-// refused or dropped finish takes no sequence and leaves no gap in the
-// client's receive-side loss stat. USAGE.md carries the worked arithmetic.
+// refused or dropped finish takes no sequence, preserving contiguous accepted
+// server session sequencing. USAGE.md carries the worked arithmetic.
 
 /** @brief Describes a reserved packet payload lease.
  *
