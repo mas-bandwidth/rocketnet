@@ -46,6 +46,9 @@ WILDCARD_ALLOWED = {
     ("functional/rocketnet_functional_tests.cpp",
      'void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }'):
         "msgx dual-stack case (macOS): an ipv4 client of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }'):
+        "iocp dual-stack case (Windows): an ipv4 client of the ipv6 wildcard",
 }
 
 TIERS = {"supported", "nightly", "unsupported"}

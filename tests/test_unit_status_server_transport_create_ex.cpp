@@ -15,7 +15,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -31,24 +30,6 @@
 // never reach the struct's list
 
 #if !ROCKETNET_DEV
-struct env_pin_saved
-{
-    bool was_set;
-    char value[256];
-};
-
-static void env_pin_set_aside( env_pin_saved * saved )
-{
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-}
-
-static void env_pin_put_back( const env_pin_saved * saved )
-{
-    if ( saved->was_set )
-        rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
-}
-
 #define check rocketnet_unit_check
 
 struct allocator_state
@@ -96,18 +77,7 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
 
 // A named production server rung with a concrete memory plan. The budget=1
 // case refuses before opening it, so this unit test needs no native backend.
-static const char * production_budget_transport()
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    return "gso";
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    return "msgx";
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    return "iocp";
-#else
-#error "server budget status test needs a production server transport"
-#endif
-}
+
 
 #if ROCKETNET_ASSERTS
 // the NULL argument below is the documented counted no-op, which fires
@@ -122,8 +92,6 @@ static void server_create_ex_expected_null_assert( const char *, const char *, c
 
 static void test_server_transport_create_ex_reports_every_status()
 {
-    env_pin_saved pin;
-    env_pin_set_aside( &pin );
 
     allocator_state state = { 0, 0, 0 };
     int status = -1;
@@ -161,12 +129,7 @@ static void test_server_transport_create_ex_reports_every_status()
     check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
-    // S2: an invalid environment value refuses apply_env
-    check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number", 1 ) == 0 );
-    status = -1;
-    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    // S2 environment parsing is covered by test_platform_primitives.
 
     // S3: an out-of-range config value refuses validation
     {
@@ -189,44 +152,8 @@ static void test_server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
     }
 
-    // the env memory_budget parse refusal (the operator budget env's own check)
-    check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "not-a-number", 1 ) == 0 );
-    {
-        struct rocketnet_server_transport_config_t config;
-        production_config( &config );
-        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-        status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    }
-    check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
-
-    // the operator budget refusal: every candidate's memory plan exceeds it
-    check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 ) == 0 );
-    {
-        struct rocketnet_server_transport_config_t config;
-        production_config( &config );
-        // The budget refusal is independent of the backend. This named
-        // production rung has a plan and refuses before any socket opens.
-        snprintf( config.transport, sizeof( config.transport ), "%s", production_budget_transport() );
-        status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-    }
-    check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
-
-    // A production portable pin reaches its own memory plan. A one-byte
-    // budget refuses before any socket opens, preserving unit purity.
-    check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 ) == 0 );
-    {
-        struct rocketnet_server_transport_config_t config;
-        production_config( &config );
-        snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
-        status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-    }
-    check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
+    // Real environment budget parsing and both production budget rungs
+    // are covered by test_platform_primitives.
 
     // S6: a keyless config (the default shape) is refused
     status = -1;
@@ -328,7 +255,6 @@ static void test_server_transport_create_ex_reports_every_status()
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 
-    env_pin_put_back( &pin );
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );

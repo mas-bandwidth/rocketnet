@@ -48,10 +48,15 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
 
+#if ROCKETNET_DEV
 static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
 // Whether the variable is set; its value, or empty, in value.
+#if ROCKETNET_DEV
 static bool create_status_getenv( const char * name, std::string & value )
 {
     char buffer[4096];
@@ -59,6 +64,7 @@ static bool create_status_getenv( const char * name, std::string & value )
     value = buffer;
     return present;
 }
+#endif // #if ROCKETNET_DEV
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -316,6 +322,7 @@ static void test_create_reports_status_config_refusals()
     // A value supplied by the caller is a config-range refusal, even though
     // create also checks environment overrides. Keep the environment absent
     // for this distinction, then restore it for the process running the suite.
+#if ROCKETNET_DEV
     std::string saved_client_env;
     std::string saved_server_env;
     const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
@@ -323,6 +330,7 @@ static void test_create_reports_status_config_refusals()
     check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
+#endif // #if ROCKETNET_DEV
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     // ROCKETNET_SEND_KBPS_UNLIMITED is no budget: accepted, with no ceiling
     client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
@@ -363,10 +371,12 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
+#if ROCKETNET_DEV
     if ( had_client_env ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     if ( had_server_env ) check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+#endif // #if ROCKETNET_DEV
 
     // a transport list that does not parse
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -406,6 +416,7 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_OK );
     rn_test_client_stop_and_destroy( budget_client );
 
+#if ROCKETNET_DEV
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     std::string prior_client;
@@ -427,6 +438,7 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     if ( prior_server_present ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
     else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
 

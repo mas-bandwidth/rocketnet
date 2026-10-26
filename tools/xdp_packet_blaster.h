@@ -14,6 +14,7 @@
 #define RN_BLASTER_MAX_MANIFEST_CASES 64u
 #define RN_BLASTER_MAX_CASE_NAME 64u
 #define RN_BLASTER_MAX_CASE_TEXT 96u
+#define RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES 6u
 #define RN_BLASTER_OWNED_CONFIRM "I-OWN-THIS-BENCH"
 
 enum rn_blaster_mode_t
@@ -51,8 +52,11 @@ struct rn_blaster_case_t
 {
     char name[RN_BLASTER_MAX_CASE_NAME];
     char source[RN_BLASTER_MAX_CASE_TEXT];
-    char expected_stage[RN_BLASTER_MAX_CASE_TEXT];
-    char expected_counter[RN_BLASTER_MAX_CASE_TEXT];
+    struct
+    {
+        char expected_stage[RN_BLASTER_MAX_CASE_TEXT];
+        char expected_counter[RN_BLASTER_MAX_CASE_TEXT];
+    } profile_oracles[RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES];
     char expected_recovery[RN_BLASTER_MAX_CASE_TEXT];
     char sequence_state[RN_BLASTER_MAX_CASE_TEXT];
     enum rn_blaster_case_operation_t operation;
