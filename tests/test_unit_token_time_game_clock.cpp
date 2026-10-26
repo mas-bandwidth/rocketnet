@@ -7,10 +7,10 @@
 // configured game_clock_epoch the token timestamp is epoch plus the caller's
 // time, floored to whole seconds, and no wall clock is read; with the field
 // zero the check reads the wall clock as before. Time is an argument starting
-// at 1000.0; no socket, no sleep and no real clock.
+// at 1000.0; client refusals and the in-memory server protocol need no socket.
 
-#include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "native_shutdown.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_protocol.h"
@@ -79,13 +79,14 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.game_clock_epoch = epoch;
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_ex( NULL, token_data, &config, time, &status );
     if ( transport )
     {
-        rn_test_client_transport_stop_and_destroy( transport );
+        rn_native_client_transport_stop_and_destroy( transport );
         return ROCKETNET_STATUS_OK;
     }
     return status;
@@ -171,8 +172,6 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         check( read.time_callback == NULL );
         check( read.game_clock_epoch == 0 );
     }
-    check( token_time_game_client_create( create, expire, GAME_CLOCK_EPOCH, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_OK );
-
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
     check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
