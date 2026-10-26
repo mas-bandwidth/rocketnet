@@ -180,15 +180,21 @@ umask 077
 (cd examples/backend/csharp && dotnet run --no-build --project Backend -- --keygen) > backend-keys.env
 ```
 
-or the C SDK `keygen` executable:
+or the C SDK `keygen` executable. The Go and C# `--keygen` modes print the
+two environment assignments below directly; the C `keygen` tool instead
+prints labelled lines (`backend public key base64 = ...` and
+`backend private key base64 = ...`, `keygen.cpp`), so convert its output:
 
 ```sh
 umask 077
-./bin/keygen > backend-keys.env
+./bin/keygen > backend-keys.txt
+printf 'ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=%s\n' "$(sed -n 's/^backend public key base64 = //p' backend-keys.txt)" > backend-keys.env
+printf 'ROCKETNET_BACKEND_PRIVATE_KEY=%s\n' "$(sed -n 's/^backend private key base64 = //p' backend-keys.txt)" >> backend-keys.env
 ```
 
-All three commands print the same two base64 environment variable assignments
-without starting a network listener:
+The Go and C# commands print the same two base64 environment variable assignments
+without starting a network listener; the C tool prints the same key material
+under the labels shown above:
 
 - `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` (32-byte Ed25519 public verification
   key, `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` = 32)
@@ -307,13 +313,13 @@ Expected output across the client and server terminals:
 - Client prints:
   ```
   backend_client: mode=production transport=portable
-  client state: disconnected -> requesting cookie
-  client state: requesting cookie -> sending connection request
-  client state: sending connection request -> sending connection response
-  client state: sending connection response -> connected
+  client state: DISCONNECTED -> REQUESTING_COOKIE
+  client state: REQUESTING_COOKIE -> SENDING_CONNECTION_REQUEST
+  client state: SENDING_CONNECTION_REQUEST -> SENDING_CONNECTION_RESPONSE
+  client state: SENDING_CONNECTION_RESPONSE -> CONNECTED
   client received: hello from the backend's client
-  client state: connected -> disconnected
-  client state after disconnect: disconnected
+  client state: CONNECTED -> DISCONNECTED
+  client state after disconnect: DISCONNECTED
   PASS
   ```
 - Server prints:
@@ -321,7 +327,7 @@ Expected output across the client and server terminals:
   backend_server: mode=production transport=portable
   ...
   server received from client 2a: hello from the backend's client
-  server client disconnected (reason server disconnected)
+  server client disconnected (reason SERVER_DISCONNECTED)
   PASS
   ```
   (`0x2a` = decimal `42`, the authenticated `client_id` recovered by opening the
@@ -340,13 +346,13 @@ address is hardcoded in source control.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `ROCKETNET_BACKEND_PRIVATE_KEY` | Backend's 64-byte Ed25519 secret key, base64, printed by `--keygen` or `./bin/keygen`. Give each server the matching 32-byte `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`. | Published development key (**development only**; refused by `ROCKETNET_DEV=0` servers) |
+| `ROCKETNET_BACKEND_PRIVATE_KEY` | Backend's 64-byte Ed25519 secret key, base64, printed by `--keygen` (Go/C#) or as the labelled `backend private key base64` line by `./bin/keygen`. Give each server the matching 32-byte `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`. | Published development key (**development only**; refused by `ROCKETNET_DEV=0` servers) |
 | `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY` | Optional initial server's 32-byte X25519 public key, base64 (`rocketnet_server_public_key`). When set, the HTTP service registers it under server ID `environment`; required for `--mint`. | none |
 | `ROCKETNET_BACKEND_SERVER_ADDRESSES` | Optional initial server's UDP address(es): `a.b.c.d:port`, `[ipv6]:port`, or one of each separated by a comma. | `127.0.0.1:40000` when `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY` is set |
 | `ROCKETNET_BACKEND_PROTOCOL_ID` | Game protocol ID (`0x` hex or decimal `uint64`); must be nonzero and match `server_config.protocol_id`. | `0x52434b544e455431` |
 | `ROCKETNET_BACKEND_PORT` | Backend HTTP listen port (`1..65535`). | `8080` |
 | `ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS` | Token validity window in seconds (`expire_timestamp - create_timestamp`, `> 0`). | `30` |
-| `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS` | Connection keepalive/handshake timeout in seconds (`1..3600`). | `10` |
+| `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS` | Connection keepalive/handshake timeout in seconds (any positive value `> 0`; both backends refuse only `<= 0`, with no upper bound in source). | `10` |
 
 ---
 
@@ -371,7 +377,7 @@ pre-send check (`rocketnet_client_connect`), and the server handshake
 | --- | --- | --- |
 | `GET /match/{clientID}` when no servers have registered | `503 Service Unavailable` | Register at least one live server via `PUT /servers/{serverID}` (or wait for fleet registration) before matching players. |
 | `GET /match/{clientID}` with a non-decimal or out-of-range `uint64` `clientID` | `400 Bad Request` | Pass a valid unsigned 64-bit integer derived by the backend's player authentication layer. |
-| `PUT /servers/{serverID}` with empty or `> 128`-byte `serverID`, malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export literal bound IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
+| `PUT /servers/{serverID}` with empty `serverID` or one over the limit (Go: `> 128` bytes; C#: `> 128` characters), malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export literal bound IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
 | `PUT /servers/{serverID}` contains an unknown JSON field | `400 Bad Request` (Go); accepted and ignored (C#) | Send only the documented `addresses` and `public_key` fields. Do not rely on the C# backend ignoring additional fields. |
 | `PUT /servers/{serverID}` body exceeds 4096 bytes | `400 Bad Request` (Go) / `413 Payload Too Large` (C#) | Keep registration payload within the 4096-byte bound (1–2 literal address strings and one base64 public key). |
 
@@ -422,8 +428,10 @@ The backend unit suites use no sockets and no wall-clock sleeps (`create_timesta
 is passed explicitly). They reproduce every deterministic vector in
 [`tests/connect_token_vectors.json`](../../tests/connect_token_vectors.json)
 byte-for-byte, verify IPv4/IPv6 address encoding, open freshly minted tokens the
-way a server does, and exercise every configuration, registration (`HTTP 204`,
-`HTTP 400`, `HTTP 413`), and match (`HTTP 200`, `HTTP 400`, `HTTP 503`) refusal:
+way a server does, and exercise configuration, registration, and match refusal
+logic at the function level. The HTTP handlers return `204`, `400`, and `413`
+(registration) and `200`, `400`, and `503` (match), but the unit suites do not
+assert those HTTP status codes:
 
 ```sh
 (cd examples/backend/go && go test -v ./...)
@@ -437,7 +445,7 @@ keypair in memory (never written to the test receipt). The harness first mints a
 separate token sealed to the published development server key and passes it on
 standard input to `backend_check_token`, with the expected client ID and
 protocol ID as arguments. It then starts the backend with an empty registry to
-verify HTTP `503`, registers the live server over `PUT /servers/local` (`HTTP
+verify HTTP `503`, registers the live server over `PUT /servers/example` (`HTTP
 204`), obtains a fresh token from the HTTP match route, and runs the production
 client-server message exchange without passing that live-server token to the
 checker. Passing `--production` requires both `example_backend_server` and

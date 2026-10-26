@@ -389,11 +389,16 @@ umask 077
 (cd examples/backend/go && go run . --keygen) > backend-keys.env
 # Or with C#:
 # (cd examples/backend/csharp && dotnet build Backend && dotnet run --no-build --project Backend -- --keygen) > backend-keys.env
-# Or with the C SDK keygen tool:
-# ./bin/keygen > backend-keys.env
+# Or with the C SDK keygen tool, which prints labelled lines
+# (`backend public key base64 = ...` / `backend private key base64 = ...`),
+# not environment assignments, so convert its output:
+# ./bin/keygen > backend-keys.txt
+# printf 'ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=%s\n' "$(sed -n 's/^backend public key base64 = //p' backend-keys.txt)" > backend-keys.env
+# printf 'ROCKETNET_BACKEND_PRIVATE_KEY=%s\n' "$(sed -n 's/^backend private key base64 = //p' backend-keys.txt)" >> backend-keys.env
 ```
 
-Each command prints two base64 environment assignments:
+The Go and C# commands each print two base64 environment assignments; the C
+`keygen` tool prints the same material under the labels shown above:
 
 - `ROCKETNET_BACKEND_PRIVATE_KEY` (64-byte Ed25519 secret signing key): stays
   **strictly on the backend token service**. Never ship it with game clients,
@@ -547,8 +552,8 @@ python3 tools/run_backend_examples.py --build build-production --production
   - `GET /match/{clientID}` returns `HTTP 400 Bad Request` if `clientID` is not
     an unsigned 64-bit decimal integer.
   - `PUT /servers/{serverID}` returns `HTTP 400 Bad Request` (or `HTTP 413` in
-    C# when the body exceeds 4096 bytes) if `serverID` is empty or `> 128`
-    bytes, JSON is malformed, `addresses` is empty, has `> 2` entries, repeats
+    C# when the body exceeds 4096 bytes) if `serverID` is empty or over the
+    limit (Go: `> 128` bytes; C#: `> 128` characters), JSON is malformed, `addresses` is empty, has `> 2` entries, repeats
     an IP family, uses a hostname instead of a literal IP, uses port `0`, or
     `public_key` is not 32-byte base64.
   - For unknown JSON fields, the Go backend returns `HTTP 400 Bad Request`; the
