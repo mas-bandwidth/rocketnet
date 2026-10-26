@@ -236,16 +236,27 @@ jobs:
       # nonzero result and its Actions step log.  Linux Release (a) is a real
       # DEV=0 build and does not run the full suites, so every selected name
       # executes exactly once without adding a job or runner.
+      - name: Start combined unit and functional timing (lean row)
+        if: runner.os == 'Linux' && matrix.leg == 'a'
+        shell: bash
+        run: &start_unit_functional_timing |
+          set -euo pipefail
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          rm -f "$timing_receipt"
+          timing_python=python3
+          command -v "$timing_python" >/dev/null 2>&1 || timing_python=python
+          timing_start_ns=$($timing_python -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
+            exit 1
+          fi
+          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
+
       - name: Lean shipped-behavior signal (no retries)
         if: runner.os == 'Linux' && matrix.leg == 'a'
         shell: bash
         run: |
           set -euo pipefail
-          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
-          if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
-            exit 1
-          fi
           unit_cases=(
             test_create_reports_status_config_refusals
             test_token_time_refusals_are_distinct
@@ -267,25 +278,6 @@ jobs:
             ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
               ./bin/functional --run "$case"
           done
-          timing_end_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
-          if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
-            exit 1
-          fi
-          timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
-          printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s/%s/%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
-            "$RUNNER_OS" '${{ matrix.build_type }}' '${{ matrix.leg }}' \
-            "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
-          if (( timing_elapsed_ms >= 120000 )); then
-            echo "CI_UNIT_FUNCTIONAL_BUDGET=FAIL"
-            exit 1
-          fi
-          if (( timing_elapsed_ms <= 60000 )); then
-            echo "CI_UNIT_FUNCTIONAL_IDEAL=MET"
-          else
-            echo "CI_UNIT_FUNCTIONAL_IDEAL=MISSED"
-          fi
-          echo "CI_UNIT_FUNCTIONAL_BUDGET=PASS"
 
       - name: Check the floating-point floor on every compiler invocation
         if: runner.os == 'Linux'
@@ -306,6 +298,11 @@ jobs:
       # the pin tests (test_*_transport_server_io_pin) go red if a rung stops
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
+
+      - name: Start combined unit and functional timing (full-suite rows)
+        if: contains(matrix.leg, 'b')
+        shell: bash
+        run: *start_unit_functional_timing
 
       - name: Sodium known answers
         if: contains(matrix.leg, 'b')
@@ -346,18 +343,7 @@ jobs:
 
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: contains(matrix.leg, 'b')
-        shell: bash
-        run: |
-          set -euo pipefail
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
-          if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
-            exit 1
-          fi
-          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
-          ./bin/test
+        run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
       # check fails, naming the first opener, on any socket() call
@@ -401,44 +387,6 @@ jobs:
           set -euo pipefail
           ./bin/functional | tee functional-pinned.log
           grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          if [[ ! -f "$timing_receipt" ]]; then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=missing_start"
-            exit 1
-          fi
-          if ! read -r timing_run_id timing_run_attempt timing_start_ns timing_extra < "$timing_receipt"; then
-            rm -f "$timing_receipt"
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
-            exit 1
-          fi
-          timing_record="$timing_run_id $timing_run_attempt $timing_start_ns"
-          timing_bytes=$(wc -c < "$timing_receipt" | tr -d '[:space:]')
-          rm -f "$timing_receipt"
-          if [[ -n "${timing_extra:-}" ]] || [[ "$timing_run_id" != "$GITHUB_RUN_ID" ]] || \
-             [[ "$timing_run_attempt" != "$GITHUB_RUN_ATTEMPT" ]] || [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]] || \
-             [[ ! "$timing_bytes" =~ ^[0-9]+$ ]] || (( timing_bytes != ${#timing_record} + 1 )); then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
-            exit 1
-          fi
-          timing_end_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
-          if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
-            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
-            exit 1
-          fi
-          timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
-          printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s/%s/%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
-            "$RUNNER_OS" '${{ matrix.build_type }}' '${{ matrix.leg }}' \
-            "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
-          if (( timing_elapsed_ms >= 120000 )); then
-            echo "CI_UNIT_FUNCTIONAL_BUDGET=FAIL"
-            exit 1
-          fi
-          if (( timing_elapsed_ms <= 60000 )); then
-            echo "CI_UNIT_FUNCTIONAL_IDEAL=MET"
-          else
-            echo "CI_UNIT_FUNCTIONAL_IDEAL=MISSED"
-          fi
-          echo "CI_UNIT_FUNCTIONAL_BUDGET=PASS"
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -705,6 +653,52 @@ jobs:
           ./bin/test_transport
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, matrix.build_type, matrix.leg) }}
+        run: &enforce_unit_functional_timing |
+          set -euo pipefail
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          if [[ ! -f "$timing_receipt" ]]; then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=missing_start"
+            exit 1
+          fi
+          if ! read -r timing_run_id timing_run_attempt timing_start_ns timing_extra < "$timing_receipt"; then
+            rm -f "$timing_receipt"
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
+            exit 1
+          fi
+          timing_record="$timing_run_id $timing_run_attempt $timing_start_ns"
+          timing_bytes=$(wc -c < "$timing_receipt" | tr -d '[:space:]')
+          rm -f "$timing_receipt"
+          if [[ -n "${timing_extra:-}" ]] || [[ "$timing_run_id" != "$GITHUB_RUN_ID" ]] || \
+             [[ "$timing_run_attempt" != "$GITHUB_RUN_ATTEMPT" ]] || [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]] || \
+             [[ ! "$timing_bytes" =~ ^[0-9]+$ ]] || (( timing_bytes != ${#timing_record} + 1 )); then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_or_stale_start"
+            exit 1
+          fi
+          timing_python=python3
+          command -v "$timing_python" >/dev/null 2>&1 || timing_python=python
+          timing_end_ns=$($timing_python -c 'import time; print(time.monotonic_ns())')
+          if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
+            echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
+            exit 1
+          fi
+          timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
+          printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
+            "$CI_TIMING_ROW" "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
+          if (( timing_elapsed_ms >= 120000 )); then
+            echo "CI_UNIT_FUNCTIONAL_BUDGET=FAIL"
+            exit 1
+          fi
+          if (( timing_elapsed_ms <= 60000 )); then
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MET"
+          else
+            echo "CI_UNIT_FUNCTIONAL_IDEAL=MISSED"
+          fi
+          echo "CI_UNIT_FUNCTIONAL_BUDGET=PASS"
+
       # Linux: the embedded server_xdp.o is reproducible and equals a fresh
       # compile of the current sources; elsewhere: the listed inputs exist.
       - name: Embedded XDP object is reproducible and current
@@ -770,8 +764,18 @@ jobs:
           done
           exit "$failed"
           GUEST
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          rm -f "$timing_receipt"
+          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
+          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sh build/xdp-libxdp-1-4.sh
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
+        run: *enforce_unit_functional_timing
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -899,6 +903,11 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Start combined unit and functional timing (development leg)
+        if: matrix.leg == 'a'
+        shell: bash
+        run: *start_unit_functional_timing
+
       # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
       # built from only the header and the prebuilt static library (seconds)
       - name: Check the public header is clean and self-contained
@@ -972,6 +981,11 @@ jobs:
       - name: Check release hardening
         if: matrix.leg == 'b'
         run: python tools/check_hardening.py bin/Release/rocketnet.dll
+
+      - name: Start combined unit and functional timing (production leg)
+        if: matrix.leg == 'b'
+        shell: bash
+        run: *start_unit_functional_timing
 
       - name: Check the library is callable from C and C++ through rocketnet.h
         if: matrix.leg == 'b'
@@ -1074,6 +1088,12 @@ jobs:
           rm -rf "$logs"
           exit "$failed"
 
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/Release/{1}', runner.os, matrix.leg) }}
+        run: *enforce_unit_functional_timing
+
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,
   # one message of every reliability type, receipts, clean disconnect, clean
@@ -1171,12 +1191,22 @@ jobs:
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory
+      - name: Start combined unit and functional timing
+        shell: bash
+        run: *start_unit_functional_timing
+
       - name: Run happy_path
         timeout-minutes: 2
         shell: bash
         run: |
           cd tools/happy_path
           go run happy_path.go
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.os) }}
+        run: *enforce_unit_functional_timing
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
   # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
@@ -1221,17 +1251,37 @@ jobs:
       - name: Unit tests (Go)
         if: matrix.backend == 'go'
         working-directory: examples/backend/go
+        shell: bash
         run: |
+          set -euo pipefail
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt: the files above are not formatted"; exit 1; }
           go vet ./...
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          rm -f "$timing_receipt"
+          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
+          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           go test -count=1 ./...
 
       - name: Build the backend and run its unit tests (C#)
         if: matrix.backend == 'csharp'
         working-directory: examples/backend/csharp
+        shell: bash
         run: |
+          set -euo pipefail
           dotnet build Backend -c Release
+          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
+          rm -f "$timing_receipt"
+          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
+          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           dotnet run --project Tests -c Release
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.backend) }}
+        run: *enforce_unit_functional_timing
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
@@ -1307,6 +1357,11 @@ jobs:
         if: matrix.leg == 'functional suite'
         run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
+      - name: Start combined unit and functional timing (unit rows)
+        if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
+        shell: bash
+        run: *start_unit_functional_timing
+
       - name: Run unit tests
         if: matrix.leg == 'unit suite'
         env:
@@ -1328,6 +1383,11 @@ jobs:
       - name: Locked-memory limit covers the io_uring cases
         if: matrix.leg == 'functional suite'
         run: bash tools/check_memlock.sh
+
+      - name: Start combined unit and functional timing (functional row)
+        if: matrix.leg == 'functional suite'
+        shell: bash
+        run: *start_unit_functional_timing
 
       - name: Run functional suite under sanitizers
         if: matrix.leg == 'functional suite'
@@ -1357,6 +1417,12 @@ jobs:
       - name: Inactive XDP index negative control
         if: matrix.leg == 'functional suite'
         run: python3 tools/check_xdp_guard_control.py
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
+        run: *enforce_unit_functional_timing
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #
@@ -1769,6 +1835,10 @@ jobs:
       # libstdc++, which lives beside the compiler rather than in the
       # multiarch tree.
 
+      - name: Start combined unit and functional timing
+        shell: bash
+        run: *start_unit_functional_timing
+
       - name: Run the big-endian wire check
         env:
           QEMU_LD_PREFIX: /
@@ -1776,6 +1846,12 @@ jobs:
         run: |
           qemu-s390x-static ./bin/wire_check
           qemu-s390x-static ./bin/test_sodium
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.build_type) }}
+        run: *enforce_unit_functional_timing
 
   # The standard in standard/ (RN-1, RN-2, RN-R), per serialize's
   # tools/conformance. The checker reads each document as a DOCUMENT -- its
@@ -1910,6 +1986,11 @@ jobs:
         if: matrix.leg == 'loopback soak'
         run: cmake --build build --target soak test_lifecycle --parallel
 
+      - name: Start combined unit and functional timing
+        if: matrix.leg == 'loopback soak'
+        shell: bash
+        run: *start_unit_functional_timing
+
       - name: Run the bounded loopback soak under tsan (real transport threads)
         if: matrix.leg == 'loopback soak'
         env:
@@ -1923,6 +2004,12 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
+        run: *enforce_unit_functional_timing
 
   # THE PINNED-SODIUM LEG.
   # Explicit system-sodium integration mode against a content-verified
@@ -2002,6 +2089,10 @@ jobs:
       - name: Build the suite
         run: cmake --build build --target test --parallel
 
+      - name: Start combined unit and functional timing
+        shell: bash
+        run: *start_unit_functional_timing
+
       - name: Run tests (auto ladder) against the pinned sodium
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
 
@@ -2009,6 +2100,12 @@ jobs:
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
+        run: *enforce_unit_functional_timing
 
   # THE PLATFORM SELFTESTS, lifted out of build-and-test (2026-09-13).
   #
