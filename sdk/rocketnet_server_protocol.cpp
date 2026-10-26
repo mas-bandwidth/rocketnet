@@ -829,9 +829,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         rocketnet_used_token_history_record( server->used_token_history, mapping->token_identifier,
                                              rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
                                              mapping->token_expire_timestamp, current_timestamp );
-        rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
-                                                    rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
     }
+    rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
+                                                rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
 
     if ( mapping->control->client_index != -1 )
     {
