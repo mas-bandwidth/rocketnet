@@ -88,6 +88,13 @@ static void * refuse_allocation( void *, size_t ) { return NULL; }
 static void refuse_free( void *, void * ) { check(false); }
 static void thread_body( void * ) {}
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+// The Linux thread and shim share one custom-allocator-backed record.
+static const int expected_platform_thread_allocations = 1;
+#else
+static const int expected_platform_thread_allocations = 2;
+#endif
+
 struct ack_writer
 {
     rocketnet_ack_endpoint_t * endpoint;
@@ -546,7 +553,7 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_frame_sync_create( &state, 60.0 ); },
         []( rocketnet_frame_sync_t * f ) { rocketnet_frame_sync_destroy( f ); } ) == 1 );
 
-    // 11. rocketnet_platform_thread_create: 2 allocations (fail N=1..2, succeed N=3).
+    // 11. The platform thread and its shim share an allocator-backed record.
     check( sweep_component_create<rocketnet_platform_thread_t>(
         state,
         [&]() { return rocketnet_platform_thread_create( &state, thread_body, NULL ); },
@@ -554,7 +561,7 @@ static void check_component_create_sweeps( allocator_state & state )
             rocketnet_platform_thread_join( t );
             rocketnet_platform_thread_destroy( t );
         },
-        false ) == 2 );
+        false ) == expected_platform_thread_allocations );
 
     check( state.live == baseline );
 }
@@ -763,7 +770,7 @@ int main()
     check_client_memory_budget( state );
     check( state.live == baseline );
 
-    for ( int failure = 1; failure <= 2; ++failure )
+    for ( int failure = 1; failure <= expected_platform_thread_allocations; ++failure )
     {
         state.fail_at = state.calls + failure;
         check( !rocketnet_platform_thread_create( &state, thread_body, NULL ) );
