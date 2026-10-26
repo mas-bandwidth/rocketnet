@@ -1452,6 +1452,16 @@ struct rocketnet_server_config_t
     /// Range is 1000 .. 600000. Default is 10000.
 
     int reliable_message_timeout_ms;
+
+    /// ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE sets the whole-server
+    /// allowance for sealing redundant disconnect-notification datagrams in
+    /// one update. Range is 1 .. 1024. Default is 64. A disconnect still
+    /// closes its local slot immediately; a value below the 10-copy burst
+    /// spreads that burst across updates. If every deferred-burst slot is
+    /// occupied, the server keeps the older work and drops the new redundant
+    /// notification copies rather than exceeding this allowance.
+
+    int disconnect_packets_per_update;
 };
 
 /// Messages

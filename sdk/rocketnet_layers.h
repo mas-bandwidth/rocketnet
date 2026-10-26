@@ -25,6 +25,7 @@ extern "C" {
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, disconnect_packets_per_update ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and unfragmented payload limits.
 /// Internal; fragments retain their separate, unrounded stride bound.
@@ -782,6 +783,8 @@ struct rocketnet_server_transport_config_t
     int simulated_reverse_window;                   // development only: reverse each window of W outgoing datagrams (2 .. 64), flushed whole at the end of each send_packets; 0 off
     /** @brief The other family's advertised address on the same port; empty serves one family. */
     char second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    /** @brief Whole-server disconnect notification packets sealed per update; 1 through 1024, default 64. */
+    int disconnect_packets_per_update;
 };
 
 // a NULL config is a counted no-op.
@@ -1017,6 +1020,8 @@ void rocketnet_forbid_xdp_commit( void );
  * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
  */
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+// Internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks.
+void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 
 // Unit tests only: supplies token-validation Unix time so update reads no wall clock.
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );

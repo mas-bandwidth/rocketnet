@@ -80,17 +80,18 @@ def main() -> int:
     cases = manifest["cases"]
     assert len(cases) == 7
     assert len({case["name"] for case in cases}) == len(cases)
+    profiles = ("xdp", "gso", "io_uring", "msgx", "iocp", "rio")
     required = {
         "name",
         "source",
         "operation",
         "argument",
         "expected_delta",
-        "expected_stage",
-        "expected_counter",
         "expected_recovery",
         "sequence_state",
     }
+    for profile in profiles:
+        required.update({f"expected_stage_{profile}", f"expected_counter_{profile}"})
     operations = {
         "truncate",
         "oversize",
@@ -100,13 +101,35 @@ def main() -> int:
         "replay",
         "bad_tag",
     }
+    generic_prefilter = {
+        "truncate": ("server-ingress-size-filter", "PREFILTER_TOO_SHORT"),
+        "oversize": ("server-ingress-size-filter", "PREFILTER_TOO_LARGE"),
+        "wrong_epoch": ("server-prefilter", "PREFILTER_WRONG_EPOCH"),
+        "wrong_filter": ("server-prefilter", "PREFILTER_WRONG_VALUE"),
+        "reserved_type": ("server-type-filter", "RESERVED_TYPE"),
+        "replay": ("server-replay-window", "PAYLOAD_ALREADY_RECEIVED"),
+        "bad_tag": ("server-aead-open", "PAYLOAD_DID_NOT_OPEN"),
+    }
+    xdp_oracles = {
+        "truncate": ("xdp-prefilter", "XDP_KERNEL_DROPPED_TOO_SMALL"),
+        "oversize": ("xdp-prefilter", "XDP_KERNEL_DROPPED_TOO_LARGE"),
+        "wrong_epoch": ("xdp-prefilter", "XDP_KERNEL_DROPPED_WRONG_EPOCH"),
+        "wrong_filter": ("xdp-prefilter", "XDP_KERNEL_DROPPED_WRONG_FILTER"),
+        "reserved_type": ("xdp-type-filter", "XDP_KERNEL_DROPPED_INVALID_TYPE"),
+        "replay": ("server-replay-window", "PAYLOAD_ALREADY_RECEIVED"),
+        "bad_tag": ("server-aead-open", "PAYLOAD_DID_NOT_OPEN"),
+    }
     for case in cases:
         assert required <= case.keys()
         assert case["operation"] in operations
-        assert case["expected_counter"] and case["expected_recovery"]
+        assert case["expected_recovery"]
         assert case["expected_delta"] in {1, 2}
         assert case["sequence_state"] in {"accepted", "fresh"}
         assert case["source"].startswith(("sdk/rocketnet_wire.h", "tests/pcapng/regress/", "fuzz/corpus/"))
+        for profile in profiles:
+            expected_stage, expected_counter = xdp_oracles[case["operation"]] if profile == "xdp" else generic_prefilter[case["operation"]]
+            assert case[f"expected_stage_{profile}"] == expected_stage
+            assert case[f"expected_counter_{profile}"] == expected_counter
     assert {case["operation"] for case in cases} == operations
 
     with tempfile.TemporaryDirectory(prefix="rn-blaster-test-") as temporary:
@@ -136,6 +159,33 @@ def main() -> int:
         assert "downstream=controlled_server_workload_contract" in first.stdout
         assert "endpoint_arena_required_bytes=" in first.stdout
         assert "manifest_cases=7" in first.stdout
+
+        for profile in profiles:
+            robustness = list(args)
+            robustness[robustness.index("throughput")] = "robustness"
+            robustness.extend(("--server-transport-profile", profile))
+            result = run(robustness, 0)
+            assert f"server_transport_profile={profile} profile_source=operator-declared" in result.stdout
+            assert "runtime_autodetect=false counter_observed=false" in result.stdout
+            case_lines = [line for line in result.stdout.splitlines() if line.startswith("PLAN_CASE ")]
+            assert len(case_lines) == 7
+            for case, line in zip(cases, case_lines):
+                expected_stage = case[f"expected_stage_{profile}"]
+                expected_counter = case[f"expected_counter_{profile}"]
+                assert f"name={case['name']} server_transport_profile={profile}" in line
+                assert f"expected_stage={expected_stage} expected_counter={expected_counter}" in line
+                assert f"expected_delta={case['expected_delta']}" in line
+
+        missing_profile = list(args)
+        missing_profile[missing_profile.index("throughput")] = "robustness"
+        refused = run(missing_profile, 2)
+        assert "requires an explicit --server-transport-profile" in refused.stderr
+
+        for unsupported_profile in ("portable", "loopback", "unknown"):
+            unsupported = list(missing_profile)
+            unsupported.extend(("--server-transport-profile", unsupported_profile))
+            refused = run(unsupported, 2)
+            assert "unsupported server transport profile" in refused.stderr
 
         public = list(args)
         public[public.index("--server") + 1] = "8.8.8.8:40000"
@@ -199,8 +249,16 @@ def main() -> int:
         refused_manifest("argument.json", bad_argument, "noncanonical argument, sequence state, or oracle")
 
         bad_oracle = json.loads(json.dumps(manifest))
-        next(case for case in bad_oracle["cases"] if case["operation"] == "replay")["expected_counter"] = "XDP_KERNEL_DROPPED_REPLAYED"
+        next(case for case in bad_oracle["cases"] if case["operation"] == "replay")["expected_counter_xdp"] = "XDP_KERNEL_DROPPED_REPLAYED"
         refused_manifest("oracle.json", bad_oracle, "noncanonical argument, sequence state, or oracle")
+
+        mismatched_profile = json.loads(json.dumps(manifest))
+        next(case for case in mismatched_profile["cases"] if case["operation"] == "wrong_filter")["expected_counter_gso"] = "XDP_KERNEL_DROPPED_WRONG_FILTER"
+        refused_manifest("profile-mismatch.json", mismatched_profile, "noncanonical argument, sequence state, or oracle")
+
+        missing_profile_oracle = json.loads(json.dumps(manifest))
+        next(case for case in missing_profile_oracle["cases"] if case["operation"] == "truncate").pop("expected_counter_rio")
+        refused_manifest("profile-missing.json", missing_profile_oracle, "missing or overlong server transport profile oracle")
 
         bad_delta = json.loads(json.dumps(manifest))
         next(case for case in bad_delta["cases"] if case["operation"] == "replay")["expected_delta"] = 1

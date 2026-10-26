@@ -83,6 +83,7 @@ struct rn_blaster_options_t
     std::string next_hop_mac_text;
     std::string token_file;
     std::string manifest_file;
+    std::string server_transport_profile;
     std::string packet_filter_text;
     std::string owned_confirmation;
     std::string xdp_mode;
@@ -259,6 +260,74 @@ static bool rn_blaster_case_operation( const char * text_value, enum rn_blaster_
     return false;
 }
 
+struct rn_blaster_server_transport_profile_t
+{
+    const char * name;
+    bool xdp_prefilter;
+};
+
+static const rn_blaster_server_transport_profile_t rn_blaster_server_transport_profiles[] = {
+    { "xdp", true },
+    { "gso", false },
+    { "io_uring", false },
+    { "msgx", false },
+    { "iocp", false },
+    { "rio", false },
+};
+
+static_assert( sizeof( rn_blaster_server_transport_profiles ) / sizeof( rn_blaster_server_transport_profiles[0] ) ==
+                   RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES,
+               "the manifest covers every physical server transport profile" );
+
+static int rn_blaster_server_transport_profile( const std::string & name )
+{
+    for ( uint32_t i = 0; i < RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES; ++i )
+        if ( name == rn_blaster_server_transport_profiles[i].name )
+            return (int) i;
+    return -1;
+}
+
+static bool rn_blaster_case_oracle_contract( const rn_blaster_case_t & item, uint32_t profile )
+{
+    const bool xdp = rn_blaster_server_transport_profiles[profile].xdp_prefilter;
+    const char * expected_stage = NULL;
+    const char * expected_counter = NULL;
+    switch ( item.operation )
+    {
+        case RN_BLASTER_CASE_TRUNCATE:
+            expected_stage = xdp ? "xdp-prefilter" : "server-ingress-size-filter";
+            expected_counter = xdp ? "XDP_KERNEL_DROPPED_TOO_SMALL" : "PREFILTER_TOO_SHORT";
+            break;
+        case RN_BLASTER_CASE_OVERSIZE:
+            expected_stage = xdp ? "xdp-prefilter" : "server-ingress-size-filter";
+            expected_counter = xdp ? "XDP_KERNEL_DROPPED_TOO_LARGE" : "PREFILTER_TOO_LARGE";
+            break;
+        case RN_BLASTER_CASE_WRONG_EPOCH:
+            expected_stage = xdp ? "xdp-prefilter" : "server-prefilter";
+            expected_counter = xdp ? "XDP_KERNEL_DROPPED_WRONG_EPOCH" : "PREFILTER_WRONG_EPOCH";
+            break;
+        case RN_BLASTER_CASE_WRONG_FILTER:
+            expected_stage = xdp ? "xdp-prefilter" : "server-prefilter";
+            expected_counter = xdp ? "XDP_KERNEL_DROPPED_WRONG_FILTER" : "PREFILTER_WRONG_VALUE";
+            break;
+        case RN_BLASTER_CASE_RESERVED_TYPE:
+            expected_stage = xdp ? "xdp-type-filter" : "server-type-filter";
+            expected_counter = xdp ? "XDP_KERNEL_DROPPED_INVALID_TYPE" : "RESERVED_TYPE";
+            break;
+        case RN_BLASTER_CASE_REPLAY:
+            expected_stage = "server-replay-window";
+            expected_counter = "PAYLOAD_ALREADY_RECEIVED";
+            break;
+        case RN_BLASTER_CASE_BAD_TAG:
+            expected_stage = "server-aead-open";
+            expected_counter = "PAYLOAD_DID_NOT_OPEN";
+            break;
+    }
+    return expected_stage && expected_counter &&
+           strcmp( item.profile_oracles[profile].expected_stage, expected_stage ) == 0 &&
+           strcmp( item.profile_oracles[profile].expected_counter, expected_counter ) == 0;
+}
+
 static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
 {
     const bool accepted = strcmp( item.sequence_state, "accepted" ) == 0;
@@ -269,40 +338,32 @@ static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
         case RN_BLASTER_CASE_TRUNCATE:
             return strcmp( item.name, "prefilter-too-short" ) == 0 &&
                    strcmp( item.source, "fuzz/corpus/prefilter_too_short" ) == 0 &&
-                   accepted && item.argument == 5u && item.expected_delta == 1u && strcmp( item.expected_stage, "xdp-prefilter" ) == 0 &&
-                   strcmp( item.expected_counter, "XDP_KERNEL_DROPPED_TOO_SMALL" ) == 0 && fresh_recovery;
+                   accepted && item.argument == 5u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_OVERSIZE:
             return strcmp( item.name, "prefilter-too-large" ) == 0 &&
                    strcmp( item.source, "fuzz/corpus/prefilter_too_large" ) == 0 &&
-                   accepted && item.argument == ROCKETNET_RECEIVE_CEILING + 1u && item.expected_delta == 1u &&
-                   strcmp( item.expected_stage, "xdp-prefilter" ) == 0 &&
-                   strcmp( item.expected_counter, "XDP_KERNEL_DROPPED_TOO_LARGE" ) == 0 && fresh_recovery;
+                   accepted && item.argument == ROCKETNET_RECEIVE_CEILING + 1u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_WRONG_EPOCH:
             return strcmp( item.name, "wrong-filter-epoch" ) == 0 &&
                    strcmp( item.source, "sdk/rocketnet_wire.h:ROCKETNET_FILTER_EPOCH_UNKEYED" ) == 0 &&
-                   accepted && item.argument == 1u && item.expected_delta == 1u && strcmp( item.expected_stage, "xdp-prefilter" ) == 0 &&
-                   strcmp( item.expected_counter, "XDP_KERNEL_DROPPED_WRONG_EPOCH" ) == 0 && fresh_recovery;
+                   accepted && item.argument == 1u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_WRONG_FILTER:
             return strcmp( item.name, "wrong-filter-value" ) == 0 &&
                    strcmp( item.source, "fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292" ) == 0 &&
-                   accepted && item.argument == 128u && item.expected_delta == 1u && strcmp( item.expected_stage, "xdp-prefilter" ) == 0 &&
-                   strcmp( item.expected_counter, "XDP_KERNEL_DROPPED_WRONG_FILTER" ) == 0 && fresh_recovery;
+                   accepted && item.argument == 128u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_RESERVED_TYPE:
             return strcmp( item.name, "reserved-packet-type" ) == 0 &&
                    strcmp( item.source, "sdk/rocketnet_wire.h:reserved-types-10-through-255" ) == 0 &&
-                   accepted && item.argument == 10u && item.expected_delta == 1u && strcmp( item.expected_stage, "xdp-type-filter" ) == 0 &&
-                   strcmp( item.expected_counter, "XDP_KERNEL_DROPPED_INVALID_TYPE" ) == 0 && fresh_recovery;
+                   accepted && item.argument == 10u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_REPLAY:
             return strcmp( item.name, "session-replay" ) == 0 &&
                    strcmp( item.source, "fuzz/corpus/prefilter_payload" ) == 0 &&
-                   accepted && item.argument == 2u && item.expected_delta == 2u && strcmp( item.expected_stage, "server-replay-window" ) == 0 &&
-                   strcmp( item.expected_counter, "PAYLOAD_ALREADY_RECEIVED" ) == 0 &&
+                   accepted && item.argument == 2u && item.expected_delta == 2u &&
                    strcmp( item.expected_recovery, "next-sequence-authenticated-payload-accepted" ) == 0;
         case RN_BLASTER_CASE_BAD_TAG:
             return strcmp( item.name, "bad-session-tag" ) == 0 &&
                    strcmp( item.source, "fuzz/corpus/prefilter_payload_full" ) == 0 &&
-                   fresh && item.argument == 1u && item.expected_delta == 1u && strcmp( item.expected_stage, "server-aead-open" ) == 0 &&
-                   strcmp( item.expected_counter, "PAYLOAD_DID_NOT_OPEN" ) == 0 && fresh_recovery;
+                   fresh && item.argument == 1u && item.expected_delta == 1u && fresh_recovery;
     }
     return false;
 }
@@ -343,8 +404,6 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
         if ( !rn_blaster_json_string( object, "name", item.name, sizeof( item.name ) ) ||
              !rn_blaster_json_string( object, "source", item.source, sizeof( item.source ) ) ||
              !rn_blaster_json_string( object, "operation", operation, sizeof( operation ) ) ||
-             !rn_blaster_json_string( object, "expected_stage", item.expected_stage, sizeof( item.expected_stage ) ) ||
-             !rn_blaster_json_string( object, "expected_counter", item.expected_counter, sizeof( item.expected_counter ) ) ||
              !rn_blaster_json_string( object, "expected_recovery", item.expected_recovery, sizeof( item.expected_recovery ) ) ||
              !rn_blaster_json_string( object, "sequence_state", item.sequence_state, sizeof( item.sequence_state ) ) ||
              !rn_blaster_json_u32( object, "argument", &item.argument ) ||
@@ -354,12 +413,28 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
             *error = "manifest case has an absent, overlong, or unknown field";
             return false;
         }
+        for ( uint32_t profile = 0; profile < RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES; ++profile )
+        {
+            const std::string stage_key = std::string( "expected_stage_" ) + rn_blaster_server_transport_profiles[profile].name;
+            const std::string counter_key = std::string( "expected_counter_" ) + rn_blaster_server_transport_profiles[profile].name;
+            if ( !rn_blaster_json_string( object, stage_key.c_str(), item.profile_oracles[profile].expected_stage,
+                                          sizeof( item.profile_oracles[profile].expected_stage ) ) ||
+                 !rn_blaster_json_string( object, counter_key.c_str(), item.profile_oracles[profile].expected_counter,
+                                          sizeof( item.profile_oracles[profile].expected_counter ) ) )
+            {
+                *error = "manifest case has a missing or overlong server transport profile oracle";
+                return false;
+            }
+        }
         if ( strcmp( item.sequence_state, "accepted" ) != 0 && strcmp( item.sequence_state, "fresh" ) != 0 )
         {
             *error = "manifest sequence_state must be accepted or fresh";
             return false;
         }
-        if ( !rn_blaster_case_contract( item ) )
+        bool oracle_contract = true;
+        for ( uint32_t profile = 0; profile < RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES; ++profile )
+            oracle_contract = oracle_contract && rn_blaster_case_oracle_contract( item, profile );
+        if ( !rn_blaster_case_contract( item ) || !oracle_contract )
         {
             *error = "manifest operation has a noncanonical argument, sequence state, or oracle";
             return false;
@@ -512,7 +587,8 @@ static void rn_blaster_usage( const char * program )
              "  --source IP:PORT --server PRIVATE_IP:PORT --source-mac XX:.. --next-hop-mac XX:..\n"
              "  --packet-filter 8hex --token-file FILE --manifest FILE --clients N --duration 1..600\n"
              "  --rate-pps N --payload-bytes 1..1200 --source-port 1024.. --seed N\n"
-             "  --mode throughput|robustness --direction c2s|s2c|both --bind auto|copy|zero-copy\n"
+             "  --mode throughput|robustness --server-transport-profile xdp|gso|io_uring|msgx|iocp|rio\n"
+             "  --direction c2s|s2c|both --bind auto|copy|zero-copy\n"
              "  --owned-bench-confirm %s\n"
              "       %s --self-test\n",
              program, RN_BLASTER_OWNED_CONFIRM, program );
@@ -563,6 +639,8 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
             options->token_file = value;
         else if ( strcmp( arg, "--manifest" ) == 0 )
             options->manifest_file = value;
+        else if ( strcmp( arg, "--server-transport-profile" ) == 0 )
+            options->server_transport_profile = value;
         else if ( strcmp( arg, "--packet-filter" ) == 0 )
             options->packet_filter_text = value;
         else if ( strcmp( arg, "--owned-bench-confirm" ) == 0 )
@@ -645,6 +723,17 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         *error = "owned bench confirmation absent";
         return false;
     }
+    if ( !options->server_transport_profile.empty() &&
+         rn_blaster_server_transport_profile( options->server_transport_profile ) < 0 )
+    {
+        *error = "unsupported server transport profile (physical profiles: xdp,gso,io_uring,msgx,iocp,rio)";
+        return false;
+    }
+    if ( options->plan.mode == RN_BLASTER_MODE_ROBUSTNESS && options->server_transport_profile.empty() )
+    {
+        *error = "robustness mode requires an explicit --server-transport-profile";
+        return false;
+    }
     return true;
 }
 
@@ -717,9 +806,22 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
                 " nominal_wire_slot_bytes=%u nominal_physical_wire_bytes_per_direction=%" PRIu64 "\n",
                 offers, nominal_wire, frame, wire_slot, offers * wire_slot );
     else
+    {
         printf( "PLAN mutation_cases=%u mutation_datagrams=%u baseline_datagrams=1 recovery_datagrams=%u"
                 " pacing=ack-driven rate_pps_ignored=true\n",
                 manifest.count, mutation_datagrams, manifest.count );
+        printf( "PLAN server_transport_profile=%s profile_source=operator-declared runtime_autodetect=false"
+                " counter_observed=false\n", options.server_transport_profile.c_str() );
+        const int profile = rn_blaster_server_transport_profile( options.server_transport_profile );
+        rocketnet_assert( profile >= 0 );
+        for ( uint32_t i = 0; i < manifest.count; ++i )
+            printf( "PLAN_CASE name=%s server_transport_profile=%s sequence_state=%s expected_stage=%s"
+                    " expected_counter=%s expected_delta=%u expected_recovery=%s\n",
+                    manifest.cases[i].name, options.server_transport_profile.c_str(), manifest.cases[i].sequence_state,
+                    manifest.cases[i].profile_oracles[profile].expected_stage,
+                    manifest.cases[i].profile_oracles[profile].expected_counter, manifest.cases[i].expected_delta,
+                    manifest.cases[i].expected_recovery );
+    }
     printf( "PLAN manifest_cases=%u nominal_valid_rocketnet_bytes=%u nominal_valid_frame_bytes=%u"
             " nominal_valid_wire_slot_bytes=%u\n",
             manifest.count, nominal_wire, frame, wire_slot );
@@ -1980,11 +2082,16 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
             results.payload_errors, results.ownership_errors,
             results.robustness_cases, results.recovery_offers );
     for ( uint32_t i = 0; i < manifest.count && options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS; ++i )
-        printf( "CASE name=%s sequence_state=%s expected_stage=%s expected_counter=%s expected_delta=%u"
+    {
+        const int profile = rn_blaster_server_transport_profile( options.server_transport_profile );
+        rocketnet_assert( profile >= 0 );
+        printf( "CASE name=%s server_transport_profile=%s sequence_state=%s expected_stage=%s expected_counter=%s expected_delta=%u"
                 " expected_recovery=%s\n",
-                manifest.cases[i].name, manifest.cases[i].sequence_state, manifest.cases[i].expected_stage,
-                manifest.cases[i].expected_counter, manifest.cases[i].expected_delta,
+                manifest.cases[i].name, options.server_transport_profile.c_str(), manifest.cases[i].sequence_state,
+                manifest.cases[i].profile_oracles[profile].expected_stage,
+                manifest.cases[i].profile_oracles[profile].expected_counter, manifest.cases[i].expected_delta,
                 manifest.cases[i].expected_recovery );
+    }
 
     rn_blaster_results_t disconnect_results = {};
     for ( uint32_t i = 0; i < initialized_sessions; ++i )

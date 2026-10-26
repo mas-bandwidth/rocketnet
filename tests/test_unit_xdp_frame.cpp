@@ -721,9 +721,11 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 
     // the env pin wins over the struct's list: set it aside for the case
 
+#if ROCKETNET_DEV
     char saved[256];
     const bool pinned = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved, sizeof( saved ) ) != 0;
     rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
@@ -744,8 +746,10 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( level );
+#if ROCKETNET_DEV
     if ( pinned )
         rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved, 1 );
+#endif // #if ROCKETNET_DEV
 
     rocketnet_unit_check( server == NULL );
     rocketnet_unit_check( status != ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
