@@ -5,7 +5,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -498,6 +500,7 @@ REGISTER_UNIT_TEST( test_connection_reset_client_slots_stale_handle_cannot_relea
 
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
@@ -1868,3 +1871,4 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
     }
 }
 REGISTER_UNIT_TEST( test_reliable_timeout_fires_while_send_pass_starved );
+#endif // #if ROCKETNET_DEV

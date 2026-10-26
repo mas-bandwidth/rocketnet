@@ -1452,6 +1452,16 @@ struct rocketnet_server_config_t
     /// Range is 1000 .. 600000. Default is 10000.
 
     int reliable_message_timeout_ms;
+
+    /// ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE sets the whole-server
+    /// allowance for sealing redundant disconnect-notification datagrams in
+    /// one update. Range is 1 .. 1024. Default is 64. A disconnect still
+    /// closes its local slot immediately; a value below the 10-copy burst
+    /// spreads that burst across updates. If every deferred-burst slot is
+    /// occupied, the server keeps the older work and drops the new redundant
+    /// notification copies rather than exceeding this allowance.
+
+    int disconnect_packets_per_update;
 };
 
 /// Messages
@@ -1923,8 +1933,8 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// finish or abort. max_bytes must not exceed the config's max_message_bytes.
 ///
 /// Sends outside CONNECTED are dropped. Start returns NULL without logging
-/// and increments messages_dropped_not_connected. Finish then returns 0.
-/// Dropped messages are not queued for a later connection.
+/// and increments messages_dropped_not_connected. Do not call finish after a
+/// NULL start. Dropped messages are not queued for a later connection.
 ///
 /// Needs CONNECTED. A message already open or a bad argument is refused with
 /// NULL. A reliable message that finds no message memory ends the connection
@@ -1945,11 +1955,12 @@ ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_clie
 /// Queues bytes_written from the open message and returns its nonzero serial.
 /// bytes_written must be between 1 and the reserved size.
 /// An invalid size logs an error, aborts the message and returns 0.
-/// Returns 0 if no message is open.
+/// Calling finish without an open message asserts in a debug build and
+/// returns 0 in a release build.
 ///
 /// Needs a message opened by rocketnet_client_start_message; in every other
-/// state it returns 0. Thread: not thread-safe; the caller owns the client
-/// one thread at a time.
+/// state it asserts in a debug build and returns 0 in a release build.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -2489,8 +2500,9 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 /// rocketnet_client_finish_message.
 ///
 /// Needs a message opened by rocketnet_server_start_message on a running
-/// server; otherwise it returns 0. Thread: not thread-safe; the caller owns the
-/// server one thread at a time.
+/// server; otherwise it asserts in a debug build and returns 0 in a release
+/// build. Thread: not thread-safe; the caller owns the server one thread at
+/// a time.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.

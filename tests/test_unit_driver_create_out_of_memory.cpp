@@ -36,7 +36,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -280,6 +282,7 @@ static void test_transport_open_reports_out_of_memory()
 
 // ---- the server ladder ---------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void transport_oom_production_server_config( struct rocketnet_server_transport_config_t * config, const char * transport )
 {
     rocketnet_server_transport_default_config( config );
@@ -415,6 +418,7 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
 #endif // #if ROCKETNET_DEV
     printf( "test_transport_create_client_ladder_stops_on_out_of_memory\n" );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---- the connection-type buffer loop -----------------------------------------
 
@@ -560,7 +564,9 @@ static void test_platform_init_survives_a_refusing_allocator()
 }
 
 REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory );
 REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_adapters_fetch_is_bounded );
 REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );

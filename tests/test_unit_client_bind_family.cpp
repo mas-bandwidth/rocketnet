@@ -149,6 +149,7 @@ REGISTER_UNIT_TEST( test_client_pick_server_address_by_host_capability );
 // the token's timeout. A late cookie from the IPv6 server is dropped and
 // counted as a foreign source.
 
+#if ROCKETNET_DEV
 struct bind_family_clock_t
 {
     double now;
@@ -372,3 +373,4 @@ static void test_client_connect_keeps_the_family_that_answers()
 }
 
 REGISTER_UNIT_TEST( test_client_connect_keeps_the_family_that_answers );
+#endif // #if ROCKETNET_DEV

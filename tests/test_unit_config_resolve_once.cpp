@@ -25,7 +25,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
@@ -237,7 +239,6 @@ REGISTER_UNIT_TEST( test_config_client_env_transport_refused_at_create );
 
 // Production environment filter acceptance/refusal runs in
 // test_platform_primitives against ordinary native workers.
-
 
 // Auto expands to the availability list, and the ladder holds only
 // ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more

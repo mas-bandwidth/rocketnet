@@ -258,7 +258,9 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     if ( testing )
     {
         transport->time_callback = testing->time_callback;
+#if ROCKETNET_DEV
         transport->step_driven = testing->step_driven ? 1 : 0;
+#endif // #if ROCKETNET_DEV
     }
     if ( memory_budget )
         *memory_budget = 0;
@@ -322,6 +324,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
+    transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure ) *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -580,6 +583,7 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_min_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, reliable_message_timeout_ms ),
+    ROCKETNET_SERVER_CONFIG_BYTES_2,
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -1185,15 +1189,18 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
     return rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
 }
 
-// a finish with no start pending (a dropped start included) returns 0,
-// counted nowhere; a refused bytes_written aborts the pending start
-// (rn_message_object_finish)
+// a finish with no start pending (a dropped start included) asserts in a
+// debug build and returns 0 in a release build, counted nowhere; a refused
+// bytes_written aborts the pending start (rn_message_object_finish)
 uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
     if ( !client->connection )
+    {
+        rocketnet_assert( client->connection != NULL );
         return 0;
+    }
     return rocketnet_message_client_finish( client->connection, bytes_written );
 }
 
@@ -1476,6 +1483,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
+    config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
     struct rocketnet_message_config_t message;
@@ -2183,8 +2191,9 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
 
 // finish and abort act on the one pending start (rn_message_object_t
 // pending_connection), so they take no destination. A finish with no start
-// pending (a dropped start included) returns 0, counted nowhere; a refused
-// bytes_written aborts the pending start (rn_message_object_finish).
+// pending (a dropped start included) asserts in a debug build and returns 0
+// in a release build, counted nowhere; a refused bytes_written aborts the
+// pending start (rn_message_object_finish).
 static int rn_server_pending_slot( const struct rocketnet_server_t * server )
 {
     if ( !server->running )
@@ -2198,7 +2207,10 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
         return 0;
     const int slot = rn_server_pending_slot( server );
     if ( slot < 0 )
+    {
+        rocketnet_assert( slot >= 0 );
         return 0;
+    }
     return rocketnet_message_server_finish( rn_server( server ), slot, bytes_written );
 }
 

@@ -134,6 +134,8 @@ void rocketnet_test_real_environment_config_precedence_and_invalid()
 
 void rocketnet_test_real_environment_client_step_driven()
 {
+    // The functional executable links rocketnet_dev. Production libraries do
+    // not carry this descriptor and are covered by the DEV=0 source/unit gates.
     rocketnet_real_environment_guard_t environment( "ROCKETNET_CLIENT_STEP_DRIVEN" );
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
 

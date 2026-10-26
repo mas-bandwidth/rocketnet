@@ -339,6 +339,7 @@ REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_disconnected );
 
 // --- a client index before CONNECTED is -1, never an assert --------------------
 
+#if ROCKETNET_DEV
 static int g_polish_asserts = 0;
 
 static void api_polish_count_assert( const char * condition, const char * function, const char * file, int line )
@@ -435,6 +436,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
+#endif // #if ROCKETNET_DEV
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 
 static void test_api_polish_server_abort_message_without_start_is_a_no_op()
@@ -447,12 +449,15 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
-    rocketnet_assert_function( api_polish_quiet_assert );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( server );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == 0 );
     check( rocketnet_server_finish_message( server, 4 ) == 0 );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     rocketnet_assert_function( NULL );
 
     rn_test_server_stop_and_destroy( server );

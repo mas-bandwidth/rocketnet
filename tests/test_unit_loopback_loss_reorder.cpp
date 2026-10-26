@@ -38,6 +38,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 static double loopback_loss_reorder_clock = 1000.0;
 
 static double loopback_loss_reorder_time_callback( void * )
@@ -537,9 +538,10 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
+#endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV
-// ---- the production refusal, the ranges and the env overlay ------------------
+// ---- the production refusal and the ranges ----------------------------------
 
 static int loopback_error_lines = 0;
 static int loopback_error_lines_naming = 0;
@@ -567,10 +569,6 @@ static void loopback_error_end()
 {
     rocketnet_log_function( NULL, NULL );
 }
-
-
-
-
 
 static void loopback_signed_token( uint8_t * token )
 {
@@ -648,13 +646,12 @@ static void test_loopback_transport_loss_reorder_production_refusal()
     loopback_error_end();
 
     // the same through the create: a production library (the development
-    // posture off) refuses with the config-out-of-range status, the struct and
-    // the env both
+    // posture off) refuses the struct with the config-out-of-range status.
+    // Environment overlay mechanics are development-hook tests and do not
+    // compile into this production-linked unit suite.
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     loopback_signed_token( token );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
-    rocketnet_public_link_simulator_test_development( 0 );
-
     client_config.simulated_reverse_window = 4;
     loopback_error_begin( "simulated_reverse_window" );
     check( rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), 1000.0 ) == NULL );
@@ -663,7 +660,6 @@ static void test_loopback_transport_loss_reorder_production_refusal()
     client_config.simulated_reverse_window = 0;
 
     // Real environment create refusals run in test_platform_primitives.
-
     // ranges: zero, or N >= 2 up to 1000000; zero, or W >= 2 up to 64. each
     // refusal logs one error line; the capture keeps those lines (and the
     // alias refusals an ambient environment adds) off stdout

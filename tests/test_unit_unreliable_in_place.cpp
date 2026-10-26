@@ -718,6 +718,16 @@ static void test_reliable_not_starved_by_in_place()
     ip_pair_teardown( &pair );
 }
 
+static int ip_asserts = 0;
+static void ip_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    ip_asserts++;
+}
+
 static void test_in_place_unreliable_keeps_acks_and_order()
 {
     ip_pair_t pair;
@@ -822,13 +832,19 @@ static void test_in_place_unreliable_keeps_acks_and_order()
     check( receipt_count == 1 && receipts[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
 
     // an in-place start left pending at send_packets is aborted there: the
-    // transport forbids a flush with a fill open
+    // transport forbids a flush with a fill open, and its later finish asserts
+    // in Debug and returns 0 in Release
     const uint64_t refused = ip_counter( rocketnet_message_client_counters( pair.client ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
     uint8_t * p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
     check( p != NULL );
     rocketnet_message_client_send_packets( pair.client );
     check( ip_counter( rocketnet_message_client_counters( pair.client ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    ip_asserts = 0;
+    rocketnet_assert_function( ip_assert_hook );
     check( rocketnet_message_client_finish( pair.client, 50 ) == 0 );
+    rocketnet_assert_function( saved_assert );
+    check( ip_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     // and abort gives the frame back
     p = rocketnet_message_client_start( pair.client, 2, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
     check( p != NULL );

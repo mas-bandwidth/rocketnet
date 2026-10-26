@@ -30,6 +30,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 #include "no_worker_world.h"
 
 // Every one of 1000 connected slots reads statistics that already reflect the
@@ -84,6 +85,7 @@ static void test_server_stats_current_every_update()
 }
 
 REGISTER_UNIT_TEST( test_server_stats_current_every_update );
+#endif // #if ROCKETNET_DEV
 
 // The resident bound of test_server_stats_current_every_update, from what it
 // builds: one server of ROCKETNET_MAX_CLIENTS slots and NO_WORKER_CLIENTS
@@ -106,20 +108,23 @@ REGISTER_UNIT_TEST( test_server_stats_current_every_update );
 #define NO_WORKER_PAIR_PAGES        56
 #define NO_WORKER_BUILD_SLOT_BYTES  ( 12 * 1024 )
 #define NO_WORKER_MARGIN_MB         32
+#define NO_WORKER_STATS_CLIENTS     1000
 
 static long no_worker_rss_bound_mb_at( uint64_t page_bytes )
 {
     const uint64_t pair_bytes = NO_WORKER_PAIR_BYTES + NO_WORKER_PAIR_PAGES * page_bytes;
-    const uint64_t bytes = (uint64_t) NO_WORKER_CLIENTS * pair_bytes + (uint64_t) ROCKETNET_MAX_CLIENTS * NO_WORKER_BUILD_SLOT_BYTES;
+    const uint64_t bytes = (uint64_t) NO_WORKER_STATS_CLIENTS * pair_bytes + (uint64_t) ROCKETNET_MAX_CLIENTS * NO_WORKER_BUILD_SLOT_BYTES;
     return suite_rss_bound_mb( bytes, NO_WORKER_MARGIN_MB );
 }
 
+#if ROCKETNET_DEV
 static long no_worker_rss_bound_mb()
 {
     return no_worker_rss_bound_mb_at( suite_page_bytes() );
 }
 
 SUITE_CASE_RSS_BOUND( test_server_stats_current_every_update, no_worker_rss_bound_mb );
+#endif // #if ROCKETNET_DEV
 
 // The bound grows with the page by NO_WORKER_PAIR_PAGES pages per pair and
 // nothing else. A peak one MiB over it is recorded in both tiers; the unit
@@ -129,7 +134,7 @@ static void test_server_stats_rss_bound_scales_with_page()
     const long small = no_worker_rss_bound_mb_at( 4096 );
     const long large = no_worker_rss_bound_mb_at( 16384 );
     const uint64_t mib = 1024 * 1024;
-    const long growth = (long) ( (uint64_t) NO_WORKER_CLIENTS * NO_WORKER_PAIR_PAGES * ( 16384 - 4096 ) / mib );
+    const long growth = (long) ( (uint64_t) NO_WORKER_STATS_CLIENTS * NO_WORKER_PAIR_PAGES * ( 16384 - 4096 ) / mib );
     check( large - small >= growth && large - small <= growth + 1 );    // each bound rounds up to whole MiB
 
     suite_result result = suite_result();

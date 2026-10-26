@@ -24,7 +24,9 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -694,6 +696,14 @@ static void test_message_send_refused_counts_bad_arguments()
 // once in MESSAGE_SEND_NOT_CONNECTED (standard/MESSAGES.md m1.5,
 // tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
 // nothing of it arrives once the transport connects.
+static int mo_asserts = 0;
+
+static void mo_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition; (void) function; (void) file; (void) line;
+    mo_asserts++;
+}
+
 static void test_message_client_start_dropped_before_transport_connected()
 {
     rocketnet_message_config_t config;
@@ -717,7 +727,11 @@ static void test_message_client_start_dropped_before_transport_connected()
         check( p == NULL );
         if ( p )
             mo_fill( p, 900 + (uint32_t) i, 100 );
+        rocketnet_assert_function( mo_assert_hook );
+        mo_asserts = 0;
         check( rocketnet_message_client_finish( pair.clients[0], 100 ) == 0 );
+        rocketnet_assert_function( NULL );
+        check( mo_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
         check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == before + 1 );
     }
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == (uint64_t) num_modes );
@@ -751,7 +765,11 @@ static void test_message_client_start_dropped_before_transport_connected()
     const uint64_t server_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
     const uint64_t refused_before = mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
     check( rocketnet_message_server_start( pair.server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 10 ) == NULL );
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
     check( rocketnet_message_server_finish( pair.server, 1, 10 ) == 0 );
+    rocketnet_assert_function( NULL );
+    check( mo_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == server_before + 1 );
     check( mo_counter( server_counters, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused_before );
     mo_pair_teardown( &pair );
@@ -959,14 +977,6 @@ static void test_receive_view_is_the_record()
 // update with a held view asserts in a debug build and is the named error in
 // release; memory never grows from held views
 // ---------------------------------------------------------------------------
-
-static int mo_asserts = 0;
-
-static void mo_assert_hook( const char * condition, const char * function, const char * file, int line )
-{
-    (void) condition; (void) function; (void) file; (void) line;
-    mo_asserts++;
-}
 
 static void test_release_returns_room()
 {
@@ -3184,9 +3194,13 @@ static void test_pending_start_cancelled_by_slot_reset()
     check( pair.server->object.pending_connection == -1 );
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == refused + 1 );
 
-    // the finish after the reset is a no-op: nothing joins the new connection's queue
+    // the finish after the reset asserts in Debug and returns 0 in Release: nothing joins the new connection's queue
     const uint32_t descriptors_free = slot->region->descriptors_free;
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
     check( rocketnet_message_server_finish( pair.server, 0, 100 ) == 0 );
+    rocketnet_assert_function( NULL );
+    check( mo_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     check( slot->region->descriptors_free == descriptors_free );
     check( slot->region->channel_send[0].ordered_write == 0 );
 
@@ -3200,7 +3214,7 @@ static void test_pending_start_cancelled_by_slot_reset()
     }
 
     // the client: a start pending across the update that ends its transport is
-    // cancelled by that update's reset, and its finish is a no-op
+    // cancelled by that update's reset, and its finish asserts in Debug and returns 0 in Release
     uint8_t * up = rocketnet_message_client_start( pair.clients[1], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
     check( up != NULL );
     mo_fill( up, 9, 100 );
@@ -3208,7 +3222,11 @@ static void test_pending_start_cancelled_by_slot_reset()
     check( rocketnet_message_client_update( pair.clients[1], pair.time + 0.01 ) == ROCKETNET_UPDATE_OK );
     check( mo_client_connection( pair.clients[1] )->hot->state == RN_MESSAGE_CONNECTION_FREE );
     check( pair.clients[1]->object.pending_connection == -1 );
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
     check( rocketnet_message_client_finish( pair.clients[1], 100 ) == 0 );
+    rocketnet_assert_function( NULL );
+    check( mo_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
 
     mo_pair_teardown( &pair );
 }
@@ -3621,6 +3639,7 @@ static void test_previous_connection_ack_dropped_after_reconnect()
 // from 1000.0. The server's slot is reset for the new connection and announces
 // its CONFIG to it, so the two exchange messages from a fresh start.
 
+#if ROCKETNET_DEV
 #define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 #define RECONNECT_CLIENT_ID 0x5107ULL
 
@@ -3793,6 +3812,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
         rn_test_client_stop_and_destroy( world.clients[i] );
     rn_test_server_stop_and_destroy( world.server );
 }
+#endif // #if ROCKETNET_DEV
 
 
 // ---------------------------------------------------------------------------
@@ -4202,7 +4222,9 @@ REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
+#endif // #if ROCKETNET_DEV
 
 // A reset increments the carve counter once and clears session metadata.
 // That counter counts invocations. It is not a measure of bytes visited.

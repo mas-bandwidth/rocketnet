@@ -391,7 +391,7 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
         if ( !stopped )
             return;
     }
-    if ( object->in_place )
+    if ( object->in_place > 0 )
         rn_message_connection_cancel_pending( object, object->pending_connection );   // the open frame goes back first
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, true );
@@ -411,7 +411,7 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     rn_message_connection_t * connection = &object->connections[index];
     if ( object->pending_connection != index )
         return;
-    if ( object->in_place )
+    if ( object->in_place > 0 )
     {
         // RNOutgoingBuild Abort: the reservation is returned; a frame with no
         // committed record goes back to the transport
@@ -428,27 +428,34 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
 
 // The transport forbids an update or a flush while a fill is open (sdk/rocketnet.h,
 // the threading contract), so an in-place start still pending there is aborted:
-// the caller's error, counted, and its later finish returns 0.
+// the caller's error, counted, and its later finish asserts in a debug build
+// and returns 0 in a release build.
 
 static void rn_message_object_close_in_place( rn_message_object_t * object )
 {
-    if ( !object->in_place )
+    if ( object->in_place <= 0 )
         return;
+    const int pending = object->pending_connection;
     rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
     rocketnet_api_misuse_record();
     rocketnet_error( "message start pending at update or send_packets: the in-place send is aborted" );
-    rn_message_connection_cancel_pending( object, object->pending_connection );
+    rn_message_connection_cancel_pending( object, pending );
+    if ( pending >= 0 )
+        object->in_place = -1 - pending;
 }
 
 // RNSlots ResetCancel: a queued-path start still pending on a connection its
 // update resets is cancelled before that reset, as kick cancels it, so the
 // recarved region holds none of it and later starts on every connection are
-// not refused by it. Counted in MESSAGE_SEND_REFUSED; its finish then returns
-// 0 (rn_message_object_finish: pending_connection is -1).
+// not refused by it. Counted in MESSAGE_SEND_REFUSED; its finish then asserts
+// in a debug build and returns 0 in a release build (rn_message_object_finish:
+// pending_connection is -1).
 
 static void rn_message_connection_cancel_at_reset( rn_message_object_t * object, int index )
 {
     rn_message_flush_unreliable( object, index, true );
+    if ( object->in_place == -1 - index )
+        object->in_place = 0;
     if ( object->pending_connection != index )
         return;
     rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -458,11 +465,16 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 
 // RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
 // tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
-// a server slot whose connection ended is freed here in O(1) -- its views,
-// receive cursor and held count cleared, its open unreliable build already
-// discarded by rn_message_connection_cancel_at_reset -- and its region is carved only when
+// a server slot whose connection ended is freed here in O(1) -- only its
+// binding cleared, its open unreliable build already discarded by
+// rn_message_connection_cancel_at_reset -- and its region is carved only when
 // Observe binds the slot to its next connection (RN_SLOTS_RESET calls
-// rocketnet_server_connection_reset). A free slot is never offered, written
+// rocketnet_server_connection_reset). Its views, receive cursor and held
+// count need no clearing here: both call sites run in an update whose
+// BeginUpdate pass already returned the last update's views to WAITING,
+// reset the cursor and held count, and expired the deliveries
+// (rn_endpoint_begin_update), so a clear here would cover an empty range.
+// A free slot is never offered, written
 // or admitted to (every path checks CONNECTED, rn_slots_admit discards for a
 // free slot), so nothing of the ended connection is reachable, and a reused
 // slot still starts exactly as a fresh one (ReusedSlotStartsClean). The
@@ -476,10 +488,6 @@ static void rn_message_connection_release( rn_message_object_t * object, int ind
 {
     rocketnet_assert( object->is_server );
     rn_message_connection_t * connection = &object->connections[index];
-    const uint32_t views = connection->ordered.channels.deliveries;
-    memset( connection->hot->views, 0, views < connection->region->delivery_entries ? views : connection->region->delivery_entries );
-    connection->hot->receive_cursor = 0;
-    connection->hot->held = 0;
     connection->hot->connection_id = 0;
     connection->hot->state = RN_MESSAGE_CONNECTION_FREE;
 }
@@ -494,6 +502,8 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
     rn_message_connection_t * connection = &object->connections[index];
     if ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
         return;
+    if ( object->in_place == -1 - index )
+        object->in_place = 0;
     rn_message_connection_cancel_pending( object, index );
     rn_message_flush_unreliable( object, index, true );
     connection->hot->state = RN_MESSAGE_CONNECTION_KICKED;
@@ -782,6 +792,10 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 {
     // tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
     // tla/RNSlots.tla StartPending: one start stays pending on this slot until finish or abort.
+    if ( !object )
+        return NULL;
+    if ( object->in_place < 0 )
+        object->in_place = 0;
     if ( index < 0 || index >= object->num_connections )
         return NULL;
 
@@ -978,10 +992,21 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
     // in FIFO order and takes its receipt serial (7.4: nonzero for every send).
-    // 0 when no start is pending on this connection, a start a reset of the
-    // connection cancelled included (rn_message_connection_cancel_at_reset)
-    if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
+    // Asserts in a debug build and returns 0 in a release build when no start
+    // is pending on this connection, a start a reset of the connection
+    // cancelled included (rn_message_connection_cancel_at_reset)
+    if ( !object )
+    {
+        rocketnet_assert( object != NULL );
         return 0;
+    }
+    if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
+    {
+        if ( index >= 0 && index < object->num_connections && object->in_place == -1 - index )
+            object->in_place = 0;
+        rocketnet_assert( index >= 0 && index < object->num_connections && object->pending_connection == index );
+        return 0;
+    }
 
     // RNOutgoingBuild FinishInPlace: the record committed at its reservation
     // and the committed end advanced by the bytes written, so a short finish
@@ -1079,6 +1104,10 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 void rn_message_object_abort( struct rn_message_object_t * object, int index )
 {
     // a start that will not be finished: its room returns to the region
+    if ( !object )
+        return;
+    if ( object->in_place < 0 )
+        object->in_place = 0;
     if ( index < 0 || index >= object->num_connections || object->pending_connection != index )
         return;
     rn_message_connection_cancel_pending( object, index );
@@ -1624,6 +1653,8 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_UPDATE_OK;
+    if ( server->object.link.destroy == rn_server_link_destroy )
+        rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     return rn_message_object_update( &server->object, time );
 }
 

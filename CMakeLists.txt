@@ -592,10 +592,27 @@ if(ROCKETNET_BUILD_TESTS)
     # Every tests/test_unit_<topic>.cpp registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )
-    # This file drives the development-only server writer fault. A production
-    # unit build excludes the translation unit itself, rather than compiling
-    # a test that can only mention or observe an absent seam.
+    # Caller-owned client I/O is a development-only deterministic scaffold.
+    # Exclude only translation units whose every case depends on that scaffold;
+    # mixed files guard their dependent cases locally so their production ABI,
+    # refusal, protocol, ring and lifecycle oracles remain registered.
     if(NOT ROCKETNET_DEV)
+        set(ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES
+            tests/test_unit_client_io_transport.cpp
+            tests/test_unit_client_receive_drop_counters.cpp
+            tests/test_unit_client_receive_thread_quit.cpp
+            tests/test_unit_destroy_before_completion.cpp
+            tests/test_unit_destroy_disconnect.cpp
+            tests/test_unit_public_not_released_counters.cpp
+            tests/test_unit_send_room_query.cpp
+            tests/test_unit_server_mass_disconnect.cpp
+            tests/test_unit_server_receive_work.cpp
+            tests/test_unit_transport_pins_ignored.cpp)
+        list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
+        # This file drives the development-only server writer fault. A production
+        # unit build excludes the translation unit itself, rather than compiling
+        # a test that can only mention or observe an absent seam.
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_connection_internal_error_counters.cpp")
     endif()
@@ -612,6 +629,12 @@ if(ROCKETNET_BUILD_TESTS)
     # receive_batch. Not a second translation unit.
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
+    if(NOT ROCKETNET_DEV)
+        # This translation unit registers a caller-stepped client fixture as
+        # well as compiling the fake server driver. Production tests use the
+        # ordinary transport from rocketnet_test_hooks instead.
+        set(ROCKETNET_UNIT_TRANSPORT_SOURCE)
+    endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     # Keep the reusable internal sequence-buffer contract visible to build
     # generators as a first-class dependency; its registered unit translation
@@ -824,7 +847,8 @@ if(ROCKETNET_BUILD_TESTS)
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
-    # test_lifecycle, test_transport, test_serialize, test_transport_control,
+    # test_lifecycle, test_production_client_lifecycle, test_transport,
+    # test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
     # test. ./bin/functional runs test_serialize, test_transport_control and
@@ -837,6 +861,12 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(${test_target} PRIVATE rocketnet)
         rocketnet_warning_floor(${test_target})
     endforeach()
+    if(NOT ROCKETNET_DEV)
+        add_executable(test_production_client_lifecycle tests/test_unit_public_step_driven_client.cpp)
+        target_compile_definitions(test_production_client_lifecycle PRIVATE ROCKETNET_PRODUCTION_LIFECYCLE_EXECUTABLE=1)
+        target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
+        rocketnet_warning_floor(test_production_client_lifecycle)
+    endif()
     # Real platform behavior against the selected DEV mode, without test hooks.
     add_executable(test_platform_primitives functional/platform_primitives.cpp)
     target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
