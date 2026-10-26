@@ -1459,11 +1459,26 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
-    char server_address[64];
-    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof(ipv4_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    snprintf( ipv6_address, sizeof(ipv6_address), "[::1]:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    const char * token_addresses[] = { ipv4_address, ipv6_address };
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() );
+    rocketnet_check( rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key,
+                     rocketnet_dev_server_public_key, ROCKETNET_DEV_PROTOCOL_ID, token_addresses, 2,
+                     rocketnet_random_uint64(), create_timestamp,
+                     create_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS,
+                     ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL,
+                     connect_token, sizeof(connect_token) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_connect_token_t parsed_token;
+    struct rocketnet_signed_connect_data_t signed_fields;
+    rocketnet_read_connect_token( &parsed_token, connect_token );
+    rocketnet_read_signed_connect_data( &signed_fields, parsed_token.signed_connect_data );
+    rocketnet_check( signed_fields.address_flags == ( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( false );
 
@@ -1494,7 +1509,9 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_transport_client_index( client ) == 0 );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+    rocketnet_check( rocketnet_server_transport_is_client_connected( server, 0 ) );
 
     int server_received = 0;
     int client_received = 0;
@@ -1544,8 +1561,10 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_check( server_received >= 10 );
-    rocketnet_check( client_received >= 10 );
+    rocketnet_check( sent_to_server == 10 );
+    rocketnet_check( sent_to_client == 10 );
+    rocketnet_check( server_received == 10 );
+    rocketnet_check( client_received == 10 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
