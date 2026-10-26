@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The shared public step-driven client/server pair setup for the
+// The shared development-only step-driven client/server pair setup for the
 // test_public_step_driven_client_* cases in
 // tests/test_unit_public_step_driven_client.cpp (unit) and
 // functional/process_thread_counts.cpp (functional). The loopback transport

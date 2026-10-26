@@ -331,7 +331,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
     uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
-    uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
+    uint64_t step_driven;                           // development only: 1 runs the I/O step on the caller; production leaves this 0
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off

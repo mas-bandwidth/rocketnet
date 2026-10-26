@@ -592,6 +592,60 @@ if(ROCKETNET_BUILD_TESTS)
     # Every tests/test_unit_<topic>.cpp registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )
+    # Caller-owned client I/O is a development-only deterministic scaffold.
+    # These translation units directly construct a transport around caller
+    # operations, so a production build does not compile or register them.
+    # The independently registered SDK, channel, ABI, refusal and
+    # shared-library cases remain. test_production_client_lifecycle below is
+    # the production-linked public create/start/connect/update/disconnect/
+    # destroy witness and uses an ordinary worker-owned client.
+    if(NOT ROCKETNET_DEV)
+        set(ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES
+            tests/test_unit_api_polish.cpp
+            tests/test_unit_client_bind_family.cpp
+            tests/test_unit_client_io_decrypt.cpp
+            tests/test_unit_client_io_step.cpp
+            tests/test_unit_client_io_stop.cpp
+            tests/test_unit_client_io_transport.cpp
+            tests/test_unit_client_memory_plan.cpp
+            tests/test_unit_client_receive_drop_counters.cpp
+            tests/test_unit_client_receive_thread_quit.cpp
+            tests/test_unit_client_server_lifecycle.cpp
+            tests/test_unit_client_transport_ranking.cpp
+            tests/test_unit_client_trusts_only_server.cpp
+            tests/test_unit_config_resolve_once.cpp
+            tests/test_unit_connect_token_port_zero.cpp
+            tests/test_unit_connection_reset.cpp
+            tests/test_unit_destroy_before_completion.cpp
+            tests/test_unit_destroy_disconnect.cpp
+            tests/test_unit_dev_keys_warning.cpp
+            tests/test_unit_driver_create_out_of_memory.cpp
+            tests/test_unit_fake_client_driver.cpp
+            tests/test_unit_load_split_capture.cpp
+            tests/test_unit_loopback_loss_reorder.cpp
+            tests/test_unit_loopback_rtt.cpp
+            tests/test_unit_memory_plan_lifecycle.cpp
+            tests/test_unit_message_objects.cpp
+            tests/test_unit_public_link_simulator.cpp
+            tests/test_unit_public_message_limit.cpp
+            tests/test_unit_public_not_released_counters.cpp
+            tests/test_unit_public_step_driven_client.cpp
+            tests/test_unit_secrets_wiped.cpp
+            tests/test_unit_send_room_query.cpp
+            tests/test_unit_sequence_burn.cpp
+            tests/test_unit_sequence_wrap_session.cpp
+            tests/test_unit_server_disconnected_reason.cpp
+            tests/test_unit_server_mass_disconnect.cpp
+            tests/test_unit_server_receive_work.cpp
+            tests/test_unit_server_send_cap_fair.cpp
+            tests/test_unit_server_serves_both_families.cpp
+            tests/test_unit_server_stats_no_worker.cpp
+            tests/test_unit_status_codes_reached.cpp
+            tests/test_unit_token_time_game_clock.cpp
+            tests/test_unit_transport_pins_ignored.cpp)
+        list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
+    endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
     # an archive member as soon as an earlier object references one of its
@@ -605,6 +659,12 @@ if(ROCKETNET_BUILD_TESTS)
     # receive_batch. Not a second translation unit.
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
+    if(NOT ROCKETNET_DEV)
+        # This translation unit registers a caller-stepped client fixture as
+        # well as compiling the fake server driver. Production tests use the
+        # ordinary transport from rocketnet_test_hooks instead.
+        set(ROCKETNET_UNIT_TRANSPORT_SOURCE)
+    endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     # Keep the reusable internal sequence-buffer contract visible to build
     # generators as a first-class dependency; its registered unit translation
@@ -813,7 +873,8 @@ if(ROCKETNET_BUILD_TESTS)
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
     # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
-    # test_lifecycle, test_transport, test_serialize, test_transport_control,
+    # test_lifecycle, test_production_client_lifecycle, test_transport,
+    # test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
     # test. ./bin/functional runs test_serialize, test_transport_control and
@@ -826,6 +887,12 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(${test_target} PRIVATE rocketnet)
         rocketnet_warning_floor(${test_target})
     endforeach()
+    if(NOT ROCKETNET_DEV)
+        add_executable(test_production_client_lifecycle tests/test_unit_public_step_driven_client.cpp)
+        target_compile_definitions(test_production_client_lifecycle PRIVATE ROCKETNET_PRODUCTION_LIFECYCLE_EXECUTABLE=1)
+        target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
+        rocketnet_warning_floor(test_production_client_lifecycle)
+    endif()
     add_executable(test_transport tests/test_driver.cpp)
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)

@@ -20,7 +20,7 @@ the public config structs:
 | `ROCKETNET_SERVER_IPV6_ADDRESS` | Overrides the `ipv6_address` argument of `rocketnet_server_create`, read at create. Form `[v6]:port`. |
 | `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` | Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock. |
 | `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock. |
-| `ROCKETNET_CLIENT_STEP_DRIVEN` | 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. |
+| `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
 | `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development only: outgoing client loss, 0 .. 100; 0 is off. |
 | `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` | Development only: outgoing server loss, 0 .. 100; 0 is off. |
 | `ROCKETNET_DEV_CLIENT_LATENCY_MS` | Development only: outgoing client latency, 0 .. 60000 milliseconds; 0 is off. |
@@ -39,8 +39,10 @@ the public config structs:
 The `ROCKETNET_DEV_` network simulator variables exist in a development
 library only and are read at create; in code, the same settings are
 `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`.
-Tests, tools and benches set the step-driven client and the receive stamp
-clock in code through `sdk/rocketnet_testing.h`.
+Development tests, tools and benches may set the step-driven client and the
+receive stamp clock in code through the private `sdk/rocketnet_testing.h`
+header. Neither setting is a public API; production client I/O remains
+worker-owned.
 
 Process-wide and platform-specific controls:
 

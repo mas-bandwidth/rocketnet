@@ -263,6 +263,7 @@ REGISTER_UNIT_TEST( test_config_env_log_level_applies_before_init_logs );
 // (3) ROCKETNET_CLIENT_STEP_DRIVEN is 0 or 1: any other value is out of range
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static bool env_names_step_driven_valid( const char * value )
 {
     int num_fields = 0;
@@ -284,6 +285,24 @@ static void test_config_env_step_driven_is_zero_or_one()
     check( !env_names_step_driven_valid( "18446744073709551615" ) );
 }
 REGISTER_UNIT_TEST( test_config_env_step_driven_is_zero_or_one );
+#else
+static void test_config_env_step_driven_is_absent_in_production()
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
+    for ( int i = 0; i < num_fields; i++ )
+        check( strcmp( fields[i].name, "step_driven" ) != 0 );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    config.step_driven = 0;
+    env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
+    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
+    env_names_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
+    check( config.step_driven == 0 );
+}
+REGISTER_UNIT_TEST( test_config_env_step_driven_is_absent_in_production );
+#endif // #if ROCKETNET_DEV
 
 
 // ---------------------------------------------------------------------------

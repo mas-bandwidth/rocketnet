@@ -266,19 +266,20 @@ through a fake platform call table. The functional scheduler readback and
 App Nap timing cases have been retired: OS scheduling and process throttling
 are outside RocketNet's control.
 
-A game that wants the client's I/O on a thread it owns sets
-`ROCKETNET_CLIENT_STEP_DRIVEN=1`: the
-client then runs the I/O step inside `rocketnet_client_update` and
-`rocketnet_client_send_packets` on the caller's thread and creates no I/O
-thread (`sdk/rocketnet_client_transport.cpp`, where the thread is created only when
-neither step mode is set). That thread's QoS is then the game's.
+Development tests may set `ROCKETNET_CLIENT_STEP_DRIVEN=1` to run the client
+I/O step inside `rocketnet_client_update` and
+`rocketnet_client_send_packets` on the caller's thread without an I/O worker.
+This is a deterministic test facility, not a production integration mode. A
+production library does not recognize the variable and always uses the normal
+worker-owned client route.
 
 ```sh
 ROCKETNET_CLIENT_STEP_DRIVEN=1 ./bin/example_transports
 ```
 
-It logs `client config override ROCKETNET_CLIENT_STEP_DRIVEN=1 (displaces 0)`
-and exits 0.
+The development executable logs
+`client config override ROCKETNET_CLIENT_STEP_DRIVEN=1 (displaces 0)` and
+exits 0. Do not use this command to qualify a production build.
 
 App Nap is a property of the game process, not of the library: nothing in
 `sdk/` holds a power or activity assertion. List the assertions a running game
