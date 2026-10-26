@@ -12,10 +12,12 @@
 #   replay-delta-1-3   the quick per-commit instance of harness_replay_near,
 #                      admitting deltas 1, 2, and 3.
 #   replay-near-4096   the full declared instance of the same source-bound
-#                      harness, admitting deltas 1..4095. It proves the two
-#                      disjoint production range-clear paths separately and
-#                      requires an intended-failure reachability control for
-#                      each path before accepting either result.
+#                      harness, admitting deltas 1..4095. It first proves that
+#                      the 13 clear-loop-shape and selected-word relation
+#                      partitions are pairwise disjoint and jointly exhaustive
+#                      over the full domain (with valid per-partition
+#                      witnesses), then proves each partition with its
+#                      intended-failure reachability control.
 #   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1:
 #                      - rocketnet_reconstruct_near (k=32, 2^32 <= expected <
 #                        2^64 - 2^32): keeps wire low 32 bits, |result -
@@ -169,8 +171,23 @@ endef
 
 replay-near-4096: proof_replay_advance.c
 	@echo "replay-near-4096 bound delta 1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(call run_replay_near_path,nonwrapping,harness_replay_near_nonwrapping)
-	$(call run_replay_near_path,wrapping,harness_replay_near_wrapping)
+	$(CBMC) $(CBMC_FLAGS) --unwind 1 -I$(SDK) \
+	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
+	    --function harness_replay_near_partition_completeness proof_replay_advance.c
+	@echo "replay-near-4096-partition-completeness VERIFICATION SUCCESSFUL full-domain=1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) partitions=13"
+	$(call run_replay_near_path,nw_empty_clear,harness_replay_near_nw_empty_clear)
+	$(call run_replay_near_path,nw_single_partial_cleared_set,harness_replay_near_nw_single_partial_cleared_set)
+	$(call run_replay_near_path,nw_single_partial_cleared_only,harness_replay_near_nw_single_partial_cleared_only)
+	$(call run_replay_near_path,nw_single_partial_set_only,harness_replay_near_nw_single_partial_set_only)
+	$(call run_replay_near_path,nw_single_partial_untouched,harness_replay_near_nw_single_partial_untouched)
+	$(call run_replay_near_path,nw_multi_first_word,harness_replay_near_nw_multi_first_word)
+	$(call run_replay_near_path,nw_multi_interior_word,harness_replay_near_nw_multi_interior_word)
+	$(call run_replay_near_path,nw_multi_last_word,harness_replay_near_nw_multi_last_word)
+	$(call run_replay_near_path,nw_multi_outside_word,harness_replay_near_nw_multi_outside_word)
+	$(call run_replay_near_path,wrap_coincident_word,harness_replay_near_wrap_coincident_word)
+	$(call run_replay_near_path,wrap_high_span_only,harness_replay_near_wrap_high_span_only)
+	$(call run_replay_near_path,wrap_low_span_only,harness_replay_near_wrap_low_span_only)
+	$(call run_replay_near_path,wrap_outside_spans,harness_replay_near_wrap_outside_spans)
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
