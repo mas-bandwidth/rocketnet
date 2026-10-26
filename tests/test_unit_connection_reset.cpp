@@ -262,7 +262,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef POISON_CONTROL
 #undef POISON_CONTROL_KEEP
 #undef POISON_CONTROL_RESET
-    rocketnet_encryption_map_remove( map, mapping_index );
+    rocketnet_encryption_map_remove_current( map, mapping_index );
     check( rocketnet_encryption_map_add( map, &address, 1005.0 ) == mapping_index );
     rocketnet_encryption_mapping_t * reused_mapping = rocketnet_encryption_map_entry( map, mapping_index );
 #define CHECK_MAPPING_RESET( field ) reset_field_holds( "rocketnet_encryption_mapping_t", #field, "RESET", &reused_mapping->field, &fresh_mapping.field, sizeof(reused_mapping->field) );
@@ -391,7 +391,7 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
     int index[LIVE];
     for ( int i = 0; i < LIVE; ++i )
     {
-        index[i] = rocketnet_client_slots_assign( slots, initial[i], 100 + i, user_data );
+        index[i] = rocketnet_client_slots_assign( slots, initial[i], 100 + i, initial[i], user_data );
         check( index[i] == i );
         check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
     }
@@ -411,8 +411,8 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
 
     const uint64_t replacement_5 = UINT64_C( 0x1234567800000001 );
     const uint64_t replacement_2 = UINT64_C( 0xfedcba9800000001 );
-    check( rocketnet_client_slots_assign( slots, replacement_5, 205, user_data ) == index[5] );
-    check( rocketnet_client_slots_assign( slots, replacement_2, 202, user_data ) == index[2] );
+    check( rocketnet_client_slots_assign( slots, replacement_5, 205, replacement_5, user_data ) == index[5] );
+    check( rocketnet_client_slots_assign( slots, replacement_2, 202, replacement_2, user_data ) == index[2] );
     check( rocketnet_client_slots_find( slots, replacement_5 ) == index[5] );
     check( rocketnet_client_slots_find( slots, replacement_2 ) == index[2] );
 
@@ -432,7 +432,7 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
         uint8_t next_user_data[ROCKETNET_USER_DATA_BYTES];
         memset( next_user_data, (int) ( generation & 0xFF ), sizeof(next_user_data) );
         const uint64_t next = ( generation << 32 ) | UINT64_C( 0xa5a50007 );
-        check( rocketnet_client_slots_assign( slots, next, (int) generation, next_user_data ) == index[5] );
+        check( rocketnet_client_slots_assign( slots, next, (int) generation, next, next_user_data ) == index[5] );
         check( rocketnet_client_slots_find( slots, next ) == index[5] );
         check( rocketnet_client_slots_client_id( slots, index[5] ) == next );
         check( rocketnet_client_slots_mapping_index( slots, index[5] ) == (int) generation );
@@ -467,14 +467,14 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
 
     const uint64_t old_id = UINT64_C( 0x00000001ffffffff );
     const uint64_t new_id = UINT64_C( 0xffffffff00000001 );
-    check( rocketnet_client_slots_assign( slots, old_id, 17, old_user_data ) == 0 );
+    check( rocketnet_client_slots_assign( slots, old_id, 17, 1, old_user_data ) == 0 );
     rocketnet_client_slot_handle_t stale;
     check( rocketnet_client_slots_handle( slots, 0, &stale ) );
     check( stale.client_id == old_id );
     check( stale.client_index == 0 );
     check( rocketnet_client_slots_release_handle( slots, &stale ) );
 
-    check( rocketnet_client_slots_assign( slots, new_id, 23, new_user_data ) == 0 );
+    check( rocketnet_client_slots_assign( slots, new_id, 23, 2, new_user_data ) == 0 );
     rocketnet_client_slot_handle_t current;
     check( rocketnet_client_slots_handle( slots, 0, &current ) );
     check( current.client_id == new_id );
@@ -1071,7 +1071,10 @@ static int reset_server_assign( reset_server_fixture_t * f, const char * address
     check( rocketnet_address_parse( &a, address ) );
     const int mapping_index = rocketnet_encryption_map_add( f->server.encryption_map, &a, 1005.0 );
     check( mapping_index >= 0 );
-    const int slot = rocketnet_client_slots_assign( f->server.client_slots, client_id, mapping_index, user_data );
+    const uint64_t owner_generation =
+        rocketnet_encryption_map_owner_generation( f->server.encryption_map, mapping_index );
+    const int slot = rocketnet_client_slots_assign( f->server.client_slots, client_id, mapping_index,
+                                                    owner_generation, user_data );
     check( slot >= 0 );
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( f->server.encryption_map, mapping_index );
     mapping->control->client_index = slot;
@@ -1213,6 +1216,65 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     reset_server_teardown( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
+
+// A delayed reset keeps the mapping index and generation captured when the
+// client slot was assigned. If that numeric mapping index has since been
+// reused, reset must release the stale client slot without removing or wiping
+// the replacement mapping.
+static void test_connection_reset_stale_mapping_owner_preserves_reuse()
+{
+    reset_server_fixture_t f;
+    reset_server_setup( &f );
+
+    rocketnet_address_t old_address;
+    rocketnet_address_t new_address;
+    check( rocketnet_address_parse( &old_address, "198.51.100.20:4000" ) );
+    check( rocketnet_address_parse( &new_address, "198.51.100.21:4000" ) );
+
+    const int mapping_index = rocketnet_encryption_map_add( f.server.encryption_map, &old_address, 1005.0 );
+    check( mapping_index >= 0 );
+    const uint64_t old_generation =
+        rocketnet_encryption_map_owner_generation( f.server.encryption_map, mapping_index );
+    uint8_t slot_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( slot_user_data, 0x31, sizeof(slot_user_data) );
+    const int slot = rocketnet_client_slots_assign( f.server.client_slots, 91, mapping_index,
+                                                    old_generation, slot_user_data );
+    check( slot >= 0 );
+
+    // Simulate a delayed owner: the old mapping leaves, but its slot reset has
+    // not yet run. LIFO reuse gives the replacement the same numeric index.
+    rocketnet_encryption_map_remove_current( f.server.encryption_map, mapping_index );
+    const int replacement_index = rocketnet_encryption_map_add( f.server.encryption_map, &new_address, 1006.0 );
+    check( replacement_index == mapping_index );
+    const uint64_t replacement_generation =
+        rocketnet_encryption_map_owner_generation( f.server.encryption_map, replacement_index );
+    check( replacement_generation != old_generation );
+
+    rocketnet_encryption_mapping_t * replacement =
+        rocketnet_encryption_map_entry( f.server.encryption_map, replacement_index );
+    rocketnet_connection_keys_t expected_keys;
+    memset( &expected_keys, 0xA7, sizeof(expected_keys) );
+    uint8_t expected_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    uint8_t expected_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( expected_nonce, 0xB8, sizeof(expected_nonce) );
+    memset( expected_user_data, 0xC9, sizeof(expected_user_data) );
+    replacement->keys = expected_keys;
+    memcpy( replacement->session_nonce, expected_nonce, sizeof(expected_nonce) );
+    memcpy( replacement->user_data, expected_user_data, sizeof(expected_user_data) );
+
+    rocketnet_server_connection_reset( &f.server, slot );
+
+    check( !rocketnet_client_slots_connected( f.server.client_slots, slot ) );
+    check( rocketnet_encryption_map_num_mappings( f.server.encryption_map ) == 1 );
+    check( rocketnet_encryption_map_find( f.server.encryption_map, &new_address ) == replacement_index );
+    replacement = rocketnet_encryption_map_entry( f.server.encryption_map, replacement_index );
+    check( memcmp( &replacement->keys, &expected_keys, sizeof(expected_keys) ) == 0 );
+    check( memcmp( replacement->session_nonce, expected_nonce, sizeof(expected_nonce) ) == 0 );
+    check( memcmp( replacement->user_data, expected_user_data, sizeof(expected_user_data) ) == 0 );
+
+    reset_server_teardown( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_stale_mapping_owner_preserves_reuse );
 
 // The slot-clean check's scratch endpoint comes from the library allocator, so
 // a failed allocation must fail closed with the member named rather than write

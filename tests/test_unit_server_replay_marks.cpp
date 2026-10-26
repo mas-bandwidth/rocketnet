@@ -90,7 +90,9 @@ static struct server_replay_marks_client_t server_replay_marks_add_client( struc
     struct server_replay_marks_client_t client;
     client.mapping = rocketnet_encryption_map_add( fixture->map, address, ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE );
     rocketnet_unit_check( client.mapping >= 0 );
-    client.slot = rocketnet_client_slots_assign( fixture->slots, client_id, client.mapping, user_data );
+    const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( fixture->map, client.mapping );
+    client.slot = rocketnet_client_slots_assign( fixture->slots, client_id, client.mapping,
+                                                 owner_generation, user_data );
     rocketnet_unit_check( client.slot >= 0 );
 
     rocketnet_encryption_map_entry( fixture->map, client.mapping )->replay_session.highest_opened = highest_opened;
@@ -218,7 +220,7 @@ static void test_server_replay_marks_forget_released_slots_first()
     server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
-    rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
     rocketnet_encryption_map_entry( fixture.map, client_b.mapping )->replay_session.highest_opened = 9;
 
     memset( &recording, 0, sizeof(recording) );
@@ -256,7 +258,7 @@ static void test_server_replay_marks_follow_an_address_change()
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
-    rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
 
     const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 9 );
     rocketnet_unit_check( client_b.slot == client_a.slot );
@@ -292,7 +294,7 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
-    rocketnet_encryption_map_remove( fixture.map, client_a.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
 
     const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 9 );
     rocketnet_unit_check( client_b.slot == client_a.slot );
@@ -343,11 +345,11 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client.slot );
-    rocketnet_encryption_map_remove( fixture.map, client.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client.mapping );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof(user_data) );
-    const int slot = rocketnet_client_slots_assign( fixture.slots, 200, -1, user_data );
+    const int slot = rocketnet_client_slots_assign( fixture.slots, 200, -1, 200, user_data );
     rocketnet_unit_check( slot == client.slot );
 
     memset( &recording, 0, sizeof(recording) );
@@ -386,7 +388,7 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     rocketnet_client_slots_release( fixture.slots, client.slot );
-    rocketnet_encryption_map_remove( fixture.map, client.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client.mapping );
 
     // A full pending buffer refuses this unmarked slot's forget. Its seen
     // identity remains responsible, so the next walk asks for it again.
@@ -465,7 +467,7 @@ static void test_server_replay_marks_refused_mark_is_owed()
     // a reconnect into the same slot before any walk: its zero mark (a fall
     // below the slot's mark) refused, then asked again and queued
     rocketnet_client_slots_release( fixture.slots, client.slot );
-    rocketnet_encryption_map_remove( fixture.map, client.mapping );
+    rocketnet_encryption_map_remove_current( fixture.map, client.mapping );
     const struct server_replay_marks_client_t again = server_replay_marks_add_client( &fixture, &a, 200, 0 );
     rocketnet_unit_check( again.slot == client.slot );
 

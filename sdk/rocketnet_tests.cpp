@@ -2193,7 +2193,7 @@ void rocketnet_test_encryption_map()
     memset( mapping->user_data, 0xAB, sizeof(mapping->user_data) );
     rocketnet_encryption_mapping_control_t * control = mapping->control;
     control->last_receive_time = 42.0;
-    rocketnet_encryption_map_remove( map, index_a );
+    rocketnet_encryption_map_remove_current( map, index_a );
     rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == -1 );
     rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 3 );
     const uint8_t * raw = (const uint8_t*) &mapping->keys;
@@ -2243,7 +2243,7 @@ void rocketnet_test_encryption_map_iterator()
     // whole pattern
     iterator = -1;
     while ( rocketnet_encryption_map_next( map, &iterator ) )
-        rocketnet_encryption_map_remove( map, iterator );
+        rocketnet_encryption_map_remove_current( map, iterator );
     rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 0 );
 
     rocketnet_encryption_map_destroy( map );
@@ -3165,7 +3165,8 @@ void rocketnet_test_request_path_slots_and_denial()
     uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( dummy_user_data, 0, sizeof(dummy_user_data) );
     for ( int i = 0; i < 4; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1, dummy_user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1,
+                                                        0xD000 + (uint64_t) i, dummy_user_data ) == i );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
@@ -3353,7 +3354,8 @@ void rocketnet_test_full_server_refuses_before_keypair()
     uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( dummy_user_data, 0, sizeof(dummy_user_data) );
     for ( int i = 0; i < 4; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1, dummy_user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1,
+                                                        0xD000 + (uint64_t) i, dummy_user_data ) == i );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
@@ -3457,7 +3459,7 @@ void rocketnet_test_request_path_ordering()
         rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_check( response_bytes == 0 );
         rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED );
-        rocketnet_encryption_map_remove( test.server.encryption_map, connected_mapping );
+        rocketnet_encryption_map_remove_current( test.server.encryption_map, connected_mapping );
     }
 
     // the client-id rung, hooked: reached only after the seal opens
@@ -3465,7 +3467,7 @@ void rocketnet_test_request_path_ordering()
     rocketnet_test_pass_cookie_gate( &test, request );
     uint8_t taken_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( taken_user_data, 0, sizeof(taken_user_data) );
-    int taken_slot = rocketnet_client_slots_assign( test.server.client_slots, 0x0D0D, -1, taken_user_data );
+    int taken_slot = rocketnet_client_slots_assign( test.server.client_slots, 0x0D0D, -1, 0x0D0D, taken_user_data );
     rocketnet_check( taken_slot != -1 );
     before = test.counters;
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
@@ -3648,7 +3650,7 @@ void rocketnet_test_request_path_config_branches()
     {
         int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
         rocketnet_check( index != -1 );
-        rocketnet_encryption_map_remove( test.server.encryption_map, index );
+        rocketnet_encryption_map_remove_current( test.server.encryption_map, index );
     }
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_check( memcmp( response + 8, first_challenge + 8, ROCKETNET_SESSION_NONCE_BYTES ) != 0 );
@@ -3855,7 +3857,7 @@ void rocketnet_test_client_slots()
     memset( user_data, 0xCD, sizeof(user_data) );
 
     // the lowest free slot is assigned, unconfirmed, with identity copied in
-    int a = rocketnet_client_slots_assign( slots, 0x1111, 7, user_data );
+    int a = rocketnet_client_slots_assign( slots, 0x1111, 7, 0x1111, user_data );
     rocketnet_check( a == 0 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x1111 ) == 0 );
     rocketnet_check( rocketnet_client_slots_client_id( slots, 0 ) == 0x1111 );
@@ -3868,8 +3870,8 @@ void rocketnet_test_client_slots()
     rocketnet_client_slots_confirm( slots, 0 );
     rocketnet_check( rocketnet_client_slots_confirmed( slots, 0 ) );
 
-    int b = rocketnet_client_slots_assign( slots, 0x2222, 8, user_data );
-    int c = rocketnet_client_slots_assign( slots, 0x3333, 9, user_data );
+    int b = rocketnet_client_slots_assign( slots, 0x2222, 8, 0x2222, user_data );
+    int c = rocketnet_client_slots_assign( slots, 0x3333, 9, 0x3333, user_data );
     rocketnet_check( b == 1 && c == 2 );
 
     // release frees the slot, clears identity, and the lowest-free rule
@@ -3877,13 +3879,13 @@ void rocketnet_test_client_slots()
     rocketnet_client_slots_release( slots, 1 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x2222 ) == -1 );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
-    int d = rocketnet_client_slots_assign( slots, 0x4444, 10, user_data );
+    int d = rocketnet_client_slots_assign( slots, 0x4444, 10, 0x4444, user_data );
     rocketnet_check( d == 1 );
     rocketnet_check( !rocketnet_client_slots_confirmed( slots, 1 ) );
 
     // full refuses
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x5555, 11, user_data ) == 3 );
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x6666, 12, user_data ) == -1 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x5555, 11, 0x5555, user_data ) == 3 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x6666, 12, 0x6666, user_data ) == -1 );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
 
     rocketnet_client_slots_destroy( slots );
@@ -3893,7 +3895,8 @@ void rocketnet_test_client_slots()
     slots = rocketnet_client_slots_create( NULL, 64 );
     rocketnet_check( slots );
     for ( int i = 0; i < 64; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i, i, user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i, i,
+                                                        UINT64_C( 0xABCD0000 ) + (uint64_t) i, user_data ) == i );
     for ( int i = 0; i < 64; i++ )
         rocketnet_check( rocketnet_client_slots_find( slots, UINT64_C( 0xABCD0000 ) + (uint64_t) i ) == i );
     for ( int i = 0; i < 64; i += 2 )
@@ -3927,11 +3930,13 @@ void rocketnet_test_client_slots_free_list()
 
     // a fresh table pops 0, 1, 2 and so on in order
     for ( int i = 0; i < 8; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0x9000000000000000 ) + (uint64_t) i, i, user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( slots, UINT64_C( 0x9000000000000000 ) + (uint64_t) i, i,
+                                                        UINT64_C( 0x9000000000000000 ) + (uint64_t) i, user_data ) == i );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
 
     // a full table pops nothing and returns -1
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x9000000000000008ULL, 8, user_data ) == -1 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x9000000000000008ULL, 8,
+                                                    0x9000000000000008ULL, user_data ) == -1 );
 
     // release 2, then 5: the next assign pops 5 (the most recently
     // released) and the one after pops 2 -- a stack, not the lowest free
@@ -3940,15 +3945,18 @@ void rocketnet_test_client_slots_free_list()
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000002ULL ) == -1 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000005ULL ) == -1 );
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000AULL, 10, user_data ) == 5 );
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000BULL, 11, user_data ) == 2 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000AULL, 10,
+                                                    0x900000000000000AULL, user_data ) == 5 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000BULL, 11,
+                                                    0x900000000000000BULL, user_data ) == 2 );
 
     // no index is handed out twice while held: 2 and 5 are held again,
     // every index is connected exactly once, and the refilled table is
     // full for the next arrival
     rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 8 );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
-    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000CULL, 12, user_data ) == -1 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000CULL, 12,
+                                                    0x900000000000000CULL, user_data ) == -1 );
     for ( int i = 0; i < 8; i++ )
     {
         rocketnet_check( rocketnet_client_slots_connected( slots, i ) );
@@ -4011,7 +4019,7 @@ void rocketnet_test_client_id_out_of_range_returns_zero()
     // now assign one, connected at index 1, and verify
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0xAB, sizeof(user_data) );
-    int idx = rocketnet_client_slots_assign( slots, 0x12345678ULL, 5, user_data );
+    int idx = rocketnet_client_slots_assign( slots, 0x12345678ULL, 5, 0x12345678ULL, user_data );
     rocketnet_check( idx == 0 );
     rocketnet_check( rocketnet_client_slots_client_id( slots, 0 ) == 0x12345678ULL );
 
@@ -4329,7 +4337,8 @@ void rocketnet_test_server_response_denials()
     uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( dummy_user_data, 0, sizeof(dummy_user_data) );
     for ( int i = 0; i < 4; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF000 + (uint64_t) i, -1, dummy_user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF000 + (uint64_t) i, -1,
+                                                        0xF000 + (uint64_t) i, dummy_user_data ) == i );
 
     uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
     rocketnet_test_client_build_response( client_response, &client_keys );
@@ -5390,7 +5399,8 @@ void rocketnet_test_client_denied_when_server_full()
     uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( dummy_user_data, 0, sizeof(dummy_user_data) );
     for ( int i = 0; i < 4; i++ )
-        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1,
+                                                        0xF100 + (uint64_t) i, dummy_user_data ) == i );
 
     struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof(client_counters) );
@@ -5472,7 +5482,8 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
                     uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
                     memset( dummy_user_data, 0, sizeof(dummy_user_data) );
                     for ( int i = 0; i < 4; i++ )
-                        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
+                        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1,
+                                                                        0xF100 + (uint64_t) i, dummy_user_data ) == i );
                     rocketnet_test_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
                     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
                     expected_state = rocketnet_test_pump( &test, &client, -1, 5.0 );

@@ -462,7 +462,8 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
             memset( dummy_user_data, 0, sizeof(dummy_user_data) );
             for ( int i = 0; i < 4; i++ )
-                rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
+                rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1,
+                                                                     0xF100 + (uint64_t) i, dummy_user_data ) == i );
 
             rocketnet_handshake_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
             rocketnet_unit_check( rocketnet_client_protocol_connect( client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
