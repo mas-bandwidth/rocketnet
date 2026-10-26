@@ -68,15 +68,16 @@ development key must not be used for production.
    Every applied override emits an `INFO` log line (`<endpoint> config override NAME=value`,
    with secret key material redacted).
 2. **Strict parsing vs. range validation**:
-   - Malformed syntax in an environment variable (empty string, leading or
-     trailing whitespace, `+` sign, non-decimal characters, integer overflow,
-     or a hex key/filter with the wrong byte count) fails before validation
+   - An empty environment value is ignored and logged. Other malformed syntax
+     (leading or trailing whitespace, `+` sign, non-decimal characters,
+     integer overflow, or base64 that does not decode to the key/filter's exact
+     byte count) fails before validation
      with `ROCKETNET_STATUS_CONFIG_ENV_INVALID` (and `rocketnet_*_required_memory`
      returns `0`).
    - A syntactically valid number that falls outside the field's legal range or
      violates a cross-field invariant (such as
      `max_message_bytes > receive_message_buffer_bytes`,
-     `max_message_bytes > send_message_buffer_bytes`, or
+     a send buffer whose large-slab share cannot hold one maximum message, or
      `packets_in_flight < reliable_messages_in_flight`) fails with
      `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. Values are never silently clamped.
 3. **Frozen at `create` (never re-read at `connect` or `start`)**:
@@ -94,29 +95,26 @@ development key must not be used for production.
 - **`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` and `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`**:
   - A value of `0` (or unset) imposes no operator runtime budget beyond the
     compile-time caps.
-  - When set to a positive byte count, the budget is enforced in two stages:
-    1. **At `rocketnet_client_create` / `rocketnet_server_create` (and `rocketnet_*_required_memory`)**:
-       the endpoint header plus the message-layer connection arena is checked
-       against the budget. If create-time memory exceeds the budget, create
-       refuses with `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED` (and
-       `rocketnet_*_required_memory` returns `0`).
-    2. **At `rocketnet_client_connect` / `rocketnet_server_start`**: as the
-       endpoint walks its resolved transport ladder, each candidate's pre-allocation
-       plan (`total_bytes = allocator_bytes + umem_bytes`, including AF_XDP
-       page-aligned UMEM when evaluating `xdp`) is checked against the stored
-       budget. Any candidate whose `total_bytes` exceeds the budget is skipped;
-       if every candidate in the ladder exceeds the budget (or fails host
-       preflight), connect/start returns
-       `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+  - The budget applies to each transport candidate's connect/start plan, not
+    to the endpoint and message block allocated at create. As the endpoint
+    walks its resolved transport ladder, each candidate's `total_bytes`
+    (`allocator_bytes + umem_bytes`, including page-aligned AF_XDP UMEM) is
+    checked against the stored budget before that transport allocates. A
+    candidate over budget is skipped; if no candidate can be granted,
+    connect/start returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+    `rocketnet_*_required_memory` still reports the complete caller-allocator
+    lifecycle peak and does not return `0` merely because this transport budget
+    is smaller than the create-time endpoint/message block.
 - **Compile-time CMake caps (`BUILDING.md` and [`docs/LOAD.md`](LOAD.md))**:
   - `-DROCKETNET_MAX_CLIENTS` (default `1000`) and `-DROCKETNET_MAX_CHANNELS`
     (default `32`) set the compile-time upper bounds for `max_clients` and
     `num_channels`.
   - `-DROCKETNET_REASSEMBLY_MEMORY_MIB` (default `512` MiB) bounds total
     fragment reassembly memory at `create` (`ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`
-    when `max_clients * max_fragmented_messages * ceil(max_message_bytes / 1024)`
-    exceeds the cap).
-  - `-DROCKETNET_XDP_MEMORY_MIB` (default `2048` MiB) bounds planned AF_XDP
+    when the transport's fixed payload reassembly plan for `max_clients` and
+    `max_fragmented_messages` exceeds the cap). The default build scales this
+    cap as 512 MiB per 1,000 compile-time clients.
+  - `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB) bounds planned AF_XDP
     transport + UMEM memory across `num_xdp_queues`.
 
 ## Operational tuning with environment overrides
@@ -131,9 +129,11 @@ include:
   `rocketnet_server_required_memory` and `rocketnet_server_create` size for the
   intended transport rather than reserving worst-case `xdp` allocator headroom.
   When using `xdp`, tune queue and CPU count only through the supported
-  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (`1 .. 64`) and
-  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 1024`) overrides while preserving the
-  existing 4,096-entry AF_XDP ring and frame constants.
+  `ROCKETNET_SERVER_NUM_XDP_QUEUES` (`1 .. 1024`) and
+  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. Preserve the pinned
+  AF_XDP geometry: 4,096-byte frames, a 4,096-entry send queue, 16,384-entry
+  receive queue and fill set, a 32,768-entry fill ring, and 49,152 UMEM frames
+  per queue.
 - **Right-sizing server match capacity**: set `ROCKETNET_SERVER_MAX_CLIENTS` to
   the server instance's actual player cap (`1 .. ROCKETNET_MAX_CLIENTS`) when
   the binary leaves `config.max_clients` at `0`. Above 1,000 players, callers
