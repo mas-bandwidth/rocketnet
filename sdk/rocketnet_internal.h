@@ -669,6 +669,12 @@ int rocketnet_server_receive_buffer_request( int max_clients );
 // a grant at or above the request is an information line.
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
 
+#if ROCKETNET_DEV
+// Test-only decision override. The production socket grant is still observed;
+// this changes only the requested-versus-granted warning branch.
+void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int granted_bytes );
+#endif // ROCKETNET_DEV
+
 // The receive buffer the kernel granted a socket, in the bytes requested
 // (Linux reports double its grant; this halves it); 0 when unreadable.
 struct rocketnet_platform_socket_t;
