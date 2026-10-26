@@ -9,8 +9,9 @@ budget, the server's tick, and message latency in frames.
 1. A fixed-step loop: accumulate `rocketnet_time()`, run one frame per 1/60 s
    of it, and `rocketnet_sleep` for the rest.
 2. The frame order, on every client and on the server: (1) `*_update` takes in
-   what arrived; (2) `*_receive_messages` takes every message in batches; (3) simulate;
-   (4) queue this frame's messages with `*_start_message` and `*_finish_message`; (5)
+   what arrived; (2) `*_receive_messages` drains every message batch until `NULL`; (3) simulate;
+   (4) queue this frame's messages with guarded `*_start_message` (checking the non-`NULL` pointer)
+   and `*_finish_message` inside that branch; (5)
    `*_send_packets` last, so this frame's messages leave this frame.
 3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
@@ -18,7 +19,7 @@ budget, the server's tick, and message latency in frames.
    carries the frame it was queued in, and the receiver counts frames since.
 
 Every run is in memory over the `loopback` transport: the in-memory transport
-holds one server and up to `ROCKETNET_MAX_CLIENTS` clients. Clients join 50 a frame; timing starts once
+holds one server and up to `ROCKETNET_MAX_CLIENTS` (`1000`) clients. Clients join 50 a frame; timing starts once
 all are connected.
 
 ## Run it
@@ -32,7 +33,10 @@ From the repository root, after the normal build:
 ```
 
 The full-scale run holds 1000 clients in one process, all in memory over the
-loopback transport. `--clients` outside 1..1000 prints a usage line and exits
+loopback transport. RocketNet's demonstrated server configuration is up to
+1000 clients under its stated workload, topology, and deployment conditions
+(above 1000 clients, users must research, stabilize, and qualify their own
+configuration). `--clients` outside 1..1000 prints a usage line and exits
 1. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
 run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
@@ -72,14 +76,16 @@ frame, and no state update arrived before its causal minimum.
 
 - `rocketnet_init`, `rocketnet_term`
 - `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
+  `rocketnet_server_start`, `rocketnet_server_stop`, `rocketnet_server_stopped`,
+  `rocketnet_server_destroy`,
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
   `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_transport_name`,
   `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
+  `rocketnet_client_connect`, `rocketnet_client_disconnect`,
+  `rocketnet_client_disconnected`, `rocketnet_client_destroy`,
   `rocketnet_client_update`, `rocketnet_client_send_packets`,
   `rocketnet_client_state`, `rocketnet_client_start_message`,
   `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
