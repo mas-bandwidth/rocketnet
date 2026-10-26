@@ -1471,8 +1471,12 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
                                          const float * rtt_history, const SentRecord * sent,
                                          const ReceivedRecord * received,
                                          const uint64_t * sent_written, const uint64_t * received_written,
-                                         rocketnet_ack_stats_result_t * result,
-                                         const rocketnet_ack_stats_validity_t * validity = NULL )
+                                         float * out_rtt, float * out_jitter, float * out_packet_loss,
+                                         float * out_sent_kbps, float * out_received_kbps, float * out_acked_kbps
+#if ROCKETNET_DEV
+                                         , const rocketnet_ack_stats_validity_t * validity = NULL
+#endif
+                                       )
 {
     // rtt: the minimum over the history of first-ack samples. a sample of
     // exactly zero -- possible only on a held or loopback clock -- is
@@ -1484,14 +1488,16 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
         float best = 1e9f;
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
+#if ROCKETNET_DEV
             if (validity && !validity->rtt.test(i)) continue;
+#endif
             const float sample = rtt_history[i];
             if ( sample > 0.0f && sample < best )
                 best = sample;
         }
         if ( best < 1e9f )
             min_rtt = best;
-        result->rtt = min_rtt;
+        *out_rtt = min_rtt;
     }
 
     // jitter: use the same positive samples as the minimum. A zero-time
@@ -1502,7 +1508,9 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
         int count = 0;
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
+#if ROCKETNET_DEV
             if (validity && !validity->rtt.test(i)) continue;
+#endif
             const float sample = rtt_history[i];
             if ( sample > 0.0f )
             {
@@ -1510,7 +1518,7 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
                 count++;
             }
         }
-        result->jitter = count > 0 ? sum / (float) count : 0.0f;
+        *out_jitter = count > 0 ? sum / (float) count : 0.0f;
     }
 
     // packet loss and the sent/acked bandwidth, over the older half of the
@@ -1536,7 +1544,9 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             if ( sequence > highest_sent )
                 break;
             const SentRecord * record = &sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+#if ROCKETNET_DEV
             if (validity && !validity->sent.test((int)(sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE))) continue;
+#endif
             if ( sent_written && !rocketnet_ack_bit( sent_written, sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
                 continue;
             if ( record->sequence != sequence )
@@ -1587,12 +1597,12 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             }
         }
 
-        result->packet_loss = num_sent > 0 ? ( (float) num_dropped ) / ( (float) num_sent ) * 100.0f : 0.0f;
+        *out_packet_loss = num_sent > 0 ? ( (float) num_dropped ) / ( (float) num_sent ) * 100.0f : 0.0f;
 
-        result->sent_kbps = ( have_sent_time && sent_finish > sent_start ) ?
+        *out_sent_kbps = ( have_sent_time && sent_finish > sent_start ) ?
             (float) ( ( (double) bytes_sent ) / ( sent_finish - sent_start ) * 8.0 / 1000.0 ) : 0.0f;
 
-        result->acked_kbps = ( have_acked_time && acked_finish > acked_start ) ?
+        *out_acked_kbps = ( have_acked_time && acked_finish > acked_start ) ?
             (float) ( ( (double) bytes_acked ) / ( acked_finish - acked_start ) * 8.0 / 1000.0 ) : 0.0f;
     }
 
@@ -1613,7 +1623,9 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             if ( sequence > highest_received )
                 break;
             const ReceivedRecord * record = &received[sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+#if ROCKETNET_DEV
             if (validity && !validity->received.test((int)(sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE))) continue;
+#endif
             if ( received_written && !rocketnet_ack_bit( received_written, sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ) )
                 continue;
             if ( record->sequence != sequence )
@@ -1635,10 +1647,12 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
             }
         }
 
-        result->received_kbps = ( have_time && finish > start ) ?
+        *out_received_kbps = ( have_time && finish > start ) ?
             (float) ( ( (double) bytes_received ) / ( finish - start ) * 8.0 / 1000.0 ) : 0.0f;
     }
 }
+
+#if ROCKETNET_DEV
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
                                         rocketnet_ack_stats_result_t * result,
@@ -1647,22 +1661,21 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
 {
     rocketnet_assert(history && result);
     rocketnet_ack_compute_stats(history->highest_sent, history->highest_received,
-                               history->rtt_history, history->sent, history->received, sent_written, received_written, result, validity);
+                               history->rtt_history, history->sent, history->received, sent_written, received_written,
+                               &result->rtt, &result->jitter, &result->packet_loss,
+                               &result->sent_kbps, &result->received_kbps, &result->acked_kbps, validity);
 }
+
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint )
 {
     rocketnet_assert(endpoint);
-    rocketnet_ack_stats_result_t result;
     rocketnet_ack_compute_stats(endpoint->highest_sequence, endpoint->highest_received_sequence,
                                endpoint->rtt_history, endpoint->sent, endpoint->received,
-                               endpoint->sent_written, endpoint->received_written, &result);
-    endpoint->rtt = result.rtt;
-    endpoint->jitter = result.jitter;
-    endpoint->packet_loss = result.packet_loss;
-    endpoint->bandwidth_sent_kbps = result.sent_kbps;
-    endpoint->bandwidth_received_kbps = result.received_kbps;
-    endpoint->bandwidth_acked_kbps = result.acked_kbps;
+                               endpoint->sent_written, endpoint->received_written,
+                               &endpoint->rtt, &endpoint->jitter, &endpoint->packet_loss,
+                               &endpoint->bandwidth_sent_kbps, &endpoint->bandwidth_received_kbps, &endpoint->bandwidth_acked_kbps);
 }
 
 // -----------------------------------------
