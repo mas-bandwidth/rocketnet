@@ -78,6 +78,8 @@ bool rocketnet_signed_connect_data_names_port_zero( const struct rocketnet_signe
            ( ( signed_fields->address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 && ipv6_port_zero );
 }
 
+#if ROCKETNET_DEV
+
 // crypto_box_seal's construction with the ephemeral secret supplied rather than
 // drawn: the test-only deterministic writer's seal, and nothing else's. Output
 // is epk || crypto_box_easy(m), crypto_box_SEALBYTES longer than m. 0 on
@@ -109,9 +111,11 @@ out:
     return result;
 }
 
+#endif // #if ROCKETNET_DEV
+
 // the one writer behind both entry points: ephemeral_secret_key NULL seals
 // with crypto_box_seal's fresh ephemeral key (production); non-NULL seals
-// with that key (the test-only vectors)
+// with that key (the test-only vectors, ROCKETNET_DEV only)
 
 static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_connect_data_t * signed_fields,
                                                  const struct rocketnet_connect_token_private_t * private_fields,
@@ -130,6 +134,7 @@ static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_c
     rocketnet_write_connect_token_private( &private_data, private_block );
 
     struct rocketnet_signed_connect_data_t signed_data = *signed_fields;
+#if ROCKETNET_DEV
     if ( ephemeral_secret_key == NULL )
     {
         if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
@@ -141,6 +146,11 @@ static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_c
                                                 signed_data.server_public_key, ephemeral_secret_key ) != 0 )
             goto out;
     }
+#else // #if ROCKETNET_DEV
+    (void) ephemeral_secret_key;
+    if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
+        goto out;
+#endif // #if ROCKETNET_DEV
 
     p = token;
     rocketnet_write_signed_connect_data( &signed_data, p );
@@ -173,6 +183,8 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, NULL, token );
 }
 
+#if ROCKETNET_DEV
+
 // TEST-ONLY: exists for tests/connect_token_vectors.json; see the header
 int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_connect_data_t * signed_fields,
                                                  const struct rocketnet_connect_token_private_t * private_fields,
@@ -184,6 +196,8 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
         return 0;
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, ephemeral_secret_key, token );
 }
+
+#endif // #if ROCKETNET_DEV
 
 enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
@@ -400,13 +414,13 @@ const uint8_t rocketnet_dev_server_public_key[32] =
     0x70, 0xcb, 0x71, 0x47, 0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c,
     0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c};
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 const uint8_t rocketnet_dev_server_secret_key[32] =
 {
     0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde,
     0x31, 0x18, 0xd8, 0x39, 0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70,
     0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97};
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string,

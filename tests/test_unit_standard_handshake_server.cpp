@@ -72,9 +72,21 @@ static void handshake_server_build_request( uint8_t * request,
     handshake_server_fill_token( &signed_fields, &private_fields, create_timestamp, expire_timestamp );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+#if ROCKETNET_DEV
     check( rocketnet_write_connect_token_deterministic( &signed_fields, &private_fields,
                                                         rocketnet_test_backend_secret_key,
                                                         rocketnet_test_token_vector_ephemeral_secret[0], token_data ) );
+#else
+    if ( create_timestamp == ROCKETNET_TEST_CREATE_TS && expire_timestamp == ROCKETNET_TEST_EXPIRE_TS )
+    {
+        memcpy( token_data, rocketnet_test_frozen_token, ROCKETNET_CONNECT_TOKEN_BYTES );
+    }
+    else
+    {
+        check( rocketnet_write_connect_token( &signed_fields, &private_fields,
+                                              rocketnet_test_backend_secret_key, token_data ) );
+    }
+#endif
 
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
@@ -148,6 +160,8 @@ static int handshake_server_process_from( struct handshake_server_t * test,
                                                                  ROCKETNET_TEST_CREATE_TS, current_time,
                                                                  response, response_bytes );
 }
+
+#if ROCKETNET_DEV
 
 static int handshake_server_generate( const char * id, uint8_t * out, int capacity )
 {
@@ -253,6 +267,8 @@ static const rn_standard_vector_t standard_handshake_server_table[] =
     RN_STANDARD_VECTOR( "t12.token-expired", "0000b759010003f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e953414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24931a7c4e88776655443322119cf8ac6800000000cef8ac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c34e42d4af5ef94a07a3a84201b889d4cd1a743cb27b11b6a10438a8feb8e584708dfebb386fe9d3282325914c792005b3f0cbdb60f45eecbe38ea0a72cec1b6ba0e14afd6efb436d00345c404c4de3925786d259cc06b1239e259ca8eb137f9349191a211ca7f01704ae96ddd52c86e16934789b7c3a0774d088e03528a4afa2dac5aa04d241805930ca24ff62b9417c1eb7f36248717557ad340a1a2111eb1f6b5b71abab8f6044450e18005898b6886f8baa2de5bf461ee4f9b32638732e4f4d9ea83761dea2a173c2e74f1383bb450926b3cd3889ef3b4dd3d84fb85aad0a12e5a77be701402d5207057841e35889d99f824309bf6b60e2403c771653beac7b23680070faf4a9195e3169fb4dd83691b77e19bfa6510342216a0349391e2e9cc7c968b016637d9f8ae49c24528a357542aec01ef8324a946af6acd6156b9c177f06cf3b829bfce60ec009d5792d162e6d9b58852d11b4df6c623a1d393ae315c246ed696057f4f8d7b918af57431a7ec50cdd40aa72bfed55c0cf4aa8c9188bd94c0563fe96fecc32277abfcc8bfb18d6e3dbbeb2b58465f35711e62e91411c4d8076ed827432f33d0cf73ba881af00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b289102eed08cc04faf63db4bcfe50bd70e8ef8980a3759f79f55d90ef7c76822564c401681b65ff3781c6cb4d2be96e69dadc39959dd67f85eaf8242b069d06" ),
 };
 
+#endif // #if ROCKETNET_DEV
+
 static void standard_handshake_server_token_refusals()
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -269,12 +285,26 @@ static void standard_handshake_server_token_refusals()
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == 1 );
         handshake_server_teardown( &test );
     }
+
+    {
+        struct handshake_server_t test;
+        handshake_server_setup( &test );
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        handshake_server_build_request( request, "198.51.100.7:56789",
+                                        ROCKETNET_TEST_CREATE_TS - 100, ROCKETNET_TEST_CREATE_TS - 50, 3 );
+        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
+        handshake_server_teardown( &test );
+    }
 }
 
 static void test_standard_handshake_server_vectors()
 {
+#if ROCKETNET_DEV
     const int count = (int) ( sizeof( standard_handshake_server_table ) / sizeof( standard_handshake_server_table[0] ) );
     check( rn_standard_vectors_walk( standard_handshake_server_table, count, handshake_server_generate ) == count );
+#endif // #if ROCKETNET_DEV
 
     standard_handshake_server_token_refusals();
 }

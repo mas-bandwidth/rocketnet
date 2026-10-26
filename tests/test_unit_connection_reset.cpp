@@ -62,6 +62,8 @@ static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
+
 #define CLIENT_PROTOCOL_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_protocol_t, field, #decision[0] == 'R' ),
 static const rocketnet_reset_member_t client_protocol_fields[] =
 {
@@ -366,6 +368,8 @@ static void test_connection_reset_inventory_covers_every_field()
 }
 REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
 
+#endif // #if ROCKETNET_DEV
+
 static void test_connection_reset_client_slots_reuse_keeps_full_identity()
 {
     enum { CAPACITY = 16, LIVE = 8, CHURN = 4096 };
@@ -498,19 +502,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
 }
 REGISTER_UNIT_TEST( test_connection_reset_client_slots_stale_handle_cannot_release_reuse );
 
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
-
-enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
-
-struct reset_loopback_t
-{
-    rocketnet_message_server_t * server;
-    rocketnet_message_client_t * clients[RESET_LOOPBACK_MAX_CLIENTS];
-    double now;
-};
+#endif // ROCKETNET_DEV
 
 struct reset_loopback_keys_t
 {
@@ -537,6 +529,18 @@ static const reset_loopback_keys_t * reset_loopback_keys()
 }
 
 static const uint64_t RESET_LOOPBACK_PROTOCOL_ID = 0x5245534554ULL;
+
+#if ROCKETNET_DEV
+extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
+
+enum { RESET_LOOPBACK_MAX_CLIENTS = 2 };
+
+struct reset_loopback_t
+{
+    rocketnet_message_server_t * server;
+    rocketnet_message_client_t * clients[RESET_LOOPBACK_MAX_CLIENTS];
+    double now;
+};
 
 static rocketnet_message_server_t * reset_loopback_server_create( double now, const rocketnet_message_config_t * message_config = NULL )
 {
@@ -1044,6 +1048,8 @@ static void reset_loopback_other_slot_scenario()
     reset_loopback_destroy( &f );
 }
 
+#endif // #if ROCKETNET_DEV
+
 struct reset_server_fixture_t
 {
     rocketnet_server_protocol_t server;
@@ -1092,6 +1098,7 @@ static void reset_server_teardown( reset_server_fixture_t * f )
     rocketnet_encryption_map_destroy( f->server.encryption_map );
 }
 
+#if ROCKETNET_DEV
 
 static void reset_client_transport_clean( rocketnet_client_transport_t * transport )
 {
@@ -1189,10 +1196,14 @@ static void reset_loopback_server_sweep_timeout_scenario()
     reset_loopback_destroy( &f );
 }
 
+#endif // #if ROCKETNET_DEV
+
 static void test_connection_reset_server_slot_reuse_is_clean()
 {
+#if ROCKETNET_DEV
     reset_loopback_slot_reuse_scenario();
     reset_loopback_server_sweep_timeout_scenario();
+#endif // #if ROCKETNET_DEV
     reset_server_fixture_t f;
     reset_server_setup( &f );
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
@@ -1276,6 +1287,8 @@ static void test_connection_reset_stale_mapping_owner_preserves_reuse()
 }
 REGISTER_UNIT_TEST( test_connection_reset_stale_mapping_owner_preserves_reuse );
 
+#if ROCKETNET_DEV
+
 // The slot-clean check's scratch endpoint comes from the library allocator, so
 // a failed allocation must fail closed with the member named rather than write
 // through NULL. The hooks forward to malloc and free until the flag is armed.
@@ -1322,9 +1335,13 @@ static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure(
 }
 REGISTER_UNIT_TEST( test_connection_reset_slot_clean_fails_closed_on_allocation_failure );
 
+#endif // #if ROCKETNET_DEV
+
 static void test_connection_reset_server_reset_touches_only_its_slot()
 {
+#if ROCKETNET_DEV
     reset_loopback_other_slot_scenario();
+#endif // #if ROCKETNET_DEV
     reset_server_fixture_t f;
     reset_server_setup( &f );
     const int a = reset_server_assign( &f, "198.51.100.3:4000", 3 );
@@ -1344,6 +1361,7 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
 
+#if ROCKETNET_DEV
 
 // The client ends the connection itself, by its own timeout: the server goes
 // silent and only the client runs. The transport state a connection leaves
@@ -1399,10 +1417,14 @@ static void reset_loopback_client_denied_scenario()
     reset_loopback_destroy( &f );
 }
 
+#endif // #if ROCKETNET_DEV
+
 static void test_connection_reset_client_disconnect_is_clean()
 {
+#if ROCKETNET_DEV
     reset_loopback_client_timeout_scenario();
     reset_loopback_client_denied_scenario();
+#endif // #if ROCKETNET_DEV
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rocketnet_client_protocol_t client;
@@ -1410,6 +1432,10 @@ static void test_connection_reset_client_disconnect_is_clean()
     client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
     check( client.reassembly );
     client.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT;
+    memset( &client.keys, 0xA5, sizeof(client.keys) );
+    memset( &client.token, 0xA5, sizeof(client.token) );
+    memset( client.client_ephemeral_secret_key, 0xA5, sizeof(client.client_ephemeral_secret_key) );
+    memset( client.session_nonce, 0xA5, sizeof(client.session_nonce) );
     client.send_sequence_handshake = 7;
     client.send_sequence_session = 9;
     client.next_fragment_payload_id = 12;
@@ -1421,6 +1447,18 @@ static void test_connection_reset_client_disconnect_is_clean()
     memset( client.reassembly->slots, 0xA5, sizeof(fresh_slots) );
     client.reassembly->newest_completed[0] = 8;
     rocketnet_client_connection_reset( &client );
+    rocketnet_connection_keys_t zero_keys;
+    memset( &zero_keys, 0, sizeof(zero_keys) );
+    rocketnet_connect_token_t zero_token;
+    memset( &zero_token, 0, sizeof(zero_token) );
+    uint8_t zero_eph[ROCKETNET_KEY_BYTES];
+    memset( zero_eph, 0, sizeof(zero_eph) );
+    uint8_t zero_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    memset( zero_nonce, 0, sizeof(zero_nonce) );
+    check( memcmp( &client.keys, &zero_keys, sizeof(zero_keys) ) == 0 );
+    check( memcmp( &client.token, &zero_token, sizeof(zero_token) ) == 0 );
+    check( memcmp( client.client_ephemeral_secret_key, zero_eph, sizeof(zero_eph) ) == 0 );
+    check( memcmp( client.session_nonce, zero_nonce, sizeof(zero_nonce) ) == 0 );
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
     check( client.send_sequence_handshake == 0 && client.send_sequence_session == 0 );
     check( client.next_fragment_payload_id == 1 );
@@ -1547,6 +1585,8 @@ static void test_connection_reset_connect_from_each_failure_state()
     }
 }
 REGISTER_UNIT_TEST( test_connection_reset_connect_from_each_failure_state );
+
+#if ROCKETNET_DEV
 
 static void reset_loopback_client_disconnect_state_scenario( int state, int mid_fragment )
 {

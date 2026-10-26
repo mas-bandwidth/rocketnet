@@ -9,12 +9,15 @@
 #define ROCKETNET_CONNECTION_RESET_H
 
 #include <stddef.h>
+#include "rocketnet_test_seams.h"
 
 struct rocketnet_client_protocol_t;
 struct rocketnet_server_protocol_t;
 struct rocketnet_client_transport_t;
 struct rocketnet_server_transport_t;
 struct rn_message_object_t;
+
+#if ROCKETNET_DEV
 
 /*
     The inventory is deliberately beside the reset declarations. A change to
@@ -98,6 +101,8 @@ struct rn_message_object_t;
     X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
     X( RESET, held ) X( RESET, state )
 
+#endif // #if ROCKETNET_DEV
+
 /*
     Reset order is part of the contract:
       1. retire the client I/O thread's published key copy;
@@ -127,6 +132,8 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
+
+#if ROCKETNET_DEV
 
 /*
     The field walk. members is a struct's declaration manifest (its
@@ -171,5 +178,7 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server );
 bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
                                                      char * failure, size_t failure_bytes );
+
+#endif // #if ROCKETNET_DEV
 
 #endif // #ifndef ROCKETNET_CONNECTION_RESET_H
