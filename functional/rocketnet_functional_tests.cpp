@@ -2093,18 +2093,15 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
 
     rocketnet_platform_socket_send_packet( socket, &local_address, sent, (int) sizeof(sent) );
 
+    // Every mode, including blocking with no timeout, first observes
+    // readiness under the shared harness watchdog, so a missing datagram
+    // fails as a harness timeout instead of hanging in the receive. The
+    // blocking/no-timeout wrapper is still created and exercised by the
+    // one receive below; readiness does not change its mode.
     rocketnet_address_t from;
-    if ( mode == ROCKETNET_PLATFORM_SOCKET_BLOCKING && timeout < 0.0f )
-    {
-        const int got = rocketnet_platform_socket_receive_packet( socket, &from, received, (int) sizeof(received) );
-        rocketnet_check( got == (int) sizeof(sent) );
-    }
-    else
-    {
-        rocketnet_test_wait_socket_readable( socket, address );
-        const int got = rocketnet_platform_socket_receive_packet( socket, &from, received, (int) sizeof(received) );
-        rocketnet_check( got == (int) sizeof(sent) );
-    }
+    rocketnet_test_wait_socket_readable( socket, address );
+    const int got = rocketnet_platform_socket_receive_packet( socket, &from, received, (int) sizeof(received) );
+    rocketnet_check( got == (int) sizeof(sent) );
 
     rocketnet_check( from.type == bind_address.type );
     rocketnet_check( from.port == local_address.port );
@@ -2452,11 +2449,19 @@ void rocketnet_test_platform_batch_pump_degraded()
 // also proves the msgx compaction memmove, since kept packets after a
 // mid-chunk skip must move down a slot.
 
-// Completion observation: the socket's queued-byte counter is the evidence
-// that the datagrams have arrived. A short stable window only samples that
-// counter; it is not an arrival deadline and elapsed time is never a pass
-// criterion. The outer watchdog exists only to end a hung harness.
-static int rocketnet_test_queue_bytes( rocketnet_platform_socket_t * socket )
+// Completion observation, per injected datagram. On Linux,
+// SK_MEMINFO_RMEM_ALLOC is socket-buffer allocation accounting (each
+// queued datagram adds its skb truesize, overhead included), never a
+// payload byte count: it is used only as a strict-growth signal, waited
+// on after each individual send before the next send, so a growth is
+// attributable to that one datagram. On macOS, FIONREAD is waited on
+// until it reaches the cumulative payload of the real datagrams sent
+// so far; zero-length chaff adds no payload there, and its arrival is
+// carried by the single injector's FIFO order once the following real
+// datagram is observed. Neither value is compared across platforms,
+// and elapsed time is never a pass criterion: one shared 30 s watchdog
+// only ends a hung harness and says so.
+static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket )
 {
 #if defined(__APPLE__)
     int queued = 0;
@@ -2475,29 +2480,62 @@ static int rocketnet_test_queue_bytes( rocketnet_platform_socket_t * socket )
 #endif
 }
 
-static void rocketnet_test_wait_for_queued_bytes( rocketnet_platform_socket_t * socket, int expected_bytes, const char * phase )
+struct rocketnet_test_queue_wait_t
 {
-    const double deadline = rocketnet_platform_time() + 30.0;
-    int last = -1;
-    int stable = 0;
+    int accounting;
+    int payload_bytes;
+    double deadline;
+};
+
+static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
+{
+    wait->accounting = rocketnet_test_queue_accounting( socket );
+    wait->payload_bytes = 0;
+    wait->deadline = rocketnet_platform_time() + 30.0;
+    if ( wait->accounting < 0 )
+    {
+        fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
+        rocketnet_check( 0 );
+    }
+}
+
+static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, int datagram_bytes, const char * phase )
+{
+    wait->payload_bytes += datagram_bytes;
+#if defined(__linux__)
+    const int target_accounting = wait->accounting;
+    (void) wait->payload_bytes;
+#elif defined(__APPLE__)
+    if ( datagram_bytes == 0 )
+        return;
+    const int target_payload = wait->payload_bytes;
+#else
+    fprintf( stderr, "harness error: %s has no queue completion observation on this platform\n", phase );
+    rocketnet_check( 0 );
+    return;
+#endif
     for ( ;; )
     {
-        const int queued = rocketnet_test_queue_bytes( socket );
+        const int queued = rocketnet_test_queue_accounting( socket );
         if ( queued < 0 )
         {
-            fprintf( stderr, "harness error: %s could not read the queued-byte counter (errno=%d)\n", phase, errno );
+            fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
             rocketnet_check( 0 );
             return;
         }
-        if ( queued >= expected_bytes && queued == last )
-            ++stable;
-        else
+#if defined(__linux__)
+        if ( queued > target_accounting )
         {
-            last = queued;
-            stable = 0;
-        }
-        if ( queued >= expected_bytes && stable >= 5 )
+            wait->accounting = queued;
             return;
+        }
+#else
+        if ( queued >= target_payload )
+        {
+            wait->accounting = queued;
+            return;
+        }
+#endif
         fd_set readable;
         FD_ZERO( &readable );
         FD_SET( socket->handle, &readable );
@@ -2513,7 +2551,7 @@ static void rocketnet_test_wait_for_queued_bytes( rocketnet_platform_socket_t * 
             rocketnet_check( 0 );
             return;
         }
-        if ( rocketnet_platform_time() >= deadline )
+        if ( rocketnet_platform_time() >= wait->deadline )
         {
             fprintf( stderr, "harness timeout: %s did not complete within the 30 s watchdog; this is a hung harness, not a transport performance failure\n", phase );
             rocketnet_check( 0 );
@@ -2546,7 +2584,10 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     const int num_real = 48;
     uint8_t real_packet[256];
     int sent_real = 0;
+    rocketnet_test_queue_wait_t batch_wait;
+    rocketnet_test_queue_wait_init( socket, &batch_wait, "batch chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
     for ( int i = 0; i < num_real; i++ )
     {
         const int bytes = 24 + i;
@@ -2554,26 +2595,26 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
         for ( int j = 1; j < bytes; j++ )
             real_packet[j] = (uint8_t) ( 3 * i + j );
         rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr*) &to, sizeof(to) ) == bytes );
+        rocketnet_test_queue_wait_datagram( socket, &batch_wait, bytes, "batch chaff exchange" );
         sent_real++;
         if ( ( i % 2 ) == 1 )
+        {
             rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+            rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
+        }
     }
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
 
     // drain through the batch pump: every real packet, in order, intact --
     // and in ONE receive_packets call, because a retry loop here greens
     // over the exact bug this test names (the review measured it: an
     // unfixed path consumes chaff between calls, so retries make
     // progress). loopback arrival is asynchronous (also measured: a
-    // recvfrom immediately after sendto answers EAGAIN), so wait on the
-    // receiver's low-water mark: it is the exact payload bytes the real
-    // packets add, and the injector's FIFO means every interleaved chaff
-    // before the last real datagram is queued too. No settle sleep.
-
-    int batch_bytes = 0;
-    for ( int i = 0; i < num_real; i++ )
-        batch_bytes += 24 + i;
-    rocketnet_test_wait_for_queued_bytes( socket, batch_bytes, "batch chaff exchange" );
+    // recvfrom immediately after sendto answers EAGAIN), so each send
+    // above is waited on individually before the next: on Linux by
+    // queue-accounting growth for that datagram, on macOS by cumulative
+    // real payload (chaff carried by the injector's FIFO). No settle sleep.
 
     static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
     static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
@@ -2608,16 +2649,19 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     // back the real one -- a retry loop here would green over a
     // per-packet path that still reads chaff as drain-end
 
+    rocketnet_test_queue_wait_t single_wait;
+    rocketnet_test_queue_wait_init( socket, &single_wait, "single-packet chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, 0, "single-packet chaff exchange" );
     uint8_t single[64];
     memset( single, 0x5a, sizeof(single) );
     rocketnet_check( sendto( injector, single, sizeof(single), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(single) );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, (int) sizeof(single), "single-packet chaff exchange" );
 
-    // completion-driven arrival for the per-packet call: wait for the real
-    // datagram's exact bytes; the chaff is before it in the injector's FIFO
-    // and the FIRST call below must skip it, not a retry.
-
-    rocketnet_test_wait_for_queued_bytes( socket, (int) sizeof(single), "single-packet chaff exchange" );
+    // completion-driven arrival for the per-packet call: each datagram
+    // above was observed queued before the next was sent, so the chaff
+    // is ahead of the real datagram and the FIRST call below must skip
+    // it, not a retry.
 
     uint8_t single_received[ROCKETNET_TEST_PUMP_STRIDE];
     rocketnet_address_t single_from;
