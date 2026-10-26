@@ -54,6 +54,13 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t owner_generation,
                                    const uint8_t * user_data );
 
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
+                                   uint64_t client_id,
+                                   int mapping_index,
+                                   const uint8_t * user_data );
+#endif // #if ROCKETNET_TEST_SEAMS
+
 // whether this client index currently holds a connection. safe for any
 // index; the field accessors below are valid only when this returns 1.
 

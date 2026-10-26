@@ -331,6 +331,26 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     return client_index;
 }
 
+#if ROCKETNET_TEST_SEAMS
+int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
+                                   uint64_t client_id,
+                                   int mapping_index,
+                                   const uint8_t * user_data )
+{
+    uint64_t owner_generation = 1;
+    if ( slots && slots->free_stack_count > 0 )
+    {
+        const int client_index = slots->free_stack[slots->free_stack_count - 1];
+        if ( client_index >= 0 && client_index < slots->max_clients &&
+             slots->slot_generation[client_index] == owner_generation )
+        {
+            owner_generation = 2;
+        }
+    }
+    return rocketnet_client_slots_assign( slots, client_id, mapping_index, owner_generation, user_data );
+}
+#endif // #if ROCKETNET_TEST_SEAMS
+
 int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );

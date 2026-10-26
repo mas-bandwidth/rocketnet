@@ -76,8 +76,7 @@ static void test_server_payload_capacity_uses_live_session_path()
     memcpy( mapping->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-    const int client_index = rocketnet_client_slots_assign( server.client_slots, 0x1400, mapping_index,
-                                                            rocketnet_encryption_map_owner_generation( server.encryption_map, mapping_index ), user_data );
+    const int client_index = rocketnet_client_slots_assign( server.client_slots, 0x1400, mapping_index, user_data );
     rocketnet_unit_check( client_index == 0 );
     mapping->control->client_index = client_index;
     mapping->control->established = 1;

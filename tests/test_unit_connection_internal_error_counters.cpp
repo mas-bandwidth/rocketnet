@@ -187,7 +187,7 @@ static void internal_error_fill_only_slot( struct internal_error_server_t * test
 {
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof(user_data) );
-    check( rocketnet_client_slots_assign( test->server.client_slots, UINT64_C( 0xD00D ), -1, UINT64_C( 0xD00D ), user_data ) == 0 );
+    check( rocketnet_client_slots_assign( test->server.client_slots, UINT64_C( 0xD00D ), -1, user_data ) == 0 );
 }
 
 static void internal_error_check_sentinel( const uint8_t * bytes, int count, uint8_t sentinel )
