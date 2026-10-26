@@ -1123,8 +1123,12 @@ REGISTER_UNIT_TEST( test_server_client_index_round_trips_as_int );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
+#if ROCKETNET_DEV
 static int lifecycle_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static int lifecycle_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
 static void test_config_packets_per_update_range()
 {
@@ -1174,6 +1178,7 @@ static void test_config_packets_per_update_range()
     check( server == NULL );
     check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
 
+#if ROCKETNET_DEV
     // the environment
     rocketnet_client_default_config( &client_config );
     lifecycle_server_config( &server_config, &identity, 1 );
@@ -1238,6 +1243,7 @@ static void test_config_packets_per_update_range()
     check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1025" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" ) == 0 );
+#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_config_packets_per_update_range );
 

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stddef.h>
+#include "../sdk/rocketnet.h"
 
 // Keep this helper independent of rocketnet_platform.h. On Windows that
 // header brings in the SDK's platform headers, whose RPC compatibility macros
@@ -13,12 +14,15 @@
 extern "C"
 {
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
+#if ROCKETNET_DEV
 void rocketnet_platform_test_environment_install( void );
 void rocketnet_platform_test_environment_set( const char * name, const char * value );
 void rocketnet_platform_test_environment_unset( const char * name );
 void rocketnet_platform_test_environment_reset( void );
+#endif // #if ROCKETNET_DEV
 }
 
+#if ROCKETNET_DEV
 // Every unit translation unit that changes configuration includes this file.
 // These initializers run before main and install the shared empty table. The
 // operation is idempotent, so initialization order cannot clear another file's
@@ -33,11 +37,14 @@ struct rocketnet_test_environment_bootstrap_t
 
 static rocketnet_test_environment_bootstrap_t rocketnet_test_environment_bootstrap;
 
+#endif // #if ROCKETNET_DEV
+
 static inline int rocketnet_test_env_getenv( const char * name, char * buffer, size_t size )
 {
     return rocketnet_platform_getenv( name, buffer, size );
 }
 
+#if ROCKETNET_DEV
 static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
 {
     if ( !overwrite )
@@ -62,3 +69,5 @@ static inline void rocketnet_test_env_restore()
 {
     rocketnet_platform_test_environment_reset();
 }
+
+#endif // #if ROCKETNET_DEV

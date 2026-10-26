@@ -369,7 +369,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
-    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
@@ -673,7 +673,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>
         ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
@@ -826,6 +826,11 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(${test_target} PRIVATE rocketnet)
         rocketnet_warning_floor(${test_target})
     endforeach()
+    # Real platform behavior against the selected DEV mode, without test hooks.
+    add_executable(test_platform_primitives functional/platform_primitives.cpp)
+    target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
+    target_link_libraries(test_platform_primitives PRIVATE rocketnet Threads::Threads)
+    rocketnet_warning_floor(test_platform_primitives)
     add_executable(test_transport tests/test_driver.cpp)
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
