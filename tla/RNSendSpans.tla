@@ -9,11 +9,13 @@
 (* tla/RNRing.tla models the receiver's ring with monotonic positions and  *)
 (* a floor at U'.  This module models the other representation: positions *)
 (* are offsets in 0..SR-1, the floor is head (the oldest live span's       *)
-(* start), the next span goes at tail, the live spans are a doubly linked  *)
-(* list first..last kept in allocation order, frees come in any order, a   *)
-(* span that would cross the end of the ring goes to 0 and leaves the      *)
-(* skipped bytes as padding, tail = head on a non-empty ring means full,   *)
-(* and the ring resets head and tail to 0 when it empties.                 *)
+(* start), the next span goes at tail, the live spans order by the         *)
+(* allocation ticket each span's descriptor carries (first..last name the  *)
+(* smallest and largest live tickets), frees come in any order, a span     *)
+(* that would cross the end of the ring goes to 0 and leaves the skipped   *)
+(* bytes as padding, tail = head on a non-empty ring means full, and the   *)
+(* ring resets head and tail to 0 when it empties.  Tickets renumber in    *)
+(* order on wraparound, which the model abstracts as unbounded tickets.    *)
 (*                                                                         *)
 (* Descriptors are 1..Q; NONE = 0 stands for RN_DESCRIPTOR_NONE.  The      *)
 (* free-descriptor list is abstracted to "any descriptor not live", a      *)
@@ -50,13 +52,13 @@ VARIABLES
     last,       \* region->span_last
     start,      \* descriptor->span_start
     len,        \* the span's rounded length (len16)
-    prev,       \* descriptor->span_prev
-    next,       \* descriptor->span_next
+    ticket,     \* descriptor->span_ticket: the span's allocation ticket
+    ticketNext, \* region->span_ticket_next
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
     exhausted   \* rn_region_exhaust has fired (sticky until Reset)
 
-vars == <<head, tail, first, last, start, len, prev, next, live, order, exhausted>>
+vars == <<head, tail, first, last, start, len, ticket, ticketNext, live, order, exhausted>>
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -81,8 +83,8 @@ Init ==
     /\ last = NONE
     /\ start = [d \in D |-> 0]
     /\ len = [d \in D |-> 0]
-    /\ prev = [d \in D |-> NONE]
-    /\ next = [d \in D |-> NONE]
+    /\ ticket = [d \in D |-> 0]
+    /\ ticketNext = 1
     /\ live = {}
     /\ order = <<>>
     /\ exhausted = FALSE
@@ -99,9 +101,8 @@ Alloc(l, d) ==
     /\ r.ok
     /\ start' = [start EXCEPT ![d] = s]
     /\ len'   = [len EXCEPT ![d] = l16]
-    /\ prev'  = [prev EXCEPT ![d] = last]
-    /\ next'  = IF last # NONE THEN [next EXCEPT ![d] = NONE, ![last] = d]
-                               ELSE [next EXCEPT ![d] = NONE]
+    /\ ticket' = [ticket EXCEPT ![d] = ticketNext]
+    /\ ticketNext' = ticketNext + 1
     /\ first' = IF last = NONE THEN d ELSE first
     /\ head'  = IF last = NONE THEN s
                 ELSE IF FloorAtOldest THEN head ELSE s
@@ -118,32 +119,33 @@ Exhaust(l) ==
     /\ \/ D \ live = {}
        \/ ~Place(Round16(l)).ok
     /\ exhausted' = TRUE
-    /\ UNCHANGED <<head, tail, first, last, start, len, prev, next, live, order>>
+    /\ UNCHANGED <<head, tail, first, last, start, len, ticket, ticketNext, live, order>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
-\* rn_region_send_free_fragment; any live span, in any order.
+\* rn_region_send_free_fragment; any live span, in any order.  The freed
+\* descriptor's ticket clears; when an edge span goes, the new edge is the
+\* live span with the smallest (or largest) remaining ticket.
 Free(d) ==
-    LET p == prev[d]
-        n == next[d]
-        f2 == IF p = NONE THEN n ELSE first
-        l2 == IF n = NONE THEN p ELSE last
-    IN
     /\ d \in live
-    /\ next'  = IF p # NONE THEN [next EXCEPT ![p] = n, ![d] = NONE]
-                            ELSE [next EXCEPT ![d] = NONE]
-    /\ prev'  = IF n # NONE THEN [prev EXCEPT ![n] = p, ![d] = NONE]
-                            ELSE [prev EXCEPT ![d] = NONE]
-    /\ first' = f2
-    /\ last'  = l2
-    /\ IF f2 = NONE
-         THEN /\ head' = 0                                   \* empty: the floor is the start
-              /\ tail' = 0
-         ELSE /\ head' = IF ~FloorAtOldest THEN start[l2]
-                         ELSE IF p = NONE THEN start[f2] ELSE head
-              /\ UNCHANGED tail
-    /\ live'  = live \ {d}
-    /\ order' = SelectSeq(order, LAMBDA x : x # d)
-    /\ UNCHANGED <<start, len, exhausted>>
+    /\ LET rest == live \ {d}
+           ord2 == SelectSeq(order, LAMBDA x : x # d)
+           f2 == IF rest = {} THEN NONE
+                 ELSE CHOOSE x \in rest : \A y \in rest : ticket[x] <= ticket[y]
+           l2 == IF rest = {} THEN NONE
+                 ELSE CHOOSE x \in rest : \A y \in rest : ticket[y] <= ticket[x]
+       IN /\ first' = f2
+          /\ last' = l2
+          /\ ticket' = [x \in D |-> IF x \in rest THEN (CHOOSE i \in 1..Len(ord2) : ord2[i] = x) ELSE 0]
+          /\ ticketNext' = Len(ord2) + 1
+          /\ IF f2 = NONE
+               THEN /\ head' = 0                                   \* empty: the floor is the start
+                    /\ tail' = 0
+               ELSE /\ head' = IF ~FloorAtOldest THEN start[l2]
+                               ELSE IF d = first THEN start[f2] ELSE head
+                    /\ UNCHANGED tail
+          /\ live' = rest
+          /\ order' = ord2
+          /\ UNCHANGED <<start, len, exhausted>>
 
 \* the region reset (rocketnet_allocator.cpp, "the send spans: empty")
 Reset ==
@@ -153,8 +155,8 @@ Reset ==
     /\ last' = NONE
     /\ start' = [d \in D |-> 0]
     /\ len' = [d \in D |-> 0]
-    /\ prev' = [d \in D |-> NONE]
-    /\ next' = [d \in D |-> NONE]
+    /\ ticket' = [d \in D |-> 0]
+    /\ ticketNext' = 1
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
@@ -177,8 +179,8 @@ TypeOK ==
     /\ last \in D \cup {NONE}
     /\ start \in [D -> 0..(SR - 1)]
     /\ len \in [D -> 0..SR]
-    /\ prev \in [D -> D \cup {NONE}]
-    /\ next \in [D -> D \cup {NONE}]
+    /\ ticket \in [D -> Nat]
+    /\ ticketNext \in Nat \ {0}
     /\ live \subseteq D
     /\ exhausted \in BOOLEAN
 
@@ -202,17 +204,15 @@ Aligned ==
 HeadIsOldestStart ==
     first # NONE => head = start[first]
 
-RECURSIVE Walk(_, _)
-Walk(x, k) == IF x = NONE \/ k = 0 THEN <<>> ELSE <<x>> \o Walk(next[x], k - 1)
-
-\* first..last, followed by next, is exactly the live spans in allocation
-\* order, and prev is its mirror.
-ListInAllocationOrder ==
-    /\ Walk(first, Q + 1) = order
+\* first..last name the live spans with the smallest and largest tickets,
+\* tickets increase in allocation order, and the ghost order is the live
+\* spans sorted by ticket.
+TicketOrder ==
     /\ { order[i] : i \in 1..Len(order) } = live
+    /\ first = IF order = <<>> THEN NONE ELSE order[1]
     /\ last = IF order = <<>> THEN NONE ELSE order[Len(order)]
-    /\ \A i \in 1..Len(order) :
-           prev[order[i]] = IF i = 1 THEN NONE ELSE order[i - 1]
+    /\ \A i \in 1..Len(order) : ticket[order[i]] > 0
+    /\ \A i, j \in 1..Len(order) : i < j => ticket[order[i]] < ticket[order[j]]
 
 \* An empty ring is all zero (the reset in rn_span_unlink).
 EmptyIsZero ==

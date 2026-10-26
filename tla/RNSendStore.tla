@@ -37,12 +37,13 @@ ASSUME GuardDoubleFree \in BOOLEAN /\ AllOrNone \in BOOLEAN
 
 ChunkIds == 1..Chunks
 
-VARIABLES free,     \* the free list, head first: a sequence of chunk ids
+VARIABLES free,     \* the free chain, head first: a sequence of chunk ids
           held,     \* held[s]: the chain s holds, first chunk first; <<>> when none
           stale,    \* stale[s]: the chain s last freed, kept for a second free
+          gen,      \* gen[i]: chunk i's generation tag (1 once a take has tagged it)
           refusal   \* the last refusal: [want |-> k, had |-> Len(free) then]; want = 0 before any
 
-vars == <<free, held, stale, refusal>>
+vars == <<free, held, stale, gen, refusal>>
 
 Range(seq) == { seq[i] : i \in DOMAIN seq }
 
@@ -54,6 +55,7 @@ Init ==
     /\ free = [ i \in 1..Chunks |-> i ]
     /\ held = [ s \in Senders |-> <<>> ]
     /\ stale = [ s \in Senders |-> <<>> ]
+    /\ gen = [ i \in ChunkIds |-> 0 ]
     /\ refusal = [ want |-> 0, had |-> 0 ]
 
 \* rn_send_store_alloc: pop k chunks, chained, or refuse whole
@@ -63,14 +65,15 @@ Alloc(s, k) ==
        THEN /\ held' = [ held EXCEPT ![s] = SubSeq(free, 1, k) ]
             /\ free' = SubSeq(free, k + 1, Len(free))
             /\ stale' = [ stale EXCEPT ![s] = <<>> ]
+            /\ gen' = [ i \in ChunkIds |-> IF i \in Range(SubSeq(free, 1, k)) THEN 1 ELSE gen[i] ]
             /\ UNCHANGED refusal
        ELSE /\ refusal' = [ want |-> k, had |-> Len(free) ]
             /\ IF AllOrNone
-               THEN UNCHANGED <<free, held, stale>>
+               THEN UNCHANGED <<free, held, stale, gen>>
                \* the reversed rule: take what is there, then report the refusal;
                \* the chunks taken belong to no one
                ELSE /\ free' = <<>>
-                    /\ UNCHANGED <<held, stale>>
+                    /\ UNCHANGED <<held, stale, gen>>
 
 \* rn_send_store_free_checked, through the live handle: push the chain back
 Free(s) ==
@@ -78,7 +81,7 @@ Free(s) ==
     /\ free' = Reverse(held[s]) \o free
     /\ held' = [ held EXCEPT ![s] = <<>> ]
     /\ stale' = [ stale EXCEPT ![s] = held[s] ]
-    /\ UNCHANGED refusal
+    /\ UNCHANGED <<gen, refusal>>
 
 \* the same handle freed again, before any of its chunks is reallocated
 FreeAgain(s) ==
@@ -90,7 +93,7 @@ FreeAgain(s) ==
        ELSE /\ free' = Reverse(stale[s]) \o free
             /\ UNCHANGED held
     /\ stale' = [ stale EXCEPT ![s] = <<>> ]
-    /\ UNCHANGED refusal
+    /\ UNCHANGED <<gen, refusal>>
 
 Next ==
     \/ \E s \in Senders, k \in 1..MaxBlock : Alloc(s, k)
@@ -105,6 +108,7 @@ TypeOK ==
     /\ free \in Seq(ChunkIds)
     /\ held \in [ Senders -> Seq(ChunkIds) ]
     /\ stale \in [ Senders -> Seq(ChunkIds) ]
+    /\ gen \in [ ChunkIds -> 0..1 ]  \* the tag's presence (the code's 10-bit tag, bounded for the model)
     /\ refusal \in [ want : 0..MaxBlock, had : 0..Chunks ]
 
 \* no chunk is in two places: never twice on the free list, never both free
@@ -126,5 +130,10 @@ RefuseOnlyWhenFull ==
 \* a held chain is never longer than a send may take
 ChainsBounded ==
     \A s \in Senders : Len(held[s]) <= MaxBlock
+
+
+\* a held chunk carries a generation its take bumped: never zero
+HeldGenerationPositive ==
+    \A s \in Senders : \A i \in Range(held[s]) : gen[i] > 0
 
 =============================================================================

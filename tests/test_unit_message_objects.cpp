@@ -1641,9 +1641,9 @@ static bool mo_region_bookkeeping_equal( const rn_region_t * a, const rn_region_
         return false;
     if ( a->exhausted != b->exhausted || a->exhausted_reason != b->exhausted_reason || a->send_room_armed != b->send_room_armed )
         return false;
-    if ( a->descriptors_free_head != b->descriptors_free_head || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
+    if ( a->descriptors_free_top != b->descriptors_free_top || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
         return false;
-    if ( a->span_head != b->span_head || a->span_tail != b->span_tail || a->span_first != b->span_first || a->span_last != b->span_last )
+    if ( a->span_head != b->span_head || a->span_tail != b->span_tail || a->span_first != b->span_first || a->span_last != b->span_last || a->span_ticket_next != b->span_ticket_next )
         return false;
     if ( memcmp( a->channel_send, b->channel_send, sizeof(rn_channel_send_t) * a->num_channels ) != 0 ) return false;
     if ( memcmp( a->channel_receive, b->channel_receive, sizeof(rn_channel_receive_t) * a->num_channels ) != 0 ) return false;
