@@ -24,6 +24,37 @@ The tool has two modes:
   canonical contract; the runtime refuses a manifest that changes any of them.
   Process survival alone is not a passing oracle.
 
+Robustness mode also requires
+`--server-transport-profile xdp|gso|io_uring|msgx|iocp|rio`. This is the
+operator's declaration of the controlled server build, not runtime transport
+autodetection. `portable` is excluded from this physical campaign and
+`loopback` is an in-process, nonphysical transport. The profile selects one
+named server counter from the manifest for each canonical operation; it does
+not create a client/server transport matrix and it does not prove that the
+server observed the packet or changed that counter.
+
+The manifest's seven-by-six oracle mapping is:
+
+| Operation | `xdp` | `gso` | `io_uring` | `msgx` | `iocp` | `rio` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `truncate` | `XDP_KERNEL_DROPPED_TOO_SMALL` | `PREFILTER_TOO_SHORT` | `PREFILTER_TOO_SHORT` | `PREFILTER_TOO_SHORT` | `PREFILTER_TOO_SHORT` | `PREFILTER_TOO_SHORT` |
+| `oversize` | `XDP_KERNEL_DROPPED_TOO_LARGE` | `PREFILTER_TOO_LARGE` | `PREFILTER_TOO_LARGE` | `PREFILTER_TOO_LARGE` | `PREFILTER_TOO_LARGE` | `PREFILTER_TOO_LARGE` |
+| `wrong_epoch` | `XDP_KERNEL_DROPPED_WRONG_EPOCH` | `PREFILTER_WRONG_EPOCH` | `PREFILTER_WRONG_EPOCH` | `PREFILTER_WRONG_EPOCH` | `PREFILTER_WRONG_EPOCH` | `PREFILTER_WRONG_EPOCH` |
+| `wrong_filter` | `XDP_KERNEL_DROPPED_WRONG_FILTER` | `PREFILTER_WRONG_VALUE` | `PREFILTER_WRONG_VALUE` | `PREFILTER_WRONG_VALUE` | `PREFILTER_WRONG_VALUE` | `PREFILTER_WRONG_VALUE` |
+| `reserved_type` | `XDP_KERNEL_DROPPED_INVALID_TYPE` | `RESERVED_TYPE` | `RESERVED_TYPE` | `RESERVED_TYPE` | `RESERVED_TYPE` | `RESERVED_TYPE` |
+| `replay` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` |
+| `bad_tag` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` |
+
+XDP owns the first five filter/type stages before the shared server protocol.
+The other physical server transports publish the generic named counters.
+Their native receive paths may reject a short or oversize datagram before the
+shared protocol; `server-ingress-size-filter` is therefore the published
+counter-family stage, not a claim that one shared function executed. Wrong
+epoch/value and reserved-type packets reach the shared server checks.
+Replay and authenticated-open refusals remain shared payload-stage oracles for
+all six profiles. The case order, mutation bytes, accepted/fresh preconditions,
+expected deltas, and recovery traffic are unchanged by profile selection.
+
 Robustness mode is IPv4-only. Its exact 1453-byte RocketNet mutation is one
 byte over the production receive ceiling but still forms a 1495-byte Ethernet
 frame inside an IPv4 MTU of 1500. A narrow tool-local framing path exists only
@@ -89,6 +120,11 @@ time zero and the last ordinal is strictly capped by the planned count.
 
 No implementation test for this tool should pass `--execute`. Physical NIC
 traffic belongs only in the separately admitted qualification card.
+
+For a robustness dry-run, change the mode to `robustness` and declare the
+controlled server build, for example `--server-transport-profile gso`. The
+plan and each `CASE` row repeat the declared profile and selected oracle, while
+also reporting `runtime_autodetect=false` and `counter_observed=false`.
 
 ## Ownership and accounting
 
