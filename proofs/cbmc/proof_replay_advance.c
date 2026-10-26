@@ -11,16 +11,18 @@
       a smaller delta clears exactly the vacated ring bits (the residues of
       highest_opened+1 .. sequence-1) and sets the new sequence bit.
 
-    The near harness is the smaller-delta claim. The default make target
-    proves deltas 1, 2, and 3 only (delta strictly less than 4). Bound 4096
-    is not proved. The far harness is the whole-window claim, proved: a delta
-    of at least 4096 clears every word, then sets the new sequence bit.
+    The near harness is the smaller-delta claim. The quick default target
+    admits deltas 1..3 and labels that reduced bound. The explicit
+    replay-near-4096 target admits every delta 1..4095 (strictly less than the
+    4096-bit window). The production range-clear implementation visits at
+    most 64 words, so unwind 65 covers the full declared near range. The far
+    harness is the whole-window claim: a delta of at least 4096 clears every
+    word, then sets the new sequence bit.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
-    Unwinding: the near clear loop runs at most delta-1 times. The default
-    near proof uses unwind 65 so all 64 symbolic words initialize. Bound
-    4096 unwinds 4096 and is not proved. The near harness checks one
+    Unwinding: the production near clear loop visits at most 64 words. Unwind
+    65 also initializes all 64 symbolic words. The near harness checks one
     arbitrary word, which quantifies all 64 words without a reference loop.
     The far harness has no data-dependent loop; its check runs 64 times
     (unwind 65).

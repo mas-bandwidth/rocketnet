@@ -1,0 +1,12 @@
+In file included from <command-line>:
+./proofs/cbmc/esbmc_shim.h:40:74: warning: ‘annotate’ attribute directive ignored [-Wattributes]
+   40 | __attribute__((annotate("__ESBMC_inf_size"))) extern bool __ESBMC_alloc[1];
+      |                                                                          ^
+./proofs/cbmc/esbmc_shim.h:41:79: warning: ‘annotate’ attribute directive ignored [-Wattributes]
+   41 | __attribute__((annotate("__ESBMC_inf_size"))) extern bool __ESBMC_is_dynamic[1];
+      |                                                                               ^
+./proofs/cbmc/esbmc_shim.h:42:81: warning: ‘annotate’ attribute directive ignored [-Wattributes]
+   42 | __attribute__((annotate("__ESBMC_inf_size"))) extern size_t __ESBMC_alloc_size[1];
+      |                                                                                 ^
+ACK_SOURCE_BINDING_SYNTAX_OK
+MAKE_DRY_OK
