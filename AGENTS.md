@@ -2,6 +2,15 @@
 
 This guide is the technical reference for an AI coding agent integrating RocketNet into a C or C++ game client and dedicated server. Every function, struct, macro, enum, and configuration variable named here matches [sdk/rocketnet.h](sdk/rocketnet.h).
 
+For the complete documentation path across this repository:
+
+- [README.md](README.md) — entry point, minimal lifecycle skeleton, and documentation map
+- [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — step-by-step walkthrough backed by runnable examples ([hello](docs/examples/hello.md), [client_server](docs/examples/client_server.md), [game_loop](docs/examples/game_loop.md), [transports](docs/examples/transports.md))
+- [USAGE.md](USAGE.md) — configuration, memory sizing, receive buffer sizing, the five-step frame loop, sending/receiving, backpressure, receipts, stats, and connection lifecycle
+- [TRANSPORTS.md](TRANSPORTS.md) — transport selection (`auto`, pin, candidate list), platform availability, and privilege requirements
+- [docs/SESSION.md](docs/SESSION.md) and [KEYS.md](KEYS.md) — connect tokens, keys, session isolation, and reconnect rules
+- [sdk/rocketnet.h](sdk/rocketnet.h) — authoritative C header for every identifier and contract
+
 - [Before production](#before-production)
 - [What RocketNet is](#what-rocketnet-is)
 - [Building and linking on Linux, Windows and macOS](#building-and-linking-on-linux-windows-and-macos)
@@ -23,8 +32,10 @@ A default build is a development build (`ROCKETNET_DEV` is 1). Before you deploy
 
 1. **Build with `ROCKETNET_DEV=0`.** CMake: `-DROCKETNET_DEV=OFF` (or `make ROCKETNET_DEV=OFF`); compiling the sources yourself: `#define ROCKETNET_DEV 0` (`-DROCKETNET_DEV=0`). Link `RocketNet::rocketnet` (or the `rocketnet` target) from that build, never the development library target. See [BUILDING.md, "Production builds"](BUILDING.md#production-builds).
 2. **Run your own backend that mints connect tokens.** Write it in Go, C# or any language, following `examples/backend/go` and `examples/backend/csharp`: it holds the backend secret key, signs each token, and hands the client the token string. Any implementation works if it writes the token format in [standard/TRANSPORT.md, t6 Connect token](standard/TRANSPORT.md#t6-connect-token). Production clients never mint their own tokens.
-3. **Never ship the development values.** Development connect tokens, the published development keys and the published test packet filter are for development only, and a `ROCKETNET_DEV=0` build refuses them: the test packet filter at client and server create (`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`), the development keys at server start (`ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`), and a token sealed to the development server key at client connect (`ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION`). Set your title's own `packet_filter` and backend key.
+3. **Never ship the development values.** Development connect tokens, the published development keys and the published test packet filter are for development only, and a `ROCKETNET_DEV=0` build refuses them: the test packet filter at client and server create (`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`), the development keys at server start (`ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`), and a token sealed to the development server key at client connect (`ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION`). Set your title's own 4-byte `packet_filter` (`ROCKETNET_PACKET_FILTER_BYTES`), nonzero `protocol_id`, and 32-byte backend public key (`ROCKETNET_BACKEND_PUBLIC_KEY_BYTES`).
 4. **Set keys and security settings from environment variables at deploy time, never in code.** Every config field has its variable (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`, `ROCKETNET_SERVER_PACKET_FILTER`, `ROCKETNET_CLIENT_PACKET_FILTER` and the rest), and the environment overrides the config struct.
+5. **Choose a supported production transport configuration and handle production status codes.** Leave `transport` at `"auto"` (`NULL`) or supply an explicit candidate list (`"xdp,gso,io_uring,portable"` on Linux, `"msgx,portable"` on macOS, `"iocp,rio,portable"` on Windows); `"portable"` remains supported on both client and server in production builds. Check and handle every negative `enum rocketnet_status_t` from `rocketnet_init`, `rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_connect`, and `rocketnet_server_start`.
+6. **Qualify server scale within the demonstrated 1000-player bound.** RocketNet's demonstrated server configuration covers up to `max_clients = 1000` (with the existing 4096-byte XDP frame/ring configuration) under its stated workload, topology, and deployment conditions. Above 1000 clients, applications must research, stabilize, and qualify their own configuration.
 
 ---
 
@@ -44,7 +55,7 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
 - **Version macros:** `ROCKETNET_VERSION` is one comparable integer, `ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH` (`10000` for 1.0.0, and for v1.0.0-preview-2, since the prerelease is not in the integer; a development build uses `255` for each part). The text form is `ROCKETNET_VERSION_FULL` (`"v1.0.0-preview-2"` for this release, or `"dev"` in a development build). `rocketnet_version()` returns the integer the library was built with; compare it with `ROCKETNET_VERSION` to catch a header and a shared library from different releases.
-- **Up to 1000 clients per server (`ROCKETNET_MAX_CLIENTS`):** Clients are addressed by an `int` slot index `0 .. max_clients - 1`; `rocketnet_client_index` returns the client's own index while connected and `-1` otherwise, and only `rocketnet_server_start_message` takes a `uint64_t` destination id (a client index today, a flow id with `ROCKETNET_FLOW_ID_BIT` set later). Create allocates each client and server as one block through the allocator (`rocketnet_client_required_memory` and `rocketnet_server_required_memory` give its size, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`). Connect and start then allocate the transport through the same allocator, before any traffic: sockets, worker threads, I/O rings and buffers, and on the server its per-client protocol tables. All allocation happens up front at create, connect and start; update, receive, start/finish/abort message and send packets never allocate.
+- **Demonstrated 1000-client server configuration (`ROCKETNET_MAX_CLIENTS`):** The default and demonstrated server configuration supports up to `1000` clients (`0 .. max_clients - 1`) under its stated workload, topology, and deployment conditions (preserving the existing 4096-byte XDP frame/ring configuration). Above 1000 clients, users must research, stabilize, and qualify their own configuration. Clients are addressed by an `int` slot index `0 .. max_clients - 1`; `rocketnet_client_index` returns the client's own index while connected and `-1` otherwise, and only `rocketnet_server_start_message` takes a `uint64_t` destination id (a client index today, a flow id with `ROCKETNET_FLOW_ID_BIT` set later). Create allocates each client and server as one block through the allocator (`rocketnet_client_required_memory` and `rocketnet_server_required_memory` give the lifecycle peak, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`). Connect and start then allocate the transport through the same allocator, before any traffic: sockets, worker threads, I/O rings and buffers, and on the server its per-client protocol tables. All allocation happens up front at create, connect and start; update, receive, start/finish/abort message and send packets never allocate.
 - **Up to 32 channels (`ROCKETNET_MAX_CHANNELS`) and 8 delivery modes:** Every message is sent on a channel `0 .. num_channels - 1` with one of eight reliability modes.
 
 ---
@@ -126,9 +137,11 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 1 — Update:** Call `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` first to pump the transport, process incoming packets and ACKs, and advance connection state.
    - **Step 2 — Receive:** Drain the one receive queue with `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`. Each call returns one `rocketnet_message_batch_t`; keep calling until it returns `NULL`. Process each entry's client index, channel, reliability, byte count and data pointer before the next receive or update on that endpoint. Draining is required: a message still in the queue at the next update is API misuse, which asserts in a debug build, counts `MESSAGE_NOT_RECEIVED`, and ends that connection (`ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED` for the server's slot, `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED` for the client). Calling receive once per frame is not enough: one update can deliver more than one batch. Read ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
-   - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, write the message bytes directly into the returned pointer, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`). To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
+   - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, check that the returned pointer is non-`NULL`, write the message bytes directly into the returned pointer inside that branch, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`) inside the same non-`NULL` branch:
+     ```c uint8_t * out = rocketnet_client_start_message( client, channel, reliability, max_bytes ); if ( out ) { /* write 1 .. max_bytes into out */ uint32_t serial = rocketnet_client_finish_message( client, bytes_written ); (void) serial; } ```
+     Calling `finish_message` without a successful outstanding `start_message` is an error and returns `0`. Optional preflight with `rocketnet_client_can_send_message` / `rocketnet_server_can_send_message` answers whether `start_message` would be granted room now without ending the connection on `MESSAGE_MEMORY_EXHAUSTED`, while `start_message` remains the authoritative reservation result (always keep the `if ( out )` check). What the application does when `can_send_message` returns `false`—skipping, deferring, dropping, or coalescing a send—is application policy, not library behavior. To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and run a guarded `start_message` / `finish_message` for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
-4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object. Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
+4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` (stepping `rocketnet_client_update` on step-driven clients) and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object (and before reconnecting a client, wait until `rocketnet_client_disconnected` is true so the new connection starts with fresh session keys, replay window, sequence numbers, and message queues). Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
 
 ### Compilable loopback integration example
 
@@ -213,23 +226,33 @@ int main( void )
         if ( reply_index >= 0 )
         {
             uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-            if ( !out )
+            if ( out )
+            {
+                uint8_t * p = out;
+                *p++ = 'p'; *p++ = 'o'; *p++ = 'n'; *p++ = 'g';
+                if ( !rocketnet_server_finish_message( server, (int) ( p - out ) ) )
+                    goto cleanup;
+            }
+            else
+            {
                 goto cleanup;
-            uint8_t * p = out;
-            *p++ = 'p'; *p++ = 'o'; *p++ = 'n'; *p++ = 'g';
-            if ( !rocketnet_server_finish_message( server, (int) ( p - out ) ) )
-                goto cleanup;
+            }
         }
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-            if ( !out )
+            if ( out )
+            {
+                uint8_t * p = out;
+                *p++ = 'p'; *p++ = 'i'; *p++ = 'n'; *p++ = 'g';
+                if ( !rocketnet_client_finish_message( client, (int) ( p - out ) ) )
+                    goto cleanup;
+                client_sent = 1;
+            }
+            else
+            {
                 goto cleanup;
-            uint8_t * p = out;
-            *p++ = 'p'; *p++ = 'i'; *p++ = 'n'; *p++ = 'g';
-            if ( !rocketnet_client_finish_message( client, (int) ( p - out ) ) )
-                goto cleanup;
-            client_sent = 1;
+            }
         }
         rocketnet_client_send_packets( client );
         rocketnet_server_send_packets( server );
@@ -250,6 +273,8 @@ cleanup:
         {
             if ( rocketnet_time() >= deadline )
                 return 1; /* Fail without freeing storage still owned by I/O. */
+            if ( client && !rocketnet_client_disconnected( client ) )
+                rocketnet_client_update( client, 1000.0 );
             rocketnet_sleep( 0.001 );
         }
     }
@@ -268,14 +293,15 @@ cleanup:
 
 Both `rocketnet_client_config_t` and `rocketnet_server_config_t` expose a `transport` field (overridable in the environment via `ROCKETNET_CLIENT_TRANSPORT` and `ROCKETNET_SERVER_TRANSPORT`).
 
-- **Ordered candidate list:** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,io_uring"`). The first candidate that initializes on the host wins. A known name that this build does not offer for the endpoint on this platform (`gso` on a client or on macOS, for example) is skipped with a log line. A list with at least one name left after skipping is a strict pin: only those transports are tried, and connect or start fails loudly if every one refuses. A list whose every name is skipped falls back to the endpoint's `"auto"` order with a warning, so one fleet-wide list deploys unchanged to mixed machines. An unknown name refuses the create. The portable server is available in both builds; production ranks it after native server transports.
-- **`"auto"` (the default when `transport` is `NULL` or `""`):** Selects the platform's recommended preference order:
-  - **Linux server:** both builds try `"xdp"`, `"gso"`, `"io_uring"`, then `"portable"`.
-  - **macOS server:** both builds try `"msgx"`, then `"portable"`. The macOS client tries `"msgx"`, `"portable"` in either build.
-  - **Windows server:** production tries `"iocp"`, `"rio"`, then `"portable"`; development tries `"portable"` first.
-  - **Linux and Windows client:** uses `"portable"`.
-- **No-root high-performance Linux server path:** When running without root or `CAP_BPF` / `CAP_NET_ADMIN`, `"xdp"` is skipped and `"gso"` (UDP `UDP_SEGMENT` / `UDP_GRO` coalescing with `sendmmsg` / `recvmmsg` worker threads) or `"io_uring"` (asynchronous batched ring I/O) provides high-throughput multi-queue UDP without kernel privileges.
-- **AF_XDP (`"xdp"`):** Kernel-bypass eBPF/AF_XDP server dataplane on Linux when root (or `CAP_BPF` and `CAP_NET_ADMIN`) and NIC support are present.
+- **Ordered candidate list ([TRANSPORTS.md](TRANSPORTS.md)):** `transport` accepts a comma-separated list of transport names tried left-to-right at client connect and server start (for example, `"xdp,gso,io_uring,portable"`). The first candidate that initializes on the host wins. A known name that this build does not offer for the endpoint on this platform (`xdp` or `io_uring` on a client, or `gso` on macOS, for example) is skipped with a log line. A list with at least one name left after skipping is a strict pin: only those transports are tried, and connect or start fails loudly if every one refuses. A list whose every name is skipped falls back to the endpoint's `"auto"` order with a warning, so one fleet-wide list deploys unchanged to mixed machines. An unknown name refuses the create with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`. The portable server is available in both builds; production ranks it after native server transports.
+- **`"auto"` (the default when `transport` is `NULL` or `""`):** Selects the platform's recommended preference order ([TRANSPORTS.md](TRANSPORTS.md)):
+  - **Linux server:** both builds try `"xdp"` (rank 10), `"gso"` (rank 20), `"io_uring"` (rank 25, when built with `liburing`), then `"portable"` (rank 30 in `ROCKETNET_DEV=1`, rank 50 in `ROCKETNET_DEV=0`).
+  - **Linux client:** tries `"gso"` (rank 10), then `"portable"` (rank 30).
+  - **macOS server and client:** tries `"msgx"` (rank 10), then `"portable"` (rank 30 on client; rank 30 in `ROCKETNET_DEV=1` / rank 50 in `ROCKETNET_DEV=0` on server).
+  - **Windows server:** production (`ROCKETNET_DEV=0`) tries `"iocp"` (rank 40), `"rio"` (rank 45), then `"portable"` (rank 50); development (`ROCKETNET_DEV=1`) tries `"portable"` (rank 30), `"iocp"` (rank 40), then `"rio"` (rank 45).
+  - **Windows client:** tries `"iocp"` (rank 10), then `"portable"` (rank 30).
+- **No-root high-performance Linux server path:** When the process does not run with effective UID 0, `"xdp"` is skipped and `"gso"` (UDP `UDP_SEGMENT` / `UDP_GRO` coalescing with `sendmmsg` / `recvmmsg` worker threads) or `"io_uring"` (asynchronous batched ring I/O) provides high-throughput multi-queue UDP without kernel privileges.
+- **AF_XDP (`"xdp"`):** Kernel-bypass eBPF/AF_XDP server dataplane on Linux (preserving the existing 4096-byte UMEM frame and ring configuration) requires effective UID 0, permission to raise `RLIMIT_MEMLOCK`, a concrete interface IP, a non-zero port, and NIC support.
 - **In-process `"loopback"`:** Carries packets in memory with no sockets and is pin-only (`"auto"` never selects `"loopback"`).
 - **Inspecting the active transport:** Call `rocketnet_client_transport_name(client)` and `rocketnet_server_transport_name(server)` after connect or start to read the winning transport name.
 
@@ -388,7 +414,7 @@ failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 RocketNet refuses invalid configuration rather than clamping it. Check returned status codes, pointers and serials. Only the misuse cases listed in `sdk/rocketnet.h` increment `api_misuses`; a refusal is not automatically misuse.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
-  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-30`, so `status < 0` means the call failed.
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-31`, so `status < 0` means the call failed.
   - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init` and `rocketnet_term`.
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration refusals, written to the status out-parameter of `rocketnet_client_create` and `rocketnet_server_create` (create is the one check of a config) or returned by the call that refuses.
   - `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` (`-27`): a config whose `config_bytes` is `0` or too small, one that skipped `rocketnet_client_default_config` or `rocketnet_server_default_config`.
@@ -432,6 +458,16 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
 - **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, call `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`, or set the environment variables `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` / `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` (`0 .. 100`), `ROCKETNET_DEV_CLIENT_LATENCY_MS` / `ROCKETNET_DEV_SERVER_LATENCY_MS`, `ROCKETNET_DEV_CLIENT_JITTER_MS` / `ROCKETNET_DEV_SERVER_JITTER_MS` and `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` / `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` (`0 .. 100`), to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 
+### Reviewing implementation changes
+
+- Treat [sdk/rocketnet.h](sdk/rocketnet.h), [standard/TRANSPORT.md](standard/TRANSPORT.md), [docs/SESSION.md](docs/SESSION.md), [SECURITY.md](SECURITY.md), and [docs/ABI-EVOLUTION.md](docs/ABI-EVOLUTION.md) as the authorities for their respective contracts; link to them instead of copying API or wire details. Inspect the real field widths and container ownership. Bounded registries and queues must not own linked or index-linked lists ([docs/SEQUENCE-BUFFERS.md](docs/SEQUENCE-BUFFERS.md)).
+- For sequence, window, ring, or allocator changes ([docs/SEQUENCE-BUFFERS.md](docs/SEQUENCE-BUFFERS.md)), check widths at each boundary: internal sequence-buffer identities and validation tags are `uint64_t`; packet sequences are 32-bit on the wire and reconstructed to 64-bit identities; message numbers are 24-bit on the wire and reconstructed to 64-bit identities; channel sequencing and ordering state uses `uint32_t` fields masked to the 24-bit wire range; and fragment `payload_id` values are 32-bit in the wire header and reassembly state. Exercise wraparound, sparse occupancy, late and duplicate arrivals, and live-slot aliasing. Keep sequence identity separate from physical storage identity; metadata rings do not by themselves preserve arbitrary payload capacity, stable pointers, or payload lifetime, and a fixed metadata ring does not justify lost capacity or a copy fallback.
+- For lifecycle or slot reuse ([docs/CONNECTION-RESET.md](docs/CONNECTION-RESET.md)), prove that prior packets, messages, callbacks, statistics, and secrets cannot affect a reconnect or reused server slot. Observe asynchronous shutdown before reuse or destroy; distinguish metadata reset (without clearing whole payload capacities) from required secret erasure (`sodium_memzero`).
+- Bound caller-thread work for mass disconnects and other per-update cleanup; cover dropped frames, bursts, and send/receive overlap without imposing real-time arrival assumptions in functional correctness. Measure caller time separately from worker time, verify intended overlap of expensive worker work with the application frame, and do not infer a latency guarantee from functional tests.
+- Keep host-shim and loopback unit evidence distinct from real Linux XDP transport evidence ([docs/LIVE-XDP.md](docs/LIVE-XDP.md)). The approved review policy exempts the portable server from the 1000-client performance qualification; this is a policy boundary, not a measured performance result or a portable capacity claim. Preserve the existing 4096-byte XDP frame/ring configuration and the demonstrated 1000-client server limit under its stated workload and topology, and keep the separate 1000-client and 10-Gbit/s real-server qualification gates distinct ([docs/LOAD.md](docs/LOAD.md), [docs/LOAD_SPLIT.md](docs/LOAD_SPLIT.md), [docs/LAN-PROOF.md](docs/LAN-PROOF.md), [docs/XDP-PACKET-BLASTER.md](docs/XDP-PACKET-BLASTER.md)); no above-1000-player performance promise follows.
+- Keep internal test controls behind literal `#if ROCKETNET_DEV` guards and out of `sdk/rocketnet.h`, and exclude only dependent cases in `ROCKETNET_DEV=0` while retaining genuine production-linked test coverage. Review crypto nonce uniqueness, key separation by role, fresh key/token handling, random-source failure paths, and secret erasure against the security and session contracts.
+- Keep public headers self-contained with minimal includes. Preserve exported C ABI and layout checks; where wire portability applies, verify byte order with independent vectors or implementations.
+
 ---
 
 ## Common mistakes
@@ -454,10 +490,10 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 RocketNet has no copying send call: the caller never hands it a finished buffer to copy. Its only per-connection send path is the start/finish pair:
 
 - `rocketnet_client_start_message(client, channel, reliability, bytes)` and `rocketnet_server_start_message(server, destination_id, channel, reliability, bytes)` reserve room for up to `bytes` bytes and return a `uint8_t *` the caller writes the message at, once, in place.
-- The caller serializes or writes the message into that pointer in place.
-- `rocketnet_client_finish_message(client, bytes_written)` and `rocketnet_server_finish_message( server, bytes_written )` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused).
+- The caller checks `if ( out )` first, serializes or writes the message into that pointer in place inside the non-`NULL` branch, and calls `finish` (or `abort`) only inside that branch.
+- `rocketnet_client_finish_message(client, bytes_written)` and `rocketnet_server_finish_message( server, bytes_written )` commit `bytes_written` bytes (`1 <= bytes_written <= bytes`) and return the message's nonzero `uint32_t` receipt serial (`0` if refused). Calling `finish` without a successful outstanding `start` is an error and returns `0`.
 - `rocketnet_client_abort_message(client)` and `rocketnet_server_abort_message( server )` cancel an open reservation without sending and give its room back.
-- `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )` and `rocketnet_server_can_send_message( server, client_index, channel, reliability, max_bytes )` answer whether that start would be given room now. They change nothing and run in constant time. A start after a `false` still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`.
+- `rocketnet_client_can_send_message( client, channel, reliability, max_bytes )` and `rocketnet_server_can_send_message( server, client_index, channel, reliability, max_bytes )` provide an optional preflight check answering whether that start would be given room now (`start` remains the authoritative reservation result and must still be checked for non-`NULL`). They change nothing and run in constant time. A start after a `false` still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`; what the application chooses to do on `false` (skip, defer, drop, or coalesce) is application policy rather than library behavior.
 - There is no public broadcast call: to send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and start and finish a message for each.
 
 Where the returned pointer lies depends on the message:
@@ -473,7 +509,7 @@ This API is an intentional design choice of RocketNet's author:
 2. **Room for the headers is reserved in front of it:** for an in-place message, `start` asks the transport for a packet with the message header's room in front of the caller's bytes and one byte after them for the form byte; the transport's own headers are already in front of that. `finish` writes the header and form byte around the bytes the caller wrote, so nothing is moved.
 3. **Start's declared maximum size lets the library choose the right buffer:** for an unreliable message, `bytes` sets the packet size requested from the transport (`header + bytes + 1`), so a message declared to fit one packet gets a real packet buffer. For a message on the region path, `bytes` picks the region storage: a fixed send-store chunk (`128`, `512` or `1152` bytes) up to `1152` bytes, or a contiguous span in the connection's send spans above that (up to `max_message_bytes`), which is fragmented into packets without the caller ever building the pieces.
 
-In practice: no per-message copy or allocation for unreliable traffic that takes the in-place path, no per-message heap allocation for any traffic (all room comes from memory sized at create), lower CPU cost per client at `1000`+ connected clients, and predictable per-connection memory (`rocketnet_client_required_memory` and `rocketnet_server_required_memory`).
+In practice: no per-message copy or allocation for unreliable traffic that takes the in-place path, no per-message heap allocation for any traffic (all room comes from memory sized at create), lower CPU cost per client within the demonstrated configurations of up to `1000` connected clients, and predictable per-connection memory (`rocketnet_client_required_memory` and `rocketnet_server_required_memory`).
 
 ### Using `start`, `finish`, and `abort` correctly
 

@@ -428,18 +428,6 @@ static void test_reliable_sequenced_drain_refusal_counts_stale()
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_drain_refusal_counts_stale );
 
-static void test_rnchannel_reliable_sequenced_witness_replays()
-{
-    // BrokenSequencedBackwards and BrokenHoldAllSequenced are rejected for
-    // numbered code 4 as for code 1; the ordered drain resets the watermark.
-    test_stale_acked_then_discarded();
-    test_stale_transport_ack_retires_resend_after_discard();
-    test_newest_delivered_under_loss_and_reorder();
-    test_shares_the_watermark_with_code_1();
-}
-
-REGISTER_UNIT_TEST( test_rnchannel_reliable_sequenced_witness_replays );
-
 static uint64_t rs_allocations;
 
 static void * rs_counted_malloc( void *, size_t bytes )

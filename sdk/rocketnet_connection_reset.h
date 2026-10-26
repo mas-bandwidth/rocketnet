@@ -45,7 +45,7 @@ struct rn_message_object_t;
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \
     X( KEEP, context ) X( KEEP, max_clients ) X( KEEP, num_connected ) X( KEEP, hash_key ) \
-    X( KEEP, bucket_head ) X( KEEP, next ) X( KEEP, num_buckets ) X( KEEP, free_stack ) \
+    X( KEEP, index_table ) X( KEEP, slot_generation ) X( KEEP, num_buckets ) X( KEEP, free_stack ) \
     X( KEEP, free_stack_count ) X( KEEP, client_id ) X( KEEP, connected ) \
     X( KEEP, mapping_index ) X( KEEP, confirmed ) X( KEEP, user_data )
 
@@ -96,7 +96,7 @@ struct rn_message_object_t;
     X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
-    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
     X( RESET, held ) X( RESET, state )
 
 /*

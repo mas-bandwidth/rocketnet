@@ -38,6 +38,8 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
 option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
+option(ROCKETNET_BUILD_SHARED "Build the shared libraries (rocketnet_shared and rocketnet_shared_dev)" ON)
+option(ROCKETNET_BUILD_DEV_LIBRARIES "Build the build-tree development libraries (rocketnet_dev and rocketnet_shared_dev)" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
@@ -51,6 +53,30 @@ option(ROCKETNET_SANITIZE_ADDRESS "Build every target with AddressSanitizer" OFF
 # minting, and refuse the development keys, tokens and test packet filter.
 # rocketnet_dev and rocketnet_shared_dev are ROCKETNET_DEV=1 in every build.
 option(ROCKETNET_DEV "Build rocketnet, rocketnet_shared and the unit test library with ROCKETNET_DEV=1 (OFF for production)" ON)
+if(ROCKETNET_BUILD_TESTS AND NOT ROCKETNET_BUILD_SHARED)
+    message(FATAL_ERROR
+        "ROCKETNET_BUILD_TESTS=ON requires ROCKETNET_BUILD_SHARED=ON "
+        "(functional tests load rocketnet_shared and rocketnet_shared_dev); "
+        "pass -DROCKETNET_BUILD_TESTS=OFF to omit shared libraries")
+endif()
+if(ROCKETNET_BUILD_TESTS AND NOT ROCKETNET_BUILD_DEV_LIBRARIES)
+    message(FATAL_ERROR
+        "ROCKETNET_BUILD_TESTS=ON requires ROCKETNET_BUILD_DEV_LIBRARIES=ON "
+        "(test targets link rocketnet_dev and load rocketnet_shared_dev); "
+        "pass -DROCKETNET_BUILD_TESTS=OFF to omit build-tree development libraries")
+endif()
+if(ROCKETNET_BUILD_EXAMPLES AND NOT ROCKETNET_BUILD_DEV_LIBRARIES)
+    message(FATAL_ERROR
+        "ROCKETNET_BUILD_EXAMPLES=ON requires ROCKETNET_BUILD_DEV_LIBRARIES=ON "
+        "(examples link rocketnet_dev); "
+        "pass -DROCKETNET_BUILD_EXAMPLES=OFF to omit build-tree development libraries")
+endif()
+if(ROCKETNET_BUILD_TOOLS AND NOT ROCKETNET_BUILD_DEV_LIBRARIES)
+    message(FATAL_ERROR
+        "ROCKETNET_BUILD_TOOLS=ON requires ROCKETNET_BUILD_DEV_LIBRARIES=ON "
+        "(tools link rocketnet_dev); "
+        "pass -DROCKETNET_BUILD_TOOLS=OFF to omit build-tree development libraries")
+endif()
 if(ROCKETNET_SANITIZE_ADDRESS)
     if(MSVC)
         add_compile_options(/fsanitize=address /Zi)
@@ -318,16 +344,22 @@ endfunction()
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
 add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
-add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+if(ROCKETNET_BUILD_SHARED)
+    add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+endif()
 # The development library: the same source compiled with ROCKETNET_DEV=1,
 # so the dev flow (examples, functional suite, soak, serialize) keeps the
 # development token minting and accepts the published development keys that the
 # production library refuses. Never installed: it is a build-tree dev aid.
-add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+if(ROCKETNET_BUILD_DEV_LIBRARIES)
+    add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+endif()
 # The development shared library: the same source with ROCKETNET_DEV=1,
 # for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
-add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+if(ROCKETNET_BUILD_SHARED AND ROCKETNET_BUILD_DEV_LIBRARIES)
+    add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+endif()
 # The test hook library: the same source with the unit suite's seams compiled
 # in (the message layer's payload copy count, the ack walk's visit count, the public link simulator's
 # development switch, and the io_uring transport's fake completion source). Only
@@ -337,19 +369,25 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
-    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
-add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
+if(TARGET rocketnet_shared)
+    add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
+endif()
 
 # The send-failure seam drives the send error arms from the functional suite.
 # It is compiled into the development libraries only, never a production
 # archive or a shared library, so no shipped symbol carries it.
-target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
-target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
-if(WIN32 AND ROCKETNET_BUILD_TESTS)
+if(TARGET rocketnet_dev)
+    target_compile_definitions(rocketnet_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+endif()
+if(TARGET rocketnet_shared_dev)
+    target_compile_definitions(rocketnet_shared_dev PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+endif()
+if(WIN32 AND ROCKETNET_BUILD_TESTS AND TARGET rocketnet_dev)
     # The lifecycle fixture alone links this instrumented static development
     # library. Production and shared libraries have no ledger code or cost.
     target_compile_definitions(rocketnet_dev PUBLIC ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
@@ -358,14 +396,18 @@ endif()
 # The soname follows SDK layout/calling compatibility, independently of wire version.
 # the shared library's soname follows the major version
 set(ROCKETNET_ABI_SOVERSION ${PROJECT_VERSION_MAJOR})
-set_target_properties(rocketnet_shared PROPERTIES
-    OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
-    VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
-    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-set_target_properties(rocketnet_shared_dev PROPERTIES
-    OUTPUT_NAME rocketnet_dev ARCHIVE_OUTPUT_NAME rocketnet_dev_import
-    VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
-    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+if(TARGET rocketnet_shared)
+    set_target_properties(rocketnet_shared PROPERTIES
+        OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
+        VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
+        C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+endif()
+if(TARGET rocketnet_shared_dev)
+    set_target_properties(rocketnet_shared_dev PROPERTIES
+        OUTPUT_NAME rocketnet_dev ARCHIVE_OUTPUT_NAME rocketnet_dev_import
+        VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
+        C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+endif()
 
 # The effective archive/import library name a target writes: ARCHIVE_OUTPUT_NAME,
 # else OUTPUT_NAME, else the target name.
@@ -384,8 +426,17 @@ endfunction()
 # A static library and a shared library's import library must not share an
 # archive/import name, or whichever writes last wins on Windows and every
 # target that links the static library pulls the DLL's import stubs instead.
-set(rocketnet_static_targets rocketnet rocketnet_dev)
-set(rocketnet_shared_targets rocketnet_shared rocketnet_shared_dev)
+set(rocketnet_static_targets rocketnet)
+if(TARGET rocketnet_dev)
+    list(APPEND rocketnet_static_targets rocketnet_dev)
+endif()
+set(rocketnet_shared_targets)
+if(TARGET rocketnet_shared)
+    list(APPEND rocketnet_shared_targets rocketnet_shared)
+endif()
+if(TARGET rocketnet_shared_dev)
+    list(APPEND rocketnet_shared_targets rocketnet_shared_dev)
+endif()
 foreach(static_target IN LISTS rocketnet_static_targets)
     foreach(shared_target IN LISTS rocketnet_shared_targets)
         rocketnet_effective_archive_name(${static_target} static_archive_name)
@@ -398,9 +449,13 @@ foreach(static_target IN LISTS rocketnet_static_targets)
     endforeach()
 endforeach()
 
-target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
-target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
-foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${rocketnet_test_hook_targets})
+if(TARGET rocketnet_shared)
+    target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
+endif()
+if(TARGET rocketnet_shared_dev)
+    target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_BUILDING_DLL)
+endif()
+foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets rocketnet_test_hook_targets)
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
@@ -463,7 +518,7 @@ foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev ${r
         endif()
     endif()
 endforeach()
-if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW)
+if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW AND TARGET rocketnet_shared)
     target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
 endif()
 
@@ -537,6 +592,13 @@ if(ROCKETNET_BUILD_TESTS)
     # Every tests/test_unit_<topic>.cpp registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp" )
+    # This file drives the development-only server writer fault. A production
+    # unit build excludes the translation unit itself, rather than compiling
+    # a test that can only mention or observe an absent seam.
+    if(NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_connection_internal_error_counters.cpp")
+    endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
     # an archive member as soon as an earlier object references one of its
@@ -575,6 +637,10 @@ if(ROCKETNET_BUILD_TESTS)
     # directory, so the audit never walks a directory itself.
     file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/functional/*.cpp" )
+    if(NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
+            "tests/test_unit_connection_internal_error_counters.cpp")
+    endif()
     list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
     file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
@@ -618,7 +684,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>
         ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
@@ -771,6 +837,11 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(${test_target} PRIVATE rocketnet)
         rocketnet_warning_floor(${test_target})
     endforeach()
+    # Real platform behavior against the selected DEV mode, without test hooks.
+    add_executable(test_platform_primitives functional/platform_primitives.cpp)
+    target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
+    target_link_libraries(test_platform_primitives PRIVATE rocketnet Threads::Threads)
+    rocketnet_warning_floor(test_platform_primitives)
     add_executable(test_transport tests/test_driver.cpp)
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
@@ -867,6 +938,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/corpus_consistency.cpp
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
+        functional/session_reconnect_isolation.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -910,6 +982,30 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
+    # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
+    # installed, and reaches no shipped SDK/API surface. The required .c path
+    # is compiled as C++ so it can compose the private protocol and AF_XDP
+    # compatibility layers without copying either implementation.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+        set_source_files_properties(tools/xdp_packet_blaster.c PROPERTIES LANGUAGE CXX)
+        add_executable(xdp_packet_blaster tools/xdp_packet_blaster.c)
+        target_compile_features(xdp_packet_blaster PRIVATE cxx_std_11)
+        target_include_directories(xdp_packet_blaster PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_definitions(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        rocketnet_use_sodium(xdp_packet_blaster)
+        rocketnet_warning_floor(xdp_packet_blaster)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_custom_target(test_xdp_packet_blaster
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
+                "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
+            DEPENDS xdp_packet_blaster
+            VERBATIM)
+    endif()
     # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
     # against each candidate's static library (bench/transport_fill.md,
     # bench/lease_cost.py), so neither is a target here.
@@ -971,7 +1067,11 @@ if(ROCKETNET_BUILD_TOOLS)
     endforeach()
 endif()
 
-install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
+set(rocketnet_install_targets rocketnet)
+if(TARGET rocketnet_shared)
+    list(APPEND rocketnet_install_targets rocketnet_shared)
+endif()
+install(TARGETS ${rocketnet_install_targets} EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

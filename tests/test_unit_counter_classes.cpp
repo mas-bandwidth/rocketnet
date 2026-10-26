@@ -632,6 +632,30 @@ static void test_counters_expect_fails_on_an_unnamed_move()
 
 REGISTER_UNIT_TEST( test_counters_expect_fails_on_an_unnamed_move );
 
+// ---------------------------------------------------------------------------
+// 5: the internal-error coverage entries are executable registered cases
+
+// The source audit's identifier inventory is deliberately lexical: it cannot
+// turn a comment, a zero-only check or a counter name in a table into branch
+// coverage. These two entries are accounted as executed witnesses instead.
+// The full unit driver runs every registry member; the named cases themselves
+// drive the real protocol branches and use rocketnet_counters_expect with a
+// positive delta. This case makes their registration part of the counter
+// suite so neither witness can silently disappear from that full run.
+
+static void test_connection_internal_error_counter_witnesses_are_registered()
+{
+#if ROCKETNET_DEV
+    check( rocketnet_unit_file_find( "test_connection_request_internal_error_counter_executes" ) != NULL );
+    check( rocketnet_unit_file_find( "test_connection_response_internal_error_counter_executes" ) != NULL );
+#else
+    check( rocketnet_unit_file_find( "test_connection_request_internal_error_counter_executes" ) == NULL );
+    check( rocketnet_unit_file_find( "test_connection_response_internal_error_counter_executes" ) == NULL );
+#endif // #if ROCKETNET_DEV
+}
+
+REGISTER_UNIT_TEST( test_connection_internal_error_counter_witnesses_are_registered );
+
 // rocketnet_counter_value checks counters once, through rocketnet_api_null_guard:
 // a NULL is a counted misuse that reads 0, and an index outside the table reads 0.
 

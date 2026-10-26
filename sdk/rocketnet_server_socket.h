@@ -43,6 +43,20 @@ void rocketnet_server_socket_forbid_commit();
 
 void rocketnet_server_socket_allow_commit();
 
+// Development-only, non-mutating pre-flight result control. The functional
+// suite uses it to drive the production pin and ladder decisions through
+// both pre-flight answers on a host that cannot provision either way; the
+// control changes only the answer, never an attachment. Not declared in a
+// production build, and absent from its archive.
+
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV && defined(ROCKETNET_XDP) && ROCKETNET_XDP
+
+void rocketnet_server_socket_set_preflight_test_result( int result );   // 0 unavailable, 1 available
+
+void rocketnet_server_socket_clear_preflight_test_result();             // natural
+
+#endif
+
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
 // bounded-token semantics -- '-' allowed before (transport-prefixed names
@@ -68,8 +82,6 @@ uint64_t rocketnet_server_socket_memory_required(int num_queues);
 struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * packet_filter, int num_xdp_queues = 7, int num_os_cpus = 1, const char * second_server_address = NULL, int * create_status = NULL );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
-
-void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_socket );
 
 // The replay high-water writer: the server socket is the only writer of the
 // pinned server_xdp_replay_map. These calls are main thread only. Forget and
@@ -106,10 +118,6 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
 
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
-
-int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
-
-int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket );
 
 // The kernel prefilter's counters, summed across CPUs into an array of
 // ROCKETNET_SERVER_XDP_NUM_COUNTERS values -- what the XDP program dropped

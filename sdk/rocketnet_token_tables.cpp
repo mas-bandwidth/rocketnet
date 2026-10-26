@@ -11,376 +11,389 @@
 #include <string.h>
 #include <limits.h>
 
-// The table's structure, laid out data-oriented: parallel fixed
-// arrays allocated once at create, chained hashing with index links and a
-// free list, and a hot/cold split -- the identifiers walked by find sit in
-// their own array; addresses, timestamps and ordering are cold and touched
-// only on a hit or an insert. Buckets are chosen by a per-table SipHash of
-// the identifier, keyed with a random key generated at create, so an
-// attacker cannot craft identifiers that pile into one chain. Nothing is
-// ever overwritten in place across chains: eviction unlinks the victim from
-// its own chain and relinks the slot under the new identifier's bucket, so
-// every entry is always findable from its own bucket.
-//
-// The request-claim table adds an intrusive doubly linked order list over
-// its live claims (order_prev and order_next, allocated at create beside the
-// other arrays). A claim is appended at the tail when recorded, and every
-// deadline is current_time + the handshake deadline, so while the server's
-// time does not go backwards the head holds the earliest deadline. A
-// released claim leaves its chain and the order list and goes back on the
-// free list. Claim, release and the capacity test are then O(1): the free
-// list head, else the order head when its deadline has passed, else full
-// (tla/RNSecurityTables.tla, ClaimRecord, ClaimRelease and
-// CanRecordMatchesScan).
+// Each independent table owns fixed generation-tagged slots, a full-token
+// open-addressed index, an array free-slot stack and, for claims, a dense
+// chronological slot array. Index hits validate the complete token against an
+// occupied slot; every recycle advances that slot's generation without wrap.
+// The dense arrays remove their entry before reuse, so no stale reference is
+// retained. Linear probing and shifts are bounded by creation-time capacity.
+
+enum rn_token_index_state_t
+{
+    RN_TOKEN_INDEX_EMPTY = -1,
+    RN_TOKEN_INDEX_TOMBSTONE = -2
+};
 
 struct rocketnet_token_table_t
 {
     void * context;
     int capacity;
-    int num_buckets;
-    uint64_t next_insert_order;
+    int index_capacity;
+    int free_count;
+    int order_count;
+    uint64_t owner_epoch;
+    uint64_t next_ticket;               // zero is the exhausted state
     uint8_t hash_key[crypto_shorthash_KEYBYTES];
+    bool claims;
 
-    int * bucket_head;                                      // num_buckets, -1 when empty
-    int * next;                                             // capacity: chain link, or free list link
-    int free_head;
-    int free_count;                                         // slots on the free list
+    int * index;
+    int * free_slots;
+    int * order_slots;
+    uint64_t * order_generations;
+    uint8_t ( * identifier )[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    struct rocketnet_address_t * address;
+    uint64_t * expire_timestamp;
+    double * claim_deadline;
+    uint64_t * ticket;                  // zero means unoccupied
+    uint64_t * generation;
 
-    int * order_prev;                                       // capacity: claim order list, -1 at the head
-    int * order_next;                                       // capacity: claim order list, -1 at the tail
-    int order_head;                                         // the live claim with the earliest deadline, or -1
-    int order_tail;                                         // the most recently recorded claim, or -1
-
-    uint8_t ( * identifier )[ROCKETNET_TOKEN_IDENTIFIER_BYTES];   // hot: walked by find
-    struct rocketnet_address_t * address;                   // cold, history and claim
-    uint64_t * expire_timestamp;                            // cold: the response binding's expiry
-    double * claim_deadline;                                // cold: the request claim's handshake deadline
-    uint64_t * insert_order;                                // cold
+#if ROCKETNET_DEV
+    mutable uint64_t probe_steps;
+    mutable uint64_t order_steps;
+    mutable uint64_t slot_steps;
+#endif
 };
-
-// the used-token history: two independent capacity tables, the response
-// binding table and the request-claim table, so claim pressure cannot
-// consume or evict response-binding capacity
 
 struct rocketnet_used_token_history_t
 {
     void * context;
-    struct rocketnet_token_table_t * bindings;   // response-binding history
-    struct rocketnet_token_table_t * claims;     // request-claim table
+    struct rocketnet_token_table_t * bindings;
+    struct rocketnet_token_table_t * claims;
 };
 
-uint64_t rocketnet_token_table_allocation_bytes(int capacity)
+#if ROCKETNET_DEV
+#define RN_TOKEN_COUNT( table, field, amount ) ( (table)->field += (uint64_t) ( amount ) )
+#else
+#define RN_TOKEN_COUNT( table, field, amount ) do { (void) (table); } while ( 0 )
+#endif
+
+static bool rn_token_slot_live( const struct rocketnet_token_table_t * table, int slot )
 {
-    if (capacity < 1) return 0;
-    const uint64_t n = (uint64_t)capacity;
-    // the history holder plus two independent tables, the response-binding
-    // table and the request-claim table, each with its own expiry and
-    // deadline arrays and its two order-list link arrays: 1 + 10 + 10 = 21
-    // allocations
-    return rocketnet_memory_allocations({
-        sizeof(rocketnet_used_token_history_t),
-        sizeof(rocketnet_token_table_t), 2*n*sizeof(int), n*sizeof(int),
-        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
-        n*sizeof(uint64_t), n*sizeof(uint64_t), n*sizeof(uint64_t),
-        n*sizeof(int), n*sizeof(int),
-        sizeof(rocketnet_token_table_t), 2*n*sizeof(int), n*sizeof(int),
-        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
-        n*sizeof(uint64_t), n*sizeof(uint64_t), n*sizeof(uint64_t),
-        n*sizeof(int), n*sizeof(int)
-    });
+    return slot >= 0 && slot < table->capacity && table->ticket[slot] != 0;
 }
 
-static struct rocketnet_token_table_t * rocketnet_token_table_create( void * context, int capacity )
+static bool rn_token_handle_current( const struct rocketnet_token_table_t * table,
+                                     int slot,
+                                     uint64_t generation )
 {
-    rocketnet_assert( capacity > 0 );
+    return slot >= 0 && slot < table->capacity &&
+           table->generation[slot] == generation;
+}
 
-    // num_buckets is capacity * 2 in a signed int, so a capacity above
-    // INT_MAX / 2 wraps the bucket count and the bucket array is sized from
-    // the wrapped value while the other arrays use the capacity. refuse it
-    // before any allocation.
+uint64_t rocketnet_token_table_allocation_bytes( int capacity )
+{
     if ( capacity < 1 || capacity > INT_MAX / 2 )
-        return NULL;
-
-    struct rocketnet_token_table_t * table = (struct rocketnet_token_table_t*) rocketnet_malloc( context, sizeof(struct rocketnet_token_table_t) );
-    if ( !table )
-        return NULL;
-    memset( table, 0, sizeof(struct rocketnet_token_table_t) );
-
-    table->context = context;
-    table->capacity = capacity;
-    table->num_buckets = capacity * 2;
-    randombytes_buf( table->hash_key, sizeof(table->hash_key) );
-
-    table->bucket_head = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) table->num_buckets );
-    table->next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    table->identifier = (uint8_t(*)[ROCKETNET_TOKEN_IDENTIFIER_BYTES]) rocketnet_malloc( context, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
-    table->address = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    table->expire_timestamp = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
-    table->claim_deadline = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) capacity );
-    table->insert_order = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
-    table->order_prev = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    table->order_next = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-
-    if ( !table->bucket_head || !table->next || !table->identifier || !table->address || !table->expire_timestamp || !table->claim_deadline || !table->insert_order ||
-         !table->order_prev || !table->order_next )
-    {
-        rocketnet_free( context, table->bucket_head );
-        rocketnet_free( context, table->next );
-        rocketnet_free( context, table->identifier );
-        rocketnet_free( context, table->address );
-        rocketnet_free( context, table->expire_timestamp );
-        rocketnet_free( context, table->claim_deadline );
-        rocketnet_free( context, table->insert_order );
-        rocketnet_free( context, table->order_prev );
-        rocketnet_free( context, table->order_next );
-        rocketnet_free( context, table );
-        return NULL;
-    }
-
-    for ( int i = 0; i < table->num_buckets; i++ )
-        table->bucket_head[i] = -1;
-
-    for ( int i = 0; i < capacity; i++ )
-        table->next[i] = i + 1 < capacity ? i + 1 : -1;
-    table->free_head = 0;
-    table->free_count = capacity;
-
-    for ( int i = 0; i < capacity; i++ )
-    {
-        table->order_prev[i] = -1;
-        table->order_next[i] = -1;
-    }
-    table->order_head = -1;
-    table->order_tail = -1;
-
-    memset( table->identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
-    memset( table->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    memset( table->expire_timestamp, 0, sizeof(uint64_t) * (size_t) capacity );
-    memset( table->claim_deadline, 0, sizeof(double) * (size_t) capacity );
-    memset( table->insert_order, 0, sizeof(uint64_t) * (size_t) capacity );
-
-    return table;
+        return 0;
+    const uint64_t n = (uint64_t) capacity;
+    const uint64_t index_n = 2 * n;
+    return rocketnet_memory_allocations( {
+        sizeof(rocketnet_used_token_history_t),
+        sizeof(rocketnet_token_table_t), index_n*sizeof(int), n*sizeof(int),
+        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
+        n*sizeof(uint64_t), n*sizeof(uint64_t), n*sizeof(uint64_t),
+        sizeof(rocketnet_token_table_t), index_n*sizeof(int), n*sizeof(int),
+        n*sizeof(int), n*sizeof(uint64_t),
+        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t),
+        n*sizeof(double), n*sizeof(uint64_t), n*sizeof(uint64_t)
+    } );
 }
 
-static void rocketnet_token_table_destroy( struct rocketnet_token_table_t * table )
+static void rn_token_table_destroy( struct rocketnet_token_table_t * table )
 {
-    rocketnet_assert( table );
-    rocketnet_free( table->context, table->bucket_head );
-    rocketnet_free( table->context, table->next );
+    if ( !table )
+        return;
+    rocketnet_free( table->context, table->index );
+    rocketnet_free( table->context, table->free_slots );
+    rocketnet_free( table->context, table->order_slots );
+    rocketnet_free( table->context, table->order_generations );
     rocketnet_free( table->context, table->identifier );
     rocketnet_free( table->context, table->address );
     rocketnet_free( table->context, table->expire_timestamp );
     rocketnet_free( table->context, table->claim_deadline );
-    rocketnet_free( table->context, table->insert_order );
-    rocketnet_free( table->context, table->order_prev );
-    rocketnet_free( table->context, table->order_next );
+    rocketnet_free( table->context, table->ticket );
+    rocketnet_free( table->context, table->generation );
     rocketnet_free( table->context, table );
 }
 
-static int rocketnet_token_table_bucket( const struct rocketnet_token_table_t * table, const uint8_t * identifier )
+static struct rocketnet_token_table_t * rn_token_table_create( void * context, int capacity, bool claims )
+{
+    if ( capacity < 1 || capacity > INT_MAX / 2 )
+        return NULL;
+    struct rocketnet_token_table_t * table =
+        (struct rocketnet_token_table_t*) rocketnet_malloc( context, sizeof(struct rocketnet_token_table_t) );
+    if ( !table )
+        return NULL;
+    memset( table, 0, sizeof(*table) );
+    table->context = context;
+    table->capacity = capacity;
+    table->index_capacity = capacity * 2;
+    table->owner_epoch = 1;
+    table->next_ticket = 1;
+    table->claims = claims;
+    randombytes_buf( table->hash_key, sizeof(table->hash_key) );
+
+    table->index = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) table->index_capacity );
+    table->free_slots = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
+    if ( claims )
+    {
+        table->order_slots = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
+        table->order_generations = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
+    }
+    table->identifier = (uint8_t(*)[ROCKETNET_TOKEN_IDENTIFIER_BYTES]) rocketnet_malloc( context, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
+    table->address = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
+    if ( claims )
+        table->claim_deadline = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) capacity );
+    else
+        table->expire_timestamp = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
+    table->ticket = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
+    table->generation = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
+    if ( !table->index || !table->free_slots ||
+         ( claims && ( !table->order_slots || !table->order_generations ) ) || !table->identifier ||
+         !table->address || ( claims ? !table->claim_deadline : !table->expire_timestamp ) ||
+         !table->ticket || !table->generation )
+    {
+        rn_token_table_destroy( table );
+        return NULL;
+    }
+
+    for ( int i = 0; i < table->index_capacity; ++i )
+        table->index[i] = RN_TOKEN_INDEX_EMPTY;
+    memset( table->identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES * (size_t) capacity );
+    memset( table->address, 0, sizeof(struct rocketnet_address_t) * (size_t) capacity );
+    if ( table->expire_timestamp )
+        memset( table->expire_timestamp, 0, sizeof(uint64_t) * (size_t) capacity );
+    if ( table->claim_deadline )
+        memset( table->claim_deadline, 0, sizeof(double) * (size_t) capacity );
+    memset( table->ticket, 0, sizeof(uint64_t) * (size_t) capacity );
+    memset( table->generation, 0, sizeof(uint64_t) * (size_t) capacity );
+    for ( int slot = 0; slot < capacity; ++slot )
+    {
+        const int free_position = capacity - 1 - slot;
+        table->free_slots[free_position] = slot;
+    }
+    table->free_count = capacity;
+    return table;
+}
+
+static int rn_token_index_start( const struct rocketnet_token_table_t * table,
+                                 const uint8_t * identifier )
 {
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES, table->hash_key );
     uint64_t value;
-    memcpy( &value, hash, 8 );
-    return (int) ( value % (uint64_t) table->num_buckets );
+    memcpy( &value, hash, sizeof(value) );
+    return (int) ( value % (uint64_t) table->index_capacity );
 }
 
-// the entry for this identifier, live or not. constant expected time: one
-// keyed hash, one short chain walk.
-
-static int rocketnet_token_table_find_any( const struct rocketnet_token_table_t * table,
-                                           const uint8_t * identifier )
+static int rn_token_index_position( const struct rocketnet_token_table_t * table,
+                                    const uint8_t * identifier )
 {
-    int bucket = rocketnet_token_table_bucket( table, identifier );
-    for ( int i = table->bucket_head[bucket]; i != -1; i = table->next[i] )
+    const int start = rn_token_index_start( table, identifier );
+    for ( int probe = 0; probe < table->index_capacity; ++probe )
     {
-        if ( sodium_memcmp( table->identifier[i], identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 )
-            return i;
+        RN_TOKEN_COUNT( table, probe_steps, 1 );
+        const int position = ( start + probe ) % table->index_capacity;
+        const int slot = table->index[position];
+        if ( slot == RN_TOKEN_INDEX_EMPTY )
+            return -1;
+        if ( slot >= 0 && rn_token_slot_live( table, slot ) &&
+             sodium_memcmp( table->identifier[slot], identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 )
+            return position;
     }
     return -1;
 }
 
-// finds the live response binding for this identifier, treating an expired
-// binding as absent. constant expected time: one keyed hash, one short chain
-// walk.
-
-static int rocketnet_token_table_find( const struct rocketnet_token_table_t * table,
-                                       const uint8_t * identifier,
-                                       uint64_t current_timestamp )
+static int rn_token_table_find_any( const struct rocketnet_token_table_t * table,
+                                    const uint8_t * identifier )
 {
-    int index = rocketnet_token_table_find_any( table, identifier );
-    if ( index == -1 )
-        return -1;
-    return table->expire_timestamp[index] > current_timestamp ? index : -1;
+    const int position = rn_token_index_position( table, identifier );
+    return position >= 0 ? table->index[position] : -1;
 }
 
-// finds the live request claim for this identifier, treating an expired
-// claim as absent.
-
-static int rocketnet_token_table_find_claim( const struct rocketnet_token_table_t * table,
-                                             const uint8_t * identifier,
-                                             double current_time )
+static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int slot )
 {
-    int index = rocketnet_token_table_find_any( table, identifier );
-    if ( index == -1 )
-        return -1;
-    return table->claim_deadline[index] > current_time ? index : -1;
-}
-
-static void rocketnet_token_table_unlink( struct rocketnet_token_table_t * table, int index )
-{
-    int bucket = rocketnet_token_table_bucket( table, table->identifier[index] );
-    if ( table->bucket_head[bucket] == index )
+    const int start = rn_token_index_start( table, table->identifier[slot] );
+    int first_tombstone = -1;
+    for ( int probe = 0; probe < table->index_capacity; ++probe )
     {
-        table->bucket_head[bucket] = table->next[index];
-        return;
-    }
-    for ( int i = table->bucket_head[bucket]; i != -1; i = table->next[i] )
-    {
-        if ( table->next[i] == index )
+        RN_TOKEN_COUNT( table, probe_steps, 1 );
+        const int position = ( start + probe ) % table->index_capacity;
+        const int entry = table->index[position];
+        if ( entry == RN_TOKEN_INDEX_TOMBSTONE && first_tombstone == -1 )
+            first_tombstone = position;
+        if ( entry == RN_TOKEN_INDEX_EMPTY )
         {
-            table->next[i] = table->next[index];
-            return;
+            const int destination = first_tombstone != -1 ? first_tombstone : position;
+            table->index[destination] = slot;
+            return true;
         }
     }
-    rocketnet_assert( 0 );
+    if ( first_tombstone != -1 )
+    {
+        table->index[first_tombstone] = slot;
+        return true;
+    }
+    return false;
 }
 
-static int rocketnet_token_table_free_pop( struct rocketnet_token_table_t * table )
+static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
-    int index = table->free_head;
-    if ( index == -1 )
+    const int position = rn_token_index_position( table, table->identifier[slot] );
+    rocketnet_assert( position >= 0 && table->index[position] == slot );
+    table->index[position] = RN_TOKEN_INDEX_TOMBSTONE;
+}
+
+static bool rn_token_can_insert( const struct rocketnet_token_table_t * table, int slot )
+{
+    return table->next_ticket != 0 && table->generation[slot] != UINT64_MAX;
+}
+
+static int rn_token_free_pop( struct rocketnet_token_table_t * table )
+{
+    if ( table->free_count == 0 )
         return -1;
-    table->free_head = table->next[index];
-    table->free_count--;
-    return index;
+    const int position = table->free_count - 1;
+    const int slot = table->free_slots[position];
+    if ( slot < 0 || slot >= table->capacity || rn_token_slot_live( table, slot ) )
+        return -1;
+    --table->free_count;
+    return slot;
 }
 
-static void rocketnet_token_table_free_push( struct rocketnet_token_table_t * table, int index )
+static void rn_token_free_push( struct rocketnet_token_table_t * table, int slot )
 {
-    table->next[index] = table->free_head;
-    table->free_head = index;
-    table->free_count++;
+    rocketnet_assert( !rn_token_slot_live( table, slot ) && table->free_count < table->capacity );
+    table->free_slots[table->free_count] = slot;
+    ++table->free_count;
 }
 
-// the claim order list: append at the tail on record, remove from anywhere
-// on release or reuse (tla/RNSecurityTables.tla, ClaimRecord and
-// ClaimRelease, invariant FreeAndOrderPartitionSlots)
-
-static void rocketnet_token_table_order_append( struct rocketnet_token_table_t * table, int index )
+static void rn_token_order_append( struct rocketnet_token_table_t * table, int slot )
 {
-    table->order_prev[index] = table->order_tail;
-    table->order_next[index] = -1;
-    if ( table->order_tail != -1 )
-        table->order_next[table->order_tail] = index;
+    rocketnet_assert( table->claims && table->order_count < table->capacity );
+    table->order_slots[table->order_count] = slot;
+    table->order_generations[table->order_count] = table->generation[slot];
+    ++table->order_count;
+}
+
+static bool rn_token_order_remove( struct rocketnet_token_table_t * table, int slot )
+{
+    rocketnet_assert( table->claims );
+    int position = -1;
+    for ( int i = 0; i < table->order_count; ++i )
+    {
+        RN_TOKEN_COUNT( table, order_steps, 1 );
+        if ( table->order_slots[i] == slot &&
+             rn_token_handle_current( table, slot, table->order_generations[i] ) )
+        {
+            position = i;
+            break;
+        }
+    }
+    if ( position < 0 )
+        return false;
+    for ( int i = position + 1; i < table->order_count; ++i )
+    {
+        RN_TOKEN_COUNT( table, order_steps, 1 );
+        table->order_slots[i - 1] = table->order_slots[i];
+        table->order_generations[i - 1] = table->order_generations[i];
+    }
+    --table->order_count;
+    return true;
+}
+
+static int rn_token_order_head( const struct rocketnet_token_table_t * table )
+{
+    if ( table->order_count == 0 )
+        return -1;
+    const int slot = table->order_slots[0];
+    if ( !rn_token_handle_current( table, slot, table->order_generations[0] ) ||
+         !rn_token_slot_live( table, slot ) )
+        return -1;
+    return slot;
+}
+
+static bool rn_token_slot_insert( struct rocketnet_token_table_t * table,
+                                  int slot,
+                                  const uint8_t * identifier,
+                                  const struct rocketnet_address_t * address,
+                                  uint64_t expire_timestamp,
+                                  double claim_deadline )
+{
+    rocketnet_assert( slot >= 0 && slot < table->capacity && !rn_token_slot_live( table, slot ) );
+    if ( !rn_token_can_insert( table, slot ) )
+        return false;
+    ++table->generation[slot];
+    memcpy( table->identifier[slot], identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+    if ( address )
+        table->address[slot] = *address;
     else
-        table->order_head = index;
-    table->order_tail = index;
+        memset( &table->address[slot], 0, sizeof(table->address[slot]) );
+    if ( table->claims )
+        table->claim_deadline[slot] = claim_deadline;
+    else
+        table->expire_timestamp[slot] = expire_timestamp;
+    table->ticket[slot] = table->next_ticket;
+    table->next_ticket = table->next_ticket == UINT64_MAX ? 0 : table->next_ticket + 1;
+    if ( !rn_token_index_insert( table, slot ) )
+    {
+        table->ticket[slot] = 0;
+        return false;
+    }
+    return true;
 }
 
-static void rocketnet_token_table_order_remove( struct rocketnet_token_table_t * table, int index )
+static void rn_token_slot_retire( struct rocketnet_token_table_t * table, int slot )
 {
-    const int prev = table->order_prev[index];
-    const int next = table->order_next[index];
-    if ( prev != -1 )
-        table->order_next[prev] = next;
-    else
-        table->order_head = next;
-    if ( next != -1 )
-        table->order_prev[next] = prev;
-    else
-        table->order_tail = prev;
-    table->order_prev[index] = -1;
-    table->order_next[index] = -1;
+    rocketnet_assert( rn_token_slot_live( table, slot ) );
+    rn_token_index_remove( table, slot );
+    table->ticket[slot] = 0;
 }
 
-// Selects a slot for a new response binding: the free list first, then any
-// entry whose binding has expired, then the oldest entry, live or not: the
-// history it writes is the documented capacity-bounded one. The response-
-// binding table only; the request-claim table selects in O(1) from its free
-// list and its order list (rocketnet_used_token_history_claim_record). A used
-// victim is unlinked from its own chain here.
-
-static int rocketnet_token_table_select_slot( struct rocketnet_token_table_t * table,
-                                              uint64_t current_timestamp )
+// Bindings retain the exact documented selection: a free slot, otherwise the
+// first expired physical slot, otherwise the oldest insertion.
+static int rn_token_binding_select_slot( struct rocketnet_token_table_t * table,
+                                         uint64_t current_timestamp )
 {
-    int index = rocketnet_token_table_free_pop( table );
-    if ( index != -1 )
-        return index;
-
+    const int free_slot = rn_token_free_pop( table );
+    if ( free_slot >= 0 )
+        return free_slot;
     int oldest = -1;
-    for ( int i = 0; i < table->capacity; i++ )
+    for ( int slot = 0; slot < table->capacity; ++slot )
     {
-        if ( table->expire_timestamp[i] <= current_timestamp )
+        RN_TOKEN_COUNT( table, slot_steps, 1 );
+        rocketnet_assert( rn_token_slot_live( table, slot ) );
+        if ( table->expire_timestamp[slot] <= current_timestamp )
         {
-            rocketnet_token_table_unlink( table, i );
-            return i;
+            if ( !rn_token_can_insert( table, slot ) )
+                return -1;
+            rn_token_slot_retire( table, slot );
+            return slot;
         }
-        if ( oldest == -1 || table->insert_order[i] < table->insert_order[oldest] )
-            oldest = i;
+        if ( oldest == -1 || table->ticket[slot] < table->ticket[oldest] )
+            oldest = slot;
     }
-
-    if ( oldest == -1 )
+    if ( oldest == -1 || !rn_token_can_insert( table, oldest ) )
         return -1;
-
-    rocketnet_token_table_unlink( table, oldest );
+    rn_token_slot_retire( table, oldest );
     return oldest;
 }
-
-static void rocketnet_token_table_insert( struct rocketnet_token_table_t * table,
-                                          int index,
-                                          const uint8_t * identifier,
-                                          const struct rocketnet_address_t * address,
-                                          uint64_t expire_timestamp,
-                                          double claim_deadline )
-{
-    memcpy( table->identifier[index], identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
-    if ( address )
-        table->address[index] = *address;
-    else
-        memset( &table->address[index], 0, sizeof(struct rocketnet_address_t) );
-    table->expire_timestamp[index] = expire_timestamp;
-    table->claim_deadline[index] = claim_deadline;
-    table->insert_order[index] = table->next_insert_order++;
-
-    int bucket = rocketnet_token_table_bucket( table, identifier );
-    table->next[index] = table->bucket_head[bucket];
-    table->bucket_head[bucket] = index;
-}
-
-// the used-token history
-//
-// Two independent capacity tables, defined above: the response-binding table
-// binds a token identifier to the first source address that opened a response
-// under it and lives until the token expires; the request-claim table binds
-// the same identifier to the first source address that presented a valid
-// request, before any asymmetric work, and lives only until the handshake
-// deadline or the response binding. The tables are independent, so claim
-// pressure cannot consume or evict response-binding capacity: one token buys
-// one half-open mapping, and a replay from a second address is refused at the
-// claim rung while the first address's mapping is live.
 
 struct rocketnet_used_token_history_t * rocketnet_used_token_history_create( void * context, int capacity )
 {
     if ( capacity < 1 || capacity > INT_MAX / 2 )
         return NULL;
-
     struct rocketnet_used_token_history_t * history =
         (struct rocketnet_used_token_history_t*) rocketnet_malloc( context, sizeof(struct rocketnet_used_token_history_t) );
     if ( !history )
         return NULL;
-    memset( history, 0, sizeof(struct rocketnet_used_token_history_t) );
-
+    memset( history, 0, sizeof(*history) );
     history->context = context;
-    history->bindings = rocketnet_token_table_create( context, capacity );
-    history->claims = rocketnet_token_table_create( context, capacity );
+    history->bindings = rn_token_table_create( context, capacity, false );
+    history->claims = rn_token_table_create( context, capacity, true );
     if ( !history->bindings || !history->claims )
     {
-        if ( history->bindings )
-            rocketnet_token_table_destroy( history->bindings );
-        if ( history->claims )
-            rocketnet_token_table_destroy( history->claims );
+        rn_token_table_destroy( history->bindings );
+        rn_token_table_destroy( history->claims );
         rocketnet_free( context, history );
         return NULL;
     }
@@ -391,10 +404,8 @@ void rocketnet_used_token_history_destroy( struct rocketnet_used_token_history_t
 {
     if ( !history )
         return;
-    if ( history->bindings )
-        rocketnet_token_table_destroy( history->bindings );
-    if ( history->claims )
-        rocketnet_token_table_destroy( history->claims );
+    rn_token_table_destroy( history->bindings );
+    rn_token_table_destroy( history->claims );
     rocketnet_free( history->context, history );
 }
 
@@ -404,10 +415,10 @@ int rocketnet_used_token_history_check( const struct rocketnet_used_token_histor
                                         uint64_t current_timestamp )
 {
     const struct rocketnet_token_table_t * table = history->bindings;
-    int index = rocketnet_token_table_find( table, token_identifier, current_timestamp );
-    if ( index == -1 )
+    const int slot = rn_token_table_find_any( table, token_identifier );
+    if ( slot == -1 || table->expire_timestamp[slot] <= current_timestamp )
         return 1;
-    return rocketnet_address_equal( &table->address[index], address ) ? 1 : 0;
+    return rocketnet_address_equal( &table->address[slot], address ) ? 1 : 0;
 }
 
 void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t * history,
@@ -417,28 +428,27 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
                                           uint64_t current_timestamp )
 {
     struct rocketnet_token_table_t * table = history->bindings;
-
-    // a live binding is a no-op; an expired one is replaced by this new
-    // binding to this address
-    int index = rocketnet_token_table_find_any( table, token_identifier );
-    if ( index != -1 )
+    int slot = rn_token_table_find_any( table, token_identifier );
+    if ( slot != -1 )
     {
-        if ( table->expire_timestamp[index] > current_timestamp )
+        if ( table->expire_timestamp[slot] > current_timestamp )
             return;
-        table->address[index] = *address;
-        table->expire_timestamp[index] = expire_timestamp;
-        table->insert_order[index] = table->next_insert_order++;
-        return;
+        if ( !rn_token_can_insert( table, slot ) )
+            return;
+        rn_token_slot_retire( table, slot );
     }
-
-    index = rocketnet_token_table_select_slot( table, current_timestamp );
-    rocketnet_assert( index != -1 );
-
-    rocketnet_token_table_insert( table, index, token_identifier, address, expire_timestamp, 0.0 );
+    else
+    {
+        slot = rn_token_binding_select_slot( table, current_timestamp );
+        if ( slot == -1 )
+            return;
+    }
+    const bool inserted = rn_token_slot_insert( table, slot, token_identifier, address, expire_timestamp, 0.0 );
+    rocketnet_assert( inserted );
+    if ( !inserted )
+        rn_token_free_push( table, slot );
+    (void) inserted;
 }
-
-// returns 1 when this token has no live claim, or holds it for this same
-// address; 0 when another address holds a live claim.
 
 int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_history_t * history,
                                               const uint8_t * token_identifier,
@@ -446,20 +456,11 @@ int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_
                                               double current_time )
 {
     const struct rocketnet_token_table_t * table = history->claims;
-    int index = rocketnet_token_table_find_claim( table, token_identifier, current_time );
-    if ( index == -1 )
+    const int slot = rn_token_table_find_any( table, token_identifier );
+    if ( slot == -1 || table->claim_deadline[slot] <= current_time )
         return 1;
-    return rocketnet_address_equal( &table->address[index], address ) ? 1 : 0;
+    return rocketnet_address_equal( &table->address[slot], address ) ? 1 : 0;
 }
-
-// records the request claim for this token until the handshake deadline. A
-// live claim is never replaced or evicted; a full table refuses the record
-// (0), and the request is refused before any crypto. O(1): the entry for this
-// identifier when there is one, else the free list head, else the order
-// list's head when its deadline has passed (tla/RNSecurityTables.tla,
-// ClaimRecord, invariants LiveClaimNeverReplaced and OrderIsDeadlineOrder).
-// Should a deadline arrive out of order, a later expired claim waits behind
-// a live head: its reuse is delayed, and a live claim is still never taken.
 
 int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_history_t * history,
                                                const uint8_t * token_identifier,
@@ -468,53 +469,59 @@ int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_histo
                                                double current_time )
 {
     struct rocketnet_token_table_t * table = history->claims;
-
-    int index = rocketnet_token_table_find_any( table, token_identifier );
-    if ( index != -1 )
+    int slot = rn_token_table_find_any( table, token_identifier );
+    if ( slot != -1 )
     {
-        if ( table->claim_deadline[index] > current_time )
+        if ( table->claim_deadline[slot] > current_time )
             return 1;
-        table->address[index] = *address;
-        table->claim_deadline[index] = deadline;
-        table->insert_order[index] = table->next_insert_order++;
-        rocketnet_token_table_order_remove( table, index );
-        rocketnet_token_table_order_append( table, index );
-        return 1;
-    }
-
-    index = rocketnet_token_table_free_pop( table );
-    if ( index == -1 )
-    {
-        index = table->order_head;
-        if ( index == -1 || table->claim_deadline[index] > current_time )
+        if ( !rn_token_can_insert( table, slot ) )
             return 0;
-        rocketnet_token_table_unlink( table, index );
-        rocketnet_token_table_order_remove( table, index );
+        if ( !rn_token_order_remove( table, slot ) )
+            return 0;
+        rn_token_slot_retire( table, slot );
     }
-
-    rocketnet_token_table_insert( table, index, token_identifier, address, 0, deadline );
-    rocketnet_token_table_order_append( table, index );
+    else
+    {
+        const int free_slot = rn_token_free_pop( table );
+        if ( free_slot >= 0 )
+            slot = free_slot;
+        else
+        {
+            slot = rn_token_order_head( table );
+            if ( slot == -1 || table->claim_deadline[slot] > current_time ||
+                 !rn_token_can_insert( table, slot ) )
+                return 0;
+            if ( !rn_token_order_remove( table, slot ) )
+                return 0;
+            rn_token_slot_retire( table, slot );
+        }
+    }
+    if ( !rn_token_slot_insert( table, slot, token_identifier, address, 0, deadline ) )
+    {
+        rn_token_free_push( table, slot );
+        return 0;
+    }
+    rn_token_order_append( table, slot );
     return 1;
 }
-
-// whether claim_record would return 1 now, without writing: the identifier
-// is already in the table (a live claim for this address -- claim_check has
-// refused any other -- or an expired entry to reuse), the free list has a
-// slot, or the order list's head, the earliest deadline, has expired. These
-// are exactly the cases in which claim_record finds or selects a slot, and
-// the answer is O(1): no walk over the table (tla/RNSecurityTables.tla,
-// CanRecordMatchesScan).
 
 int rocketnet_used_token_history_claim_can_record( const struct rocketnet_used_token_history_t * history,
                                                    const uint8_t * token_identifier,
                                                    double current_time )
 {
     const struct rocketnet_token_table_t * table = history->claims;
-    if ( rocketnet_token_table_find_any( table, token_identifier ) != -1 )
-        return 1;
-    if ( table->free_head != -1 )
-        return 1;
-    return table->order_head != -1 && table->claim_deadline[table->order_head] <= current_time;
+    const int found = rn_token_table_find_any( table, token_identifier );
+    if ( found != -1 )
+        return table->claim_deadline[found] > current_time || rn_token_can_insert( table, found );
+    if ( table->free_count > 0 )
+    {
+        const int position = table->free_count - 1;
+        const int slot = table->free_slots[position];
+        return slot >= 0 && slot < table->capacity && !rn_token_slot_live( table, slot ) &&
+               rn_token_can_insert( table, slot );
+    }
+    const int slot = rn_token_order_head( table );
+    return slot != -1 && table->claim_deadline[slot] <= current_time && rn_token_can_insert( table, slot );
 }
 
 int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history )
@@ -522,26 +529,102 @@ int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_t
     return history->claims->free_count;
 }
 
-// releases this address's claim, when a request that holds one is refused
-// before its mapping is added, or when the half-open mapping that holds it is
-// removed before the handshake deadline. The entry leaves its chain and the
-// order list and its slot goes back on the free list, so a second release,
-// which no longer finds it, or a release from another address changes
-// nothing (tla/RNSecurityTables.tla, ClaimRelease, invariant
-// FreeAndOrderPartitionSlots).
-
 void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
                                                  const uint8_t * token_identifier,
                                                  const struct rocketnet_address_t * address )
 {
     struct rocketnet_token_table_t * table = history->claims;
-    int index = rocketnet_token_table_find_any( table, token_identifier );
-    if ( index == -1 )
+    const int slot = rn_token_table_find_any( table, token_identifier );
+    if ( slot == -1 || !rocketnet_address_equal( &table->address[slot], address ) )
         return;
-    if ( !rocketnet_address_equal( &table->address[index], address ) )
+    if ( !rn_token_order_remove( table, slot ) )
         return;
-    rocketnet_token_table_unlink( table, index );
-    rocketnet_token_table_order_remove( table, index );
-    table->claim_deadline[index] = 0.0;
-    rocketnet_token_table_free_push( table, index );
+    rn_token_slot_retire( table, slot );
+    table->claim_deadline[slot] = 0.0;
+    rn_token_free_push( table, slot );
 }
+
+#if ROCKETNET_DEV
+extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history )
+{
+    history->bindings->probe_steps = history->bindings->order_steps = history->bindings->slot_steps = 0;
+    history->claims->probe_steps = history->claims->order_steps = history->claims->slot_steps = 0;
+}
+
+extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history )
+{
+    return history->claims->probe_steps;
+}
+
+extern "C" uint64_t rocketnet_dev_token_claim_order_steps( const struct rocketnet_used_token_history_t * history )
+{
+    return history->claims->order_steps;
+}
+
+extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
+                                                       const uint8_t * token_identifier )
+{
+    return rn_token_index_start( history->claims, token_identifier );
+}
+
+extern "C" void rocketnet_dev_token_claim_set_wide_state( struct rocketnet_used_token_history_t * history,
+                                                           uint64_t generation,
+                                                           uint64_t next_ticket )
+{
+    struct rocketnet_token_table_t * table = history->claims;
+    for ( int slot = 0; slot < table->capacity; ++slot )
+        table->generation[slot] = generation;
+    table->next_ticket = next_ticket;
+}
+
+extern "C" int rocketnet_dev_token_claim_reset( struct rocketnet_used_token_history_t * history )
+{
+    struct rocketnet_token_table_t * table = history->claims;
+    if ( table->owner_epoch == UINT64_MAX )
+        return 0;
+    ++table->owner_epoch;
+    table->next_ticket = 1;
+    table->order_count = 0;
+    table->free_count = table->capacity;
+    for ( int i = 0; i < table->index_capacity; ++i )
+        table->index[i] = RN_TOKEN_INDEX_EMPTY;
+    for ( int slot = 0; slot < table->capacity; ++slot )
+    {
+        table->ticket[slot] = 0;
+        table->generation[slot] = 0;
+        const int free_position = table->capacity - 1 - slot;
+        table->free_slots[free_position] = slot;
+    }
+    return 1;
+}
+
+extern "C" int rocketnet_dev_token_claim_head_handle( const struct rocketnet_used_token_history_t * history,
+                                                       int * slot,
+                                                       uint64_t * generation,
+                                                       uint64_t * owner_epoch )
+{
+    const struct rocketnet_token_table_t * table = history->claims;
+    if ( table->order_count == 0 || !slot || !generation || !owner_epoch )
+        return 0;
+    *slot = table->order_slots[0];
+    *generation = table->order_generations[0];
+    *owner_epoch = table->owner_epoch;
+    return rn_token_handle_current( table, *slot, *generation ) ? 1 : 0;
+}
+
+extern "C" int rocketnet_dev_token_claim_remove_handle( struct rocketnet_used_token_history_t * history,
+                                                         int slot,
+                                                         uint64_t generation,
+                                                         uint64_t owner_epoch )
+{
+    struct rocketnet_token_table_t * table = history->claims;
+    if ( owner_epoch != table->owner_epoch ||
+         !rn_token_handle_current( table, slot, generation ) || !rn_token_slot_live( table, slot ) )
+        return 0;
+    if ( !rn_token_order_remove( table, slot ) )
+        return 0;
+    rn_token_slot_retire( table, slot );
+    rn_token_free_push( table, slot );
+    return 1;
+}
+#endif

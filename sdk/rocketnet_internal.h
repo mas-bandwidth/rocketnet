@@ -564,7 +564,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_duplicate_percent, 0,                         0, 100,                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )
+    STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )             \
+    INT_FIELD(    disconnect_packets_per_update, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1, 1024,              0 )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -576,8 +577,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 3, in bytes: the other family's public address, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, second_public_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
+/** @brief Server transport config revision 4, in bytes: the disconnect notification packet allowance, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, disconnect_packets_per_update ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
@@ -623,8 +626,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // rocketnet_platform_client_ipv6_available opens and closes an AF_INET6 socket.
 // With a table set, each reads its entry instead and opens nothing; NULL, the
 // default, runs the real lookups. The unit suite sets a fake before
-// rocketnet_init (tests/test.cpp) so ./bin/test opens no socket. Not exported.
+// rocketnet_init (tests/test.cpp) so the DEV unit suite opens no socket. Not exported.
 
+#if ROCKETNET_DEV
 struct rocketnet_platform_network_lookups_t
 {
     int ( *connection_type )( void );
@@ -632,6 +636,8 @@ struct rocketnet_platform_network_lookups_t
 };
 
 void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
+
+#endif // #if ROCKETNET_DEV
 
 // The public config structs in rocketnet.h are written out field by field;
 // the tables above are the declarations the parse, the validation, the env
@@ -646,6 +652,10 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
 // or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
+#if ROCKETNET_DEV
+uint64_t rocketnet_sleep_platform_dispatch_count_for_test( void );
+void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double seconds ) );
+#endif // #if ROCKETNET_DEV
 
 // Server receive buffer sizing (sdk/rocketnet_constants.h, USAGE.md "Receive
 // buffer sizing"). rocketnet_server_receive_buffer_bytes is pure arithmetic:
@@ -664,6 +674,12 @@ int rocketnet_server_receive_buffer_request( int max_clients );
 // raise (net.core.rmem_max on Linux, kern.ipc.maxsockbuf on macOS and BSD);
 // a grant at or above the request is an information line.
 void rocketnet_server_receive_buffer_granted( const char * name, int requested_bytes, int granted_bytes );
+
+#if ROCKETNET_DEV
+// Test-only decision override. The production socket grant is still observed;
+// this changes only the requested-versus-granted warning branch.
+void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int granted_bytes );
+#endif // ROCKETNET_DEV
 
 // The receive buffer the kernel granted a socket, in the bytes requested
 // (Linux reports double its grant; this halves it); 0 when unreadable.

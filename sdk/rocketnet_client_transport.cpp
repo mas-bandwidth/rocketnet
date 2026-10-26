@@ -901,15 +901,23 @@ void rocketnet_client_io_wipe( void * data, size_t bytes )
 // tla/RNClientIoDecrypt.tla PublishKeys: the protocol's hook at the challenge
 static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
 {
-    rocketnet_client_io_publish_keys( (rocketnet_client_io_t *) context, client->keys.session_server_to_client,
+    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) context;
+    rocketnet_client_io_publish_keys( &client_transport->client_io, client->keys.session_server_to_client,
                                       client->signed_fields.protocol_id, client->connection_salt, client->packet_filter,
                                       &client->server_address );
 }
 
-// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state
+// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state.
+// When no background I/O thread owns the open block, take the retired epoch
+// immediately so sodium_memzero erases session_server_to_client and salt at the
+// terminal transition instead of leaving the retired copy in memory until the
+// next update step or stop.
 static void rocketnet_client_transport_retire_keys( void * context )
 {
-    rocketnet_client_io_retire_keys( (rocketnet_client_io_t *) context );
+    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) context;
+    rocketnet_client_io_retire_keys( &client_transport->client_io );
+    if ( !client_transport->thread )
+        rocketnet_client_io_take_keys( &client_transport->client_io );
 }
 
 bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport_io_operations_t * operations )
@@ -1255,6 +1263,74 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 {
     return client_transport && ( client_transport->io_thread || client_transport->step_in_update ) ? &client_transport->client_io : NULL;
 }
+
+#if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
+// Private state seam for the client refusal unit. It makes a deterministic
+// connected session without a socket or clock, exposes only the fields whose
+// immobility is the refusal contract, and gives that unit one live mutation
+// for each forbidden outcome. No declaration enters a public header.
+void rocketnet_client_transport_seed_refusal_state_for_test(
+    rocketnet_client_transport_t * client_transport, uint64_t protocol_id,
+    const uint8_t * packet_filter, const uint8_t * connection_salt,
+    const uint8_t * session_server_to_client )
+{
+    rocketnet_assert( client_transport && packet_filter && connection_salt && session_server_to_client );
+    rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    protocol->state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+    protocol->signed_fields.protocol_id = protocol_id;
+    memcpy( protocol->packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( protocol->connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
+    memcpy( protocol->keys.session_server_to_client, session_server_to_client, ROCKETNET_KEY_BYTES );
+    protocol->client_index = 3;
+    protocol->max_clients = 8;
+    rocketnet_replay_advance( &protocol->replay_session, 23 );
+    rocketnet_replay_advance( &protocol->accepted_session, 19 );
+    protocol->ack.largest_acked_sequence = 13;
+    protocol->ack.highest_received_sequence = 17;
+    protocol->last_receive_time = 999.5;
+}
+
+void rocketnet_client_transport_refusal_state_for_test(
+    const rocketnet_client_transport_t * client_transport,
+    int * state, int * client_index, int * max_clients,
+    uint64_t * replay_highest, uint64_t * accepted_highest,
+    uint64_t * largest_acked, uint64_t * highest_received,
+    double * last_receive_time, int * payloads, int * acked_packets )
+{
+    rocketnet_assert( client_transport );
+    const rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    if ( state ) *state = protocol->state;
+    if ( client_index ) *client_index = protocol->client_index;
+    if ( max_clients ) *max_clients = protocol->max_clients;
+    if ( replay_highest ) *replay_highest = protocol->replay_session.highest_opened;
+    if ( accepted_highest ) *accepted_highest = protocol->accepted_session.highest_opened;
+    if ( largest_acked ) *largest_acked = protocol->ack.largest_acked_sequence;
+    if ( highest_received ) *highest_received = protocol->ack.highest_received_sequence;
+    if ( last_receive_time ) *last_receive_time = protocol->last_receive_time;
+    if ( payloads ) *payloads = client_transport->received_packets.num_packets;
+    if ( acked_packets ) *acked_packets = protocol->num_acked;
+}
+
+void rocketnet_client_transport_mutate_refusal_state_for_test(
+    rocketnet_client_transport_t * client_transport, int outcome, int delta )
+{
+    rocketnet_assert( client_transport && ( delta == -1 || delta == 1 ) );
+    if ( outcome == 0 )
+        client_transport->received_packets.num_packets += delta;
+    else if ( outcome == 1 )
+    {
+        if ( delta > 0 ) client_transport->protocol.ack.largest_acked_sequence++;
+        else client_transport->protocol.ack.largest_acked_sequence--;
+    }
+    else if ( outcome == 2 )
+    {
+        if ( delta > 0 ) client_transport->protocol.replay_session.highest_opened++;
+        else client_transport->protocol.replay_session.highest_opened--;
+    }
+    else
+        rocketnet_assert( 0 );
+}
+#endif // #if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
     const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
@@ -1975,7 +2051,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         // terminal state; destroy retires it too
         client_transport->protocol.publish_keys = rocketnet_client_transport_publish_keys;
         client_transport->protocol.retire_keys = rocketnet_client_transport_retire_keys;
-        client_transport->protocol.keys_context = &client_transport->client_io;
+        client_transport->protocol.keys_context = client_transport;
 
         if ( client_transport->step_driven || client_transport->step_in_update )
             return client_transport;

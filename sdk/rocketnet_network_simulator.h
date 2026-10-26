@@ -140,6 +140,42 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
 
 void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_simulator_t * simulator );
 
+// Private DEV-only seams for the index contract. A handle names one physical
+// slot generation, so a delayed remove cannot clear a packet that later reused
+// the same slot. The counters make the bitmap's bounded word work observable
+// without turning timing into a correctness test.
+
+struct rocketnet_network_simulator_slot_handle_t
+{
+    int slot;
+    uint64_t generation;
+};
+
+struct rocketnet_network_simulator_index_stats_t
+{
+    uint64_t membership_word_updates;
+    uint64_t max_membership_word_updates;
+    uint64_t selection_summary_words;
+    uint64_t selection_occupancy_words;
+    uint64_t selection_slots;
+    uint64_t max_selection_summary_words;
+    uint64_t max_selection_occupancy_words;
+    uint64_t max_selection_slots;
+    uint64_t stale_removals;
+};
+
+bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_network_simulator_t * simulator,
+                                                        int slot,
+                                                        struct rocketnet_network_simulator_slot_handle_t * handle );
+
+bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_simulator_t * simulator,
+                                                      const struct rocketnet_network_simulator_slot_handle_t * handle );
+
+void rocketnet_network_simulator_test_index_stats( const struct rocketnet_network_simulator_t * simulator,
+                                                    struct rocketnet_network_simulator_index_stats_t * stats );
+
+void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_network_simulator_t * simulator );
+
 
 #else // #if ROCKETNET_TEST_SEAMS
 

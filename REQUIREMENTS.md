@@ -70,6 +70,32 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - The caller can supply allocation, logging and assertion hooks. Ordinary
   memory uses the caller allocator.
 
+## Configuration, memory planning, and scale qualification
+
+- Neither `rocketnet_*_default_config` nor `rocketnet_*_light_config` is a
+  universally suitable preset for every game. Callers size channels, message
+  arenas, fragment reassembly slots, reliable windows, per-update packet and
+  unreliable budgets, compile-time caps, and runtime memory budgets to match
+  their game's concrete tick rate, payload distribution, and player count using
+  the tradeoffs and formulas documented in [`docs/LOAD.md`](docs/LOAD.md) and
+  [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+- Callers query deterministic worst-case allocator requirements through
+  `rocketnet_client_required_memory` and `rocketnet_server_required_memory`
+  (or `LOAD_PLAN_ONLY=1 ./bin/load` and `bin/transport_memory`) and account
+  separately for OS and kernel resources outside the user-space allocator
+  (thread stacks, AF_XDP page-aligned UMEM and kernel rings, `io_uring` mapped
+  rings, and kernel socket buffers).
+- The default compile-time `ROCKETNET_MAX_CLIENTS` ceiling (`1000`) and the
+  demonstrated 1,000-player configuration in [`docs/LOAD.md`](docs/LOAD.md)
+  apply only under that workload's exact message profile, tick rate, and
+  deployment assumptions. Above 1,000 players, callers research, stabilize, and
+  qualify their own configuration, memory budget, and host/NIC deployment; no
+  arbitrary client count or validated-above-1000 guarantee is provided.
+- Operational diagnostics and recovery follow the public status, state, and
+  counter contracts in [`docs/ERRORS-AND-LOGGING.md`](docs/ERRORS-AND-LOGGING.md),
+  preserving refusal and drop semantics without infinite retry loops, unchecked
+  message completion, early context destruction, or forced shutdown.
+
 ## First-deliverable boundary
 
 The first deliverable contains the public client/server API, secure connection,
