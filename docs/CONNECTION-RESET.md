@@ -147,6 +147,34 @@ material is overwritten in place with `sodium_memzero`:
   rings and bitmaps reset on every client connection reset and every server
   slot reset (`rocketnet_ack_endpoint_reset`). Client loss and jitter are
   derived from its ACK history; no receive-gap or arrival-gap tracker is kept.
+  Those two trackers used to live on `rocketnet_client_transport_t` and were
+  removed in `db2192c7`. Widths below are the natural layout on the supported
+  64-bit ABIs, LP64 and LLP64 (`uint64_t`
+  and `double` 8 bytes, align 8; `float` and `int` 4 bytes, align 4), with
+  `ROCKETNET_ENABLE_MEMORY_CHECKS` at its default 0 so the sentinel macros in
+  `sdk/rocketnet_memory_checks.h` add no bytes. `rocketnet_packet_loss_tracker_t`
+  (deleted `sdk/rocketnet_packet_loss_tracker.h`) was three `uint64_t` fields
+  (24) plus `uint64_t received_packets[1024]` (8192) = 8216; 1024 was
+  `ROCKETNET_PACKET_LOSS_TRACKER_HISTORY`. `rocketnet_jitter_tracker_t`
+  (deleted `sdk/rocketnet_jitter_tracker.h`) was one `uint64_t` and three
+  `double` fields = 32. Each of the 256 `rocketnet_client_stats_frame_t`
+  buckets (`ROCKETNET_NUM_CLIENT_STATS_FRAMES`) lost `session_packets_received`
+  and `packets_lost` (8 + 8); 256 × 16 = 4096. Stored `client_stats` changed
+  from `rocketnet_client_transport_stats_t` (`sdk/rocketnet_layers.h`: three
+  `float` and four `int` = 28, 4 bytes of padding, four `uint64_t` = 32, sizeof
+  64) to `rocketnet_client_transport_counters_t` (four `int` = 16 and four
+  `uint64_t` = 32, sizeof 48), a difference of 16. 8216 + 32 + 4096 + 16 =
+  12360 bytes less on each client transport. The alignment gap before the old
+  trackers equals the tail padding after `current_stats_index` (`int`), so it
+  is not part of the 12360. Default-off sentinels would have added three
+  `uint32_t[64]` (768) on the loss tracker and two (512) on the jitter tracker.
+  Each accepted session packet (`session_sequence != 0`) made two calls,
+  `rocketnet_packet_loss_tracker_packet_received` and
+  `rocketnet_jitter_tracker_packet_received`. Each client update made one
+  call, `rocketnet_packet_loss_tracker_update`, from
+  `rocketnet_client_update_stats`. Create and connection reset each called
+  `rocketnet_packet_loss_tracker_reset` and `rocketnet_jitter_tracker_reset`.
+  This counts removed calls. It is not a wall-time claim.
 - **Server per-client totals (`rocketnet_server_client_stats`)**: Scoped strictly
   to the currently connected occupant of `client_index`. Queries on an empty
   slot return all zeros; `rocketnet_server_wire_totals_assign` zeroes the slot's

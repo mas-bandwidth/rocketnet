@@ -8,6 +8,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_message_object.h"
 #include "rocketnet_client_io.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_connection_reset.h"
@@ -3396,19 +3397,62 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
 }
 
 #if defined(ROCKETNET_ACK_STATS_TEST_HOOKS)
-// Exercise the real getter with causal ACK history and deliberately different
-// receive estimates. No transport lifecycle, I/O, thread or wall clock is used.
-void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint_t * endpoint,
-                                                   rocketnet_client_transport_stats_t * stats )
+// One in-memory transport. No socket, thread, or wall clock. The caller frees
+// it with rocketnet_client_transport_ack_stats_close_for_test.
+static rocketnet_client_transport_t * rocketnet_client_transport_ack_stats_open_for_test( const rocketnet_ack_endpoint_t * endpoint )
 {
     auto * client = (rocketnet_client_transport_t *) rocketnet_malloc( NULL, sizeof(rocketnet_client_transport_t) );
     rocketnet_assert( client );
     rocketnet_client_transport_construct( client );
     rocketnet_client_protocol_init( &client->protocol, &client->counters );
     client->protocol.ack = *endpoint;
-    rocketnet_client_transport_stats( client, stats );
+    return client;
+}
+
+static void rocketnet_client_transport_ack_stats_close_for_test( rocketnet_client_transport_t * client )
+{
+    if ( !client )
+        return;
     client->~rocketnet_client_transport_t();
     rocketnet_free( NULL, client );
+}
+
+// Exercise the real getter with causal ACK history and deliberately different
+// receive estimates. No transport lifecycle, I/O, thread or wall clock is used.
+void rocketnet_client_transport_ack_stats_for_test( const rocketnet_ack_endpoint_t * endpoint,
+                                                   rocketnet_client_transport_stats_t * stats )
+{
+    auto * client = rocketnet_client_transport_ack_stats_open_for_test( endpoint );
+    rocketnet_client_transport_stats( client, stats );
+    rocketnet_client_transport_ack_stats_close_for_test( client );
+}
+
+// The public rocketnet_client_stats path, over the same in-memory ACK history.
+// The message client is only the object the public getter already walks. It
+// is not a connection and it opens nothing. The test calls rocketnet_client_stats.
+struct rocketnet_client_t * rocketnet_client_ack_stats_public_client_for_test( const rocketnet_ack_endpoint_t * endpoint )
+{
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_ack_stats_open_for_test( endpoint );
+    rn_message_link_t link;
+    rn_message_client_link( &link, transport );
+    auto * message = (rocketnet_message_client_t *) rocketnet_malloc( NULL, sizeof( *message ) );
+    rocketnet_assert( message );
+    memset( message, 0, sizeof( *message ) );
+    message->object.link = link;
+    struct rocketnet_client_t * client = rocketnet_client_adopt( NULL, message );
+    rocketnet_assert( client );
+    return client;
+}
+
+void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_client_t * client )
+{
+    if ( !client )
+        return;
+    struct rocketnet_message_client_t * message = rocketnet_client_message_client( client );
+    rocketnet_client_transport_t * transport = message ? rocketnet_message_client_transport( message ) : NULL;
+    rocketnet_free( NULL, client );
+    rocketnet_free( NULL, message );
+    rocketnet_client_transport_ack_stats_close_for_test( transport );
 }
 #endif
 
