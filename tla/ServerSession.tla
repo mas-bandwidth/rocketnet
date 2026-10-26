@@ -284,7 +284,8 @@ StopCompletes ==
 \* disconnect_all_clients: one call, every CONNECTED slot is sent its
 \* disconnect burst and reset with reason SERVER_DISCONNECTED in the same step;
 \* a slot still in HANDSHAKE is left as it is. The public loop and its slot
-\* predicates are sdk/rocketnet_api.cpp:1866-1887.
+\* predicates are sdk/rocketnet_api.cpp:1866-1887; the transport transition is
+\* sdk/rocketnet_server_transport.cpp:3439-3513.
 EndsInDisconnectAll(i) ==
     slot[i].st = "CONNECTED"
     /\ ~(Defect = "disconnectallleavesclient" /\ i = 1)
