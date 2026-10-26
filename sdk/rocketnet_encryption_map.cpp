@@ -309,6 +309,14 @@ const struct rocketnet_address_t * rocketnet_encryption_map_address( const struc
     return &map->address[index];
 }
 
+uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encryption_map_t * map, int index )
+{
+    rocketnet_assert( map );
+    rocketnet_assert( index >= 0 && index < map->capacity );
+    rocketnet_assert( map->address[index].type != ROCKETNET_ADDRESS_NONE );
+    return map->generation[index];
+}
+
 static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_map_t * map,
                                                     const struct rn_sequence_buffer_handle_t & handle )
 {
@@ -336,19 +344,30 @@ static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_
     return true;
 }
 
-// tla/RNDestroyWipe.tla Remove: drops the mapping from live and wipes its secrets.
-void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
+bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * map,
+                                            int index,
+                                            uint64_t owner_generation )
+{
+    rocketnet_assert( map );
+    if ( index < 0 || index >= map->capacity || owner_generation == 0 )
+        return false;
+
+    struct rn_sequence_buffer_handle_t handle = {};
+    handle.identity = (uint64_t) index;
+    handle.generation = owner_generation;
+    handle.owner_epoch = owner_generation;
+    handle.ticket = owner_generation;
+    return rocketnet_encryption_map_remove_handle( map, handle );
+}
+
+// tla/RNDestroyWipe.tla Remove: drops the current mapping from live and wipes its secrets.
+void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );
     rocketnet_assert( index >= 0 && index < map->capacity );
     rocketnet_assert( map->address[index].type != ROCKETNET_ADDRESS_NONE );
 
-    struct rn_sequence_buffer_handle_t handle = {};
-    handle.identity = (uint64_t) index;
-    handle.generation = map->generation[index];
-    handle.owner_epoch = map->generation[index];
-    handle.ticket = map->generation[index];
-    const bool removed = rocketnet_encryption_map_remove_handle( map, handle );
+    const bool removed = rocketnet_encryption_map_remove_owned( map, index, map->generation[index] );
     rocketnet_assert( removed );
     (void) removed;
 }

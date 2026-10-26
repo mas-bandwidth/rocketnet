@@ -782,7 +782,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( challenge_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
         {
             rocketnet_assert( 0 );          // fixed arguments; a wrong size is a bug, not a condition
-            rocketnet_encryption_map_remove( server->encryption_map, index );
+            rocketnet_encryption_map_remove_current( server->encryption_map, index );
             rocketnet_debug( "server ignored connection request. internal error" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -882,7 +882,10 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     // tla/RNXdpReplay.tla Connect: a new session takes a slot and its opened high water stays at zero.
     // tla/ReplayWindow.tla Connect: the mapping takes a slot and its replay window is left unchanged.
     // tla/RNSlots.tla Connect: the slot's connection owner becomes the new connection id.
-    int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index, mapping->user_data );
+    const uint64_t mapping_generation =
+        rocketnet_encryption_map_owner_generation( server->encryption_map, mapping_index );
+    int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index,
+                                                      mapping_generation, mapping->user_data );
     rocketnet_assert( client_index != -1 );     // num_free was checked above
     rocketnet_server_connection_id_assigned( server, client_index );
 
@@ -966,7 +969,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
         // tla/MCReceiveOrder.tla IdleRemove: the slotless mapping leaves
         // alone, as the idle timeout does, and releases its token's claim
         rocketnet_server_release_mapping_claim( server, mapping_index );
-        rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+        rocketnet_encryption_map_remove_current( server->encryption_map, mapping_index );
     }
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
@@ -1617,7 +1620,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             if ( current_time >= control->handshake_deadline )
             {
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
-                rocketnet_encryption_map_remove( server->encryption_map, iterator );
+                rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
             }
             else if ( current_time >= control->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
@@ -1626,7 +1629,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
                 // and releases its token's claim before it is removed
                 rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
                 rocketnet_server_release_mapping_claim( server, iterator );
-                rocketnet_encryption_map_remove( server->encryption_map, iterator );
+                rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             }
             continue;
@@ -1641,7 +1644,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
                 rocketnet_server_connection_reset( server, client_index );
             }
             else
-                rocketnet_encryption_map_remove( server->encryption_map, iterator );
+                rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
             counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
         }

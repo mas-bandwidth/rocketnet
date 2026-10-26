@@ -207,7 +207,10 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
         CHECK(index >= 0);
         auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map, index);
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-        CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, (uint64_t) i + 1, index, user_data) == i);
+        const uint64_t owner_generation =
+            rocketnet_encryption_map_owner_generation(server->protocol.encryption_map, index);
+        CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, (uint64_t) i + 1, index,
+                                            owner_generation, user_data) == i);
         mapping->control->client_index = i; mapping->client_id = (uint64_t) i + 1; mapping->control->established = 1;
         mapping->control->timeout_seconds = 1000;
         // Synthetic connections have test keys; this fixture does not
@@ -387,7 +390,7 @@ static void test_staged_idle_maintenance_preflight()
     // an address at -1 or reserving a staged frame.
     rocketnet_client_slots_release(server->protocol.client_slots, 0);
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-    CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, 9, -1, user_data) == 0);
+    CHECK(rocketnet_client_slots_assign(server->protocol.client_slots, 9, -1, 9, user_data) == 0);
     const uint64_t missing_before = server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING];
     rocketnet_server_transport_update(server, 1003.5);
     CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING] == missing_before + 1);

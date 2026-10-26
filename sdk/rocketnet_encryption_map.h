@@ -135,9 +135,24 @@ struct rocketnet_encryption_mapping_control_t * rocketnet_encryption_map_control
 
 const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index );
 
-// Removes a mapping, zeroing all key material before the slot is freed.
+// The exact nonzero generation that owns a live mapping index. Client slots
+// retain this value with the index so a delayed reset cannot remove a reused
+// mapping.
 
-void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );
+uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encryption_map_t * map, int index );
+
+// Removes a mapping only when index and owner_generation still name the same
+// live mapping. A stale owner is a no-op and returns false.
+
+bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * map,
+                                            int index,
+                                            uint64_t owner_generation );
+
+// Removes a mapping whose index was obtained synchronously from the current
+// add, find or iterator operation. Persisted indices must use remove_owned.
+// All key material is zeroed before the slot is freed.
+
+void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index );
 
 // Iterates the live mappings: start with iterator = -1, call until it
 // returns 0; each call yields the next live index. Removing the yielded

@@ -77,16 +77,21 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         return;
 
     int mapping_index = -1;
+    uint64_t mapping_generation = 0;
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
+    {
         mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+        mapping_generation = rocketnet_client_slots_owner_generation( server->client_slots, client_index );
+    }
 
     /*
-        Remove first: rocketnet_encryption_map_remove wipes the session keys
-        and nonce, and takes the entry out of live, while the slot still
-        identifies the mapping. The slot identity and user data are cleared only afterwards.
+        Remove first: generation-aware removal wipes the session keys and
+        nonce only when the slot still owns this exact mapping instance. A
+        delayed reset that names a reused index leaves the replacement mapping
+        untouched. The stale slot is still released afterwards.
     */
     if ( mapping_index >= 0 && server->encryption_map )
-        rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+        (void) rocketnet_encryption_map_remove_owned( server->encryption_map, mapping_index, mapping_generation );
 
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );

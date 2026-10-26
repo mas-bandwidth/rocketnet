@@ -443,7 +443,8 @@ static void test_sim_schedule_same_tick_slot_reuse()
     memcpy( m_a->keys.session_client_to_server, rocketnet_test_session_c2s_key, ROCKETNET_KEY_BYTES );
     memcpy( m_a->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     m_a->send_sequence_session = 1;
-    int slot_a = rocketnet_client_slots_assign( server.client_slots, 0xA000, map_a, user_data );
+    const uint64_t generation_a = rocketnet_encryption_map_owner_generation( server.encryption_map, map_a );
+    int slot_a = rocketnet_client_slots_assign( server.client_slots, 0xA000, map_a, generation_a, user_data );
     rocketnet_unit_check( slot_a == 0 );
     m_a->control->client_index = slot_a;
     m_a->control->established = 1;
@@ -484,7 +485,8 @@ static void test_sim_schedule_same_tick_slot_reuse()
     memcpy( m_b->keys.session_client_to_server, rocketnet_test_session_s2c_key, ROCKETNET_KEY_BYTES );
     memcpy( m_b->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     m_b->send_sequence_session = 1;
-    int slot_b = rocketnet_client_slots_assign( server.client_slots, 0xB000, map_b, user_data );
+    const uint64_t generation_b = rocketnet_encryption_map_owner_generation( server.encryption_map, map_b );
+    int slot_b = rocketnet_client_slots_assign( server.client_slots, 0xB000, map_b, generation_b, user_data );
     rocketnet_unit_check( slot_b == 0 );
     m_b->control->client_index = slot_b;
     m_b->control->established = 1;

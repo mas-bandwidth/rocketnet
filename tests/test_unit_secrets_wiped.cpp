@@ -639,7 +639,7 @@ static void test_secrets_wiped_user_data_at_slots_and_map_destroy()
     secrets_wiped_user_data( user_data );
     struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
     check( slots != NULL );
-    check( rocketnet_client_slots_assign( slots, 0x5EED, 0, user_data ) >= 0 );
+    check( rocketnet_client_slots_assign( slots, 0x5EED, 0, 0x5EED, user_data ) >= 0 );
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
     check( map != NULL );
     struct rocketnet_address_t address;
@@ -961,8 +961,8 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     check( slots );
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     secrets_wiped_user_data( user_data );
-    const int first = rocketnet_client_slots_assign( slots, 1, 0, user_data );
-    const int second = rocketnet_client_slots_assign( slots, 2, 1, user_data );
+    const int first = rocketnet_client_slots_assign( slots, 1, 0, 1, user_data );
+    const int second = rocketnet_client_slots_assign( slots, 2, 1, 2, user_data );
     check( first == 0 && second == 1 );
     const uint8_t * data = rocketnet_client_slots_user_data( slots, first );
     bool unused_untouched = true;
@@ -1006,7 +1006,7 @@ static void test_client_slots_release_of_free_slot_is_refused()
     check( slots );
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     secrets_wiped_user_data( user_data );
-    const int first = rocketnet_client_slots_assign( slots, 1, 0, user_data );
+    const int first = rocketnet_client_slots_assign( slots, 1, 0, 1, user_data );
     check( first >= 0 );
     const int never_assigned = first == 3 ? 0 : 3;
     rocketnet_assert_function( secrets_wiped_quiet_assert );
@@ -1019,7 +1019,8 @@ static void test_client_slots_release_of_free_slot_is_refused()
     rocketnet_assert_function( NULL );
     int indices[4];
     for ( int i = 0; i < 4; ++i )
-        indices[i] = rocketnet_client_slots_assign( slots, (uint64_t) ( 10 + i ), i, user_data );
+        indices[i] = rocketnet_client_slots_assign( slots, (uint64_t) ( 10 + i ), i,
+                                                    (uint64_t) ( 10 + i ), user_data );
     bool distinct = true;
     for ( int i = 0; i < 4; ++i )
     {
@@ -1092,7 +1093,7 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
     // reachable. LIFO free storage reuses that same stable public index.
     const int removed = index[3];
     const uint64_t remove_probes_before = rocketnet_encryption_map_test_probes( map );
-    rocketnet_encryption_map_remove( map, removed );
+    rocketnet_encryption_map_remove_current( map, removed );
     check( rocketnet_encryption_map_test_probes( map ) - remove_probes_before <=
            rocketnet_encryption_map_test_probe_bound( map ) );
     check( rocketnet_encryption_map_find( map, &colliding[3] ) == -1 );
@@ -1109,7 +1110,7 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
     for ( int cycle = 0; cycle < 1024; ++cycle )
     {
         const uint64_t probes_before = rocketnet_encryption_map_test_probes( map );
-        rocketnet_encryption_map_remove( map, replacement );
+        rocketnet_encryption_map_remove_current( map, replacement );
         current = secrets_wiped_map_address( 300000 + cycle );
         check( rocketnet_encryption_map_add( map, &current, 4000.0 + cycle ) == replacement );
         check( rocketnet_encryption_map_test_probes( map ) - probes_before <=
@@ -1141,7 +1142,7 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
     memset( &old_mapping->keys, 0xA1, sizeof( old_mapping->keys ) );
     memset( old_mapping->session_nonce, 0xB2, sizeof( old_mapping->session_nonce ) );
     memset( old_mapping->user_data, 0xC3, sizeof( old_mapping->user_data ) );
-    rocketnet_encryption_map_remove( map, index );
+    rocketnet_encryption_map_remove_current( map, index );
     check( secrets_wiped_all_zero( (const uint8_t *) &old_mapping->keys, sizeof( old_mapping->keys ) ) );
     check( secrets_wiped_all_zero( old_mapping->session_nonce, sizeof( old_mapping->session_nonce ) ) );
     check( secrets_wiped_all_zero( old_mapping->user_data, sizeof( old_mapping->user_data ) ) );

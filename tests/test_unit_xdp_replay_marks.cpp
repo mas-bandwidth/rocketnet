@@ -369,7 +369,8 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
 
     const int old_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( old_mapping >= 0 );
-    const int old_slot = rocketnet_client_slots_assign( slots, 100, old_mapping, user_data );
+    const int old_slot = rocketnet_client_slots_assign( slots, 100, old_mapping,
+        rocketnet_encryption_map_owner_generation( map, old_mapping ), user_data );
     rocketnet_unit_check( old_slot >= 0 );
     rocketnet_encryption_map_entry( map, old_mapping )->replay_session.highest_opened = 40;
 
@@ -380,7 +381,7 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
     // the old session leaves; its forget fails (one)
 
     rocketnet_client_slots_release( slots, old_slot );
-    rocketnet_encryption_map_remove( map, old_mapping );
+    rocketnet_encryption_map_remove_current( map, old_mapping );
     rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
     rocketnet_unit_check( marks.forget_count == 1 );
     kernel.delete_refusals = 1;
@@ -392,7 +393,8 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
 
     const int new_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( new_mapping >= 0 );
-    const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping, user_data );
+    const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping,
+        rocketnet_encryption_map_owner_generation( map, new_mapping ), user_data );
     rocketnet_unit_check( new_slot >= 0 );
     rocketnet_encryption_map_entry( map, new_mapping )->replay_session.highest_opened = 3;
 
@@ -477,7 +479,8 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
 
     const int old_mapping_a = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( old_mapping_a >= 0 );
-    const int old_slot_a = rocketnet_client_slots_assign( slots, 100, old_mapping_a, user_data );
+    const int old_slot_a = rocketnet_client_slots_assign( slots, 100, old_mapping_a,
+        rocketnet_encryption_map_owner_generation( map, old_mapping_a ), user_data );
     rocketnet_unit_check( old_slot_a >= 0 );
     rocketnet_encryption_map_entry( map, old_mapping_a )->replay_session.highest_opened = old_high_water;
 
@@ -486,7 +489,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     rocketnet_unit_check( !replay_fake_kernel_admits( &kernel, &key_a, 1 ) );
 
     rocketnet_client_slots_release( slots, old_slot_a );
-    rocketnet_encryption_map_remove( map, old_mapping_a );
+    rocketnet_encryption_map_remove_current( map, old_mapping_a );
     rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
     rocketnet_unit_check( marks.forget_count == 1 );
     kernel.delete_refusals = 1;
@@ -496,11 +499,12 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     // a new session from A, in another slot, before the held delete lands;
     // the kernel refuses the delete again in the commit of its first update
 
-    const int other_slot = rocketnet_client_slots_assign( slots, 300, -1, user_data );
+    const int other_slot = rocketnet_client_slots_assign( slots, 300, -1, 300, user_data );
     rocketnet_unit_check( other_slot >= 0 );
     const int new_mapping_a = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( new_mapping_a >= 0 );
-    const int new_slot_a = rocketnet_client_slots_assign( slots, 200, new_mapping_a, user_data );
+    const int new_slot_a = rocketnet_client_slots_assign( slots, 200, new_mapping_a,
+        rocketnet_encryption_map_owner_generation( map, new_mapping_a ), user_data );
     rocketnet_unit_check( new_slot_a >= 0 && new_slot_a != old_slot_a );
     rocketnet_client_slots_release( slots, other_slot );
 
@@ -518,7 +522,8 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
 
     const int old_mapping_b = rocketnet_encryption_map_add( map, &b, 1005.0 );
     rocketnet_unit_check( old_mapping_b >= 0 );
-    const int old_slot_b = rocketnet_client_slots_assign( slots, 400, old_mapping_b, user_data );
+    const int old_slot_b = rocketnet_client_slots_assign( slots, 400, old_mapping_b,
+        rocketnet_encryption_map_owner_generation( map, old_mapping_b ), user_data );
     rocketnet_unit_check( old_slot_b >= 0 );
     rocketnet_encryption_map_entry( map, old_mapping_b )->replay_session.highest_opened = old_high_water;
 
@@ -527,10 +532,11 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     rocketnet_unit_check( !replay_fake_kernel_admits( &kernel, &key_b, 1 ) );
 
     rocketnet_client_slots_release( slots, old_slot_b );
-    rocketnet_encryption_map_remove( map, old_mapping_b );
+    rocketnet_encryption_map_remove_current( map, old_mapping_b );
     const int new_mapping_b = rocketnet_encryption_map_add( map, &b, 1005.0 );
     rocketnet_unit_check( new_mapping_b >= 0 );
-    const int new_slot_b = rocketnet_client_slots_assign( slots, 500, new_mapping_b, user_data );
+    const int new_slot_b = rocketnet_client_slots_assign( slots, 500, new_mapping_b,
+        rocketnet_encryption_map_owner_generation( map, new_mapping_b ), user_data );
     rocketnet_unit_check( new_slot_b == old_slot_b );
 
     rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
@@ -588,7 +594,8 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
 
     const int old_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( old_mapping >= 0 );
-    const int old_slot = rocketnet_client_slots_assign( slots, 100, old_mapping, user_data );
+    const int old_slot = rocketnet_client_slots_assign( slots, 100, old_mapping,
+        rocketnet_encryption_map_owner_generation( map, old_mapping ), user_data );
     rocketnet_unit_check( old_slot >= 0 );
     rocketnet_encryption_map_entry( map, old_mapping )->replay_session.highest_opened = ROCKETNET_XDP_REPLAY_WINDOW + 1000;
 
@@ -600,10 +607,11 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     // refuses its zero mark, so the old entry still drops sequence 1
 
     rocketnet_client_slots_release( slots, old_slot );
-    rocketnet_encryption_map_remove( map, old_mapping );
+    rocketnet_encryption_map_remove_current( map, old_mapping );
     const int new_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( new_mapping >= 0 );
-    const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping, user_data );
+    const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping,
+        rocketnet_encryption_map_owner_generation( map, new_mapping ), user_data );
     rocketnet_unit_check( new_slot == old_slot );
 
     rocketnet_server_replay_marks_walk( walk, slots, map, &sink );

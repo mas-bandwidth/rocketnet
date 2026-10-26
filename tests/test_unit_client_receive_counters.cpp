@@ -1092,7 +1092,8 @@ static void test_server_response_and_slot_counters_move_exactly()
     {
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
         memset( user_data, 0, sizeof(user_data) );
-        const int slot = rocketnet_client_slots_assign( pair.server.client_slots, 0xBEEFULL, -1, user_data );
+        const int slot = rocketnet_client_slots_assign( pair.server.client_slots, 0xBEEFULL, -1,
+                                                        0xBEEFULL, user_data );
         check( slot != -1 );
 
         struct rocketnet_address_t to;

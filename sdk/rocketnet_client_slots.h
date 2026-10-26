@@ -39,14 +39,19 @@ int rocketnet_client_slots_num_free( const struct rocketnet_client_slots_t * slo
 
 int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, uint64_t client_id );
 
-// Assigns a free slot from the free list (LIFO): unconfirmed, identity copied in, bound to
-// the mapping index. Returns the client index, or -1 when full. The caller
-// checks for a duplicate client id before assigning; assigning a duplicate
-// is a bug, and asserts.
+// Assigns a free slot from the free list (LIFO): unconfirmed, identity copied
+// in, bound to the mapping index and its exact nonzero owner generation.
+// owner_generation names this ownership instance and must differ from the
+// generation last held by a reused numeric slot. Production passes the
+// encryption mapping generation; standalone fixtures pass an explicit fresh
+// synthetic generation. Returns the client index, or -1 when full. The caller
+// checks for a duplicate client id before assigning; assigning a duplicate is
+// a bug, and asserts.
 
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
+                                   uint64_t owner_generation,
                                    const uint8_t * user_data );
 
 // whether this client index currently holds a connection. safe for any
@@ -59,6 +64,8 @@ int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * sl
 uint64_t rocketnet_client_slots_client_id( const struct rocketnet_client_slots_t * slots, int client_index );
 
 int rocketnet_client_slots_mapping_index( const struct rocketnet_client_slots_t * slots, int client_index );
+
+uint64_t rocketnet_client_slots_owner_generation( const struct rocketnet_client_slots_t * slots, int client_index );
 
 const uint8_t * rocketnet_client_slots_user_data( const struct rocketnet_client_slots_t * slots, int client_index );
 
