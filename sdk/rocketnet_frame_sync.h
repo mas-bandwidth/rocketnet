@@ -15,7 +15,11 @@
 // The frame sync primitive, built to the issue #56 measurements: an absolute
 // deadline per frame, the platform sleep that honors it, priority taken on
 // the waiting thread, and a capped adaptive spin guard covering the sleeper's
-// oversleep. The guard runs only while priority is held: an unprivileged
+// oversleep. On Windows, creation requires a high-resolution waitable timer
+// (CreateWaitableTimerExW with CREATE_WAITABLE_TIMER_HIGH_RESOLUTION) and
+// fails with ROCKETNET_STATUS_TIMER_CREATE_FAILED when unavailable, never
+// falling back to a coarse standard waitable timer. The guard runs only while
+// priority is held: an unprivileged
 // spinner gets preempted out of its own spin window and the adaptation then
 // chases the loss -- measured to 37ms of guard and thousands of dropped
 // frames -- so without priority the primitive is plain absolute sleep, and

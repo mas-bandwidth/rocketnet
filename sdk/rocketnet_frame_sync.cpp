@@ -25,6 +25,10 @@
 
 #define ROCKETNET_NANOS_PER_SECOND 1000000000ULL
 
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
 // -------------------------------------------------------------------
 // the platform clock and the absolute sleep it pairs with
 // -------------------------------------------------------------------
@@ -108,10 +112,6 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
 
 static HANDLE rocketnet_frame_sync_create_waitable_timer( unsigned flags )
 {
@@ -432,17 +432,15 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    // Windows frame pacing requires a high-resolution waitable timer
+    // (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION); it never retries or falls back
+    // to a coarse standard waitable timer (flags == 0).
     frame_sync->waitable_timer = rocketnet_frame_sync_create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION );
-    if ( !frame_sync->waitable_timer )
-    {
-        rocketnet_info( "frame sync: high resolution waitable timer unavailable, using standard" );
-        frame_sync->waitable_timer = rocketnet_frame_sync_create_waitable_timer( 0 );
-    }
     if ( !frame_sync->waitable_timer )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
-        rocketnet_error( "frame sync: could not create waitable timer (%lu)", (unsigned long) GetLastError() );
+        rocketnet_error( "frame sync: could not create high resolution waitable timer (%lu)", (unsigned long) GetLastError() );
         rocketnet_free( context, frame_sync );
         return NULL;
     }
@@ -451,11 +449,11 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
         (uintptr_t) frame_sync->waitable_timer, "frame sync waitable timer" );
 #endif
 #elif ROCKETNET_DEV
-    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
+    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
-        rocketnet_error( "frame sync: could not create timer" );
+        rocketnet_error( "frame sync: could not create high resolution waitable timer" );
         rocketnet_free( context, frame_sync );
         return NULL;
     }

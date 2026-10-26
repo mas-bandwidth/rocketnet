@@ -10740,6 +10740,9 @@ static void rocketnet_test_hostname_resolve_localhost()
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_frame_sync_dropped_stats();
+#if ROCKETNET_DEV
+extern void rocketnet_test_frame_sync_high_resolution_timer_required();
+#endif // #if ROCKETNET_DEV
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
 extern void test_api_polish_dev_token_string();
@@ -10809,6 +10812,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
+#if ROCKETNET_DEV
+    { "test_frame_sync_high_resolution_timer_required", rocketnet_test_frame_sync_high_resolution_timer_required, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
     { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },

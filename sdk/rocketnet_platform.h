@@ -958,7 +958,7 @@ struct rocketnet_platform_priority_calls_t
     int ( *mutex_init )( struct rocketnet_platform_mutex_t * mutex );
     /** @brief Platform startup (Windows WSAStartup); 0 on success, nonzero on failure. */
     int ( *platform_start )( void );
-    /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Off Windows the handle is unused and the entry returns a non-NULL placeholder, so NULL stays the failure answer on every platform. */
+    /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Frame sync requests CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (0x00000002) and refuses creation without falling back to a coarse timer when unavailable. Off Windows the handle is unused and the entry returns a non-NULL placeholder only for the high-resolution flag, so NULL stays the failure answer on every platform. */
     void* ( *create_waitable_timer )( unsigned flags );
 };
 
