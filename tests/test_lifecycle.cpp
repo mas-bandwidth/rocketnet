@@ -88,6 +88,13 @@ static void * refuse_allocation( void *, size_t ) { return NULL; }
 static void refuse_free( void *, void * ) { check(false); }
 static void thread_body( void * ) {}
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+// The Linux thread and shim share one custom-allocator-backed record.
+static const int expected_platform_thread_allocations = 1;
+#else
+static const int expected_platform_thread_allocations = 2;
+#endif
+
 struct ack_writer
 {
     rocketnet_ack_endpoint_t * endpoint;
@@ -546,7 +553,7 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_frame_sync_create( &state, 60.0 ); },
         []( rocketnet_frame_sync_t * f ) { rocketnet_frame_sync_destroy( f ); } ) == 1 );
 
-    // 11. rocketnet_platform_thread_create: 2 allocations (fail N=1..2, succeed N=3).
+    // 11. The platform thread and its shim share an allocator-backed record.
     check( sweep_component_create<rocketnet_platform_thread_t>(
         state,
         [&]() { return rocketnet_platform_thread_create( &state, thread_body, NULL ); },
@@ -554,7 +561,7 @@ static void check_component_create_sweeps( allocator_state & state )
             rocketnet_platform_thread_join( t );
             rocketnet_platform_thread_destroy( t );
         },
-        false ) == 2 );
+        false ) == expected_platform_thread_allocations );
 
     check( state.live == baseline );
 }
@@ -711,10 +718,12 @@ int main()
     check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
     check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
 
-    // The client transport's plan: defaults, unknown/NULL/auto transports and an
-    // overflowing geometry all refuse to 0, a larger max payload plans larger,
-    // and planning allocates nothing. A create-time counting-allocator match
-    // needs a live socket, so it is left to bench/transport_memory.cpp.
+    // The client transport's plan: defaults plan a nonzero size, the same config
+    // plans the same size again, unknown/NULL/auto transports and an overflowing
+    // geometry all refuse to 0, and planning allocates nothing. The payload is
+    // fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (no config field). A
+    // create-time counting-allocator match needs a live socket, so it is left
+    // to bench/transport_memory.cpp.
     rocketnet_client_transport_config_t client_memory_config;
     rocketnet_client_transport_default_config(&client_memory_config);
     check(rocketnet_client_transport_required_memory(NULL, "portable") > 0);
@@ -723,7 +732,7 @@ int main()
     check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
     check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == client_default_memory);
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
     check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
     client_memory_config.max_fragmented_messages = 0;
@@ -761,7 +770,7 @@ int main()
     check_client_memory_budget( state );
     check( state.live == baseline );
 
-    for ( int failure = 1; failure <= 2; ++failure )
+    for ( int failure = 1; failure <= expected_platform_thread_allocations; ++failure )
     {
         state.fail_at = state.calls + failure;
         check( !rocketnet_platform_thread_create( &state, thread_body, NULL ) );
