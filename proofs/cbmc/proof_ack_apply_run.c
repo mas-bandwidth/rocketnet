@@ -2,27 +2,30 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC harness for rocketnet_ack_apply_run: neither skip nor double-count
-    an acked range. The run is not proved. The body is the static leaf in
-    sdk/rocketnet_ack.cpp.
-    The endpoint re-declares the fields that leaf reads and writes.
+    ESBMC harness for the current production rocketnet_ack_apply_run leaf.
+    The SDK translation unit is included below, so the proof executes the
+    bitmap popcount and descending set-bit walk in sdk/rocketnet_ack.cpp,
+    rather than a copied model of an older linear implementation.
 
-    The run is symbolic in its start and its length. The length is at most
-    ACK_RUN_BOUND and at most the retained window (4096), and the whole run
-    sits inside that window. Each sequence in the run has a matching sent
-    record and carries no packet id and no aggregate, so the batch never
-    defers one. Under those conditions the returned count equals the number
-    of records that were unacked, each of those records ends acked, and the
-    marking walk visits each sequence once when any of them was unacked.
+    A symbolic retained run has length 1..ACK_RUN_BOUND. Every sequence in
+    the run has a matching live sent record; whether it was already acked is
+    symbolic. The sent_held and sent_unacked bitmaps are initialized to the
+    exact ring state those records describe. No record carries a packet id or
+    aggregate id, and a negative time avoids the independent RTT tree update.
 
-    The harness initializes exactly the sent records in the symbolic run.
-    The leaf reads no other record under the run assumptions; the negative
-    RTT sample and absent packet ids/aggregates bypass the other arrays.
+    The assertions prove that the production walk:
+      * counts every and only newly acked live record;
+      * does not report a live record as unknown or batch-full;
+      * visits every and only initially-unacked sequence once;
+      * leaves an arbitrary sequence in the run acked, written and held, with
+        its unacked bit cleared; and
+      * advances largest_acked_sequence to the newest newly acked sequence.
 
-    Flags: --bounds-check --pointer-check --signed-overflow-check
-           --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
-    Unwinding: ACK_RUN_BOUND. Bound 8 and the complete window of 4096 are
-    both unproved. A bound covers only runs of that length.
+    ACK_RUN_BOUND=8 is the required small run. ACK_RUN_BOUND=4096 is the full
+    retained window. The Makefile records timeout, OOM, UNKNOWN or unwind
+    failure as HOLD, never as a proof. ACK_NEGATIVE_CONTROL replaces the visit
+    equality with its negation after requiring an unacked record; its intended
+    assertion failure witnesses satisfiable assumptions and operation reach.
 */
 
 #include <stdint.h>
@@ -31,229 +34,118 @@
 #define ACK_RUN_BOUND 4096
 #endif
 
-#ifndef __CPROVER__
-#define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
-#define __CPROVER_assume( c ) ( (void) ( c ) )
-static uint64_t nondet_uint64( void ) { return 0; }
-static unsigned char nondet_uchar( void ) { return 0; }
-#else
-uint64_t nondet_uint64( void );
-unsigned char nondet_uchar( void );
-#endif
+#define ROCKETNET_ACK_VISIT_TEST_HOOKS 1
+#include "rocketnet_ack.cpp"
 
-#define ROCKETNET_SENT_PACKET_BUFFER_SIZE      4096
-#define ROCKETNET_RTT_HISTORY_SIZE             2048
-#define ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
-
-struct rocketnet_sent_packet_record_t
+static void proof_set_bit( uint64_t * words, uint64_t slot )
 {
-    uint64_t sequence;
-    uint64_t packet_id;
-    uint64_t aggregate_id;
-    double send_time;
-    uint32_t wire_bytes;
-    uint8_t acked;
-    uint8_t has_packet_id;
-    uint8_t was_keep_alive;
-    uint8_t pad;
-};
-
-struct rocketnet_packet_aggregate_t
-{
-    uint64_t id;
-    uint64_t packet_id;
-    uint32_t remaining;
-    uint32_t pad;
-};
-
-struct rocketnet_ack_endpoint_t
-{
-    uint64_t highest_sequence;
-    uint8_t keep_alive_acked;
-    int has_rtt_sample;
-    float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];
-    struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-    struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
-};
-
-unsigned long long g_ack_visit_count = 0;
-
-static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
-                                    uint64_t low, uint64_t high, double time,
-                                    uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
-                                    uint64_t * unknown_sequence_counter,
-                                    uint64_t * batch_full_counter )
-{
-    if ( high > endpoint->highest_sequence )
-    {
-        uint64_t above_low = low > endpoint->highest_sequence + 1 ? low : endpoint->highest_sequence + 1;
-        *unknown_sequence_counter += high - above_low + 1;
-        if ( low > endpoint->highest_sequence )
-            return 0;
-        high = endpoint->highest_sequence;
-    }
-
-    uint64_t window_low = 1;
-    if ( endpoint->highest_sequence >= ROCKETNET_SENT_PACKET_BUFFER_SIZE )
-        window_low = endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
-
-    if ( high < window_low )
-        return 0;
-    if ( low < window_low )
-        low = window_low;
-
-    int all_acked = 1;
-    for ( uint64_t seq = high; seq >= low; seq-- )
-    {
-        struct rocketnet_sent_packet_record_t * rec = &endpoint->sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-        if ( rec->sequence == seq && !rec->acked )
-        {
-            all_acked = 0;
-            break;
-        }
-    }
-    if ( all_acked )
-        return 0;
-
-    int newly_acked = 0;
-
-    for ( uint64_t sequence = high; ; sequence-- )
-    {
-        g_ack_visit_count++;
-        struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-
-        if ( record->sequence != sequence )
-        {
-            ( *unknown_sequence_counter )++;
-        }
-        else if ( !record->acked )
-        {
-            if ( ( record->has_packet_id || record->aggregate_id != 0 ) && *acked_count >= acked_capacity )
-            {
-                ( *batch_full_counter )++;
-            }
-            else
-            {
-                record->acked = 1;
-                newly_acked++;
-
-                if ( record->was_keep_alive )
-                    endpoint->keep_alive_acked = 1;
-
-                double sample = time - record->send_time;
-                if ( sample >= 0.0 )
-                {
-                    endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] = (float) ( sample * 1000.0 );
-                    endpoint->has_rtt_sample = 1;
-                }
-
-                if ( record->has_packet_id )
-                {
-                    acked_packet_ids[(*acked_count)++] = record->packet_id;
-                }
-                else if ( record->aggregate_id != 0 )
-                {
-                    struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
-                    if ( aggregate->id == record->aggregate_id && aggregate->remaining > 0 )
-                    {
-                        aggregate->remaining--;
-                        if ( aggregate->remaining == 0 )
-                            acked_packet_ids[(*acked_count)++] = aggregate->packet_id;
-                    }
-                }
-            }
-        }
-
-        if ( sequence == low )
-            break;
-    }
-
-    return newly_acked;
+    words[slot >> 6] |= 1ULL << ( slot & 63 );
 }
 
-int main( void )
+static int proof_bit( const uint64_t * words, uint64_t slot )
 {
-    struct rocketnet_ack_endpoint_t endpoint;
-    uint64_t low;
-    uint64_t high;
-    uint64_t len;
-    uint64_t window_low;
-    uint64_t i;
-    uint64_t n_unacked;
-    uint64_t acked_packet_ids[1];
-    int acked_count;
-    uint64_t unknown_sequence_counter;
-    uint64_t batch_full_counter;
-    int newly_acked;
+    return (int) ( ( words[slot >> 6] >> ( slot & 63 ) ) & 1ULL );
+}
 
-    endpoint.highest_sequence = nondet_uint64();
-    low = nondet_uint64();
-    high = nondet_uint64();
+int harness_ack_apply_run( void )
+{
+    static struct rocketnet_ack_endpoint_t endpoint;
+    uint64_t low = nondet_uint64();
+    uint64_t high = nondet_uint64();
+    uint64_t highest = nondet_uint64();
+    uint64_t len;
+    uint64_t expected_new = 0;
+    uint64_t expected_largest = 0;
+    uint64_t eligible_unacked = 0;
+    uint64_t chosen;
+    uint64_t acked_packet_ids[1];
+    int acked_count = 0;
+    uint64_t unknown_sequence_counter = 0;
+    uint64_t batch_full_counter = 0;
 
     __CPROVER_assume( ACK_RUN_BOUND >= 1 );
     __CPROVER_assume( ACK_RUN_BOUND <= ROCKETNET_SENT_PACKET_BUFFER_SIZE );
     __CPROVER_assume( low >= 1 );
     __CPROVER_assume( low <= high );
-    __CPROVER_assume( high - low <= (uint64_t) ACK_RUN_BOUND - 1 );
-    __CPROVER_assume( high <= endpoint.highest_sequence );
+    __CPROVER_assume( high - low < (uint64_t) ACK_RUN_BOUND );
+    __CPROVER_assume( high <= highest );
+    __CPROVER_assume( highest - low < ROCKETNET_SENT_PACKET_BUFFER_SIZE );
 
-    window_low = 1;
-    if ( endpoint.highest_sequence >= ROCKETNET_SENT_PACKET_BUFFER_SIZE )
-        window_low = endpoint.highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
-    __CPROVER_assume( low >= window_low );
-
+    endpoint.highest_sequence = highest;
     len = high - low + 1;
 
-    for ( i = 0; i < len; i++ )
+    for ( uint64_t i = 0; i < len; ++i )
     {
-        uint64_t seq = low + i;
-        struct rocketnet_sent_packet_record_t * rec =
-            &endpoint.sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-        rec->sequence = seq;
-        rec->acked = nondet_uchar() & 1;
-        rec->has_packet_id = 0;
-        rec->aggregate_id = 0;
-        rec->was_keep_alive = 0;
-        rec->send_time = 0.0;
+        const uint64_t sequence = low + i;
+        const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+        struct rocketnet_sent_packet_record_t * record = &endpoint.sent[slot];
+        const uint8_t already_acked = nondet_uchar() & 1U;
+
+        record->sequence = sequence;
+        record->packet_id = 0;
+        record->aggregate_id = 0;
+        record->send_time = 0.0;
+        record->wire_bytes = 0;
+        record->acked = already_acked;
+        record->has_packet_id = 0;
+        record->was_keep_alive = 0;
+        proof_set_bit( endpoint.sent_written, slot );
+        proof_set_bit( endpoint.sent_held, slot );
+
+        if ( !already_acked )
+        {
+            proof_set_bit( endpoint.sent_unacked, slot );
+            expected_new++;
+            expected_largest = sequence;
+            if ( sequence <= rocketnet_ack_stats_eligible_top( highest ) )
+                eligible_unacked++;
+        }
     }
 
-    n_unacked = 0;
-    for ( i = 0; i < len; i++ )
-    {
-        uint64_t seq = low + i;
-        if ( endpoint.sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked == 0 )
-            n_unacked++;
-    }
+    endpoint.stats_eligible_unacked = (uint32_t) eligible_unacked;
+    g_ack_visit_count = 0;
 
-    acked_count = 0;
-    unknown_sequence_counter = 0;
-    batch_full_counter = 0;
-    /* A negative sample skips the rtt store. The count does not depend on it. */
-    newly_acked = rocketnet_ack_apply_run( &endpoint, low, high, -1.0,
-                                           acked_packet_ids, 1, &acked_count,
-                                           &unknown_sequence_counter,
-                                           &batch_full_counter );
+    const int newly_acked = rocketnet_ack_apply_run(
+        &endpoint, low, high, -1.0, acked_packet_ids, 1, &acked_count,
+        &unknown_sequence_counter, &batch_full_counter );
 
-    __CPROVER_assert( (uint64_t) newly_acked == n_unacked,
-                      "the run neither skips nor double-counts" );
+    __CPROVER_assert( (uint64_t) newly_acked == expected_new,
+                      "the production ACK run neither skips nor double-counts" );
     __CPROVER_assert( unknown_sequence_counter == 0,
-                      "a sent in-window sequence is not skipped as unknown" );
+                      "every held sequence remains known" );
     __CPROVER_assert( batch_full_counter == 0,
-                      "the run does not defer a record" );
+                      "records without packet or aggregate ids never defer" );
+    __CPROVER_assert( acked_count == 0,
+                      "records without packet or aggregate ids surface no id" );
+    __CPROVER_assert( endpoint.stats_eligible_unacked == 0,
+                      "every eligible unacked record leaves the running total" );
+    __CPROVER_assert( g_ack_visit_count == expected_new,
+                      "the production walk visits each initially-unacked sequence once" );
+    __CPROVER_assert( endpoint.largest_acked_sequence == expected_largest,
+                      "largest_acked_sequence names the newest newly acked sequence" );
 
-    for ( i = 0; i < len; i++ )
+    chosen = nondet_uint64();
+    __CPROVER_assume( chosen < len );
     {
-        uint64_t seq = low + i;
-        __CPROVER_assert( endpoint.sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked == 1,
-                          "every sequence in the run ends acked" );
+        const uint64_t sequence = low + chosen;
+        const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+        __CPROVER_assert( endpoint.sent[slot].sequence == sequence,
+                          "the ACK walk does not overwrite a live sent record" );
+        __CPROVER_assert( endpoint.sent[slot].acked == 1,
+                          "an arbitrary sequence in the run ends acked" );
+        __CPROVER_assert( proof_bit( endpoint.sent_written, slot ) == 1,
+                          "an ACK does not erase the written identity" );
+        __CPROVER_assert( proof_bit( endpoint.sent_held, slot ) == 1,
+                          "an ACK does not erase the held identity" );
+        __CPROVER_assert( proof_bit( endpoint.sent_unacked, slot ) == 0,
+                          "an ACK clears the unacked identity" );
     }
 
-    if ( n_unacked == 0 )
-        __CPROVER_assert( g_ack_visit_count == 0,
-                          "an all-acked run does not enter the marking walk" );
-    else
-        __CPROVER_assert( g_ack_visit_count == len,
-                          "the marking walk visits each sequence once" );
+#if defined(ACK_NEGATIVE_CONTROL)
+    __CPROVER_assume( expected_new > 0 );
+    __CPROVER_assert( g_ack_visit_count == 0,
+                      "negative control reaches the production ACK operation" );
+#endif
 
     return 0;
 }
