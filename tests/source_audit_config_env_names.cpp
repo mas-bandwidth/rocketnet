@@ -271,6 +271,8 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS", "10" );
     set.push_back( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS" );
+    env_names_setenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE", "64" );
+    set.push_back( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" );
     env_names_setenv( "ROCKETNET_SERVER_TRANSPORT", "loopback" );
     set.push_back( "ROCKETNET_SERVER_TRANSPORT" );
 
@@ -493,8 +495,9 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_BACKEND_PUBLIC_KEY" ) );
+    check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 66u : 65u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 67u : 66u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

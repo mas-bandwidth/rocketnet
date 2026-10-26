@@ -15,6 +15,8 @@
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet.h"
+#include "../sdk/rocketnet_constants.h"
+#include "../sdk/rocketnet_server_protocol.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_packet_builder.h"
 #include "token_string.h"
@@ -28,6 +30,10 @@
 #define LIFECYCLE_MAX_CLIENTS 4
 
 #if ROCKETNET_DEV
+uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
+    int index, uint8_t * out, int out_bytes, int * head, int * count );
+
 struct lifecycle_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -49,6 +55,7 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
 // defaults hold: the window, the send queue and the send buffer then fit
 // that many messages, on the server and every client the world creates
 static int lifecycle_queue_messages = 0;
+static int lifecycle_disconnect_packets_per_update = 0;
 
 static void lifecycle_queue_config( int * reliable_messages_in_flight, int * packets_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
 {
@@ -68,6 +75,8 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    if ( lifecycle_disconnect_packets_per_update > 0 )
+        config->disconnect_packets_per_update = lifecycle_disconnect_packets_per_update;
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
@@ -164,6 +173,58 @@ static void lifecycle_connect( lifecycle_world_t * world, int client, uint64_t c
     check( rocketnet_server_client_connected( world->server, index ) != 0 );
     check( rocketnet_server_client_id( world->server, index ) == client_id );
 }
+
+static int lifecycle_key_nonzero( const uint8_t * key )
+{
+    int count = 0;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+        count += key[i] != 0 ? 1 : 0;
+    return count;
+}
+
+static void test_server_disconnect_allowance_one_spreads_one_burst()
+{
+    lifecycle_disconnect_packets_per_update = 1;
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    lifecycle_disconnect_packets_per_update = 0;
+    lifecycle_connect( &world, 0, 0x1000 );
+    const int slot = rocketnet_client_index( world.clients[0] );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
+    const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+
+    rocketnet_server_disconnect_client( world.server, slot );
+    check( !rocketnet_server_client_connected( world.server, slot ) );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) == before );
+
+    uint8_t key[ROCKETNET_KEY_BYTES];
+    int head = -1;
+    int count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+        (int) sizeof( key ), &head, &count ) == 1 );
+    check( count == 1 );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key,
+        (int) sizeof( key ), NULL, NULL ) == 1 );
+    check( lifecycle_key_nonzero( key ) > 0 );
+
+    uint64_t sealed = 0;
+    for ( int update = 0; count > 0; update++ )
+    {
+        check( update < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+        const uint64_t step_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        lifecycle_pump( &world );
+        const uint64_t step = rocketnet_server_transport_disconnect_seals_for_test( transport ) - step_before;
+        check( step <= 1 );
+        sealed += step;
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key,
+            (int) sizeof( key ), NULL, &count ) == 1 );
+    }
+    check( sealed == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( lifecycle_key_nonzero( key ) == 0 );
+    lifecycle_world_destroy( &world );
+}
+
+REGISTER_UNIT_TEST( test_server_disconnect_allowance_one_spreads_one_burst );
 
 static void lifecycle_client_send( rocketnet_client_t * client, uint8_t tag, uint8_t value )
 {

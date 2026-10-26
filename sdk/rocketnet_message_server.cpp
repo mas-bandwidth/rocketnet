@@ -458,11 +458,16 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 
 // RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
 // tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
-// a server slot whose connection ended is freed here in O(1) -- its views,
-// receive cursor and held count cleared, its open unreliable build already
-// discarded by rn_message_connection_cancel_at_reset -- and its region is carved only when
+// a server slot whose connection ended is freed here in O(1) -- only its
+// binding cleared, its open unreliable build already discarded by
+// rn_message_connection_cancel_at_reset -- and its region is carved only when
 // Observe binds the slot to its next connection (RN_SLOTS_RESET calls
-// rocketnet_server_connection_reset). A free slot is never offered, written
+// rocketnet_server_connection_reset). Its views, receive cursor and held
+// count need no clearing here: both call sites run in an update whose
+// BeginUpdate pass already returned the last update's views to WAITING,
+// reset the cursor and held count, and expired the deliveries
+// (rn_endpoint_begin_update), so a clear here would cover an empty range.
+// A free slot is never offered, written
 // or admitted to (every path checks CONNECTED, rn_slots_admit discards for a
 // free slot), so nothing of the ended connection is reachable, and a reused
 // slot still starts exactly as a fresh one (ReusedSlotStartsClean). The
@@ -476,10 +481,6 @@ static void rn_message_connection_release( rn_message_object_t * object, int ind
 {
     rocketnet_assert( object->is_server );
     rn_message_connection_t * connection = &object->connections[index];
-    const uint32_t views = connection->ordered.channels.deliveries;
-    memset( connection->hot->views, 0, views < connection->region->delivery_entries ? views : connection->region->delivery_entries );
-    connection->hot->receive_cursor = 0;
-    connection->hot->held = 0;
     connection->hot->connection_id = 0;
     connection->hot->state = RN_MESSAGE_CONNECTION_FREE;
 }
@@ -1624,6 +1625,8 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_UPDATE_OK;
+    if ( server->object.link.destroy == rn_server_link_destroy )
+        rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     return rn_message_object_update( &server->object, time );
 }
 
