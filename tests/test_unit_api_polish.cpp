@@ -449,12 +449,15 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
-    rocketnet_assert_function( api_polish_quiet_assert );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( server );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == 0 );
     check( rocketnet_server_finish_message( server, 4 ) == 0 );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     rocketnet_assert_function( NULL );
 
     rn_test_server_stop_and_destroy( server );

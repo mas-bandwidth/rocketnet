@@ -478,9 +478,12 @@ disconnects under load:
      `start_message`.
    - Always check the `uint8_t *` pointer returned by `start_message`. If it is
      `NULL`, do **not** write payload bytes and do **not** call
-     `finish_message` (an unmatched `finish_message` returns `0`; a
+     `finish_message`: calling `finish_message` without a live reservation
+     (including after `start_message` returned `NULL` or after a disconnect or
+     slot reset cancelled the reservation) asserts in a debug build and returns
+     `0` safely in a release build. When a reservation is open, a
      `finish_message` with `bytes_written < 1` or `bytes_written > max_bytes`
-     aborts the open start, logs an `ERROR`, and returns `0`).
+     aborts the open start, logs an `ERROR`, and returns `0`.
    - If `can_send_message` returns `false` or `start_message` returns `NULL`,
      **never retry in a tight same-frame loop**: queue space and send budgets
      only replenish when a subsequent frame runs `update` (advancing monotonic

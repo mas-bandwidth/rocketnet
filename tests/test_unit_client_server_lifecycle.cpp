@@ -685,12 +685,45 @@ static void test_client_disconnect_clears_denied_state()
 }
 REGISTER_UNIT_TEST( test_client_disconnect_clears_denied_state );
 
+static int lifecycle_finish_assertions = 0;
+
+static void lifecycle_finish_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    lifecycle_finish_assertions++;
+}
+
+static uint32_t lifecycle_client_finish_without_start( rocketnet_client_t * client, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_client_finish_message( client, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
+static uint32_t lifecycle_server_finish_without_start( rocketnet_server_t * server, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_server_finish_message( server, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
 // tla/ClientSession.tla DropSend, tla/ServerSession.tla ServerDropSend):
-// start message returns NULL and finish message 0, the NOT_CONNECTED_DROPS
-// counter moves by exactly 1 per start, the misuse count does not move, and
-// nothing of it is ever sent.
+// start message returns NULL, finish message asserts in Debug and returns 0 in
+// Release, the NOT_CONNECTED_DROPS counter moves by exactly 1 per start, the
+// misuse count does not move, and nothing of it is ever sent.
 static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
 {
     const uint64_t misuse = rocketnet_api_misuse_count();
@@ -701,7 +734,7 @@ static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -716,7 +749,7 @@ static void lifecycle_check_server_send_dropped( rocketnet_server_t * server, in
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -784,7 +817,7 @@ static void test_client_send_dropped_while_connecting()
     lifecycle_check_client_send_dropped( client );
     const uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 ) == NULL );
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == 2 );
 
@@ -868,7 +901,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     // an index at or past max_clients stays a counted misuse, and is no drop
     uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_server_start_message( server, 1000, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 2 );     // the finish with no start pending is not misuse
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 1 );
@@ -888,7 +921,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     lifecycle_check_server_send_dropped( server, 2 );
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 4 );
 
@@ -1178,9 +1211,10 @@ static void test_server_destination_flow_id_refused()
     check( rocketnet_server_start_message( world.server, flow, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 1 );
     // finish and abort act on the pending start: the refused one left none,
-    // so each returns its empty value, uncounted, with no flow log
+    // so finish asserts in Debug and returns 0 in Release, and abort is a
+    // no-op, both uncounted and with no flow log
     misuse = rocketnet_api_misuse_count();
-    check( rocketnet_server_finish_message( world.server, 4 ) == 0 );
+    check( lifecycle_server_finish_without_start( world.server, 4 ) == 0 );
     rocketnet_server_abort_message( world.server );
     check( rocketnet_api_misuse_count() == misuse && lifecycle_flow_logs == 1 );
     // an index merely out of range is counted misuse without the flow log
