@@ -38,6 +38,8 @@ static void stats_ack( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, d
     rocketnet_unit_check( unknown == 0 && full == 0 && count == 0 );
 }
 
+#if ROCKETNET_DEV
+
 // Project an endpoint into the independent history scan. Projection happens
 // only in this unit oracle; the worker uses its history directly and performs
 // no endpoint reconstruction.
@@ -73,14 +75,20 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
     delete history;
 }
 
+#endif // ROCKETNET_DEV
+
 // Compare both typed recompute entry points at every existing manual numeric
-// edge assertion. This intentionally updates endpoint; the received live
-// aggregate cases below use a separate non-mutating oracle.
+// edge assertion in DEV=1, while keeping the production recompute and numeric
+// assertions active in DEV=0. This intentionally updates endpoint; the received
+// live aggregate cases below use a separate non-mutating oracle.
 static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
 {
+#if ROCKETNET_DEV
     rocketnet_ack_stats_result_t result;
     stats_history_result( endpoint, &result );
+#endif
     rocketnet_ack_endpoint_update_stats(endpoint);
+#if ROCKETNET_DEV
     // Equal inputs must retain the exact float operation order, not merely
     // approximate a six-field result after the scratch removal.
     rocketnet_unit_check(result.rtt == endpoint->rtt);
@@ -89,6 +97,7 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
     rocketnet_unit_check(result.sent_kbps == endpoint->bandwidth_sent_kbps);
     rocketnet_unit_check(result.received_kbps == endpoint->bandwidth_received_kbps);
     rocketnet_unit_check(result.acked_kbps == endpoint->bandwidth_acked_kbps);
+#endif
 }
 
 static void test_ack_stats_jitter_positive_samples()
@@ -252,6 +261,73 @@ static void test_ack_stats_direct_history_uint64_high_water()
 
 REGISTER_UNIT_TEST(test_ack_stats_direct_history_uint64_high_water);
 
+#include "rocketnet_replay.h"
+
+// one accepted session packet as both production receive paths take it:
+// replay admits it and advances, then the received statistics record it
+static void stats_accept( rocketnet_ack_endpoint_t * endpoint, struct rocketnet_replay_protection_t * replay,
+                          uint64_t sequence, int wire_bytes, double time )
+{
+    rocketnet_unit_check( !rocketnet_replay_already_received( replay, sequence ) );
+    rocketnet_replay_advance( replay, sequence );
+    rocketnet_ack_endpoint_record_received( endpoint, sequence, wire_bytes, time );
+}
+
+// a previously unseen sequence that replay admits more than one received
+// ring behind the high-water mark shares its slot with a newer counted
+// record: the received statistics refuse it and keep the newer record
+// counted (tla/RNServerStats.tla Write, invariant RetainedIsNewest)
+static void test_ack_received_late_alias_keeps_counted_newer()
+{
+    auto * endpoint = stats_endpoint();
+    struct rocketnet_replay_protection_t replay;
+    memset( &replay, 0, sizeof(replay) );
+
+    stats_accept( endpoint, &replay, 3000, 300, 1000.0 );
+    stats_accept( endpoint, &replay, 3001, 400, 1001.0 );
+    stats_accept( endpoint, &replay, 5000, 500, 1002.0 );
+
+    // the counted window is the older half of the ring behind 5000, and
+    // holds 3000 and 3001
+    const uint64_t base = 5000 - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1;
+    const uint64_t top = base + ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 - 1;
+    rocketnet_unit_check( base == 2953 && top == 3976 );
+    rocketnet_unit_check( 3000 >= base && 3001 <= top );
+
+    // replay admits 952, which shares its received slot with 3000
+    const uint64_t late = 952;
+    rocketnet_unit_check( !rocketnet_replay_already_received( &replay, late ) );
+    rocketnet_unit_check( late % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE == 3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    rocketnet_unit_check( late < base );
+
+    const uint32_t count = endpoint->stats_received_count;
+    const uint64_t bytes = endpoint->stats_received_bytes;
+    const float kbps = endpoint->bandwidth_received_kbps;
+    rocketnet_unit_check( count == 2 && bytes == 700 && kbps > 0.0f );
+
+    stats_accept( endpoint, &replay, late, 100, 1003.0 );
+
+    // refused: the newer record stays in its slot and counted
+    rocketnet_unit_check( endpoint->stats_received_count == count );
+    rocketnet_unit_check( endpoint->stats_received_bytes == bytes );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
+    rocketnet_unit_check( endpoint->received[3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE].sequence == 3000 );
+    rocketnet_unit_check( endpoint->highest_received_sequence == 5000 );
+    stats_update_and_compare_history( endpoint );
+    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
+
+    // the refusal leaves later writes counted
+    stats_accept( endpoint, &replay, 3002, 200, 1004.0 );
+    rocketnet_unit_check( endpoint->stats_received_count == 3 );
+    rocketnet_unit_check( endpoint->stats_received_bytes == 900 );
+    stats_update_and_compare_history( endpoint );
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_late_alias_keeps_counted_newer );
+
+#if ROCKETNET_DEV
+
 // Stale records may look like current sequence numbers after slot reuse.
 // A cleared validity mask must hide them without touching the cold ring.
 static void test_ack_stats_history_ignores_unwritten_records()
@@ -319,73 +395,6 @@ static void test_ack_stats_epoch_invalidation_preserves_storage()
     delete history;
 }
 REGISTER_UNIT_TEST(test_ack_stats_epoch_invalidation_preserves_storage);
-
-#include "rocketnet_replay.h"
-
-// one accepted session packet as both production receive paths take it:
-// replay admits it and advances, then the received statistics record it
-static void stats_accept( rocketnet_ack_endpoint_t * endpoint, struct rocketnet_replay_protection_t * replay,
-                          uint64_t sequence, int wire_bytes, double time )
-{
-    rocketnet_unit_check( !rocketnet_replay_already_received( replay, sequence ) );
-    rocketnet_replay_advance( replay, sequence );
-    rocketnet_ack_endpoint_record_received( endpoint, sequence, wire_bytes, time );
-}
-
-// a previously unseen sequence that replay admits more than one received
-// ring behind the high-water mark shares its slot with a newer counted
-// record: the received statistics refuse it and keep the newer record
-// counted (tla/RNServerStats.tla Write, invariant RetainedIsNewest)
-static void test_ack_received_late_alias_keeps_counted_newer()
-{
-    auto * endpoint = stats_endpoint();
-    struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
-
-    stats_accept( endpoint, &replay, 3000, 300, 1000.0 );
-    stats_accept( endpoint, &replay, 3001, 400, 1001.0 );
-    stats_accept( endpoint, &replay, 5000, 500, 1002.0 );
-
-    // the counted window is the older half of the ring behind 5000, and
-    // holds 3000 and 3001
-    const uint64_t base = 5000 - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 1;
-    const uint64_t top = base + ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 - 1;
-    rocketnet_unit_check( base == 2953 && top == 3976 );
-    rocketnet_unit_check( 3000 >= base && 3001 <= top );
-
-    // replay admits 952, which shares its received slot with 3000
-    const uint64_t late = 952;
-    rocketnet_unit_check( !rocketnet_replay_already_received( &replay, late ) );
-    rocketnet_unit_check( late % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE == 3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    rocketnet_unit_check( late < base );
-
-    const uint32_t count = endpoint->stats_received_count;
-    const uint64_t bytes = endpoint->stats_received_bytes;
-    const float kbps = endpoint->bandwidth_received_kbps;
-    rocketnet_unit_check( count == 2 && bytes == 700 && kbps > 0.0f );
-
-    stats_accept( endpoint, &replay, late, 100, 1003.0 );
-
-    // refused: the newer record stays in its slot and counted
-    rocketnet_unit_check( endpoint->stats_received_count == count );
-    rocketnet_unit_check( endpoint->stats_received_bytes == bytes );
-    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
-    rocketnet_unit_check( endpoint->received[3000 % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE].sequence == 3000 );
-    rocketnet_unit_check( endpoint->highest_received_sequence == 5000 );
-    stats_update_and_compare_history( endpoint );
-    rocketnet_unit_check( endpoint->bandwidth_received_kbps == kbps );
-
-    // the refusal leaves later writes counted
-    stats_accept( endpoint, &replay, 3002, 200, 1004.0 );
-    rocketnet_unit_check( endpoint->stats_received_count == 3 );
-    rocketnet_unit_check( endpoint->stats_received_bytes == 900 );
-    stats_update_and_compare_history( endpoint );
-
-    rocketnet_free( NULL, endpoint );
-}
-REGISTER_UNIT_TEST( test_ack_received_late_alias_keeps_counted_newer );
-
-#if ROCKETNET_DEV
 
 static bool stats_received_time_equal( double a, double b )
 {
@@ -584,6 +593,52 @@ static void test_ack_received_stats_blocks_match_scan_edges()
         stats_received_step( endpoint, sequence, (int) ( 100 + sequence % 37 ), (double) sequence );
     stats_received_step( endpoint, N + 2000, 777, 5000.0 );
     rocketnet_unit_check( endpoint->stats_received_operations <= 256 );
+
+    // Combined 6-field live aggregate, reference history and independent
+    // numeric expectations across reset, unwritten stale ring entries,
+    // equal-time history, ring wrap, slot aliases and late out-of-order
+    // arrivals without calling update_stats first.
+    rocketnet_ack_endpoint_reset( endpoint );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 0, 0, 0, 2000.0 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, 2, 200, 0, 0, 0, 2000.0 ) );
+    stats_ack( endpoint, 1, 2000.0 );
+    stats_ack( endpoint, 2, 2000.0 );
+    stats_received_step( endpoint, 1, 150, 2000.0 );
+    stats_received_step( endpoint, 2, 250, 2000.0 );
+    rocketnet_ack_stats_result_t ref = {};
+    stats_history_result( endpoint, &ref );
+    rocketnet_unit_check( ref.rtt == 0.0f && ref.jitter == 0.0f && ref.packet_loss == 0.0f );
+    rocketnet_unit_check( ref.sent_kbps == 0.0f && ref.acked_kbps == 0.0f && ref.received_kbps == 0.0f );
+
+    // Reset leaves the prior records in the cold rings as unwritten stale
+    // entries; wrap both rings, replace slot 1 with an alias N apart, refuse a
+    // stale alias, and check all six fields against independent numbers.
+    rocketnet_ack_endpoint_reset( endpoint );
+    const uint64_t S = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    const uint64_t sent_half = S / 2;
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, 1, 500, 0, 0, 0, 900.0 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 1, 100, 0, 0, 0, 1000.00 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 2, 200, 0, 0, 0, 1000.25 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + 3, 300, 0, 0, 0, 1000.50 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( endpoint, S + sent_half + 3, 400, 0, 0, 0, 1001.00 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( endpoint, 1, 999, 0, 0, 0, 1002.00 ) == ROCKETNET_ACK_SENT_REFUSED_STALE );
+    stats_ack( endpoint, S + 1, 1000.020 );
+    stats_ack( endpoint, S + 3, 1000.540 );
+
+    stats_received_step( endpoint, 1, 900, 900.0 );
+    stats_received_step( endpoint, N + 1, 125, 2000.50 );
+    stats_received_step( endpoint, N + 3, 275, 2000.00 );
+    stats_received_step( endpoint, N + 2, 100, 2000.50 );
+    stats_received_step( endpoint, N + N / 2 + 1, 800, 2005.00 );
+    stats_received_step( endpoint, 1, 999, 2006.00 );
+
+    stats_history_result( endpoint, &ref );
+    rocketnet_unit_check( fabsf( ref.rtt - 20.0f ) < 0.001f && fabsf( endpoint->rtt - 20.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( ref.jitter - 10.0f ) < 0.001f && fabsf( endpoint->jitter - 10.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( ref.packet_loss - 100.0f / 3.0f ) < 0.001f && fabsf( endpoint->packet_loss - 100.0f / 3.0f ) < 0.001f );
+    rocketnet_unit_check( fabsf( ref.sent_kbps - 9.6f ) < 0.001f && fabsf( endpoint->bandwidth_sent_kbps - 9.6f ) < 0.001f );
+    rocketnet_unit_check( fabsf( ref.acked_kbps - 6.4f ) < 0.001f && fabsf( endpoint->bandwidth_acked_kbps - 6.4f ) < 0.001f );
+    rocketnet_unit_check( fabsf( ref.received_kbps - 8.0f ) < 0.001f && fabsf( endpoint->bandwidth_received_kbps - 8.0f ) < 0.001f );
 
     rocketnet_free( NULL, endpoint );
 }
