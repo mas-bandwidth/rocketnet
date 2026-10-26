@@ -16,6 +16,20 @@
 #include <sodium.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
+// Consume at the protocol entry that owns the writer, before any return. A
+// fault is therefore one-shot even when the packet is refused before it
+// reaches the selected writer.
+static int rocketnet_server_test_take_writer_fault( struct rocketnet_server_protocol_t * server, int writer )
+{
+    const int fault = server->test_fail_fixed_writer;
+    if ( fault != writer )
+        return 0;
+    server->test_fail_fixed_writer = ROCKETNET_SERVER_TEST_FAIL_WRITER_NONE;
+    return 1;
+}
+#endif // #if ROCKETNET_DEV
+
 // the connection ids, docs/CHANNELS.md P9a: a slot takes the next id from the
 // server-wide counter when it is assigned and drops to 0 when it is released
 
@@ -256,6 +270,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint64_t token_expire_timestamp,
                                                     int32_t timeout_seconds,
                                                     double current_time,
+                                                    int fail_denied_writer,
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
@@ -283,6 +298,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     rocketnet_assert( server->used_token_history );
     rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
+
+    int fail_denied_writer = 0;
+#if ROCKETNET_DEV
+    fail_denied_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_REQUEST_DENIED_WRITER );
+#endif // #if ROCKETNET_DEV
 
     uint64_t * counters = server->counters->values;
 
@@ -623,7 +643,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     int result = rocketnet_server_process_opened_request( server, from, connection_salt, client_ephemeral_public_key,
                                                           signed_connect_data, &private_data, token_identifier,
                                                           token_expire_timestamp, timeout_seconds,
-                                                          current_time, response_packet, response_bytes );
+                                                          current_time, fail_denied_writer, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof(private_data) );
 
@@ -648,6 +668,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint64_t token_expire_timestamp,
                                                     int32_t timeout_seconds,
                                                     double current_time,
+                                                    int fail_denied_writer,
                                                     uint8_t * response_packet,
                                                     int * response_bytes )
 {
@@ -699,7 +720,9 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
         if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
-            int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
+            int denied_bytes = 0;
+            if ( !fail_denied_writer )
+                denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
                                                               server->packet_filter, 1, session_nonce, NULL, 0,
                                                               server->protocol_id, connection_salt, NULL,
                                                               keys.handshake_server_to_client );
@@ -810,6 +833,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                                          int mapping_index,
                                                          uint64_t current_timestamp,
                                                          double current_time,
+                                                         int fail_denied_writer,
                                                          uint8_t * response_packet,
                                                          int * response_bytes )
 {
@@ -829,9 +853,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         rocketnet_used_token_history_record( server->used_token_history, mapping->token_identifier,
                                              rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
                                              mapping->token_expire_timestamp, current_timestamp );
-        rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
-                                                    rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
     }
+    rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
+                                                rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
 
     if ( mapping->control->client_index != -1 )
     {
@@ -860,10 +884,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
     {
-        rocketnet_debug( "server denied connection response. no client slots available" );
-        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
-
-        int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
+        int denied_bytes = 0;
+        if ( !fail_denied_writer )
+            denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
                                                           server->packet_filter, mapping->send_sequence_handshake,
                                                           mapping->session_nonce, NULL, 0,
                                                           server->protocol_id, mapping->connection_salt, NULL,
@@ -871,11 +894,14 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
         {
             rocketnet_assert( 0 );
+            rocketnet_debug( "server ignored connection response. internal error" );
             counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
         mapping->send_sequence_handshake++;
         *response_bytes = denied_bytes;
+        rocketnet_debug( "server denied connection response. no client slots available" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
         return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
     }
 
@@ -971,33 +997,6 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
-// The server's payload copy: type_data_bytes into out_payload only when the
-// caller's buffer is large enough. Above the capacity the payload is refused
-// whole, never truncated, and counted as RECEIVE_CURSOR_TOO_SMALL; a copy
-// that fits is counted as PAYLOAD_DELIVERED. The transport sizes the buffer,
-// so a caller that passes a smaller one is refused instead of overrun.
-
-int rocketnet_server_payload_copy( uint8_t * out_payload, int out_payload_capacity,
-                                   const uint8_t * type_data, int type_data_bytes,
-                                   int * out_payload_bytes, uint64_t * counters )
-{
-    rocketnet_assert( out_payload );
-    rocketnet_assert( type_data );
-    rocketnet_assert( out_payload_bytes );
-
-    if ( type_data_bytes > out_payload_capacity )
-    {
-        rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
-        counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
-        return 0;
-    }
-
-    memcpy( out_payload, type_data, (size_t) type_data_bytes );
-    *out_payload_bytes = type_data_bytes;
-    counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
-    return 1;
-}
-
 struct rocketnet_sealed_type_counters_t
 {
     int received;
@@ -1039,6 +1038,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                    int * out_payload_client_index )
 {
     uint64_t * counters = server->counters->values;
+
+    int fail_response_denied_writer = 0;
+#if ROCKETNET_DEV
+    if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+        fail_response_denied_writer = rocketnet_server_test_take_writer_fault( server, ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER );
+#endif // #if ROCKETNET_DEV
 
     static const struct rocketnet_sealed_type_counters_t table[6] = {
         { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
@@ -1215,7 +1220,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         if ( mapping->control->client_index == -1 )
             mapping->control->last_receive_time = current_time;
 
-        return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
+        return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time,
+                                                              fail_response_denied_writer, response_packet, response_bytes );
     }
 
     // tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.

@@ -68,8 +68,6 @@ struct rn_message_object_layout_t
     uint64_t connections;           // offset of the connection array
     uint64_t views;                 // offset of the first connection's views; each connection's next at + view_stride
     uint64_t view_stride;
-    uint64_t cursors;
-    uint64_t cursor_stride;
     uint64_t arena;
     uint64_t arena_bytes;
     uint64_t total;
@@ -98,9 +96,6 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     layout->views = offset;
     layout->view_stride = rn_message_align64( deliveries );
     offset += layout->view_stride * n;
-    layout->cursors = offset;
-    layout->cursor_stride = rn_message_align64( sizeof( uint32_t ) * (uint64_t) config->num_channels );
-    offset += layout->cursor_stride * n;
     layout->arena = offset;
     layout->arena_bytes = arena_bytes;
     offset += rn_message_align64( arena_bytes );
@@ -308,7 +303,6 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         connection->hot = &object->hot_connections[i];
         rn_endpoint_init( connection, rn_arena_region( object->arena, i ), &endpoint_config );
         connection->hot->views = block + layout.views + layout.view_stride * (uint64_t) i;
-        connection->hot->cursors = (uint32_t *) ( block + layout.cursors + layout.cursor_stride * (uint64_t) i );
         connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
         if ( object->is_server )
             rocketnet_server_connection_reset( object, (int) ( connection - object->connections ) );
@@ -465,7 +459,7 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 // RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
 // tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
 // a server slot whose connection ended is freed here in O(1) -- its views,
-// cursors and held count cleared, its open unreliable build already
+// receive cursor and held count cleared, its open unreliable build already
 // discarded by rn_message_connection_cancel_at_reset -- and its region is carved only when
 // Observe binds the slot to its next connection (RN_SLOTS_RESET calls
 // rocketnet_server_connection_reset). A free slot is never offered, written
@@ -484,7 +478,7 @@ static void rn_message_connection_release( rn_message_object_t * object, int ind
     rn_message_connection_t * connection = &object->connections[index];
     const uint32_t views = connection->ordered.channels.deliveries;
     memset( connection->hot->views, 0, views < connection->region->delivery_entries ? views : connection->region->delivery_entries );
-    memset( connection->hot->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
+    connection->hot->receive_cursor = 0;
     connection->hot->held = 0;
     connection->hot->connection_id = 0;
     connection->hot->state = RN_MESSAGE_CONNECTION_FREE;
@@ -617,7 +611,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // receive descriptors return to the region (RNSlots Release's charge)
         const uint32_t delivered = rn_endpoint_begin_update( connection );
         memset( connection->hot->views, 0, delivered < connection->region->delivery_entries ? delivered : connection->region->delivery_entries );
-        memset( connection->hot->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
+        connection->hot->receive_cursor = 0;
         connection->hot->held = 0;
 
         // tla/RNSlots.tla ResetFree: a kicked connection's region is cleared before the transport update can give the slot to another client.
@@ -1208,19 +1202,19 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
             rn_message_connection_t * connection = &object->connections[i];
             const uint32_t deliveries = connection->ordered.channels.deliveries;
             const rn_delivery_t * table = connection->region->deliveries;
-            for ( uint32_t k = connection->hot->cursors[0]; k < deliveries; k++ )
+            for ( uint32_t k = connection->hot->receive_cursor; k < deliveries; k++ )
             {
                 if ( connection->hot->views[k] != RN_MESSAGE_VIEW_WAITING )
                     continue;
                 connection->hot->views[k] = RN_MESSAGE_VIEW_HELD;
                 connection->hot->held++;
-                connection->hot->cursors[0] = k + 1;
+                connection->hot->receive_cursor = k + 1;
                 object->receive_connection = i;
                 *out_index = i;
                 *out_entry = k;
                 return &table[k];
             }
-            connection->hot->cursors[0] = deliveries;
+            connection->hot->receive_cursor = deliveries;
         }
         object->receive_connection = i + 1;
     }
@@ -1257,7 +1251,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
         return false;
     const uint32_t deliveries = connection->ordered.channels.deliveries;
     const rn_delivery_t * table = connection->region->deliveries;
-    uint32_t cursor = connection->hot->cursors[0];
+    uint32_t cursor = connection->hot->receive_cursor;
     if ( cursor > deliveries )
         cursor = deliveries;
     uint32_t k = cursor == 0 ? deliveries - 1 : cursor - 1;

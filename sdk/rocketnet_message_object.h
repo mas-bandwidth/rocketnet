@@ -137,7 +137,7 @@ struct rn_message_link_t
 #define RN_MESSAGE_CONNECTION_HOT_LAYOUT_FIELDS( X ) \
     X( connection_id, uint64_t connection_id ) \
     X( views, uint8_t * views ) \
-    X( cursors, uint32_t * cursors ) \
+    X( receive_cursor, uint32_t receive_cursor ) \
     X( held, uint32_t held ) \
     X( state, int state )
 
@@ -212,7 +212,7 @@ struct rn_message_object_t
     // the one receive queue, pumped by each receive: the update's deliveries,
     // connection by connection in index order, each connection's in its
     // delivery order. receive_connection is the connection the queue is at;
-    // its cursors[0] is the next delivery. The batch form hands out up to
+    // its receive_cursor is the next delivery. The batch form hands out up to
     // ROCKETNET_RECEIVE_BATCH_MESSAGES of the same queue per call, released
     // together at the next batch call or update.
     int receive_connection;

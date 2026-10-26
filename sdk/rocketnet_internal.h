@@ -626,8 +626,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // rocketnet_platform_client_ipv6_available opens and closes an AF_INET6 socket.
 // With a table set, each reads its entry instead and opens nothing; NULL, the
 // default, runs the real lookups. The unit suite sets a fake before
-// rocketnet_init (tests/test.cpp) so ./bin/test opens no socket. Not exported.
+// rocketnet_init (tests/test.cpp) so the DEV unit suite opens no socket. Not exported.
 
+#if ROCKETNET_DEV
 struct rocketnet_platform_network_lookups_t
 {
     int ( *connection_type )( void );
@@ -635,6 +636,8 @@ struct rocketnet_platform_network_lookups_t
 };
 
 void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
+
+#endif // #if ROCKETNET_DEV
 
 // The public config structs in rocketnet.h are written out field by field;
 // the tables above are the declarations the parse, the validation, the env

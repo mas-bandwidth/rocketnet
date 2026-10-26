@@ -801,6 +801,7 @@ REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
 extern void (*rocketnet_config_decode_staging_hook)( const uint8_t * staging, int bytes );
 
+#if ROCKETNET_DEV
 static uint8_t secrets_wiped_staging[256];
 static int secrets_wiped_staging_bytes = -1;
 
@@ -883,6 +884,7 @@ static void test_secrets_wiped_config_staging_on_refused_parse()
 
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
