@@ -17,9 +17,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#if ROCKETNET_DEV
-#include "test_env_source.h"
-#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
@@ -662,6 +659,7 @@ static void test_loopback_transport_loss_reorder_production_refusal()
     loopback_error_end();
     client_config.simulated_reverse_window = 0;
 
+    // Real environment create refusals run in test_platform_primitives.
     // ranges: zero, or N >= 2 up to 1000000; zero, or W >= 2 up to 64. each
     // refusal logs one error line; the capture keeps those lines (and the
     // alias refusals an ambient environment adds) off stdout
@@ -701,6 +699,7 @@ static void test_loopback_transport_loss_reorder_production_refusal()
         server_config.simulated_reverse_window = 0;
     }
 
+    // Real environment overlay checks run in test_platform_primitives.
     check( loopback_error_lines >= 12 );
     loopback_error_end();
 

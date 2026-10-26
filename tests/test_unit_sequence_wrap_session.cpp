@@ -65,6 +65,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 #define SEQUENCE_WRAP_DT 0.01
 #define SEQUENCE_WRAP_STEPS 5000
 #define SEQUENCE_WRAP_SETTLE 100
@@ -542,6 +543,8 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 // expected wins and an exact tie takes the larger. Pins the behaviour the
 // session cases above rely on, at each edge: the same block, the block below,
 // the block above, a tie, and expected zero (no block below).
+
+#endif // #if ROCKETNET_DEV
 
 static void test_reconstruct_near_picks_nearest_and_larger_on_tie( void )
 {

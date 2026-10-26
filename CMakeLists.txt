@@ -369,7 +369,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_hooks STATIC EXCLUDE_FROM_ALL ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
-    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>)
     target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
@@ -607,12 +607,14 @@ if(ROCKETNET_BUILD_TESTS)
             tests/test_unit_send_room_query.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            # This production-path clock test creates a real worker and is
-            # moving to the functional tier; it is not a deterministic unit.
-            tests/test_unit_token_time_game_clock.cpp
             tests/test_unit_transport_pins_ignored.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
+        # This file drives the development-only server writer fault. A production
+        # unit build excludes the translation unit itself, rather than compiling
+        # a test that can only mention or observe an absent seam.
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_connection_internal_error_counters.cpp")
     endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
@@ -658,6 +660,10 @@ if(ROCKETNET_BUILD_TESTS)
     # directory, so the audit never walks a directory itself.
     file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/functional/*.cpp" )
+    if(NOT ROCKETNET_DEV)
+        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
+            "tests/test_unit_connection_internal_error_counters.cpp")
+    endif()
     list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
     file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
@@ -701,7 +707,7 @@ if(ROCKETNET_BUILD_TESTS)
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1
+        ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 $<$<BOOL:${ROCKETNET_DEV}>:ROCKETNET_ENVIRONMENT_TEST_HOOKS=1>
         ROCKETNET_ACK_VISIT_TEST_HOOKS=1
         $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
     target_include_directories(test_wide PRIVATE
@@ -861,6 +867,11 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
         rocketnet_warning_floor(test_production_client_lifecycle)
     endif()
+    # Real platform behavior against the selected DEV mode, without test hooks.
+    add_executable(test_platform_primitives functional/platform_primitives.cpp)
+    target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
+    target_link_libraries(test_platform_primitives PRIVATE rocketnet Threads::Threads)
+    rocketnet_warning_floor(test_platform_primitives)
     add_executable(test_transport tests/test_driver.cpp)
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
@@ -1001,6 +1012,30 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
+    # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
+    # installed, and reaches no shipped SDK/API surface. The required .c path
+    # is compiled as C++ so it can compose the private protocol and AF_XDP
+    # compatibility layers without copying either implementation.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+        set_source_files_properties(tools/xdp_packet_blaster.c PROPERTIES LANGUAGE CXX)
+        add_executable(xdp_packet_blaster tools/xdp_packet_blaster.c)
+        target_compile_features(xdp_packet_blaster PRIVATE cxx_std_11)
+        target_include_directories(xdp_packet_blaster PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_definitions(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        rocketnet_use_sodium(xdp_packet_blaster)
+        rocketnet_warning_floor(xdp_packet_blaster)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_custom_target(test_xdp_packet_blaster
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
+                "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
+            DEPENDS xdp_packet_blaster
+            VERBATIM)
+    endif()
     # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
     # against each candidate's static library (bench/transport_fill.md,
     # bench/lease_cost.py), so neither is a target here.

@@ -15,7 +15,6 @@
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #if ROCKETNET_DEV
-#include "test_env_source.h"
 #include "fake_client_driver.h"
 #endif // #if ROCKETNET_DEV
 
@@ -126,16 +125,6 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     check( fake->destroy_calls == 1 );
     delete fake;
 }
-
-static int test_set_environment( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-
-static int test_unset_environment( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
-}
 #endif // #if ROCKETNET_DEV
 
 static void dev_warning_server_config( rocketnet_server_transport_config_t * config )
@@ -200,29 +189,12 @@ static void test_dev_keys_warn_on_every_start()
 #endif
     }
 
-    // The remaining checks use development-only environment and caller-step
-    // scaffolding; the production build retains the refusal above.
-#if ROCKETNET_DEV
-    // the server, production keys: no warning line. The ladder is forced to
-    // exhaust on the operator memory budget, so no socket opens.
-    {
-        struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_default_config( &config );
-        memset( config.backend_public_key, 0x42, 32 );
-        memset( config.server_public_key, 0x43, 32 );
-        memset( config.server_secret_key, 0x44, 32 );
-        config.protocol_id = 1;
-        check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
-        int status = -1;
-        start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
-        stop_capture();
-        check( srv == NULL );
-        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-        check( g_dev_warn_lines == 0 );
-        check( test_unset_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
-    }
+    // The remaining checks use development-only caller-step scaffolding; the
+    // production build retains the refusal above.
+    // The real environment budget/no-warning scenario runs in
+    // test_platform_primitives against the selected normal library.
 
+#if ROCKETNET_DEV
     // the client can tell from its token's server key: a development key warns
     {
         uint8_t dev_key[ROCKETNET_KEY_BYTES];

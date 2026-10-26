@@ -42,6 +42,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 static void env_names_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
 static void env_names_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
 
@@ -158,6 +159,9 @@ static struct rn_message_object_t * env_names_object_create( int is_server, int3
 // field's name under the endpoint prefix
 // ---------------------------------------------------------------------------
 
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
 static void test_config_env_budget_is_never_a_message_field()
 {
     env_names_setenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS", "123" );
@@ -186,12 +190,14 @@ static void test_config_env_budget_is_never_a_message_field()
     check( server_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 }
 REGISTER_UNIT_TEST( test_config_env_budget_is_never_a_message_field );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // (1) the documented ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS is the budget the
 // message object takes: ROCKETNET_MESSAGE_SERVER_SEND_KBPS changes nothing
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void test_config_env_per_client_send_kbps_is_the_server_budget()
 {
     env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "500" );
@@ -228,12 +234,14 @@ static void test_config_env_per_client_send_kbps_is_the_server_budget()
     check( client_default == 300 );
 }
 REGISTER_UNIT_TEST( test_config_env_per_client_send_kbps_is_the_server_budget );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // (1, 3) ROCKETNET_LOG_LEVEL is applied before init's first line: at error,
 // init emits no info line
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void test_config_env_log_level_applies_before_init_logs()
 {
     // the worker ran init at error; the default level is info
@@ -258,6 +266,7 @@ static void test_config_env_log_level_applies_before_init_logs()
         check( log.levels[i] <= (int) ROCKETNET_LOG_LEVEL_ERROR );
 }
 REGISTER_UNIT_TEST( test_config_env_log_level_applies_before_init_logs );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // (3) ROCKETNET_CLIENT_STEP_DRIVEN is 0 or 1: any other value is out of range
@@ -309,6 +318,7 @@ REGISTER_UNIT_TEST( test_config_env_step_driven_is_absent_in_production );
 // library does not read them, and every spelling resolves.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static bool env_names_dev_latency_resolves( bool server, const char * value, int * latency_ms )
 {
     const char * name = server ? "ROCKETNET_DEV_SERVER_LATENCY_MS" : "ROCKETNET_DEV_CLIENT_LATENCY_MS";
@@ -334,7 +344,9 @@ static bool env_names_dev_latency_resolves( bool server, const char * value, int
     env_names_unsetenv( name );
     return resolved;
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_config_env_dev_simulator_numbers_are_strict()
 {
     for ( int side = 0; side < 2; side++ )
@@ -354,6 +366,7 @@ static void test_config_env_dev_simulator_numbers_are_strict()
     }
 }
 REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
@@ -362,6 +375,7 @@ REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );
 // rocketnet_config_apply_env_uint64)
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void test_config_env_transport_passes_exercise_all_rows()
 {
     // 1. Internal & simulator rows:
@@ -425,6 +439,7 @@ static void test_config_env_transport_passes_exercise_all_rows()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );
 }
 REGISTER_UNIT_TEST( test_config_env_transport_passes_exercise_all_rows );
+#endif // #if ROCKETNET_DEV
 
 // the memory budget reader (rocketnet_config_apply_env_uint64) logs like the
 // table pass: a set value logs one override line naming the variable and the
@@ -432,6 +447,7 @@ REGISTER_UNIT_TEST( test_config_env_transport_passes_exercise_all_rows );
 // unset variable logs nothing
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static int env_names_count_named( const env_names_log_t & log, const char * name, const char * phrase )
 {
     int count = 0;
@@ -440,7 +456,9 @@ static int env_names_count_named( const env_names_log_t & log, const char * name
             count++;
     return count;
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_config_env_memory_budget_logs_its_override()
 {
     // client: a set value assigns and logs exactly one override line
@@ -501,3 +519,4 @@ static void test_config_env_memory_budget_logs_its_override()
     check( unset_capture.log.lines.empty() );
 }
 REGISTER_UNIT_TEST( test_config_env_memory_budget_logs_its_override );
+#endif // #if ROCKETNET_DEV

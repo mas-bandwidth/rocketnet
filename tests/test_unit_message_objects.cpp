@@ -486,6 +486,84 @@ static rn_message_connection_t * mo_client_connection( rocketnet_message_client_
     return rn_message_object_connection( &client->object, 0 );
 }
 
+static uint64_t mo_align64( uint64_t bytes )
+{
+    return ( bytes + 63 ) & ~(uint64_t) 63;
+}
+
+struct mo_old_message_connection_hot_t
+{
+    uint64_t connection_id;
+    uint8_t * views;
+    uint32_t * cursors;
+    uint32_t held;
+    int state;
+};
+
+static uint64_t mo_message_object_layout_formula( const rocketnet_message_config_t * config, int connections, bool is_server, bool old_cursor_array )
+{
+    rocketnet_message_config_t sized = *config;
+    const int kbps = is_server ? config->server_send_kbps : config->client_send_kbps;
+    sized.client_send_kbps = kbps;
+    sized.server_send_kbps = kbps;
+    const uint64_t n = (uint64_t) connections;
+    const uint64_t deliveries = (uint64_t) sized.reliable_messages_in_flight + (uint64_t) sized.unreliable_messages_per_update;
+    uint64_t offset = mo_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ?
+                                  sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
+    offset += mo_align64( ( old_cursor_array ? sizeof( mo_old_message_connection_hot_t ) : sizeof( rn_message_connection_hot_t ) ) * n );
+    offset += mo_align64( sizeof( rn_message_connection_t ) * n );
+    offset += mo_align64( deliveries ) * n;
+    if ( old_cursor_array )
+        offset += mo_align64( sizeof( uint32_t ) * (uint64_t) sized.num_channels ) * n;
+    offset += mo_align64( rn_arena_required_bytes( &sized, connections ) );
+    return offset;
+}
+
+static void test_receive_cursor_scalar_layout_and_exact_blocks()
+{
+    static_assert( sizeof( mo_old_message_connection_hot_t ) == 32, "old cursor-pointer slot formula changed" );
+    const int channels[] = { 1, 4, ROCKETNET_MAX_CHANNELS };
+    const int connections[] = { 1, MO_MAX_SLOTS };
+    for ( size_t c = 0; c < sizeof( channels ) / sizeof( channels[0] ); c++ )
+    {
+        rocketnet_message_config_t config;
+        mo_config( &config );
+        config.num_channels = channels[c];
+        for ( size_t k = 0; k < sizeof( connections ) / sizeof( connections[0] ); k++ )
+        {
+            const int n = connections[k];
+            const bool is_server = n > 1;
+            const uint64_t actual = rn_message_object_required_bytes( &config, n, is_server );
+            const uint64_t current_formula = mo_message_object_layout_formula( &config, n, is_server, false );
+            const uint64_t old_formula = mo_message_object_layout_formula( &config, n, is_server, true );
+            const uint64_t removed_hot_bytes = mo_align64( sizeof( mo_old_message_connection_hot_t ) * (uint64_t) n ) -
+                                                       mo_align64( sizeof( rn_message_connection_hot_t ) * (uint64_t) n );
+            const uint64_t removed_cursor_bytes = mo_align64( sizeof( uint32_t ) * (uint64_t) channels[c] ) * (uint64_t) n;
+            check( actual == current_formula );
+            check( old_formula == actual + removed_hot_bytes + removed_cursor_bytes );
+        }
+
+        mo_net_t * net = mo_net_new();
+        rn_message_link_t client_link = mo_link( mo_net_client( net, 0 ) );
+        const uint64_t bytes = rn_message_object_required_bytes( &config, 1, 0 );
+        const uint64_t allocation_bytes = bytes + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+        check( allocation_bytes <= SIZE_MAX );
+        void * allocation = malloc( (size_t) allocation_bytes );
+        check( allocation != NULL );
+        void * block = (void *) ( ( (uintptr_t) allocation + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) &
+                                  ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+        check( rn_message_object_create( NULL, &client_link, 0, 1, &config, block, bytes - 1,
+                                         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 ) == NULL );
+        rn_message_object_t * object = rn_message_object_create( NULL, &client_link, 0, 1, &config, block, bytes,
+                                                                 ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 );
+        check( object != NULL );
+        check( object->hot_connections[0].receive_cursor == 0 );
+        rn_message_object_destroy( object );
+        free( allocation );
+        mo_net_free( net );
+    }
+}
+
 // every message the application received this update, released before the next
 
 struct mo_received_t
@@ -1067,13 +1145,13 @@ static void test_message_release_after_receive_and_in_place_header()
     // first, then last behind a forced cursor (the wrap), then middle
     rocketnet_message_server_release( pair.server, views[0] );
     check( slot->hot->held == (uint32_t) messages - 1 );
-    const uint32_t cursor = slot->hot->cursors[0];
-    slot->hot->cursors[0] = (uint32_t) ( messages / 2 );
+    const uint32_t cursor = slot->hot->receive_cursor;
+    slot->hot->receive_cursor = (uint32_t) ( messages / 2 );
     rocketnet_message_server_release( pair.server, views[(size_t) ( messages - 1 )] );
     check( slot->hot->held == (uint32_t) messages - 2 );
     rocketnet_message_server_release( pair.server, views[(size_t) ( messages / 2 )] );
     check( slot->hot->held == (uint32_t) messages - 3 );
-    slot->hot->cursors[0] = cursor;
+    slot->hot->receive_cursor = cursor;
 
     for ( int m = messages - 2; m > 0; m-- )
     {
@@ -1092,6 +1170,78 @@ static void test_message_release_after_receive_and_in_place_header()
 }
 
 REGISTER_UNIT_TEST( test_message_release_after_receive_and_in_place_header );
+
+static void test_receive_cursor_single_then_batch_across_connections()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 2 );
+    mo_step( &pair );
+    mo_step( &pair );
+
+    for ( int slot = 0; slot < 2; slot++ )
+    {
+        for ( int message = 0; message < 3; message++ )
+        {
+            uint8_t bytes[32];
+            mo_fill( bytes, (uint32_t) ( 100 * ( slot + 1 ) + message ), sizeof( bytes ) );
+            check( rocketnet_message_client_send( pair.clients[slot], message & 1,
+                                                   ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+                                                   bytes, (int) sizeof( bytes ) ) != 0 );
+        }
+        rocketnet_message_client_send_packets( pair.clients[slot] );
+    }
+
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    const uint8_t * first = NULL;
+    int first_slot = -1, first_channel = -1, first_bytes = 0;
+    check( rn_message_object_receive( &pair.server->object, &first_slot, &first_channel, &first, &first_bytes ) == 1 );
+    check( first_slot == 0 && first_bytes == 32 );
+    std::vector<uint8_t> first_copy( first, first + first_bytes );
+    uint32_t first_id = 0;
+    check( mo_verify( first_copy, &first_id ) );
+    check( first_id >= 100 && first_id <= 102 );
+    check( first_channel == (int) ( first_id & 1 ) );
+    check( mo_server_slot( &pair, 0 )->hot->receive_cursor == 1 );
+
+    static rocketnet_message_batch_t batch;
+    check( rocketnet_message_server_receive_messages( pair.server, &batch ) == 5 );
+    bool seen[2][3] = {};
+    seen[0][first_id - 100] = true;
+    for ( int i = 0; i < batch.num_messages; i++ )
+    {
+        check( batch.client_index[i] == ( i < 2 ? 0 : 1 ) );
+        std::vector<uint8_t> received( batch.data[i], batch.data[i] + batch.bytes[i] );
+        uint32_t id = 0;
+        check( mo_verify( received, &id ) );
+        const int slot = batch.client_index[i];
+        const uint32_t base = (uint32_t) ( 100 * ( slot + 1 ) );
+        check( id >= base && id < base + 3 );
+        check( batch.channel[i] == (int) ( id & 1 ) );
+        check( !seen[slot][id - base] );
+        seen[slot][id - base] = true;
+    }
+    for ( int slot = 0; slot < 2; slot++ )
+        for ( int message = 0; message < 3; message++ )
+            check( seen[slot][message] );
+    check( mo_server_slot( &pair, 0 )->hot->receive_cursor == 3 );
+    check( mo_server_slot( &pair, 1 )->hot->receive_cursor == 3 );
+
+    rocketnet_message_server_release( pair.server, first );
+    check( rocketnet_message_server_receive_messages( pair.server, &batch ) == 0 );
+    check( mo_server_slot( &pair, 0 )->hot->held == 0 );
+    check( mo_server_slot( &pair, 1 )->hot->held == 0 );
+
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    check( mo_server_slot( &pair, 0 )->hot->receive_cursor == 0 );
+    check( mo_server_slot( &pair, 1 )->hot->receive_cursor == 0 );
+    mo_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_receive_cursor_scalar_layout_and_exact_blocks );
+REGISTER_UNIT_TEST( test_receive_cursor_single_then_batch_across_connections );
 
 // ---------------------------------------------------------------------------
 // both shipped types end to end over the pair, both directions, with loss:
@@ -3078,8 +3228,12 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 
 #if ROCKETNET_DEV
 static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_send_budget_message_env_is_not_read()
 {
     rocketnet_message_config_t config;

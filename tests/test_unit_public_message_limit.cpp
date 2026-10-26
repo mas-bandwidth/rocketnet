@@ -121,7 +121,9 @@ struct message_limit_env_t
     }
     ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }
 };
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_public_message_limit_env_is_endpoint_scoped()
 {
     message_limit_env_t client_env( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES" );
@@ -148,6 +150,7 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     check( message.max_message_bytes == 65536 );
 }
 REGISTER_UNIT_TEST( test_public_message_limit_env_is_endpoint_scoped );
+#endif // #if ROCKETNET_DEV
 
 static double message_limit_now = 1000.0;
 static double message_limit_clock( void * ) { return message_limit_now; }

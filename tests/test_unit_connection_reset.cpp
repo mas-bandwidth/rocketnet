@@ -40,14 +40,18 @@ struct reset_env_pin_t
     bool was_set;
     char value[256];
 };
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 {
     pin->name = name;
     pin->was_set = rocketnet_test_env_getenv( name, pin->value, sizeof(pin->value) ) != 0;
     rocketnet_test_env_unsetenv( name );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 {
     if ( !pin->was_set )
@@ -310,8 +314,6 @@ static void test_connection_reset_inventory_covers_every_field()
     const rn_message_connection_hot_t fresh_hot = *connection->hot;
     connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     memset( connection->hot->views, 0xA5, connection->region->delivery_entries );
-    memset( connection->hot->cursors, 0xA5,
-            sizeof(uint32_t) * (size_t) connection->region->num_channels );
 #define POISON_ENDPOINT_RESET( field ) memset( &connection->field, 0xA5, sizeof(connection->field) );
 #define POISON_ENDPOINT_KEEP( field )
 #define POISON_ENDPOINT( decision, field ) POISON_ENDPOINT_##decision( field )
@@ -359,8 +361,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_HOT_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
         check( connection->hot->views[i] == 0 );
-    for ( uint32_t i = 0; i < connection->region->num_channels; i++ )
-        check( connection->hot->cursors[i] == 0 );
+    check( connection->hot->receive_cursor == 0 );
     rn_message_object_destroy( object );
 }
 REGISTER_UNIT_TEST( test_connection_reset_inventory_covers_every_field );
@@ -549,10 +550,14 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     memcpy( config.server_secret_key, keys->server_secret, sizeof(config.server_secret_key) );
     snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
     int status = -1;
+#if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if ROCKETNET_DEV
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
+#if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
+#endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
     rn_message_link_t link;
@@ -579,11 +584,15 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof(config.transport), "%s", "loopback" );
     config.step_driven = 1;
+#if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
+#endif // #if ROCKETNET_DEV
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
+#if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
+#endif // #if ROCKETNET_DEV
     check( transport );
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
@@ -815,10 +824,14 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     memcpy( server_config.server_secret_key, keys->server_secret, sizeof(server_config.server_secret_key) );
     snprintf( server_config.transport, sizeof(server_config.transport), "%s", "loopback" );
     int status = -1;
+#if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if ROCKETNET_DEV
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+#if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
+#endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 

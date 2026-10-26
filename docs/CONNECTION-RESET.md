@@ -44,7 +44,8 @@ naming `<struct>.<member>`.
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
 | `rn_message_connection_t` / `rn_endpoint_t` | endpoint region; ordered/reliable queues; descriptors; receive ring; send store; packet, delivery, hold, receipt and resend rings | channel and allocator state | RESET | `rn_endpoint_reset` carves the region fresh |
 | | packet/message serials, ordering/sequencing indices, unreliable queue, pending start, write pass and send-budget accumulator | message send state | RESET | no work may cross connections |
-| | `views`, `cursors` | allocation pointers | KEEP | storage is fixed; pointed-to contents reset |
+| | `views` | allocation pointer | KEEP | storage is fixed; pointed-to contents reset |
+| | `receive_cursor` | next delivery in the connection's one receive queue | RESET | a new update or connection starts at its first delivery |
 | | `connection_id`, `state`, `held` | message slot binding | RESET | slot becomes free |
 | | `disconnect_reason` | last message-layer reason | KEEP | the public client state carries it until disconnect or the next connect |
 
