@@ -17,10 +17,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 #include <map>
 #include <string>
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
@@ -48,7 +48,7 @@ extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
     return rocketnet_direct_allocation_total.load( std::memory_order_relaxed );
 }
 
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 // The unit suite installs this table before main. Reads then stop at the
 // table, including an absent name, so ambient process values cannot enter a
@@ -108,7 +108,7 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
     return true;
 }
 
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -269,28 +269,29 @@ void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, i
 // test seam for the client bind-family choice: true unless a test turns it
 // off, in which case an IPv6 socket create behaves as it does on a host with
 // no IPv6 stack. the client's availability probe reads the same flag.
+#if ROCKETNET_DEV
 static bool rocketnet_platform_ipv6_socket_available_for_testing = true;
 
 // test seam for the network lookups (rocketnet_internal.h): NULL runs the real
 // connection-type lookup and IPv6 probe; a unit test's table replaces both.
 static std::atomic<const rocketnet_platform_network_lookups_t *> rocketnet_platform_network_lookups_override{ NULL };
 
-#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_network_lookups_for_testing( const rocketnet_platform_network_lookups_t * lookups )
 {
     rocketnet_platform_network_lookups_override.store( lookups, std::memory_order_release );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // Network-thread priority (docs/CLIENT-IO.md, TRANSPORTS.md). The calls and their
-// values are the flow library's (flow_platform.cpp), unchanged; each platform
-// block below fills the real call table. A unit test replaces the table
-// (test_unit_thread_priority.cpp). A refused call is counted process-wide and
+// values are the flow library's (flow_platform.cpp), unchanged. DEV builds
+// allow a unit test to replace the real calls through a table; production
+// calls the real wrappers directly. A refused call is counted process-wide and
 // logged once per call kind; it never fails the caller.
 
 static std::atomic<bool> rocketnet_platform_thread_priority_on{ true };
 static std::atomic<uint64_t> rocketnet_platform_thread_priority_refusal_count{ 0 };
 static std::atomic<bool> rocketnet_platform_thread_priority_logged[ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT];
+#if ROCKETNET_DEV
 static std::atomic<const rocketnet_platform_priority_calls_t *> rocketnet_platform_priority_calls_override{ NULL };
 
 static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls()
@@ -299,25 +300,28 @@ static const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_c
     return calls ? calls : rocketnet_platform_priority_calls_real();
 }
 
-#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_set_priority_calls_for_testing( const rocketnet_platform_priority_calls_t * calls )
 {
     rocketnet_platform_priority_calls_override.store( calls, std::memory_order_release );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_current()
 {
     return rocketnet_platform_priority_calls();
 }
 
-#if ROCKETNET_TEST_SEAMS
 void rocketnet_platform_thread_priority_reset_logged_for_testing()
 {
     for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
         rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
+#define ROCKETNET_PLATFORM_PRIORITY_CALL(name) ( rocketnet_platform_priority_calls()->name )
+#else
+#define ROCKETNET_PLATFORM_PRIORITY_CALL(name) rocketnet_platform_real_##name
+#endif
 
 void rocketnet_platform_set_thread_priority_enabled( bool enabled )
 {
@@ -355,6 +359,7 @@ static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thre
     return pthread_setschedparam( thread->handle, policy, &param );
 }
 
+#if ROCKETNET_DEV
 static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
 {
     (void) thread;
@@ -372,6 +377,7 @@ static void rocketnet_platform_real_timer_frequency( void * frequency )
 {
     (void) frequency;
 }
+#endif // #if ROCKETNET_DEV
 
 static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mutex )
 {
@@ -388,6 +394,7 @@ static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mute
     return 0;
 }
 
+#if ROCKETNET_DEV
 static int rocketnet_platform_real_platform_start( void )
 {
     return 0;
@@ -415,6 +422,7 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 {
     return &rocketnet_platform_priority_calls_real_table;
 }
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
 {
@@ -422,7 +430,7 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;
     const int priority = sched_get_priority_min( SCHED_RR );
-    const int result = rocketnet_platform_priority_calls()->set_sched( thread, SCHED_RR, priority );
+    const int result = ROCKETNET_PLATFORM_PRIORITY_CALL(set_sched)( thread, SCHED_RR, priority );
     if ( result != 0 )
     {
         char call[64];
@@ -876,13 +884,20 @@ static double time_start;
 
 bool rocketnet_platform_init()
 {
-    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+#if ROCKETNET_DEV
+    if ( ROCKETNET_PLATFORM_PRIORITY_CALL(platform_start)() != 0 )
         return false;
+#endif // #if ROCKETNET_DEV
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+#if ROCKETNET_DEV
     const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
-    connection_type = lookups ? lookups->connection_type() : get_connection_type();
+    if ( lookups )
+        connection_type = lookups->connection_type();
+    else
+#endif // #if ROCKETNET_DEV
+        connection_type = get_connection_type();
     return true;
 }
 
@@ -894,11 +909,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
         return test_result;
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -1103,12 +1118,14 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     socket->send_replay_failures = 0;
     socket->connected = false;
 
+#if ROCKETNET_DEV
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
     {
         rocketnet_error( "failed to create socket" );
         rocketnet_free( context, socket );
         return NULL;
     }
+#endif // #if ROCKETNET_DEV
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -2161,7 +2178,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
+    return ROCKETNET_PLATFORM_PRIORITY_CALL(mutex_init)( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
@@ -2695,8 +2712,10 @@ bool rocketnet_platform_mac_primary_interface_matches( const void * primary_inte
 
 bool rocketnet_platform_init()
 {
-    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+#if ROCKETNET_DEV
+    if ( ROCKETNET_PLATFORM_PRIORITY_CALL(platform_start)() != 0 )
         return false;
+#endif // #if ROCKETNET_DEV
 
     mach_timebase_info( &timebase_info );
 
@@ -2769,11 +2788,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
         return test_result;
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     const char * value = getenv( var );
     if ( !value )
@@ -2969,12 +2988,14 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     // create socket
 
+#if ROCKETNET_DEV
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
     {
         rocketnet_error( "failed to create socket" );
         rocketnet_free( context, socket );
         return NULL;
     }
+#endif // #if ROCKETNET_DEV
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -4235,7 +4256,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
+    return ROCKETNET_PLATFORM_PRIORITY_CALL(mutex_init)( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
@@ -4604,6 +4625,7 @@ static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
 // from platform init to platform term, matching the host application's lifecycle
 
+#if ROCKETNET_DEV
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
     (void) thread;
@@ -4611,6 +4633,7 @@ static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thre
     (void) priority;
     return 0;
 }
+#endif // #if ROCKETNET_DEV
 
 static int rocketnet_platform_real_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
 {
@@ -4648,6 +4671,7 @@ static int rocketnet_platform_real_platform_start( void )
     return WSAStartup( MAKEWORD(2,2), &WsaData ) == NO_ERROR ? 0 : 1;
 }
 
+#if ROCKETNET_DEV
 static void* rocketnet_platform_real_create_waitable_timer( unsigned flags )
 {
     return CreateWaitableTimerExW( NULL, NULL, flags, TIMER_ALL_ACCESS );
@@ -4669,13 +4693,14 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 {
     return &rocketnet_platform_priority_calls_real_table;
 }
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;
-    if ( !rocketnet_platform_priority_calls()->set_thread_priority( thread, THREAD_PRIORITY_TIME_CRITICAL ) )
+    if ( !ROCKETNET_PLATFORM_PRIORITY_CALL(set_thread_priority)( thread, THREAD_PRIORITY_TIME_CRITICAL ) )
     {
         char reason[32];
         snprintf( reason, sizeof( reason ), "error %lu", (unsigned long) GetLastError() );
@@ -4692,7 +4717,7 @@ static void rocketnet_platform_timer_period_end()
     if ( !timer_period_begun )
         return;
     timer_period_begun = false;
-    const unsigned int result = rocketnet_platform_priority_calls()->time_end_period( 1 );
+    const unsigned int result = ROCKETNET_PLATFORM_PRIORITY_CALL(time_end_period)( 1 );
     if ( result != TIMERR_NOERROR )
     {
         char reason[32];
@@ -4708,7 +4733,7 @@ bool rocketnet_platform_init()
     timer_period_begun = false;
     if ( rocketnet_platform_thread_priority_enabled() )
     {
-        const unsigned int result = rocketnet_platform_priority_calls()->time_begin_period( 1 );
+        const unsigned int result = ROCKETNET_PLATFORM_PRIORITY_CALL(time_begin_period)( 1 );
         if ( result == TIMERR_NOERROR )
         {
             timer_period_begun = true;
@@ -4720,10 +4745,10 @@ bool rocketnet_platform_init()
             rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_TIME_BEGIN_PERIOD, "timer period", "timeBeginPeriod 1", reason, "the timer keeps its default period" );
         }
     }
-    rocketnet_platform_priority_calls()->timer_frequency( &timer_frequency );
+    ROCKETNET_PLATFORM_PRIORITY_CALL(timer_frequency)( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
 
-    if ( rocketnet_platform_priority_calls()->platform_start() != 0 )
+    if ( ROCKETNET_PLATFORM_PRIORITY_CALL(platform_start)() != 0 )
     {
         rocketnet_error( "WSAStartup failed" );
         rocketnet_platform_timer_period_end();
@@ -4749,11 +4774,11 @@ int rocketnet_platform_connection_type()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
         return test_result;
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
     buffer[0] = '\0';
     // getenv_s with no buffer reports the bytes the value needs, terminator
     // included, and zero when the variable is unset
@@ -4875,7 +4900,7 @@ void rocketnet_platform_server_thread_priority( rocketnet_platform_thread_t * th
 bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
-    return rocketnet_platform_priority_calls()->mutex_init( mutex ) == 0;
+    return ROCKETNET_PLATFORM_PRIORITY_CALL(mutex_init)( mutex ) == 0;
 }
 
 void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
@@ -5223,12 +5248,14 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 
+#if ROCKETNET_DEV
     if ( address->type == ROCKETNET_ADDRESS_IPV6 && !rocketnet_platform_ipv6_socket_available_for_testing )
     {
         rocketnet_error( "failed to create socket" );
         rocketnet_free( context, s );
         return NULL;
     }
+#endif // #if ROCKETNET_DEV
 
     s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
@@ -5883,21 +5910,23 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 
 // ----------------------------------------------------------------
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available )
 {
     rocketnet_platform_ipv6_socket_available_for_testing = available;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 bool rocketnet_platform_client_ipv6_available()
 {
+#if ROCKETNET_DEV
     if ( !rocketnet_platform_ipv6_socket_available_for_testing )
         return false;
 
     const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
     if ( lookups )
         return lookups->ipv6_available();
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
