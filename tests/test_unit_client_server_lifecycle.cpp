@@ -11,7 +11,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_constants.h"
 #include "../sdk/rocketnet_server_protocol.h"
@@ -29,6 +31,7 @@
 #define LIFECYCLE_PROTOCOL 0x7A11C1C1E5EED001ULL
 #define LIFECYCLE_MAX_CLIENTS 4
 
+#if ROCKETNET_DEV
 uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
 int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
     int index, uint8_t * out, int out_bytes, int * head, int * count );
@@ -682,12 +685,45 @@ static void test_client_disconnect_clears_denied_state()
 }
 REGISTER_UNIT_TEST( test_client_disconnect_clears_denied_state );
 
+static int lifecycle_finish_assertions = 0;
+
+static void lifecycle_finish_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    lifecycle_finish_assertions++;
+}
+
+static uint32_t lifecycle_client_finish_without_start( rocketnet_client_t * client, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_client_finish_message( client, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
+static uint32_t lifecycle_server_finish_without_start( rocketnet_server_t * server, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_server_finish_message( server, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
 // tla/ClientSession.tla DropSend, tla/ServerSession.tla ServerDropSend):
-// start message returns NULL and finish message 0, the NOT_CONNECTED_DROPS
-// counter moves by exactly 1 per start, the misuse count does not move, and
-// nothing of it is ever sent.
+// start message returns NULL, finish message asserts in Debug and returns 0 in
+// Release, the NOT_CONNECTED_DROPS counter moves by exactly 1 per start, the
+// misuse count does not move, and nothing of it is ever sent.
 static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
 {
     const uint64_t misuse = rocketnet_api_misuse_count();
@@ -698,7 +734,7 @@ static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -713,7 +749,7 @@ static void lifecycle_check_server_send_dropped( rocketnet_server_t * server, in
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -781,7 +817,7 @@ static void test_client_send_dropped_while_connecting()
     lifecycle_check_client_send_dropped( client );
     const uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 ) == NULL );
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == 2 );
 
@@ -865,7 +901,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     // an index at or past max_clients stays a counted misuse, and is no drop
     uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_server_start_message( server, 1000, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 2 );     // the finish with no start pending is not misuse
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 1 );
@@ -885,7 +921,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     lifecycle_check_server_send_dropped( server, 2 );
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 4 );
 
@@ -1175,9 +1211,10 @@ static void test_server_destination_flow_id_refused()
     check( rocketnet_server_start_message( world.server, flow, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 1 );
     // finish and abort act on the pending start: the refused one left none,
-    // so each returns its empty value, uncounted, with no flow log
+    // so finish asserts in Debug and returns 0 in Release, and abort is a
+    // no-op, both uncounted and with no flow log
     misuse = rocketnet_api_misuse_count();
-    check( rocketnet_server_finish_message( world.server, 4 ) == 0 );
+    check( lifecycle_server_finish_without_start( world.server, 4 ) == 0 );
     rocketnet_server_abort_message( world.server );
     check( rocketnet_api_misuse_count() == misuse && lifecycle_flow_logs == 1 );
     // an index merely out of range is counted misuse without the flow log
@@ -3026,3 +3063,56 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+#endif // #if ROCKETNET_DEV
+
+#if !ROCKETNET_DEV
+// Production keeps the public default and range oracle without compiling the
+// caller-stepped lifecycle fixture or its environment hooks.
+static void test_config_packets_per_update_range()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x31, 0x43, 0x59, 0x71 };
+    rocketnet_quiet( 1 );
+
+    rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    memcpy( client_config.packet_filter, packet_filter, sizeof( client_config.packet_filter ) );
+    check( client_config.packets_per_update == 256 );
+
+    rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = LIFECYCLE_PROTOCOL;
+    server_config.max_clients = 1;
+    memset( server_config.backend_public_key, 0x52, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.packet_filter, packet_filter, sizeof( server_config.packet_filter ) );
+    check( server_config.packets_per_update == 256 );
+
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client_config.packets_per_update = 1024;
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+    client_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    client_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+
+    server_config.packets_per_update = 1024;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_server_stop_and_destroy( server );
+    server_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    server_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+}
+REGISTER_UNIT_TEST( test_config_packets_per_update_range );
+#endif // #if !ROCKETNET_DEV

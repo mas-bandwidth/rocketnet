@@ -332,7 +332,7 @@ struct rocketnet_client_transport_config_t
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
     double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
     uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
-    uint64_t step_driven;                           // 1: the caller's update and send_packets run the I/O step, no I/O thread; 0: today's thread
+    uint64_t step_driven;                           // development only: 1 runs the I/O step on the caller; production leaves this 0
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off
@@ -564,11 +564,13 @@ uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_trans
 uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL client_transport or context is a counted no-op that returns 0.
+// An unstarted, consumed, stale, modified or wrong-owner context asserts in a
+// debug build and returns 0 in a release build.
 /**
  * @brief Seals and stages bytes written into a client packet lease.
  *
  * @param client_transport Client transport that created the lease; NULL is a counted no-op.
- * @param context Active, unmodified lease; this call consumes it.
+ * @param context Active, unmodified lease from start_packet; this call consumes it. Invalid or stale leases assert in a debug build and return zero in a release build.
  * @param payload_bytes Initialized byte count, from 1 through reported capacity.
  * @return Sealed wire size, or zero when refused or dropped.
  */
@@ -1194,11 +1196,13 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL server_transport or context is a counted no-op that returns 0.
+// An unstarted, consumed, stale, modified or wrong-owner context asserts in a
+// debug build and returns 0 in a release build.
 /**
  * @brief Seals and stages bytes written into a server packet lease.
  *
  * @param server_transport Server transport that created the lease; NULL is a counted no-op.
- * @param context Active, unmodified lease; this call consumes it.
+ * @param context Active, unmodified lease from start_packet; this call consumes it. Invalid or stale leases assert in a debug build and return zero in a release build.
  * @param payload_bytes Initialized byte count, from 1 through reported capacity.
  * @return Sealed wire size, or zero when refused or dropped.
  */
@@ -1728,7 +1732,10 @@ void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * 
 // a NULL client is a counted no-op that returns NULL.
 uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes );
 
-// the receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+// the receipt serial, nonzero; asserts in a debug build and returns 0 in a
+// release build when no start is pending; returns 0 and aborts the pending
+// start when bytes_written is outside 1 to the bytes started. a NULL client is
+// a counted no-op that returns 0.
 uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
@@ -1841,7 +1848,10 @@ void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * 
 // a NULL server is a counted no-op that returns NULL.
 uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes );
 
-// a NULL server is a counted no-op that returns 0.
+// the receipt serial, nonzero; asserts in a debug build and returns 0 in a
+// release build when no start is pending on client_index; returns 0 and aborts
+// the pending start when bytes_written is outside 1 to the bytes started. a
+// NULL server is a counted no-op that returns 0.
 uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.

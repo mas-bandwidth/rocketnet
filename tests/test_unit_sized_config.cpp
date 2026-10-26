@@ -773,6 +773,8 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
 // call, not a field. Every case runs in memory: the loopback transport, step
 // driven, time from 1000.0, no socket and no clock.
 
+#if ROCKETNET_DEV
+
 #define PUBLIC_CONFIG_PROTOCOL 0x0C0F16A11FEDULL
 
 struct public_config_identity_t
@@ -905,6 +907,8 @@ static void test_network_simulator_applies_to_outgoing_packets()
     rocketnet_quiet( 0 );
 }
 
+#endif // #if ROCKETNET_DEV
+
 static void test_public_config_default_fills_every_field()
 {
     // the inline default and its library half at sizeof write the same whole
@@ -952,7 +956,9 @@ static void test_public_config_default_fills_every_field()
 }
 
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_network_simulator_applies_to_outgoing_packets );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_default_fills_every_field );
 REGISTER_UNIT_TEST( test_sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( test_sized_config_message_revision_1_reads_budget_defaults );

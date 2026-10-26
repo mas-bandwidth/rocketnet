@@ -26,6 +26,7 @@
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_client_io.h"
 
+#if ROCKETNET_DEV
 static double live_link_clock = 1000.0;
 
 static double live_link_time_callback( void * )
@@ -285,6 +286,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
 
     live_link_pair_teardown( &pair );
 }
+#endif // #if ROCKETNET_DEV
 
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
 {
@@ -406,6 +408,7 @@ static int public_link_wire_receive( struct public_link_wire_t * wire )
     return rocketnet_network_simulator_receive( wire->simulator, &wire->to, wire->time, &from, wire->received );
 }
 
+#if ROCKETNET_DEV
 static void public_link_simulator_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -477,6 +480,7 @@ static void test_public_link_simulator_latency()
     rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
+#endif // #if ROCKETNET_DEV
 
 static void test_public_link_simulator_jitter()
 {
@@ -508,6 +512,7 @@ static void test_public_link_simulator_jitter()
     public_link_wire_end( &wire );
 }
 
+#if ROCKETNET_DEV
 static void test_public_link_simulator_duplicate()
 {
     rocketnet_public_link_simulator_test_development( 1 );
@@ -524,6 +529,7 @@ static void test_public_link_simulator_duplicate()
     rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
+#endif // #if ROCKETNET_DEV
 
 static void test_public_link_simulator_same_seed_same_schedule()
 {
@@ -602,6 +608,7 @@ static void test_public_link_simulator_inactive_takes_no_lock()
 // A server whose simulator is inactive passes its packets straight through:
 // the payload sent in one update reaches the client at the next one, with
 // nothing held by the simulator.
+#if ROCKETNET_DEV
 static void test_public_link_simulator_server_inactive_passes_straight_through()
 {
     struct live_link_pair_t pair;
@@ -615,18 +622,21 @@ static void test_public_link_simulator_server_inactive_passes_straight_through()
 
     live_link_pair_teardown( &pair );
 }
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_public_link_simulator_inactive_takes_no_lock );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_server_inactive_passes_straight_through );
 REGISTER_UNIT_TEST( test_public_link_simulator_drops_at_loss );
 REGISTER_UNIT_TEST( test_public_link_simulator_latency );
-REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_duplicate );
-REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 REGISTER_UNIT_TEST( test_public_link_simulator_applies_to_live_connection );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent );
+#endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
+REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {
@@ -644,6 +654,7 @@ static void test_public_link_simulator_revision_1_prefixes()
     rocketnet_client_transport_default_config_current( &client_current );
     snprintf( client_current.transport, sizeof(client_current.transport), "%s", "loopback" );
     memcpy( client.bytes, &client_current, sizeof(client.bytes) );
+#if ROCKETNET_DEV
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_link_simulator_token( token );
     rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_sized(
@@ -653,6 +664,7 @@ static void test_public_link_simulator_revision_1_prefixes()
     rn_test_client_transport_stop_and_destroy( client_transport );
     for ( size_t i = 0; i < sizeof(client.guard); i++ )
         check( client.guard[i] == 0xa5 );
+#endif // #if ROCKETNET_DEV
 
     struct alignas(alignof(rocketnet_server_transport_config_t)) server_revision_1_t
     {

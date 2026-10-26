@@ -36,6 +36,8 @@ static void test_xdp_transport_send_staging_retains_producer()
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_staging_retains_producer);
 
+#if ROCKETNET_DEV
+
 // The fixture calls the actual transport send_packets with a fake staged
 // backend. After the first call the staged and flushed counters agree.
 int rocketnet_server_transport_test_xdp_reflush();
@@ -74,6 +76,8 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
     rocketnet_unit_check(rocketnet_server_transport_test_staged_simulator_flush() == 1);
 }
 REGISTER_UNIT_TEST(test_xdp_transport_send_packets_flushes_simulator_window);
+
+#endif // #if ROCKETNET_DEV
 
 // A publish without a filling generation is refused: the release build must
 // not queue -1, and the refused call leaves the queue as it was. The

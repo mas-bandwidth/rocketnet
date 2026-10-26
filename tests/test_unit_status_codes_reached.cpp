@@ -261,6 +261,7 @@ static void test_client_connect_thread_create_failed_reached()
 }
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 
+#if ROCKETNET_DEV
 static double reached_now = 1000.0;
 static double reached_clock( void * ) { return reached_now; }
 
@@ -345,3 +346,4 @@ static void test_client_connection_response_timed_out_state_reached()
     check( ended_at - stalled_at < REACHED_TIMEOUT_SECONDS + 1.0 );
 }
 REGISTER_UNIT_TEST( test_client_connection_response_timed_out_state_reached );
+#endif // #if ROCKETNET_DEV

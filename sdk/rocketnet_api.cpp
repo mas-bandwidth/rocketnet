@@ -258,7 +258,9 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     if ( testing )
     {
         transport->time_callback = testing->time_callback;
+#if ROCKETNET_DEV
         transport->step_driven = testing->step_driven ? 1 : 0;
+#endif // #if ROCKETNET_DEV
     }
     if ( memory_budget )
         *memory_budget = 0;
@@ -1187,15 +1189,18 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
     return rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
 }
 
-// a finish with no start pending (a dropped start included) returns 0,
-// counted nowhere; a refused bytes_written aborts the pending start
-// (rn_message_object_finish)
+// a finish with no start pending (a dropped start included) asserts in a
+// debug build and returns 0 in a release build, counted nowhere; a refused
+// bytes_written aborts the pending start (rn_message_object_finish)
 uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, int bytes_written )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
     if ( !client->connection )
+    {
+        rocketnet_assert( client->connection != NULL );
         return 0;
+    }
     return rocketnet_message_client_finish( client->connection, bytes_written );
 }
 
@@ -2186,8 +2191,9 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
 
 // finish and abort act on the one pending start (rn_message_object_t
 // pending_connection), so they take no destination. A finish with no start
-// pending (a dropped start included) returns 0, counted nowhere; a refused
-// bytes_written aborts the pending start (rn_message_object_finish).
+// pending (a dropped start included) asserts in a debug build and returns 0
+// in a release build, counted nowhere; a refused bytes_written aborts the
+// pending start (rn_message_object_finish).
 static int rn_server_pending_slot( const struct rocketnet_server_t * server )
 {
     if ( !server->running )
@@ -2201,7 +2207,10 @@ uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, in
         return 0;
     const int slot = rn_server_pending_slot( server );
     if ( slot < 0 )
+    {
+        rocketnet_assert( slot >= 0 );
         return 0;
+    }
     return rocketnet_message_server_finish( rn_server( server ), slot, bytes_written );
 }
 

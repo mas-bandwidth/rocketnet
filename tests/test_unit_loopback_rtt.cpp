@@ -53,6 +53,7 @@
 
 enum loopback_rtt_side_t { LOOPBACK_RTT_SERVER = 0, LOOPBACK_RTT_CLIENT = 1 };
 
+#if ROCKETNET_DEV
 static double loopback_rtt_clock = 1000.0;
 static double loopback_rtt_time_callback( void * ) { return loopback_rtt_clock; }
 
@@ -293,6 +294,7 @@ static void test_loopback_transport_rtt_client_sends( void ) { loopback_rtt_chec
 
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_server_sends );
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
+#endif // #if ROCKETNET_DEV
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.

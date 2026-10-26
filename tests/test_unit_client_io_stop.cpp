@@ -234,6 +234,7 @@ static void test_client_io_hand_off_after_stop_asserts()
 }
 REGISTER_UNIT_TEST( test_client_io_hand_off_after_stop_asserts );
 
+#if ROCKETNET_DEV
 // the bounded destroy-wait harness: a step-driven transport on a wrapper of
 // the fake driver whose receive (called once per I/O step) counts steps,
 // advances the test clock (so destroy's deadline fires) and fails the case
@@ -406,3 +407,4 @@ static void test_client_io_destroy_requires_completed_stop()
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
 }
 REGISTER_UNIT_TEST( test_client_io_destroy_requires_completed_stop );
+#endif // #if ROCKETNET_DEV

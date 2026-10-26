@@ -36,6 +36,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 // a token whose IPv4 address is 127.0.0.1:ipv4_port and whose IPv6 address
 // is [::1]:ipv6_port, flagged by flags; ports are little-endian on the wire
 static void port_zero_token( uint8_t * token, uint8_t flags, uint16_t ipv4_port, uint16_t ipv6_port )
@@ -120,6 +121,7 @@ static void test_client_transport_refuses_connect_token_port_zero()
 }
 
 REGISTER_UNIT_TEST( test_client_transport_refuses_connect_token_port_zero );
+#endif // #if ROCKETNET_DEV
 
 // the byte a refusal must leave in the caller's token buffer: the makers
 // write nothing into it, so every byte still holds the sentinel
@@ -203,6 +205,7 @@ static void test_token_makers_refuse_port_zero()
 
 REGISTER_UNIT_TEST( test_token_makers_refuse_port_zero );
 
+#if ROCKETNET_DEV
 static double port_zero_clock( void * ) { return 1000.0; }
 
 static void test_client_connect_refuses_connect_token_port_zero()
@@ -243,3 +246,4 @@ static void test_client_connect_refuses_connect_token_port_zero()
 }
 
 REGISTER_UNIT_TEST( test_client_connect_refuses_connect_token_port_zero );
+#endif // #if ROCKETNET_DEV

@@ -27,6 +27,7 @@
 #define check rocketnet_unit_check
 #define SERVER_DISCONNECTED_PROTOCOL 0x5345525644495301ULL
 
+#if ROCKETNET_DEV
 struct server_disconnected_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -310,6 +311,7 @@ static void test_client_disconnect_and_timeout_read_none()
 }
 
 REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_none );
+#endif // #if ROCKETNET_DEV
 
 // A client message object over a link that is not a client transport (the
 // unit suites' in-memory links, the functional channel harness): the link
@@ -415,6 +417,7 @@ static void test_client_link_without_end_reason_reads_none()
 }
 REGISTER_UNIT_TEST( test_client_link_without_end_reason_reads_none );
 
+#if ROCKETNET_DEV
 // A server disconnect ends the slot in every query and send at once, before
 // the next update: rocketnet_server_disconnect_client and
 // rocketnet_server_disconnect_all_clients go through the message layer's kick
@@ -473,7 +476,13 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
     server_disconnect_now_check( object->in_place == 0 );
     server_disconnect_now_check( object->pending_connection == -1 );
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    static int disconnect_now_finish_asserts = 0;
+    disconnect_now_finish_asserts = 0;
+    rocketnet_assert_function( []( const char *, const char *, const char *, int ) { disconnect_now_finish_asserts++; } );
     server_disconnect_now_check( rocketnet_server_finish_message( server, 16 ) == 0 );
+    rocketnet_assert_function( saved_assert );
+    server_disconnect_now_check( disconnect_now_finish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
     server_disconnect_now_check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
@@ -515,3 +524,4 @@ static void test_server_disconnect_all_clients_ends_slots_at_once()
     server_disconnect_now_case( true );
 }
 REGISTER_UNIT_TEST( test_server_disconnect_all_clients_ends_slots_at_once );
+#endif // #if ROCKETNET_DEV

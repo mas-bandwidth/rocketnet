@@ -160,6 +160,7 @@ static void test_client_cookie_takes_no_rtt_sample()
     check( client.state_first_send_time == 1000.2 );
 }
 
+#if ROCKETNET_DEV
 struct client_trusts_clock_t
 {
     double now;
@@ -253,3 +254,7 @@ REGISTER_UNIT_TEST( test_client_cookie_does_not_refresh_idle_timer );
 REGISTER_UNIT_TEST( test_client_transport_connects_socket_to_server );
 REGISTER_UNIT_TEST( test_client_transport_refuses_when_connect_fails );
 REGISTER_UNIT_TEST( test_client_cookie_takes_no_rtt_sample );
+#else
+REGISTER_UNIT_TEST( test_client_cookie_does_not_refresh_idle_timer );
+REGISTER_UNIT_TEST( test_client_cookie_takes_no_rtt_sample );
+#endif // #if ROCKETNET_DEV

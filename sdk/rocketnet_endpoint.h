@@ -141,8 +141,9 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 
 // The send in two halves, for a caller that writes the bytes in place (R3):
 // start reserves the record and returns where to write it, finish queues it
-// and returns its serial (serial 0: the next), abort returns the room.
-// transport_max_payload_bytes is the transport's payload cap now.
+// and returns its serial (serial 0: the next; asserts in a debug build and
+// returns 0 in a release build when no queued start is pending), abort returns
+// the room. transport_max_payload_bytes is the transport's payload cap now.
 uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
 
 // The room query: true when rn_endpoint_start with these arguments, now,
@@ -192,11 +193,12 @@ void rn_endpoint_in_place_begin( struct rn_endpoint_t * endpoint, int channel, i
 // The finish of an in-place start: the header and the form byte are written
 // around the bytes in place at payload (the frame's payload root), the
 // sequencing index and the serial are taken, and the send budget admits the
-// packet. Returns the serial, or 0 when bytes is outside 1 to the bytes
-// started (the start stays pending). *payload_bytes is the payload length to
-// finish the frame with, or 0 when the budget dropped the message (counted
-// MESSAGE_UNRELIABLE_OVER_BUDGET; a receipt takes its LOSS): the owner then
-// aborts the frame.
+// packet. Asserts in a debug build and returns 0 in a release build when no
+// in-place start is pending or payload is NULL. Returns the serial, or 0 when
+// bytes is outside 1 to the bytes started (the start stays pending).
+// *payload_bytes is the payload length to finish the frame with, or 0 when the
+// budget dropped the message (counted MESSAGE_UNRELIABLE_OVER_BUDGET; a
+// receipt takes its LOSS): the owner then aborts the frame.
 uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t * payload, int bytes, double now, int * payload_bytes );
 
 // The finished in-place frame left (finish_packet returned wire_bytes), or
