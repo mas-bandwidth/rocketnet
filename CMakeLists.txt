@@ -966,6 +966,30 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
+    # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
+    # installed, and reaches no shipped SDK/API surface. The required .c path
+    # is compiled as C++ so it can compose the private protocol and AF_XDP
+    # compatibility layers without copying either implementation.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
+        set_source_files_properties(tools/xdp_packet_blaster.c PROPERTIES LANGUAGE CXX)
+        add_executable(xdp_packet_blaster tools/xdp_packet_blaster.c)
+        target_compile_features(xdp_packet_blaster PRIVATE cxx_std_11)
+        target_include_directories(xdp_packet_blaster PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_definitions(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_compile_options(xdp_packet_blaster PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        target_link_libraries(xdp_packet_blaster PRIVATE rocketnet_dev RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        rocketnet_use_sodium(xdp_packet_blaster)
+        rocketnet_warning_floor(xdp_packet_blaster)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_custom_target(test_xdp_packet_blaster
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_xdp_packet_blaster.py"
+                "$<TARGET_FILE:xdp_packet_blaster>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/xdp_packet_blaster_cases.json"
+            DEPENDS xdp_packet_blaster
+            VERBATIM)
+    endif()
     # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
     # against each candidate's static library (bench/transport_fill.md,
     # bench/lease_cost.py), so neither is a target here.
