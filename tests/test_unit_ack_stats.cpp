@@ -629,7 +629,7 @@ static void test_ack_received_stats_blocks_match_scan_edges()
     stats_received_step( endpoint, N + 1, 125, 2000.50 );
     stats_received_step( endpoint, N + 3, 275, 2000.00 );
     stats_received_step( endpoint, N + 2, 100, 2000.50 );
-    stats_received_step( endpoint, N + N / 2 + 1, 800, 2005.00 );
+    stats_received_step( endpoint, N + N / 2 + 3, 800, 2005.00 );
     stats_received_step( endpoint, 1, 999, 2006.00 );
 
     stats_history_result( endpoint, &ref );
