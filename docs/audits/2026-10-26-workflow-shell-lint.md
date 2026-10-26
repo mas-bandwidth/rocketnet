@@ -23,6 +23,8 @@ Attempt 3 (`rn-lint-existing-workflows-and-shell.w3@1`) continues commit `ccbaba
 
 Attempt 5 (`rn-lint-existing-workflows-and-shell.w5@1`) merges current main into `ddccf4d1aa7237bee22a3e93ce96dfd4db79e305`. The merge head before this paragraph was `a15b4fd1925d1c86d222c6040973be5c52262721`. `tools/xdp_packet_blaster.c` on that tree includes `linux/sockios.h`. That file is outside this card's shell and workflow sources. Bench rerun at that head, logs `/home/nova/johnny-jobs/lint-w5-a15b4fd/`. Same binaries: actionlint 1.7.12 and ShellCheck 0.11.0. Load was 0.03. Twenty workflows, each actionlint exit 1 (72 `runner-label`, 1 `if-cond`). Thirty-one shell scripts, sixteen exit 1. ShellCheck's gcc log is 121 lines, sha256 `19a8c8faf5cc9f97245d26dfff325dd0ccd5702d8005ecbf1ba62c2331d87f58`, byte-identical to attempt 3. The same counts. No new rule. Nothing was installed. This paragraph is the only change after that run. The tools do not parse this audit.
 
+Attempt 6 (`rn-lint-existing-workflows-and-shell.w6@1`) merges current `origin/main` (`5298d36c`) into `97684ef4025de881f2cb9b5afbfc2b61b139cb00` and updates the `.github/workflows/ci.yml` and `.github/workflows/nightly-leaks.yml` `runner-label` line numbers below to match the merged workflow files. All 72 `runner-label` hits, the single `if-cond` hit, and all 121 ShellCheck lines (sha256 `19a8c8faf5cc9f97245d26dfff325dd0ccd5702d8005ecbf1ba62c2331d87f58`) remain identical in rule and rationale.
+
 ## Fixed in this commit
 
 `scripts/live-xdp-fleet` assigned five locals and never read them. Removing the assignments does not change what the script runs. ShellCheck SC2034 on the edited file is gone.
@@ -37,20 +39,20 @@ Attempt 5 (`rn-lint-existing-workflows-and-shell.w5@1`) merges current main into
 Every one of these is actionlint rule `runner-label`. The token is a custom self-hosted label (`fleet`, `long`, `libxdp-1-4`, `rocketnet-macos`, `rocketnet-quiet`, `rocketnet-windows`). actionlint's own text says to name custom labels in `actionlint.yaml`. That file is outside PATHS. `scripts/check-fleet-runners` (read, not a shell script) refuses GitHub-hosted labels (`ubuntu-*`, `macos-*`, `windows-*`) and allows the fleet labels. Renaming a label would change runner routing, which this card forbids. `self-hosted`, `Linux`, and `X64` were not reported. Counted from the run: fleet 40, rocketnet-windows 12, rocketnet-macos 10, long 7, rocketnet-quiet 2, libxdp-1-4 1.
 
 - `.github/workflows/cbmc.yml:29:40`
-- `.github/workflows/ci.yml:629:40`
-- `.github/workflows/ci.yml:629:47`
-- `.github/workflows/ci.yml:765:42`
-- `.github/workflows/ci.yml:1086:40`
-- `.github/workflows/ci.yml:1159:40`
-- `.github/workflows/ci.yml:1274:40`
-- `.github/workflows/ci.yml:1409:40`
-- `.github/workflows/ci.yml:1573:40`
-- `.github/workflows/ci.yml:1688:40`
-- `.github/workflows/ci.yml:1759:40`
-- `.github/workflows/ci.yml:1826:40`
-- `.github/workflows/ci.yml:2056:40`
-- `.github/workflows/ci.yml:2108:40`
-- `.github/workflows/ci.yml:2165:40`
+- `.github/workflows/ci.yml:744:40`
+- `.github/workflows/ci.yml:744:47`
+- `.github/workflows/ci.yml:890:42`
+- `.github/workflows/ci.yml:1237:40`
+- `.github/workflows/ci.yml:1333:40`
+- `.github/workflows/ci.yml:1468:40`
+- `.github/workflows/ci.yml:1603:40`
+- `.github/workflows/ci.yml:1767:40`
+- `.github/workflows/ci.yml:1892:40`
+- `.github/workflows/ci.yml:1963:40`
+- `.github/workflows/ci.yml:2041:40`
+- `.github/workflows/ci.yml:2281:40`
+- `.github/workflows/ci.yml:2333:40`
+- `.github/workflows/ci.yml:2390:40`
 - `.github/workflows/docs.yml:31:40`
 - `.github/workflows/fuzz-nightly.yml:42:40`
 - `.github/workflows/fuzz-nightly.yml:191:40`
@@ -75,7 +77,7 @@ Every one of these is actionlint rule `runner-label`. The token is a custom self
 - `.github/workflows/nightly-frame-budget.yml:36:40`
 - `.github/workflows/nightly-frame-budget.yml:64:42`
 - `.github/workflows/nightly-frame-budget.yml:120:42`
-- `.github/workflows/nightly-leaks.yml:29:40`
+- `.github/workflows/nightly-leaks.yml:31:40`
 - `.github/workflows/nightly-macos-sanitizers.yml:54:42`
 - `.github/workflows/nightly-max-clients.yml:36:40`
 - `.github/workflows/nightly-max-clients.yml:36:47`
