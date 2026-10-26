@@ -313,7 +313,6 @@ Expected output across the client and server terminals:
 - Client prints:
   ```
   backend_client: mode=production transport=portable
-  client state: DISCONNECTED -> REQUESTING_COOKIE
   client state: REQUESTING_COOKIE -> SENDING_CONNECTION_REQUEST
   client state: SENDING_CONNECTION_REQUEST -> SENDING_CONNECTION_RESPONSE
   client state: SENDING_CONNECTION_RESPONSE -> CONNECTED
@@ -327,7 +326,7 @@ Expected output across the client and server terminals:
   backend_server: mode=production transport=portable
   ...
   server received from client 2a: hello from the backend's client
-  server client disconnected (reason SERVER_DISCONNECTED)
+  server client disconnected (reason NONE)
   PASS
   ```
   (`0x2a` = decimal `42`, the authenticated `client_id` recovered by opening the
