@@ -821,10 +821,14 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     memcpy( server_config.server_secret_key, keys->server_secret, sizeof(server_config.server_secret_key) );
     snprintf( server_config.transport, sizeof(server_config.transport), "%s", "loopback" );
     int status = -1;
+#if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if ROCKETNET_DEV
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+#if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
+#endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
