@@ -24,7 +24,8 @@
     never reassemble the datagram, and drops the rest at its reassembly
     timeout. Every other fragment (a non-first fragment to any port, a first
     fragment to another port or address, to an unconfigured server, or whose
-    UDP header is not in the frame) passes to the kernel stack and is
+    UDP header is not reached through the bounded extension-header walk)
+    passes to the kernel stack and is
     counted in PASSED_FRAGMENT, so other services' fragmented traffic is
     untouched: a non-first fragment carries no UDP header, so nothing in it
     names a port. Both checks run before any size, epoch, filter or replay
@@ -549,8 +550,9 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
             else if ( ip6->nexthdr == IPPROTO_FRAGMENT )
             {
                 // a fragment, judged as the IPv4 fragments are: the first
-                // fragment (offset 0, more-fragments set, UDP behind it) of
-                // a datagram to this server drops; every other fragment is
+                // fragment (offset 0, more-fragments set, UDP behind it,
+                // possibly after a bounded extension-header chain) of a
+                // datagram to this server drops; every other fragment is
                 // the kernel's to reassemble
 
                 // the header starts 54 bytes into the frame (the Ethernet
@@ -566,16 +568,31 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                     struct server_xdp_ipv6_fragment_header_t header;
                     __builtin_memcpy( &header, fragment, sizeof(header) );
 
-                    if ( header.next_header == IPPROTO_UDP &&
-                         ( header.offset_flags & __constant_htons( 0xfff9 ) ) == __constant_htons( 0x0001 ) )
+                    if ( ( header.offset_flags & __constant_htons( 0xfff9 ) ) == __constant_htons( 0x0001 ) )
                     {
-                        struct udphdr * udp = (struct udphdr*) ( fragment + sizeof(struct server_xdp_ipv6_fragment_header_t) );
-                        const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
-                        if ( config != NULL && server_xdp_udp_is_ours( udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ) ) )
+                        __u8 * cursor = fragment + sizeof( struct server_xdp_ipv6_fragment_header_t );
+                        __u8 next_header = header.next_header;
+                        int walking = 1;
+                        for ( int i = 0; i < SERVER_XDP_IPV6_EXTENSION_WALK; i++ )
                         {
-                            debug_printf( "ipv6 first fragment to this server" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
-                            return XDP_DROP;
+                            // A second fragment header is malformed and is
+                            // not part of the post-fragment policy walk.
+                            if ( walking && next_header != IPPROTO_FRAGMENT )
+                                walking = server_xdp_ipv6_extension_step( &cursor, &next_header, data_end );
+                            else
+                                walking = 0;
+                        }
+
+                        if ( next_header == IPPROTO_UDP )
+                        {
+                            struct udphdr * udp = (struct udphdr *) cursor;
+                            const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+                            if ( config != NULL && server_xdp_udp_is_ours( udp, data_end, config, server_xdp_ipv6_address_match( config, ip6 ) ) )
+                            {
+                                debug_printf( "ipv6 first fragment to this server" );
+                                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+                                return XDP_DROP;
+                            }
                         }
                     }
                 }

@@ -100,6 +100,7 @@ struct xdp_host_frame_t
                                             // 0, 43, 60 (8 bytes each), 51 (AH, 12 bytes),
                                             // 50 (ESP, SPI and sequence only), or 44 + fragment
                                             // field << 8 (a fragment header with that field)
+    int ipv6_first_extension_length = -1;   // >= 0: override the first extension header's declared length
     const uint8_t * destination = NULL;     // NULL: the configured server address
     uint16_t port = xdp_host_server_port;
     int payload_bytes = 100;                // UDP payload: prefilter header + body
@@ -214,7 +215,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
             {
                 // AH: next header, payload length (12 bytes: 1), reserved, SPI, sequence
                 out.push_back( next );
-                out.push_back( 1 );
+                out.push_back( i == 0 && f.ipv6_first_extension_length >= 0 ? (uint8_t) f.ipv6_first_extension_length : 1 );
                 for ( int b = 0; b < 10; b++ )
                     out.push_back( 0x00 );
             }
@@ -231,7 +232,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
                 // hop-by-hop, routing or destination options: length 0 (8
                 // bytes), the rest a PadN option
                 out.push_back( next );
-                out.push_back( 0 );
+                out.push_back( i == 0 && f.ipv6_first_extension_length >= 0 ? (uint8_t) f.ipv6_first_extension_length : 0 );
                 out.push_back( 1 );
                 out.push_back( 4 );
                 for ( int b = 0; b < 4; b++ )
@@ -852,7 +853,7 @@ static void test_xdp_transport_host_ipv6_extension_headers_to_our_port_drop()
     std::vector<xdp_host_row_t> rows;
     const int dropped = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION );
 
-    for ( size_t i = 0; i < sizeof(xdp_host_ipv6_extensions) / sizeof(xdp_host_ipv6_extensions[0]); i++ )
+    for ( size_t i = 0; i < sizeof( xdp_host_ipv6_extensions ) / sizeof( xdp_host_ipv6_extensions[0] ); i++ )
     {
         xdp_host_row_t row = xdp_host_row( xdp_host_ipv6_extensions[i].name, 6 );
         row.label += " to the server";
@@ -903,7 +904,7 @@ static void test_xdp_transport_host_ipv6_extension_headers_elsewhere_pass_counte
     std::vector<xdp_host_row_t> rows;
     const int passed = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
 
-    for ( size_t i = 0; i < sizeof(xdp_host_ipv6_extensions) / sizeof(xdp_host_ipv6_extensions[0]); i++ )
+    for ( size_t i = 0; i < sizeof( xdp_host_ipv6_extensions ) / sizeof( xdp_host_ipv6_extensions[0] ); i++ )
     {
         xdp_host_row_t port = xdp_host_row( xdp_host_ipv6_extensions[i].name, 6 );
         port.label += " to another port";
@@ -1141,6 +1142,23 @@ static void test_xdp_transport_host_ipv6_first_fragment_drops_counted()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_first_fragment_drop_rows( 6, rows );
+
+    const int dropped = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT );
+    for ( size_t i = 0; i < sizeof( xdp_host_ipv6_extensions ) / sizeof( xdp_host_ipv6_extensions[0] ); i++ )
+    {
+        xdp_host_row_t extension = xdp_host_fragment_row( "first fragment with an extension header to the server", 6, 0, true );
+        extension.label += ": ";
+        extension.label += xdp_host_ipv6_extensions[i].name;
+        extension.frame.ipv6_fragment_next = (uint8_t) xdp_host_ipv6_extensions[i].type;
+        extension.frame.ipv6_extensions.push_back( xdp_host_ipv6_extensions[i].type );
+        rows.push_back( xdp_host_expect( extension, XDP_HOST_DROP, dropped ) );
+    }
+
+    xdp_host_row_t chain = xdp_host_fragment_row( "first fragment with four extension headers to the server", 6, 0, true );
+    chain.frame.ipv6_fragment_next = 0;
+    chain.frame.ipv6_extensions = { 0, 60, 43, 51 };
+    rows.push_back( xdp_host_expect( chain, XDP_HOST_DROP, dropped ) );
+
     xdp_host_run_rows( rows );
 }
 
@@ -1172,6 +1190,73 @@ static void test_xdp_transport_host_ipv6_fragment_passes_counted()
 
     xdp_host_row_t atomic = xdp_host_fragment_row( "atomic fragment to the server's port", 6, 0, false );
     rows.push_back( xdp_host_expect( atomic, XDP_HOST_PASS, passed ) );
+
+    // A fixed-header fragment remains a fragment while the bounded walker
+    // looks through headers after it. Only offset-zero, more-fragments UDP
+    // to this server drops; every other outcome keeps the fragment counter.
+
+    xdp_host_row_t other_port = xdp_host_fragment_row( "first fragment with extensions to another port", 6, 0, true );
+    other_port.frame.ipv6_fragment_next = 0;
+    other_port.frame.ipv6_extensions = { 0, 60 };
+    other_port.frame.port = 53;
+    rows.push_back( xdp_host_expect( other_port, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t other_address = xdp_host_fragment_row( "first fragment with extensions to another address", 6, 0, true );
+    other_address.frame.ipv6_fragment_next = 43;
+    other_address.frame.ipv6_extensions = { 43, 51 };
+    other_address.frame.destination = xdp_host_other_ipv6;
+    rows.push_back( xdp_host_expect( other_address, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t other_service = xdp_host_fragment_row( "first fragment with extensions carrying ICMPv6", 6, 0, true );
+    other_service.frame.ipv6_fragment_next = 0;
+    other_service.frame.ipv6_extensions = { 0, 60 };
+    other_service.frame.protocol = 58;
+    rows.push_back( xdp_host_expect( other_service, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t middle_extensions = xdp_host_fragment_row( "middle fragment with extension-looking bytes", 6, 185, true );
+    middle_extensions.frame.ipv6_fragment_next = 0;
+    middle_extensions.frame.ipv6_extensions = { 0, 60 };
+    rows.push_back( xdp_host_expect( middle_extensions, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t atomic_extensions = xdp_host_fragment_row( "atomic fragment with extensions to the server", 6, 0, false );
+    atomic_extensions.frame.ipv6_fragment_next = 0;
+    atomic_extensions.frame.ipv6_extensions = { 0, 60 };
+    rows.push_back( xdp_host_expect( atomic_extensions, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t esp = xdp_host_fragment_row( "first fragment followed by ESP", 6, 0, true );
+    esp.frame.ipv6_fragment_next = 50;
+    esp.frame.ipv6_extensions = { 50 };
+    rows.push_back( xdp_host_expect( esp, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t nested = xdp_host_fragment_row( "first fragment followed by an atomic fragment header", 6, 0, true );
+    nested.frame.ipv6_fragment_next = 44;
+    nested.frame.ipv6_extensions = { 44 };
+    rows.push_back( xdp_host_expect( nested, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t extension_cut = xdp_host_fragment_row( "first fragment with its extension header cut", 6, 0, true );
+    extension_cut.frame.ipv6_fragment_next = 0;
+    extension_cut.frame.ipv6_extensions = { 0 };
+    extension_cut.frame.truncate_to = 14 + 40 + 8 + 1;
+    rows.push_back( xdp_host_expect( extension_cut, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t udp_cut = xdp_host_fragment_row( "first fragment with an extension and its UDP header cut", 6, 0, true );
+    udp_cut.frame.ipv6_fragment_next = 60;
+    udp_cut.frame.ipv6_extensions = { 60 };
+    udp_cut.frame.truncate_to = 14 + 40 + 8 + 8 + 7;
+    rows.push_back( xdp_host_expect( udp_cut, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t overlong = xdp_host_fragment_row( "first fragment with an extension length beyond the frame", 6, 0, true );
+    overlong.frame.ipv6_fragment_next = 0;
+    overlong.frame.ipv6_extensions = { 0 };
+    overlong.frame.ipv6_first_extension_length = 255;
+    const std::vector<uint8_t> overlong_bytes = xdp_host_frame_bytes( overlong.frame );
+    rocketnet_unit_check( overlong_bytes[14 + 40 + 8 + 1] == 255 );
+    rows.push_back( xdp_host_expect( overlong, XDP_HOST_PASS, passed ) );
+
+    xdp_host_row_t walk_limit = xdp_host_fragment_row( "first fragment with five extension headers", 6, 0, true );
+    walk_limit.frame.ipv6_fragment_next = 0;
+    walk_limit.frame.ipv6_extensions = { 0, 60, 43, 60, 51 };
+    rows.push_back( xdp_host_expect( walk_limit, XDP_HOST_PASS, passed ) );
 
     xdp_host_run_rows( rows );
 }

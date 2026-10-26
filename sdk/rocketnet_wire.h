@@ -241,8 +241,9 @@ ROCKETNET_WIRE_STATIC_ASSERT( sizeof(struct rocketnet_server_xdp_replay_value_t)
 // the server is hostile or misconfigured. DROPPED_FIRST_FRAGMENT counts the
 // first fragments the program drops: IPv4 with more-fragments set and
 // offset 0 (ihl 5, protocol UDP), or IPv6 whose next header is a fragment
-// header at offset 0 with more-fragments set and UDP behind it, whose UDP
-// header is in the frame and names the configured address and port.
+// header at offset 0 with more-fragments set and UDP behind it, directly or
+// through the bounded extension-header walk, whose UDP header is in the
+// frame and names the configured address and port.
 // Without its first fragment the kernel never reassembles the datagram and
 // drops the rest at its reassembly timeout. PASSED_FRAGMENT counts every
 // other IP fragment, which the program hands to the kernel stack for
