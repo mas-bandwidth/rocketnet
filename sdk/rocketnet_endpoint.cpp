@@ -319,8 +319,11 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     // tla/RNReceipts.tla Send: issues the next receipt serial before any packet write.
     // tla/RNOutgoingBuild.tla FinishQueued: the region record's message is
     // appended to the queue the write pass copies from.
-    if ( endpoint->pending_type == -1 || endpoint->pending_in_place )
+    if ( !endpoint || endpoint->pending_type == -1 || endpoint->pending_in_place )
+    {
+        rocketnet_assert( endpoint != NULL && endpoint->pending_type != -1 && !endpoint->pending_in_place );
         return 0;                                               // an in-place start finishes with rn_endpoint_in_place_finish
+    }
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
         return 0;
 
@@ -509,9 +512,13 @@ void rn_endpoint_in_place_begin( struct rn_endpoint_t * endpoint, int channel, i
 
 uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t * payload, int bytes, double now, int * payload_bytes )
 {
-    *payload_bytes = 0;
-    if ( endpoint->pending_type == -1 || !endpoint->pending_in_place || !payload )
+    if ( payload_bytes )
+        *payload_bytes = 0;
+    if ( !endpoint || endpoint->pending_type == -1 || !endpoint->pending_in_place || !payload || !payload_bytes )
+    {
+        rocketnet_assert( endpoint != NULL && endpoint->pending_type != -1 && endpoint->pending_in_place && payload != NULL && payload_bytes != NULL );
         return 0;
+    }
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
         return 0;
 

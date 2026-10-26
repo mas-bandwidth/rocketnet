@@ -37,7 +37,6 @@ inventory=""
 commit=""
 seed=1
 run_dir=""
-public_port=40000
 
 # section 6: nine windows, eight waits, the worst-case drain, the stagger,
 # load/listen and teardown. RULINGS (d) uses 621 s for the byte bound.
@@ -132,10 +131,6 @@ trap cleanup EXIT
 server_count=0
 server_label=""
 server_ssh=""
-server_shape=""
-server_site=""
-server_path=""
-server_cap=""
 server_nic=""
 server_address=""
 server_queues=""
@@ -197,10 +192,6 @@ while IFS= read -r line || [ -n "$line" ]; do
             refuse "inventory row $label: $site-site server cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
         server_label=$label
         server_ssh=$ssh_name
-        server_shape=$shape
-        server_site=$site
-        server_path=$path
-        server_cap=$cap
         server_nic=$nic
         server_address=$address
         server_queues=$queues

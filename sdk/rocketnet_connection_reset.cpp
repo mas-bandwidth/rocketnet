@@ -77,16 +77,21 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         return;
 
     int mapping_index = -1;
+    uint64_t mapping_generation = 0;
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
+    {
         mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+        mapping_generation = rocketnet_client_slots_owner_generation( server->client_slots, client_index );
+    }
 
     /*
-        Remove first: rocketnet_encryption_map_remove wipes the session keys
-        and nonce, and takes the entry out of live, while the slot still
-        identifies the mapping. The slot identity and user data are cleared only afterwards.
+        Remove first: generation-aware removal wipes the session keys and
+        nonce only when the slot still owns this exact mapping instance. A
+        delayed reset that names a reused index leaves the replacement mapping
+        untouched. The stale slot is still released afterwards.
     */
     if ( mapping_index >= 0 && server->encryption_map )
-        rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+        (void) rocketnet_encryption_map_remove_owned( server->encryption_map, mapping_index, mapping_generation );
 
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );
@@ -114,16 +119,15 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
 
     /*
         rn_endpoint_reset releases queued channel state and resets its region.
-        views and cursors are allocations inside that region and remain stable;
-        their contents become fresh with the region. A start pending on this
-        connection is cancelled by the update before it calls this reset
+        views is an allocation inside that region and remains stable; its
+        contents and the receive cursor become fresh with the region. A start
+        pending on this connection is cancelled by the update before it calls this reset
         (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
     */
     rn_endpoint_reset( connection, object->time );
     memset( &connection->unreliable_build, 0, sizeof(connection->unreliable_build) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
-    memset( connection->hot->cursors, 0,
-            sizeof(uint32_t) * (size_t) connection->region->num_channels );
+    connection->hot->receive_cursor = 0;
     connection->hot->held = 0;
     connection->hot->connection_id = 0;
     connection->hot->state = RN_MESSAGE_CONNECTION_FREE;

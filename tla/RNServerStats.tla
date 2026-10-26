@@ -16,15 +16,12 @@
 (* sequences, the earliest and latest times, and, for loss, the records    *)
 (* in its loss-eligible part (sequence <= highest - H) and how many of     *)
 (* those are unacknowledged. The running aggregates keep the same numbers  *)
-(* without the walk. Every edge is a function of highest, so when a write  *)
-(* raises highest the window moves in one step, before anything is         *)
-(* overwritten: the counted records below the new base leave (all of them  *)
-(* at once, in O(1), when the new base is past the old top), the counted   *)
-(* survivors crossing into the eligible part are counted there, and the    *)
-(* present records between the old top and the new one (no higher than    *)
-(* the old highest: nothing above it is written yet) enter. Then the write *)
-(* retires the record it replaces if that one is counted, writes, and      *)
-(* counts the new record if it lands in the window.                        *)
+(* without the walk. The received implementation lazily clears physical   *)
+(* slot ranges that leave the retained full window, point-writes the exact *)
+(* full-width sequence generation, and reduces the older-half range from  *)
+(* fixed 32-slot blocks. A move never reinserts every newly counted record *)
+(* in the older half. The sent implementation retains incremental counters*)
+(* for loss and acknowledgment state.                                     *)
 (*                                                                         *)
 (* Two sides share the machine. The sent side (Late = FALSE) writes above  *)
 (* highest, with gaps (burned sequences) and jumps; with Reorder = TRUE it *)
@@ -36,9 +33,9 @@
 (* write-count clock does not, so the Reorder instance checks the counts   *)
 (* and bounds, not the spans. The received side (Late = TRUE) writes any   *)
 (* sequence at any time: reordered, late, duplicate, or older than the     *)
-(* window. Its times do not follow its sequences, so the counted records   *)
-(* are kept on a list ordered by write time (inserted by walking back from *)
-(* the tail) and the span is read from the list's ends (SeqTimes = FALSE). *)
+(* window. Its times do not follow its sequences, so the received blocks   *)
+(* reduce minimum and maximum time over exact-tagged leaves                *)
+(* (SeqTimes = FALSE); it never infers time order from sequence order.     *)
 (* Times are the write count: one clock, in call order.                    *)
 (*                                                                         *)
 (* A write runs as two micro-steps (Slide, then Write) under the           *)
@@ -99,22 +96,17 @@ Present(r, s) == s >= 1 /\ r[s % N].seq = s
 InWin(s, b, h) == s >= b /\ s <= b + H - 1 /\ s <= h
 T(r, s) == r[s % N].time
 
-Empty == [counted |-> {}, cnt |-> 0, unacked |-> 0, ecnt |-> 0, eunacked |-> 0,
-          lo |-> 0, hi |-> 0, alo |-> 0, ahi |-> 0, order |-> << >>]
+Empty == [counted |-> {}, leaves |-> {}, cnt |-> 0, unacked |-> 0, ecnt |-> 0, eunacked |-> 0,
+          lo |-> 0, hi |-> 0, alo |-> 0, ahi |-> 0]
 
 AckedCount(a) == a.cnt - a.unacked
-
-\* insert after the last list entry written no later than s (the walk back
-\* from the tail stops at the first such entry)
-InsertByTime(o, r, s) ==
-    LET k == Max({0} \cup {i \in 1..Len(o) : T(r, o[i]) <= T(r, s)})
-    IN SubSeq(o, 1, k) \o << s >> \o SubSeq(o, k + 1, Len(o))
 
 Ins(a, r, b, h, s) ==
     IF ~InWin(s, b, h) THEN a
     ELSE LET ak == r[s % N].acked
              el == s <= Eligible(h)
          IN [counted  |-> a.counted \cup {s},
+             leaves   |-> a.leaves \cup {s},
              cnt      |-> a.cnt + 1,
              unacked  |-> IF ak THEN a.unacked ELSE a.unacked + 1,
              ecnt     |-> IF el THEN a.ecnt + 1 ELSE a.ecnt,
@@ -122,8 +114,7 @@ Ins(a, r, b, h, s) ==
              lo       |-> IF a.cnt = 0 \/ s < a.lo THEN s ELSE a.lo,
              hi       |-> IF a.cnt = 0 \/ s > a.hi THEN s ELSE a.hi,
              alo      |-> IF ak /\ ( AckedCount(a) = 0 \/ s < a.alo ) THEN s ELSE a.alo,
-             ahi      |-> IF ak /\ ( AckedCount(a) = 0 \/ s > a.ahi ) THEN s ELSE a.ahi,
-             order    |-> InsertByTime(a.order, r, s)]
+             ahi      |-> IF ak /\ ( AckedCount(a) = 0 \/ s > a.ahi ) THEN s ELSE a.ahi]
 
 \* the record s is still in the ring while it is removed
 Rem(a, r, b, h, s) ==
@@ -145,6 +136,7 @@ Rem(a, r, b, h, s) ==
                      ELSE IF s # a.alo /\ s = a.ahi THEN Max({x \in 1..(s - 1) : AckedAt(x)})
                      ELSE a.ahi
          IN [counted  |-> a.counted \ {s},
+             leaves   |-> a.leaves \ {s},
              cnt      |-> a.cnt - 1,
              unacked  |-> u2,
              ecnt     |-> IF el THEN a.ecnt - 1 ELSE a.ecnt,
@@ -152,8 +144,7 @@ Rem(a, r, b, h, s) ==
              lo       |-> lo2,
              hi       |-> hi2,
              alo      |-> alo2,
-             ahi      |-> ahi2,
-             order    |-> SelectSeq(a.order, LAMBDA x : x # s)]
+             ahi      |-> ahi2]
 
 \* a counted survivor crossing into the loss-eligible part
 Cross(a, r, s) ==
@@ -174,6 +165,11 @@ RECURSIVE CrossAll(_, _, _)
 CrossAll(a, r, S) ==
     IF S = {} THEN a
     ELSE LET x == Min(S) IN CrossAll(Cross(a, r, x), r, S \ {x})
+
+\* Abstract fixed-block range reduction. The implementation maintains this
+\* result with one point-block rebuild, bounded edge rebuilds and summaries.
+Reduce(r, b, h) ==
+    InsAll(Empty, r, b, h, {x \in Seqs : InWin(x, b, h) /\ Present(r, x)})
 
 Init ==
     /\ ring = [i \in 0..(N - 1) |-> [seq |-> 0, acked |-> FALSE, time |-> 0]]
@@ -218,7 +214,8 @@ Slide ==
                                 {x \in Seqs : x > t0 /\ x >= b1 /\ x <= t1 /\ x <= h0 /\ Present(ring, x)})
        IN /\ highest' = h1
           /\ base' = b1
-          /\ agg' = IF h1 = h0 THEN agg ELSE enter
+          /\ agg' = IF h1 = h0 THEN agg
+                    ELSE IF Late THEN Reduce(ring, b1, h1) ELSE enter
     /\ pc' = "write"
     /\ UNCHANGED <<ring, writes, pending, written>>
 
@@ -233,7 +230,8 @@ Write ==
                 a1 == IF Present(ring, ring[i].seq) THEN Rem(agg, ring, base, highest, ring[i].seq) ELSE agg
                 r2 == [ring EXCEPT ![i] = [seq |-> pending, acked |-> FALSE, time |-> writes + 1]]
             IN /\ ring' = r2
-               /\ agg' = Ins(a1, r2, base, highest, pending)
+               /\ agg' = IF Late THEN Reduce(r2, base, highest)
+                          ELSE Ins(a1, r2, base, highest, pending)
     /\ written' = written \cup {pending}
     /\ writes' = writes + 1
     /\ pc' = "idle"
@@ -308,18 +306,21 @@ BoundsExact ==
         /\ AckedWin # {} => agg.alo = Min(AckedWin) /\ agg.ahi = Max(AckedWin)
         /\ AckedWin = {} => AckedCount(agg) = 0
 
-\* the list holds the counted records once each, in write-time order
-OrderedByTime ==
-    Settled =>
-        /\ {agg.order[i] : i \in 1..Len(agg.order)} = agg.counted
-        /\ Len(agg.order) = Cardinality(agg.counted)
-        /\ \A i \in 1..(Len(agg.order) - 1) : T(ring, agg.order[i]) <= T(ring, agg.order[i + 1])
+\* Historical invariant name retained by the checked configurations. It now
+\* states that the queried exact-tagged block leaves are precisely the
+\* reference window; there is no receive-time list.
+RangeAggregateExact ==
+    Settled => agg.leaves = Win /\ Cardinality(agg.leaves) = agg.cnt
 
-\* the published spans are the reference's earliest and latest times
+OrderedByTime ==
+    RangeAggregateExact
+
+\* The range reduction publishes the reference extrema. SeqTimes is the
+\* reversed witness for incorrectly reading the sequence-bound records.
 PublishedSpanExact ==
-    Settled /\ Win # {} /\ Len(agg.order) > 0 =>
-        LET lt == IF SeqTimes THEN T(ring, agg.lo) ELSE T(ring, agg.order[1])
-            ht == IF SeqTimes THEN T(ring, agg.hi) ELSE T(ring, agg.order[Len(agg.order)])
+    Settled /\ Win # {} =>
+        LET lt == IF SeqTimes THEN T(ring, agg.lo) ELSE MinT(agg.leaves)
+            ht == IF SeqTimes THEN T(ring, agg.hi) ELSE MaxT(agg.leaves)
         IN lt = MinT(Win) /\ ht = MaxT(Win)
 
 AckedSpanExact ==

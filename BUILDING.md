@@ -116,7 +116,8 @@ cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
 `rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
 `usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
-`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
+`test_production_client_lifecycle` (DEV=0 only), `test_msgx` and `test_iocp`;
+they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
@@ -207,6 +208,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp) | `./bin/functional` on macOS |
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp) | CI `Functional: lifecycle binary` |
+| `test_production_client_lifecycle` | functional | DEV=0 public client/server create, connect, update, disconnect and destroy over portable worker threads | production (`ROCKETNET_DEV=OFF`) gates |
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
@@ -801,12 +803,13 @@ or a frame/send/ACK cadence requirement.
 ## Runtime environment inventory
 
 These are the environment variables read by the SDK. Each setting has one name;
-the client and server forms are separate settings. The unit inventory checks this
-list in both directions against the SDK reads and the public header.
+the client and server forms are separate settings. Entries marked development
+only are absent from a production library. The unit inventory checks this list
+in both directions against the SDK reads and the public header.
 
 * Environment: ROCKETNET_CLIENT_PACKET_FILTER
 * Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
-* Environment: ROCKETNET_CLIENT_STEP_DRIVEN
+* Environment: ROCKETNET_CLIENT_STEP_DRIVEN (development only)
 * Environment: ROCKETNET_CLIENT_TRANSPORT
 * Environment: ROCKETNET_CLIENT_SEND_KBPS
 * Environment: ROCKETNET_CLIENT_NUM_CHANNELS
@@ -837,6 +840,7 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
+* Environment: ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE
 * Environment: ROCKETNET_SERVER_TRANSPORT
 * Environment: ROCKETNET_SERVER_IPV4_ADDRESS
 * Environment: ROCKETNET_SERVER_IPV6_ADDRESS

@@ -25,8 +25,10 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "fake_client_driver.h"
 #include "portable_crt.h"
+#endif // #if ROCKETNET_DEV
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
@@ -126,9 +128,11 @@ static void test_client_ranking_portable_is_last_everywhere()
 
     printf( "test_client_ranking_portable_is_last_everywhere\n" );
 }
+REGISTER_UNIT_TEST( test_client_ranking_portable_is_last_everywhere );
 
 // ---- creates on a recording fake -------------------------------------------------
 
+#if ROCKETNET_DEV
 #define RANKING_MAX_CREATES 8
 
 // every create the ladder asked for, by name, and the names it refuses
@@ -413,7 +417,7 @@ static void test_client_ranking_pin_is_honoured()
     printf( "test_client_ranking_pin_is_honoured\n" );
 }
 
-REGISTER_UNIT_TEST( test_client_ranking_portable_is_last_everywhere );
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
+#endif // #if ROCKETNET_DEV

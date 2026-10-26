@@ -372,7 +372,8 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
         {
             uint8_t dummy[ROCKETNET_USER_DATA_BYTES];
             memset( dummy, 0, sizeof(dummy) );
-            rocketnet_client_slots_assign( server.client_slots, 0xD000 + (uint64_t) i, -1, dummy );
+            rocketnet_client_slots_assign( server.client_slots, 0xD000 + (uint64_t) i, -1,
+                                           0xD000 + (uint64_t) i, dummy );
         }
 
         rocketnet_admit_request( &server, &counters, ct.signed_connect_data, ct.signature, now, &d );

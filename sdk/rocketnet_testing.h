@@ -4,10 +4,10 @@
 */
 
 // What the tests, tools and benches set on a client that a game never does:
-// the receive stamp clock, and the step-driven client (no network thread;
-// update and send_packets run its I/O step on the caller's thread). Games
-// include rocketnet.h alone. ROCKETNET_CLIENT_STEP_DRIVEN=1 in the
-// environment still turns the step-driven client on, read at create.
+// the receive stamp clock, and, in a development build, the step-driven client
+// (no network thread; update and send_packets run its I/O step on the caller's
+// thread). Games include rocketnet.h alone. The step-driven setting and its
+// environment control do not exist in a production library.
 
 #ifndef ROCKETNET_TESTING_H
 #define ROCKETNET_TESTING_H
@@ -24,8 +24,10 @@ struct rocketnet_client_testing_t
     // network thread, and on the caller's thread during disconnect and destroy
     double (*time_callback)( void * context );
 
-    // true runs the client's I/O step inside update and send_packets on the
-    // caller's thread, with no network thread
+    // Development only: true runs the client's I/O step inside update and
+    // send_packets on the caller's thread, with no network thread. The field
+    // stays in this private test struct in production so non-stepping clock
+    // fixtures keep one source shape; production creation ignores it.
     bool step_driven;
 };
 

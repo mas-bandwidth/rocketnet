@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
 void rocketnet_unit_prepare();
 
 static void pins_set( const char * name, const char * value )
@@ -132,3 +133,5 @@ static void test_unit_transport_pins_ignored()
 }
 
 REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );
+
+#endif // #if ROCKETNET_DEV
