@@ -44,6 +44,7 @@
 #include <linux/ethtool.h>
 #include <linux/if_link.h>
 #include <linux/if_xdp.h>
+#include <linux/sockios.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
