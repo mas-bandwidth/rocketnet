@@ -878,6 +878,12 @@ int main( int argc, char ** argv )
 
     const int profile_refused = soak_profile_report( soak_elapsed, iteration );
 
+    // A failing run always names its simulator seed, pinned or not, so the
+    // wire that failed can be replayed from the log alone.
+    if ( failures || hangs || terminals || profile_refused )
+        printf( "soak_sim: FAILED simulator seed=%llu replay: ROCKETNET_SOAK_SIM_SEED=%llu ./bin/soak_sim\n",
+                (unsigned long long) simulator_seed, (unsigned long long) simulator_seed );
+
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_client_slots_destroy( server.client_slots );

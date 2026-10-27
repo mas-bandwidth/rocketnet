@@ -72,17 +72,26 @@ three equal PASS lines.
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
 Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
-then sweeps a longer range sized to about twenty minutes on that OS (Linux
-51-11000, macOS 51-14000, Windows 51-6000). A FAIL line or a trace
-mismatch fails the leg; the log holds the replay line.
+then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
+`seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)
+printing a `PASS schedule=<name> seeds=1-50 fired=<count>` line; a schedule
+that fires zero times fails its step. Each leg then sweeps a longer range
+sized to about twenty minutes on that OS (Linux 10950 seeds, macOS 13950,
+Windows 5950). The reference range 1-50 stays fixed; only the sweep start
+rolls: it is derived from the run number (run number 1 starts at seed 51, each
+later run starts one range-length later), so consecutive nights cover
+different ranges of the same length, and the log prints the range with its
+replay line. `.github/workflows/nightly-channel-seeds.yml` rolls the same
+way over ranges of 2000 channel seeds (run number 1 starts at seed 1). A FAIL
+line or a trace mismatch fails the leg; the log holds the replay line.
 
-The Linux and macOS ranges were refreshed in Release at executable source
-968673ea: Linux 51-11000 PASS in 1442.42 s and macOS 51-14000 PASS in
-1153.10 s. Windows (x64, MSVC, Release) was run at executable source
+The Linux and macOS sweep lengths were refreshed in Release at executable
+source 968673ea: Linux 10950 seeds PASS in 1442.42 s and macOS 13950 seeds
+PASS in 1153.10 s. Windows (x64, MSVC, Release) was run at executable source
 809ad504 (current main 6fa04f88 merged into the same carry), holding the
 Windows host exclusively: the build had 0 warnings, the fifteen cases passed,
-`--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 51-6000 passed
-in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
+`--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 5950 seeds
+passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
 
     PASS seeds=51-2050 runs=2000 trace=3398a85cc19ce52f    432.65 s
     PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
@@ -125,7 +134,11 @@ schedule; a failure prints its seed and the replay command, which carries
   object, whose update clamps a backwards game time
   (`rocketnet_clamp_update_time`), so the protocol sees it. The skew check's
   bound for that endpoint is the 5 s maximum (plus 1 ms of rounding); every
-  other endpoint keeps 0.45 s.
+  other endpoint keeps 0.45 s. A step back past the server's three-second
+  cookie lifetime makes the rewound client answer a cookie challenge after
+  the shared clock has passed its expiry, so the refusal check explains
+  `CONNECTION_REQUEST_COOKIE_EXPIRED` only on a run where a rewound clock
+  was actually observed; on any other run it stays unexplained.
 - `seq-gap`: draws a side (the client's sends or the server's), a client, a
   step and a gap of 1025 to 8192. At the first step from there on where the
   client holds a session on both ends, that side's next session send sequence
