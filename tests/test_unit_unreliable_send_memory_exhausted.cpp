@@ -25,6 +25,11 @@
 
 #define UNRELIABLE_FULL_PROTOCOL 0x7A11C0DE5E4D0001ULL
 
+// Unreliable sequenced on channel 0, which the reliable messages queued below
+// hold: a start behind queued channel work does not take the direct-to-frame
+// path (rn_endpoint_in_place_header), so it needs room in the send region.
+#define UNREL ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED
+
 static double g_unreliable_full_now = 1000.0;
 static double unreliable_full_clock( void * ) { return g_unreliable_full_now; }
 
@@ -93,10 +98,10 @@ static void test_unreliable_send_without_message_memory_ends_connection()
     const enum rocketnet_reliability_t reliable = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
 
     // with room, an unreliable start succeeds and is abandoned
-    uint8_t * open = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+    uint8_t * open = rocketnet_client_start_message( client, 0, UNREL, bytes );
     check( open != NULL );
     rocketnet_client_abort_message( client );
-    open = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+    open = rocketnet_server_start_message( server, (uint64_t) slot, 0, UNREL, bytes );
     check( open != NULL );
     rocketnet_server_abort_message( server );
 
@@ -127,10 +132,10 @@ static void test_unreliable_send_without_message_memory_ends_connection()
     check( rocketnet_server_client_connected( server, slot ) );
 
     // the unreliable start finds no room: NULL, and the connection ends
-    check( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes ) );
-    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes ) == NULL );
-    check( !rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes ) );
-    check( rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes ) == NULL );
+    check( !rocketnet_client_can_send_message( client, 0, UNREL, bytes ) );
+    check( rocketnet_client_start_message( client, 0, UNREL, bytes ) == NULL );
+    check( !rocketnet_server_can_send_message( server, slot, 0, UNREL, bytes ) );
+    check( rocketnet_server_start_message( server, (uint64_t) slot, 0, UNREL, bytes ) == NULL );
 
     rocketnet_client_update( client, g_unreliable_full_now );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
