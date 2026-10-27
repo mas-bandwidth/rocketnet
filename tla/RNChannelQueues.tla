@@ -96,8 +96,10 @@ StaleCancel ==
 
 EnqueueUnreliable ==
     /\ Len(unreliable) < MaxQ
-    /\ unreliable' = Append(unreliable, [id |-> Len(unreliable) + 1, gen |-> 1, epoch |-> epoch, hole |-> FALSE])
-    /\ UNCHANGED <<epoch, ticketNext, nextId, queue, ready, resend, holes, staleRemoved>>
+    /\ nextId <= MaxQ * 3
+    /\ unreliable' = Append(unreliable, [id |-> nextId, gen |-> 1, epoch |-> epoch, hole |-> FALSE])
+    /\ nextId' = nextId + 1
+    /\ UNCHANGED <<epoch, ticketNext, queue, ready, resend, holes, staleRemoved>>
 
 \* An outside event stamps one live unreliable entry with a previous epoch.
 StaleEpoch ==
