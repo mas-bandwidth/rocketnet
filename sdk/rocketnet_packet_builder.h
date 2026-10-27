@@ -144,7 +144,7 @@ struct rn_packet_builder_t
 
 #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 // The calling thread's last completed flat plan, for operation-bound and tag
-// checks. This development-only snapshot is not part of a connection and is
+// checks. This development-only record is not part of a connection and is
 // absent from ROCKETNET_DEV=0 builds.
 const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void );
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
