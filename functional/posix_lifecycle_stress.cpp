@@ -811,8 +811,11 @@ static void posix_case_result( const char * name, const posix_cell_t * cell, con
     printf( "%s [%s]: fds %d -> %d, threads %d -> %d, heap umems %ld -> %ld, %.3fs\n", name, cell->name,
             before->fds, after->fds, before->threads, after->threads, before->umems, after->umems, seconds );
     fflush( stdout );
+    // The library creates no threads. Growth is a leak. An OS-owned thread
+    // that exits during the case is not one, so an equal or lower count
+    // passes. Descriptors and xdp umems stay exact.
     if ( before->fds < 0 || before->threads < 0 || before->umems < 0 ||
-         before->fds != after->fds || before->threads != after->threads || before->umems != after->umems )
+         before->fds != after->fds || after->threads > before->threads || before->umems != after->umems )
     {
         printf( "%s [%s]: FAIL resource count moved (fds %d -> %d, threads %d -> %d, heap umems %ld -> %ld)\n", name, cell->name,
                 before->fds, after->fds, before->threads, after->threads, before->umems, after->umems );

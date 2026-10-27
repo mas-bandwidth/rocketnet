@@ -34,6 +34,59 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], amount );
 }
 
+// The unreliable FIFO is the flat send_descriptors array ordered by
+// enqueue_ticket (tla/RNChannelQueues.tla's sequence): the head is the live
+// unreliable descriptor with the smallest ticket, and the next entry is the
+// smallest ticket after a given one. No descriptor points at another.
+static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
+{
+    return descriptor->in_use &&
+           ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE ||
+             descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+             descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ) &&
+           ( rn_descriptor_schedule_live( descriptor ) || rn_descriptor_schedule_hole( descriptor ) );
+}
+
+static uint32_t rn_unreliable_next_live( const rn_region_t * region, uint32_t after_ticket )
+{
+    uint32_t best = RN_DESCRIPTOR_NONE;
+    uint32_t best_ticket = 0;
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_live( descriptor ) )
+            continue;
+        if ( descriptor->enqueue_ticket <= after_ticket )
+            continue;
+        if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
+        {
+            best = d;
+            best_ticket = descriptor->enqueue_ticket;
+        }
+    }
+    return best;
+}
+
+static void rn_unreliable_sync( rn_endpoint_t * endpoint )
+{
+    rn_region_t * region = endpoint->region;
+    endpoint->unreliable_head = rn_unreliable_next_live( region, 0 );
+    uint32_t tail = RN_DESCRIPTOR_NONE;
+    uint32_t tail_ticket = 0;
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_live( descriptor ) )
+            continue;
+        if ( tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
+        {
+            tail = d;
+            tail_ticket = descriptor->enqueue_ticket;
+        }
+    }
+    endpoint->unreliable_tail = tail;
+}
+
 // the public promotion threshold is the record rule at the full payload capacity
 static_assert( ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES == ROCKETNET_MESSAGE_SINGLE_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1,
                "ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is the largest unreliable message one packet carries" );
@@ -281,7 +334,6 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         descriptor->reliability = (uint8_t) reliability;
         descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
         descriptor->fragments = 1;
-        descriptor->next = RN_DESCRIPTOR_NONE;
         endpoint->pending_descriptor = d;
         pointer = rn_region_send_write_pointer( region, d );
     }
@@ -388,7 +440,6 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         }
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
-        descriptor->next = RN_DESCRIPTOR_NONE;
         rn_descriptor_enqueue_stamp( region, descriptor );
         if ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
         {
@@ -396,12 +447,8 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             // queue and takes no reliable number or resend entry.
             descriptor->sequencing = rn_channels_send_sequenced( &endpoint->ordered.channels, descriptor->channel, &descriptor->ordering );
         }
-        if ( endpoint->unreliable_tail == RN_DESCRIPTOR_NONE )
-            endpoint->unreliable_head = d;
-        else
-            region->send_descriptors[endpoint->unreliable_tail].next = d;
-        endpoint->unreliable_tail = d;
         endpoint->unreliable_count++;
+        rn_unreliable_sync( endpoint );
     }
 
     endpoint->serial = serial;
@@ -753,8 +800,9 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 // reliable-timeout attempts cap). This keeps a frame from being started
 // for nothing.
 
-static int rn_endpoint_fifo_due( const rn_region_t * region, uint32_t cursor, double delay, double now )
+static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack_t * ack, bool chunk, double delay, double now )
 {
+    uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
     for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
     {
         if ( steps >= 64 )
@@ -762,7 +810,7 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, uint32_t cursor, do
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
             return ( rn_send_number_unsent_due( slot->last_send ) || now >= slot->last_send + delay ) ? 1 : 0;
-        cursor = region->resend_fifo[cursor].next;
+        cursor = rn_window_ack_resend_next( ack, chunk, cursor );
     }
     return 0;
 }
@@ -775,22 +823,15 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
 
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = endpoint->region;
-    return rn_endpoint_fifo_due( region, ack->resend_head, rn_window_ack_resend_delay( ack ), now ) ||
-           rn_endpoint_fifo_due( region, ack->chunk_head, rn_window_ack_chunk_resend_delay( ack ), now );
+    return rn_endpoint_fifo_due( region, ack, false, rn_window_ack_resend_delay( ack ), now ) ||
+           rn_endpoint_fifo_due( region, ack, true, rn_window_ack_chunk_resend_delay( ack ), now );
 }
 
-static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d, uint32_t previous )
+static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    const uint32_t next = descriptor->next;
     const bool hole = rn_descriptor_schedule_hole( descriptor );
-    if ( previous == RN_DESCRIPTOR_NONE )
-        endpoint->unreliable_head = next;
-    else
-        region->send_descriptors[previous].next = next;
-    if ( endpoint->unreliable_tail == d )
-        endpoint->unreliable_tail = previous;
     if ( hole )
     {
         if ( endpoint->unreliable_holes > 0 )
@@ -798,10 +839,10 @@ static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d,
     }
     else if ( endpoint->unreliable_count > 0 )
         endpoint->unreliable_count--;
-    descriptor->next = RN_DESCRIPTOR_NONE;
     descriptor->enqueue_ticket = 0;
     descriptor->schedule_flags = 0;
     rn_region_send_free( region, d );
+    rn_unreliable_sync( endpoint );
 }
 
 static bool rn_endpoint_unreliable_receipt( const rn_send_descriptor_t * descriptor )
@@ -810,30 +851,37 @@ static bool rn_endpoint_unreliable_receipt( const rn_send_descriptor_t * descrip
 }
 
 // tla/RNChannelQueues.tla EnqueueUnreliable, StaleEpoch and Expire.
-// One forward pass. Drops holes and entries from another schedule epoch.
-// Live entries keep their order. schedule_work counts each link once.
+// One pass over the flat sequence. Drops holes and entries from another
+// schedule epoch. Live entries keep their ticket order. schedule_work
+// counts each sequence entry once.
 static void rn_endpoint_unreliable_rebuild( rn_endpoint_t * endpoint )
 {
     rn_region_t * region = endpoint->region;
-    uint32_t previous = RN_DESCRIPTOR_NONE;
-    uint32_t d = endpoint->unreliable_head;
-    for ( uint32_t guard = 0; d != RN_DESCRIPTOR_NONE && guard <= region->queue; guard++ )
+    uint32_t after = 0;
+    uint32_t d;
+    while ( ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE )
     {
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        const uint32_t next = descriptor->next;
+        after = descriptor->enqueue_ticket;
         endpoint->ordered.channels.schedule_work++;
-        const bool drop = rn_descriptor_schedule_hole( descriptor ) || !descriptor->in_use ||
-                          descriptor->queue_epoch != region->schedule_epoch || !rn_descriptor_schedule_live( descriptor );
-        if ( drop )
+        if ( descriptor->queue_epoch != region->schedule_epoch )
         {
             if ( rn_endpoint_unreliable_receipt( descriptor ) )
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial );
-            rn_endpoint_unreliable_unlink( endpoint, d, previous );
+            rn_endpoint_unreliable_unlink( endpoint, d );
         }
-        else
-            previous = d;
-        d = next;
     }
+    for ( uint32_t hole = 0; hole < region->descriptors_fresh; hole++ )
+    {
+        rn_send_descriptor_t * descriptor = &region->send_descriptors[hole];
+        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_hole( descriptor ) )
+            continue;
+        endpoint->ordered.channels.schedule_work++;
+        if ( rn_endpoint_unreliable_receipt( descriptor ) )
+            rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial );
+        rn_endpoint_unreliable_unlink( endpoint, hole );
+    }
+    rn_unreliable_sync( endpoint );
 }
 
 bool rn_endpoint_cancel_unreliable( struct rn_endpoint_t * endpoint, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch )
@@ -857,6 +905,7 @@ bool rn_endpoint_cancel_unreliable( struct rn_endpoint_t * endpoint, uint32_t de
     if ( endpoint->unreliable_count > 0 )
         endpoint->unreliable_count--;
     endpoint->unreliable_holes++;
+    rn_unreliable_sync( endpoint );
     if ( endpoint->unreliable_count == 0 || endpoint->unreliable_holes > RN_SCHEDULE_HOLE_BOUND )
         rn_endpoint_unreliable_rebuild( endpoint );
     return true;
@@ -876,7 +925,7 @@ static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int count
         const rn_send_descriptor_t * descriptor = &endpoint->region->send_descriptors[endpoint->unreliable_head];
         if ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
             rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial ); // local budget drop before wire send
-        rn_endpoint_unreliable_unlink( endpoint, endpoint->unreliable_head, RN_DESCRIPTOR_NONE );
+        rn_endpoint_unreliable_unlink( endpoint, endpoint->unreliable_head );
     }
     if ( count > already_counted )
         rn_endpoint_count( endpoint, counter, count - already_counted );
@@ -936,7 +985,7 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
     else if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &stride ) )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-        rn_endpoint_unreliable_unlink( endpoint, d, RN_DESCRIPTOR_NONE );
+        rn_endpoint_unreliable_unlink( endpoint, d );
         return 0;
     }
 
@@ -963,7 +1012,7 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
             budget->unreliable_dropped++;
             budget->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
-            rn_endpoint_unreliable_unlink( endpoint, d, RN_DESCRIPTOR_NONE );
+            rn_endpoint_unreliable_unlink( endpoint, d );
             return 0;
         }
     }
@@ -1051,10 +1100,13 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
 {
     rn_region_t * region = endpoint->region;
     int count = 0;
-    for ( uint32_t d = endpoint->unreliable_head; d != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; d = region->send_descriptors[d].next )
+    uint32_t after = 0;
+    uint32_t d;
+    while ( ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->queue_epoch != region->schedule_epoch )
+        after = descriptor->enqueue_ticket;
+        if ( descriptor->queue_epoch != region->schedule_epoch )
             continue;
         if ( rn_endpoint_large_sequenced( endpoint, descriptor ) )
             break; // send the preceding small records first
@@ -1157,13 +1209,13 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
                 taken_epoch[taken_count] = epochs[i];
                 taken_count++;
             }
-            uint32_t previous = RN_DESCRIPTOR_NONE;
-            uint32_t d = endpoint->unreliable_head;
+            uint32_t after = 0;
             int taken = 0;
-            for ( uint32_t guard = 0; d != RN_DESCRIPTOR_NONE && taken < taken_count && guard <= region->queue; guard++ )
+            uint32_t d;
+            while ( taken < taken_count && ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE )
             {
-                const uint32_t next = region->send_descriptors[d].next;
                 const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+                after = descriptor->enqueue_ticket;
                 const bool match = d == taken_index[taken] &&
                                    descriptor->generation == taken_generation[taken] &&
                                    descriptor->queue_epoch == taken_epoch[taken] &&
@@ -1171,12 +1223,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
                                    rn_descriptor_schedule_live( descriptor );
                 if ( match )
                 {
-                    rn_endpoint_unreliable_unlink( endpoint, d, previous );
+                    rn_endpoint_unreliable_unlink( endpoint, d );
                     taken++;
                 }
-                else
-                    previous = d;
-                d = next;
             }
             endpoint->packet_written = 1;
             return (int) endpoint->unreliable_builder.packet[0].payload_bytes;
@@ -1199,7 +1248,7 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             if ( !rocketnet_message_writer_add( &writer, &record ) || rocketnet_message_writer_finish( &writer ) != payload_bytes )
             {
                 rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-                rn_endpoint_unreliable_unlink( endpoint, d, RN_DESCRIPTOR_NONE );
+                rn_endpoint_unreliable_unlink( endpoint, d );
                 endpoint->written++;
                 endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
                 return 0;
@@ -1285,7 +1334,7 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
             if ( endpoint->send_budget_enabled )                       // R6: uncapped, no bucket to settle
                 rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
-            rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
+            rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor );
             break;
 
         default:
@@ -1337,7 +1386,7 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             if ( endpoint->send_budget_enabled )                       // tla/RNSendBudget.tla SendFailed: refund the whole charge
                 rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, 0 );
-            rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor, RN_DESCRIPTOR_NONE );
+            rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor );
             endpoint->written++;
             break;
 
@@ -1375,8 +1424,9 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
     return endpoint->config_error;
 }
 
-static double rn_endpoint_fifo_deadline( const rn_region_t * region, uint32_t cursor, double delay )
+static double rn_endpoint_fifo_deadline( const rn_region_t * region, const rn_window_ack_t * ack, bool chunk, double delay )
 {
+    uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
     for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
     {
         if ( steps >= 64 )
@@ -1384,7 +1434,7 @@ static double rn_endpoint_fifo_deadline( const rn_region_t * region, uint32_t cu
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
             return rn_send_number_unsent_due( slot->last_send ) ? 0.0 : slot->last_send + delay;
-        cursor = region->resend_fifo[cursor].next;
+        cursor = rn_window_ack_resend_next( ack, chunk, cursor );
     }
     return RN_ENDPOINT_NO_DEADLINE;
 }
@@ -1402,8 +1452,8 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
     const rn_region_t * region = endpoint->region;
     double deadline = RN_ENDPOINT_NO_DEADLINE;
 
-    const double resend = rn_endpoint_fifo_deadline( region, ack->resend_head, rn_window_ack_resend_delay( ack ) );
-    const double chunk = rn_endpoint_fifo_deadline( region, ack->chunk_head, rn_window_ack_chunk_resend_delay( ack ) );
+    const double resend = rn_endpoint_fifo_deadline( region, ack, false, rn_window_ack_resend_delay( ack ) );
+    const double chunk = rn_endpoint_fifo_deadline( region, ack, true, rn_window_ack_chunk_resend_delay( ack ) );
     if ( resend < deadline )
         deadline = resend;
     if ( chunk < deadline )

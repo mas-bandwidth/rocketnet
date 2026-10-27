@@ -18,10 +18,10 @@
 (* order on wraparound, which the model abstracts as unbounded tickets.    *)
 (*                                                                         *)
 (* Descriptors are 1..Q; NONE = 0 stands for RN_DESCRIPTOR_NONE.  The      *)
-(* free-descriptor list is abstracted to "any descriptor not live", a      *)
+(* free-descriptor stack is abstracted to "any descriptor not live", a     *)
 (* superset of the code's LIFO choice.  order is a ghost: the live         *)
-(* descriptors in the order they were allocated, which the list must       *)
-(* equal.                                                                  *)
+(* descriptors in the order they were allocated, which the flat order      *)
+(* array (slot/pos, modelled from its oldest position) must equal.         *)
 (*                                                                         *)
 (* Two constants flip one rule each for the reversed witnesses:            *)
 (*   FloorAtOldest = FALSE  the floor (head) follows the newest span's     *)
@@ -57,10 +57,18 @@ VARIABLES
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
     exhausted,  \* rn_region_exhaust has fired (sticky until Reset)
-    prv,        \* descriptor->span_prev: the previous live span, NONE at the oldest
-    nxt         \* descriptor->span_next: the next live span, NONE at the newest
+    slot,       \* the flat order array: slot[i] is the descriptor at order position i, NONE outside the live segment
+    pos         \* descriptor->span_pos: a live span's order position, NONE when not live
 
-vars == <<head, tail, first, last, start, len, ticket, ticketNext, live, order, exhausted, prv, nxt>>
+vars == <<head, tail, first, last, start, len, ticket, ticketNext, live, order, exhausted, slot, pos>>
+
+\* the order array's contents for a live order: positions 1..Len(ord) hold
+\* ord in order (the code's circular segment, modelled from its oldest
+\* position; the rotation is not observable), the rest NONE
+SlotOf(ord) == [ i \in 1..Q |-> IF i <= Len(ord) THEN ord[i] ELSE NONE ]
+PosOf(ord) == [ d \in D |-> IF \E i \in 1..Len(ord) : ord[i] = d
+                             THEN CHOOSE i \in 1..Len(ord) : ord[i] = d
+                             ELSE NONE ]
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -90,8 +98,8 @@ Init ==
     /\ live = {}
     /\ order = <<>>
     /\ exhausted = FALSE
-    /\ prv = [d \in D |-> NONE]
-    /\ nxt = [d \in D |-> NONE]
+    /\ slot = SlotOf(<<>>)
+    /\ pos = PosOf(<<>>)
 
 \* rn_region_send_alloc_span with room: rn_span_place then rn_span_link
 Alloc(l, d) ==
@@ -114,9 +122,8 @@ Alloc(l, d) ==
     /\ tail'  = IF e = SR THEN 0 ELSE e
     /\ live'  = live \cup {d}
     /\ order' = Append(order, d)
-    /\ prv'   = [prv EXCEPT ![d] = last]
-    /\ nxt'   = [x \in D |-> IF last # NONE /\ x = last THEN d
-                             ELSE IF x = d THEN NONE ELSE nxt[x]]
+    /\ slot'  = SlotOf(Append(order, d))
+    /\ pos'   = PosOf(Append(order, d))
     /\ UNCHANGED exhausted
 
 \* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, then
@@ -126,24 +133,23 @@ Exhaust(l) ==
     /\ \/ D \ live = {}
        \/ ~Place(Round16(l)).ok
     /\ exhausted' = TRUE
-    /\ UNCHANGED <<head, tail, first, last, start, len, ticket, ticketNext, live, order, prv, nxt>>
+    /\ UNCHANGED <<head, tail, first, last, start, len, ticket, ticketNext, live, order, slot, pos>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
 \* rn_region_send_free_fragment; any live span, in any order.  The freed
-\* descriptor's ticket clears; the span is spliced out of the intrusive
-\* list, so when an edge span goes, the new edge is its link neighbour.
+\* descriptor's ticket clears; the span leaves the order array (an edge
+\* span's neighbour in the array is the new edge; an interior span's gap
+\* is closed by shifting the shorter side of the segment).
 Free(d) ==
     /\ d \in live
     /\ LET rest == live \ {d}
            ord2 == SelectSeq(order, LAMBDA x : x # d)
-           f2 == IF d = first THEN nxt[d] ELSE first
-           l2 == IF d = last THEN prv[d] ELSE last
+           f2 == IF ord2 = <<>> THEN NONE ELSE ord2[1]
+           l2 == IF ord2 = <<>> THEN NONE ELSE ord2[Len(ord2)]
        IN /\ first' = f2
           /\ last' = l2
-          /\ prv' = [x \in D |-> IF nxt[d] # NONE /\ x = nxt[d] THEN prv[d]
-                                 ELSE IF x = d THEN NONE ELSE prv[x]]
-          /\ nxt' = [x \in D |-> IF prv[d] # NONE /\ x = prv[d] THEN nxt[d]
-                                 ELSE IF x = d THEN NONE ELSE nxt[x]]
+          /\ slot' = SlotOf(ord2)
+          /\ pos' = PosOf(ord2)
           /\ ticket' = [x \in D |-> IF x \in rest THEN (CHOOSE i \in 1..Len(ord2) : ord2[i] = x) ELSE 0]
           /\ ticketNext' = Len(ord2) + 1
           /\ IF f2 = NONE
@@ -169,8 +175,8 @@ Reset ==
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
-    /\ prv' = [d \in D |-> NONE]
-    /\ nxt' = [d \in D |-> NONE]
+    /\ slot' = SlotOf(<<>>)
+    /\ pos' = PosOf(<<>>)
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
@@ -194,8 +200,8 @@ TypeOK ==
     /\ ticketNext \in Nat \ {0}
     /\ live \subseteq D
     /\ exhausted \in BOOLEAN
-    /\ prv \in [D -> D \cup {NONE}]
-    /\ nxt \in [D -> D \cup {NONE}]
+    /\ slot \in [1..Q -> D \cup {NONE}]
+    /\ pos \in [D -> (1..Q) \cup {NONE}]
 
 Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
 
@@ -239,6 +245,12 @@ FullAdmitsNothing ==
 IdleAdmitsAnyMessage ==
     first = NONE => /\ Place(SR).ok
                     /\ \A l \in Lengths : Place(Round16(l)).ok
+
+\* The order array holds exactly the live spans, in allocation order, and
+\* every live span's position names its slot (and no other span's).
+SlotMatchesOrder ==
+    /\ slot = SlotOf(order)
+    /\ pos = PosOf(order)
 
 \* The live spans lie in ring order from head to tail: unwrapped (tail >
 \* head, or tail = 0 with the newest span ending at SR) they sit inside

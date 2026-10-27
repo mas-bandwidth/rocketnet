@@ -39,7 +39,7 @@
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
-static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS, "a whole bank fits the process view" );
+static_assert( ROCKETNET_RIO_RECEIVES <= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE, "a whole bank fits the process view" );
 
 // the bytes of a bank's members after data, which pack with no padding
 // between them
@@ -1246,7 +1246,7 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
     while ( rio->ready_count > 0 )
     {
         const int candidate = rio->ready_banks[rio->ready_head];
-        if ( total + rio->banks[candidate].num_packets > ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+        if ( total + rio->banks[candidate].num_packets > ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
             break; // the oldest ready bank waits for the next call
         rio->ready_head = ( rio->ready_head + 1 ) % ROCKETNET_RIO_RECEIVE_BANKS;
         rio->ready_count--;
@@ -1541,8 +1541,8 @@ bool rocketnet_server_rio_test_worker_handoff()
     valid &= rio->posted_receives.load() == ROCKETNET_RIO_RECEIVES && state.reposts == ROCKETNET_RIO_RECEIVE_BANKS * ROCKETNET_RIO_RECEIVES;
 
     // Main exposes the ready banks that fit the process view, oldest first.
-    const int fit = ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS / ROCKETNET_RIO_RECEIVES < ROCKETNET_RIO_RECEIVE_BANKS - 1
-        ? ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS / ROCKETNET_RIO_RECEIVES : ROCKETNET_RIO_RECEIVE_BANKS - 1;
+    const int fit = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE / ROCKETNET_RIO_RECEIVES < ROCKETNET_RIO_RECEIVE_BANKS - 1
+        ? ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE / ROCKETNET_RIO_RECEIVES : ROCKETNET_RIO_RECEIVE_BANKS - 1;
     const int oldest = rio->ready_banks[rio->ready_head];
     rocketnet_server_rio_receive_packets( rio );
     valid &= rio->exposed_count == fit && rio->exposed_banks[0] == oldest &&

@@ -89,7 +89,6 @@ DEVELOPMENT_SYMBOL_PARTS = (
     "rn_message_payload_copy_count", "rocketnet_portable_rx_test_",
     "rocketnet_portable_tx_test_", "rocketnet_platform_socket_set_receive_hook",
     "rocketnet_platform_socket_send_error_hook", "rocketnet_xdp_test_",
-    "rocketnet_windows_lifecycle_ledger",
 )
 
 

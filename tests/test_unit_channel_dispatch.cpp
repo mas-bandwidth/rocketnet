@@ -669,12 +669,29 @@ static bool schedule_enqueue( rn_channels_t * channels, uint32_t channel, uint32
 
 static uint32_t schedule_walk( const rn_channels_t * channels, uint32_t channel, uint32_t * out, uint32_t max_out )
 {
+    // The flat FIFO walk: live descriptors of this channel in enqueue_ticket order.
     const rn_region_t * region = channels->region;
     uint32_t n = 0;
-    for ( uint32_t d = region->channel_send[channel].queue_head; d != RN_DESCRIPTOR_NONE && n < max_out; d = region->send_descriptors[d].next )
+    uint32_t after = 0;
+    while ( n < max_out )
     {
-        if ( rn_descriptor_schedule_live( &region->send_descriptors[d] ) )
-            out[n++] = d;
+        uint32_t best = RN_DESCRIPTOR_NONE;
+        uint32_t best_ticket = 0;
+        for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+        {
+            const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+            if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->channel != channel || descriptor->enqueue_ticket <= after )
+                continue;
+            if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
+            {
+                best = d;
+                best_ticket = descriptor->enqueue_ticket;
+            }
+        }
+        if ( best == RN_DESCRIPTOR_NONE )
+            break;
+        after = best_ticket;
+        out[n++] = best;
     }
     return n;
 }
@@ -743,8 +760,10 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( rn_ordered_announce_config( &ordered, &config ) );
     const rn_send_descriptor_t * head = &region->send_descriptors[region->channel_send[0].queue_head];
     rocketnet_unit_check( ( head->flags & RN_SEND_FLAG_CONTROL ) != 0 );
-    rocketnet_unit_check( head->next != RN_DESCRIPTOR_NONE );
-    rocketnet_unit_check( head->enqueue_ticket < region->send_descriptors[head->next].enqueue_ticket );
+    uint32_t front_order[2];
+    rocketnet_unit_check( schedule_walk( channels, 0, front_order, 2 ) == 2 );
+    rocketnet_unit_check( front_order[0] == region->channel_send[0].queue_head );
+    rocketnet_unit_check( head->enqueue_ticket < region->send_descriptors[front_order[1]].enqueue_ticket );
     rocketnet_unit_check( channels->schedule_work == before + 2 );
     rocketnet_unit_check( channels->schedule_work < region->queue );
     rocketnet_unit_check( channels->ready_head == 0 );
@@ -755,13 +774,13 @@ static void test_channel_config_front_ready_rotation_and_work()
     const uint32_t ticket0 = region->channel_send[0].ready_ticket;
     const uint32_t ticket1 = region->channel_send[1].ready_ticket;
     rocketnet_unit_check( ticket0 != 0 && ticket1 != 0 && ticket0 != ticket1 );
-    rocketnet_unit_check( region->channel_send[0].ready_next == 1 );
-    rocketnet_unit_check( region->channel_send[1].ready_next == RN_DESCRIPTOR_NONE );
+    rocketnet_unit_check( channels->ready_head == 0 && channels->ready_tail == 1 );
+    rocketnet_unit_check( region->channel_send[0].ready_ticket < region->channel_send[1].ready_ticket );
     alignas( 16 ) uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * payloads[1] = { frame };
     rn_ordered_write( &ordered, 1000.0, payloads, 1 );
     rocketnet_unit_check( channels->ready_head == 1 );
-    rocketnet_unit_check( region->channel_send[1].ready_next == 0 );
+    rocketnet_unit_check( channels->ready_tail == 0 );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != region->channel_send[1].ready_ticket );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != 0 && region->channel_send[1].ready_ticket != 0 );
     rn_arena_destroy( arena );

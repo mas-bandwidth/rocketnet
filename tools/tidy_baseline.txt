@@ -48,8 +48,6 @@ clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-multi-level-implicit-poin
 clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-sizeof-expression	2f63ec55e37e1c85
 clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-sizeof-expression	36e5b6a2c4d79df7
 clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-sizeof-expression	73267e87baea6f84
-clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	c3672d8ed6c4e088
-clang-tidy	sdk/rocketnet_client_transport.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	ec6be17d2d4e1d05
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	69d962b3ee8259c9
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	bb4aacd838cf618d
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	cd54a1e1a735a171

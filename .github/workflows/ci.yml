@@ -588,6 +588,10 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
+      - name: Check test scaffolding boundary (red controls)
+        if: runner.os == 'Linux' && matrix.dev == 'OFF'
+        run: python3 tools/check_test_scaffolding_boundary.py --red-controls
+
       - name: Check production library boundary
         if: contains(matrix.leg, 'a') && matrix.dev == 'OFF'
         run: |
