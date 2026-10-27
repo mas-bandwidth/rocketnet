@@ -3432,6 +3432,13 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
         }
 
+        // The SCHED_RR worker spins on its dedicated isolated queue CPU by
+        // design: NAPI runs in softirq on the queue CPUs, and the isolated-CPU
+        // pre-flight above is the guard that keeps every queue on its own core.
+        // This pass deliberately does not sleep. rocketnet_platform_sleep
+        // returns at once for a non-positive request, so a zero-duration call
+        // would never yield the CPU.
+
         if ( stopping ) break;
     }
     // Last access to queue storage, acquired by stopped before destruction.
