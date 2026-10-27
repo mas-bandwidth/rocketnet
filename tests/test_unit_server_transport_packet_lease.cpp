@@ -114,6 +114,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     server_config.protocol_id = LEASE_TEST_PROTOCOL;
     server_config.max_clients = 2;
     server_config.game_clock_epoch = LEASE_TEST_EPOCH;
+    memset( server_config.packet_filter, 0x5A, sizeof( server_config.packet_filter ) );
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, world->server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world->server_secret, sizeof( server_config.server_secret_key ) );
@@ -139,6 +140,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    memset( client_config.packet_filter, 0x5A, sizeof( client_config.packet_filter ) );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     rocketnet_client_transport_io_config_t io_config = { "loopback", &client_config, NULL };
     rocketnet_address_t client_bind;
