@@ -5,7 +5,12 @@ Every tracked .h in the repository must be classified into either:
   - OWNED_GLOBS: repository-owned headers across bench, examples, functional,
     fuzz, root (load_census.h), proofs, sdk, tests, and tools.
   - EXCLUDED_HEADERS: vendored or mirrored kernel/BPF headers with explicit
-    provenance (sodium/sodium.h and tests/xdp_host/**).
+    provenance. The excluded files are sodium/sodium.h,
+    tests/xdp_host/bpf/bpf_helpers.h, tests/xdp_host/linux/bpf.h,
+    tests/xdp_host/linux/if_ether.h, tests/xdp_host/linux/if_packet.h,
+    tests/xdp_host/linux/if_vlan.h, tests/xdp_host/linux/in.h,
+    tests/xdp_host/linux/ip.h, tests/xdp_host/linux/ipv6.h, and
+    tests/xdp_host/linux/udp.h. tests/xdp_host/server_xdp_host.h is owned.
 
 Every repository-owned .h file must:
   1. Begin with `#pragma once` as its first preprocessing directive, with no
@@ -44,6 +49,7 @@ OWNED_GLOBS = (
     "tests/*.h",
     "tools/*.h",
     "tools/differential/*.h",
+    "tests/xdp_host/server_xdp_host.h",
 )
 
 EXCLUDED_HEADERS = {
@@ -77,9 +83,6 @@ EXCLUDED_HEADERS = {
     ),
     "tests/xdp_host/linux/udp.h": (
         "mirrored Linux UAPI <linux/udp.h> header shim for host XDP filter compilation"
-    ),
-    "tests/xdp_host/server_xdp_host.h": (
-        "host XDP filter shim boundary paired with tests/xdp_host mirrored kernel headers"
     ),
 }
 
@@ -517,6 +520,8 @@ def main():
         f"Header guards clean: {owned_count} owned headers verified, "
         f"{excluded_count} excluded headers accounted for ({len(headers)} total tracked .h files)"
     )
+    for ex_path in sorted(EXCLUDED_HEADERS):
+        print(f"excluded: {ex_path}")
     return 0
 
 

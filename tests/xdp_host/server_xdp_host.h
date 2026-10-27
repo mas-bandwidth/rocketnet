@@ -15,8 +15,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_XDP_HOST_H
-#define ROCKETNET_SERVER_XDP_HOST_H
+#ifndef ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H
+#define ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H
 
 #include <stdint.h>
 
@@ -75,4 +75,4 @@ uint64_t rocketnet_xdp_host_last_redirect_key( void );
 }
 #endif
 
-#endif // #ifndef ROCKETNET_SERVER_XDP_HOST_H
+#endif // ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H
