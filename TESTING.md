@@ -134,7 +134,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | 1000 clients over the LAN, every guarantee checked (soak matrix) | msgx | planned for the final deliverable |
 | 1000 clients over the LAN, every guarantee checked (soak matrix) | gso | planned for the final deliverable |
 | 1000 clients over the LAN, every guarantee checked (soak matrix) | io_uring | planned for the final deliverable |
-| 1000 clients over the LAN, every guarantee checked (soak matrix) | portable | planned for the final deliverable |
+| 1000 clients over the LAN, every guarantee checked (soak matrix) (portable: void, native-only proof) | portable | ❌ |
 | 1000 clients over the LAN, every guarantee checked (soak matrix) | iocp | planned for the final deliverable |
 | 1000 clients over the LAN, every guarantee checked (soak matrix) | rio | planned for the final deliverable |
 | Sanitizers per transport | xdp | planned for the final deliverable |
@@ -172,36 +172,36 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Receipt loss reported after its own deadline | planned for the final deliverable |
 | Source format in the netcode style (clang-format check) | planned for the final deliverable |
 | TLA+ ledger current (tla/CASES.tsv and tla/COVERAGE.tsv match the models) | planned for the final deliverable |
-| TLA+ model check: link (19 required) | planned for the final deliverable |
-| TLA+ model check: clientconnection (14 required, 9 bench) | planned for the final deliverable |
-| TLA+ model check: replaywindow (2 required, 1 bench) | planned for the final deliverable |
+| TLA+ model check: link (22 required) | planned for the final deliverable |
+| TLA+ model check: clientconnection (21 required, 9 bench) | planned for the final deliverable |
+| TLA+ model check: replaywindow (3 required, 1 bench) | planned for the final deliverable |
 | TLA+ model check: rnsendstore (1 required) | planned for the final deliverable |
 | TLA+ model check: rnring (5 required) | planned for the final deliverable |
 | TLA+ model check: rnsendspans (3 required) | planned for the final deliverable |
 | TLA+ model check: rnwindow (7 required) | planned for the final deliverable |
-| TLA+ model check: receiveorder (4 required) | planned for the final deliverable |
-| TLA+ model check: rndriversendstaging (2 required) | planned for the final deliverable |
-| TLA+ model check: rnsecuritytables (13 required) | planned for the final deliverable |
-| TLA+ model check: serverconnection (5 required) | planned for the final deliverable |
+| TLA+ model check: receiveorder (8 required) | planned for the final deliverable |
+| TLA+ model check: rndriversendstaging (3 required) | planned for the final deliverable |
+| TLA+ model check: rnsecuritytables (17 required) | planned for the final deliverable |
+| TLA+ model check: serverconnection (14 required) | planned for the final deliverable |
 | TLA+ model check: rnconnectionmemory (3 required) | planned for the final deliverable |
-| TLA+ model check: rnsendbudget (4 required) | planned for the final deliverable |
-| TLA+ model check: rnreceipts (5 required) | planned for the final deliverable |
-| TLA+ model check: rnchannel (9 required) | planned for the final deliverable |
+| TLA+ model check: rnsendbudget (5 required) | planned for the final deliverable |
+| TLA+ model check: rnreceipts (6 required) | planned for the final deliverable |
+| TLA+ model check: rnchannel (11 required) | planned for the final deliverable |
 | TLA+ model check: rnslots (12 required) | planned for the final deliverable |
-| TLA+ model check: rnchanneltypes (11 required) | planned for the final deliverable |
+| TLA+ model check: rnchanneltypes (14 required) | planned for the final deliverable |
 | TLA+ model check: rnsenthistory (3 required) | planned for the final deliverable |
 | TLA+ model check: rnscheduler (3 required) | planned for the final deliverable |
 | TLA+ model check: rnresendtiming (5 required) | planned for the final deliverable |
 | TLA+ model check: rnfilterepochs (3 required) | planned for the final deliverable |
-| TLA+ model check: rnuringdriver (4 required) | planned for the final deliverable |
-| TLA+ model check: fragmentsandacks (18 required, 6 bench) | planned for the final deliverable |
+| TLA+ model check: rnuringdriver (7 required) | planned for the final deliverable |
+| TLA+ model check: fragmentsandacks (20 required, 7 bench) | planned for the final deliverable |
 | TLA+ model check: rnblocks (2 required) | planned for the final deliverable |
-| TLA+ model check: rnclientio (8 required) | planned for the final deliverable |
+| TLA+ model check: rnclientio (24 required) | planned for the final deliverable |
 | TLA+ model check: rnendpoint (5 required, 2 bench) | planned for the final deliverable |
-| TLA+ model check: rnxdpreplay (3 required) | planned for the final deliverable |
-| TLA+ model check: rnxdpreceivering (3 required) | planned for the final deliverable |
-| TLA+ model check: rnriodriver (4 required) | planned for the final deliverable |
-| TLA+ model check: rnrioworker (8 required) | planned for the final deliverable |
+| TLA+ model check: rnxdpreplay (18 required) | planned for the final deliverable |
+| TLA+ model check: rnxdpreceivering (4 required) | planned for the final deliverable |
+| TLA+ model check: rnriodriver (5 required) | planned for the final deliverable |
+| TLA+ model check: rnrioworker (9 required) | planned for the final deliverable |
 | TLA+ model check: rnclientlinkstop (3 required) | planned for the final deliverable |
 | TLA+ model check: rnportablerx (6 required) | planned for the final deliverable |
 | TLA+ model check: shutdownownership (14 required) | planned for the final deliverable |
@@ -209,25 +209,25 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnflows (2 required) | planned for the final deliverable |
 | TLA+ model check: rnclientiodecrypt (5 required) | planned for the final deliverable |
 | TLA+ model check: rnlivefleetrun (3 required) | planned for the final deliverable |
-| TLA+ model check: clientsession (5 required) | planned for the final deliverable |
-| TLA+ model check: serversession (10 required) | planned for the final deliverable |
-| TLA+ model check: rnoutgoingbuild (4 required) | planned for the final deliverable |
+| TLA+ model check: clientsession (10 required) | planned for the final deliverable |
+| TLA+ model check: serversession (13 required) | planned for the final deliverable |
+| TLA+ model check: rnoutgoingbuild (6 required) | planned for the final deliverable |
 | TLA+ model check: rnsimfaults (3 required) | planned for the final deliverable |
 | TLA+ model check: rnclientreceivequit (5 required) | planned for the final deliverable |
 | TLA+ model check: rnserversendfair (4 required) | planned for the final deliverable |
 | TLA+ model check: sendhandoff (3 required) | planned for the final deliverable |
-| TLA+ model check: rnbufferhandoff (9 required) | planned for the final deliverable |
-| TLA+ model check: rnlazypool (3 required) | planned for the final deliverable |
-| TLA+ model check: rnwrittenring (3 required) | planned for the final deliverable |
-| TLA+ model check: rndestroywipe (6 required) | planned for the final deliverable |
-| TLA+ model check: rnserverstats (8 required) | planned for the final deliverable |
-| TLA+ model check: rnbufferhandoffbase (4 required) | planned for the final deliverable |
 | TLA+ model check: ackblockwrap (2 required) | planned for the final deliverable |
-| TLA+ model check: rnclientiocp (2 required) | planned for the final deliverable |
-| TLA+ model check: rnsentmap (3 required) | planned for the final deliverable |
 | TLA+ model check: loopbackqueue (2 required) | planned for the final deliverable |
-| TLA+ model check: rnupdateclock (2 required) | planned for the final deliverable |
+| TLA+ model check: rnbufferhandoff (9 required) | planned for the final deliverable |
+| TLA+ model check: rnbufferhandoffbase (4 required) | planned for the final deliverable |
+| TLA+ model check: rnclientiocp (2 required) | planned for the final deliverable |
+| TLA+ model check: rndestroywipe (6 required) | planned for the final deliverable |
+| TLA+ model check: rnlazypool (3 required) | planned for the final deliverable |
 | TLA+ model check: rnmsgxpause (2 required) | planned for the final deliverable |
+| TLA+ model check: rnsentmap (3 required) | planned for the final deliverable |
+| TLA+ model check: rnserverstats (8 required) | planned for the final deliverable |
+| TLA+ model check: rnupdateclock (2 required) | planned for the final deliverable |
+| TLA+ model check: rnwrittenring (3 required) | planned for the final deliverable |
 | TLA+ model check: rngsohandoff (2 required) | planned for the final deliverable |
 | CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | planned for the final deliverable |
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |

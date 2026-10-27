@@ -20,8 +20,15 @@ results are recorded in the [published release notes](https://github.com/mas-ban
 
 The owner explicitly authorized replacing this preview tag and requires native
 unit and functional suites to pass on Linux, macOS and Windows at the final
-commit. Recorded manual runs satisfy that requirement; CI infrastructure is
-not a deliverable. Earlier receipts below retain their original scope.
+commit. The final tagged commit is
+`83d04c4d9df1b7f54fd6886455372b237f85740b` (v1.0.0-preview-2). One
+preview-2 functional gate status is recorded here, in
+[TESTING.md](../TESTING.md) and in the README: the functional gate is not
+green at that commit. The macOS Debug socket receive-short condition and
+the s390x big-endian full-system run are known issues deferred to
+preview-3; the recorded manual runs and receipts below retain their
+original tested heads and scope and do not turn that gate green. CI
+infrastructure is not a deliverable.
 
 The runtime candidate was `ba09993ba30e1c93c55d8d2f0bdf42baedd9ee0a`.
 Commit `a76d641ad64768e239528cd1c6bfdf37a0caaa41` restores the earlier CI
@@ -74,13 +81,13 @@ The evidence establishes copy mode, not zero-copy or line-rate throughput.
   the native flush nonblocking. Functional error-injection checks settle
   earlier sends and observe completion through the ordinary send boundary,
   rather than bypassing it with direct native flushes.
-- **macOS flood isolation repaired for this recut:** exact-delivery functional
+- **macOS flood isolation repaired for this recut (the separate macOS Debug socket receive-short condition remains a known issue, see the functional gate status above):** exact-delivery functional
   cases lost packets while the eight-thread destroy-under-traffic flood ran
   concurrently. The repair gives that existing flood its own Darwin suite
   group without changing workload, assertions or deadlines. Full Debug auto
   and portable-pinned runs passed at `afdc49b5` in 269 and 270 seconds while
   kernel drop counters still rose; that patch is included in this recut.
-- **s390x fixture repaired; timing findings remain:** the io_uring codec unit
+- **s390x fixture repaired; timing findings and the full-system guest run remain known issues:** the io_uring codec unit
   fixture now writes native UAPI fields in native byte order. Native Linux
   Release passed; verified big-endian S/390 Debug and Release each failed the
   original assertion on the base and passed with `1b91edbf`. The SDK parser
