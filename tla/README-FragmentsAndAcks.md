@@ -55,7 +55,7 @@ sequences), `surfacedCount`, `deliveredCount`, `openedEver`, `namedEver`, `badSt
 | `StartPayload` | the application | `start_packet` + `finish_packet` on the wire route: one sequence, one record with the packet id |
 | `StartFragmented(cnt)` | the application | the arena route: `rocketnet_fragment_plan`, `start_fragments` reserves `cnt - 1` sequences after the one `start_packet` spent, the payload id is drawn, `open_aggregate` pins the packet id behind `cnt` acknowledgments, `seal_fragment` records each fragment |
 | `BurnOne` | a failed finish | a sequence spent and never sent (USAGE.md, "Not every NULL from start_packet spends one") |
-| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`sdk/rocketnet_client_transport.cpp:871-903`, the draw at 905) and burns the one sequence `start_packet` spent, which is `BurnOne` |
+| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`rocketnet_client_transport_send_packets` in `sdk/rocketnet_client_transport.cpp`, the draw in `rocketnet_client_transport_start_packet`) and burns the one sequence `start_packet` spent, which is `BurnOne` |
 | `DefectiveSend` | a defective sender | a sealed fragment whose header says anything (`DefectIds` non-empty) |
 | `Flush` | `send_packets` | the staged packets go to the wire in fill order, `Link!Send` |
 | `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the walk, the retained window, unknown sequences, the batch and its deferral, aggregates |
@@ -76,7 +76,7 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: a completed payload that is then dropped as `FRAGMENT_PAYLOAD_BATCH_FULL` was accepted fragment by fragment and is still acknowledged, which USAGE.md:146-148 allows at the fragment level; the gap is real and the model's rule witnesses sit in it. A fragment reassembly refuses is not in this gap (`NamedOnlyIfAccepted`) |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: a completed payload that is then dropped as `FRAGMENT_PAYLOAD_BATCH_FULL` was accepted fragment by fragment and is still acknowledged, which USAGE.md allows at the fragment level; the gap is real and the model's rule witnesses sit in it. A fragment reassembly refuses is not in this gap (`NamedOnlyIfAccepted`) |
 | `NamedOnlyIfAccepted` | a fragment reassembly refuses (stale, count or size mismatch, payload too large, duplicate index) is never named by a block, so the sender's aggregate never completes on it. The block is built from the ack-eligible window (`accepted_session` in the code), and a fragment enters it only when `rocketnet_reassembly_process_fragment` accepts it (standard/TRANSPORT.md t15.3: a packet is eligible only once its type data passes validation); its sequence is still spent in the replay window |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
@@ -121,7 +121,7 @@ window refuses.
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
   what the ack layer does with truthful blocks. F1 broke it from below; the code now
   clears the whole window on a large skip (`rocketnet_replay_advance`,
-  `sdk/rocketnet_replay.cpp:56-61`).
+  `sdk/rocketnet_replay.cpp`).
 - **The 32-bit wire fields.** `largest received` is carried whole; the reconstruction
   against `highest_sent` (`rocketnet_reconstruct_ack_largest`) and the u16 range caps
   are not modelled. Payload ids are modulo `IdSpace` instead of 2^32, with `FirstId` to
@@ -492,9 +492,9 @@ distinct in 15.479 s at two workers.
 
 ### The stale rule the code runs
 
-The shipped test is two comparisons. `sdk/rocketnet_fragment.cpp:378-380` reads the
+The shipped test is two comparisons. `sdk/rocketnet_fragment.cpp` reads the
 reference and refuses an id farther than `ROCKETNET_REASSEMBLY_REACH` (a quarter of the
-id space, `sdk/rocketnet_fragment.h:87`) from the newest completed id in both
+id space, `sdk/rocketnet_fragment.h`) from the newest completed id in both
 directions, before the slot is consulted:
 
 ```
@@ -502,26 +502,26 @@ const uint32_t reference = set->newest_completed[connection_index];
 if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
 ```
 
-`sdk/rocketnet_fragment.cpp:387-388` then refuses an id at most
+`sdk/rocketnet_fragment.cpp` then refuses an id at most
 `ROCKETNET_REASSEMBLY_BEHIND` (`ROCKETNET_MAX_FRAGMENTS`,
-`sdk/rocketnet_fragment.h:86`) behind an occupied slot's id:
+`sdk/rocketnet_fragment.h`) behind an occupied slot's id:
 
 ```
 if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
      slot->payload_id - payload_id <= ROCKETNET_REASSEMBLY_BEHIND )
 ```
 
-`tla/FragmentsAndAcks.tla:513-522` scales those two constants, and `:530-534` is the
+`tla/FragmentsAndAcks.tla` scales those two constants, and `SendAck` is the
 `"code"` arm: `Far(new, newestCompleted) \/ BehindOccupant(new, old)`. `Reach` is
 `IdSpace \div 4` and `Behind` is `StaleAhead`. `newestCompleted` starts at 0 and
 advances on a completion, including one the delivery bound drops, when the forward
-distance is nonzero and below half the id space (`tla/FragmentsAndAcks.tla:526-528`,
-`sdk/rocketnet_fragment.cpp:600-602`).
+distance is nonzero and below half the id space (`tla/FragmentsAndAcks.tla`,
+`sdk/rocketnet_fragment.cpp`).
 
 Before this change the model's `code` arm was `((new - old) % IdSpace) > StaleAhead`,
 one unsigned forward distance against the slot's occupant. The shipped test above is two
-comparisons: the reach pair against the newest completed id (`sdk/rocketnet_fragment.cpp:380`)
-and the behind bound against the occupant (`:387-388`). The old arm had neither a
+comparisons: the reach pair against the newest completed id (`sdk/rocketnet_fragment.cpp`)
+and the behind bound against the occupant (`rocketnet_reassembly_process_fragment`). The old arm had neither a
 reference id nor the occupant's behind bound, so it is kept only as the retired arm.
 
 `find-stale` runs that arm and passes `StaleOnlyIfOlder`. Its terrain reaches a
@@ -539,7 +539,7 @@ half-space comparison; `find-stale-serial-small` is the bench row for it.
 
 ### The delivered bound, and the below-bound witness
 
-`sdk/rocketnet_fragment.h:135-139`: an update that drains N packets on one connection
+`sdk/rocketnet_fragment.h`: an update that drains N packets on one connection
 completes at most `(N + min(N, connections × slots)) / 2` payloads, and at that
 capacity `BATCH_FULL` is zero under any load the drain delivers. A set sized below the
 bound counts `BATCH_FULL` for each completion past it.

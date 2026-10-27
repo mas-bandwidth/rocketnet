@@ -11,8 +11,165 @@ ROOT = Path(__file__).resolve().parents[1]
 COVERAGE = ROOT / "tla" / "COVERAGE.tsv"
 TLA_DIR = ROOT / "tla"
 
-FUNC_RE = re.compile(r"(?:rn_|rocketnet_)[A-Za-z0-9_]+(?=,|\)|and\b)")
+FUNC_RE = re.compile(r"(?:rn_|rocketnet_)[A-Za-z0-9_]+")
+FUNC_WITH_PATH_RE = re.compile(
+    r"((?:rn_|rocketnet_)[A-Za-z0-9_]+)\s*\(\s*((?:sdk|tests)/[^)\s]+)\)")
+_PATH_TOKEN_RE = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:cpp|h|c|tla|md)(?::[0-9]+(?:-[0-9]+)?)?")
 DST_CHECK_RE = re.compile(r'rocketnet_dst_check_fail\(\s*\w+,\s*"([a-z0-9_]+)"')
+
+CITATION_RE = re.compile(
+    r"((?:sdk|tests|tla)/[A-Za-z0-9_./-]+\.[a-z]+):(\d+)(?:-(\d+))?")
+CITATION_SCAN_FILES = (
+    "sdk/rocketnet_driver.h",
+    "sdk/rocketnet_layers.h",
+    "sdk/rocketnet_driver_builtin.cpp",
+    "sdk/rocketnet_allocator.h",
+    "sdk/rocketnet_server_uring_linux.cpp",
+    "tla/ReplayWindow.tla",
+    "tla/MCReplayWindow.tla",
+    "tla/ServerSession.tla",
+    "tla/RNSlots.tla",
+    "tla/RNClientReceiveQuit.tla",
+    "tla/README-ReplayWindow.md",
+    "tla/README-ClientConnection.md",
+    "tla/README-FragmentsAndAcks.md",
+)
+_FUNC_HEADER_RE = re.compile(
+    r"^\s*(?:static\s+|extern\s+\"C\"\s+|inline\s+)*[A-Za-z_][\w\s\*&<>:,]*?"
+    r"\b((?:rn_|rocketnet_|split_|simulated_)[A-Za-z0-9_]+)\s*\(")
+
+_sdk_texts_cache = {}
+
+
+def sdk_texts():
+    key = str(ROOT)
+    if key not in _sdk_texts_cache:
+        texts = {}
+        sdk = ROOT / "sdk"
+        if sdk.is_dir():
+            for path in sorted(sdk.rglob("*")):
+                if path.is_file():
+                    texts[path.relative_to(ROOT).as_posix()] = \
+                        path.read_text(errors="replace")
+        _sdk_texts_cache[key] = texts
+    return _sdk_texts_cache[key]
+
+
+def note_function_citations(note):
+    """Every rn_/rocketnet_ function a note names, with its own file.
+
+    A name followed by a parenthesised path is resolved against that
+    file; every other name is resolved against all of sdk/.  File
+    names and _t type names are not functions and are skipped.
+    """
+    citations = {}
+    for fn, path in FUNC_WITH_PATH_RE.findall(note):
+        if not fn.endswith("_t"):
+            citations[fn] = path.split(":")[0]
+    cleaned = _PATH_TOKEN_RE.sub(" ", note)
+    for fn in FUNC_RE.findall(cleaned):
+        if not fn.endswith("_t"):
+            citations.setdefault(fn, None)
+    return sorted(citations.items())
+
+
+def function_defined(fn, path, code_text):
+    if path:
+        target = ROOT / path
+        if target.is_file():
+            return f"{fn}(" in target.read_text(errors="replace")
+        return False
+    if code_text and f"{fn}(" in code_text:
+        return True
+    return any(f"{fn}(" in text for text in sdk_texts().values())
+
+
+def _function_starts(text):
+    lines = text.splitlines()
+    starts = []
+    for i, line in enumerate(lines):
+        m = _FUNC_HEADER_RE.match(line)
+        if not m:
+            continue
+        window = "\n".join(lines[i:i + 20])
+        brace = window.find("{")
+        semi = window.find(";")
+        if brace == -1 or (semi != -1 and semi < brace):
+            continue
+        starts.append((i + 1, m.group(1)))
+    return starts
+
+
+def enclosing_symbol(target_text, line_no):
+    """The symbol whose definition encloses line_no, or None."""
+    lines = target_text.splitlines()
+    starts = _function_starts(target_text)
+    enclosing = None
+    for start, name in starts:
+        if start <= line_no:
+            enclosing = name
+        else:
+            break
+    if enclosing:
+        return enclosing
+    for idx in range(min(line_no, len(lines)) - 1, -1, -1):
+        line = lines[idx]
+        m = re.search(r"struct\s+((?:rocketnet_|rn_)[A-Za-z0-9_]+)", line)
+        if m:
+            return m.group(1)
+        m = re.search(r"#define\s+((?:ROCKETNET_|RN_)[A-Z0-9_]+)", line)
+        if m:
+            return m.group(1)
+        m = re.match(r"\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def check_citations():
+    """Every remaining path:line citation in the scanned files must
+    resolve: the cited line lies inside the symbol the citing text
+    names (the nearest rn_/rocketnet_ name before the citation)."""
+    failures = []
+    scan_files = list(CITATION_SCAN_FILES)
+    for pattern in ("tla/MCReplayWindow*.tla", "tla/MCServerSession*.tla",
+                    "tla/MCRNSlots*.tla", "tla/MCRNClientReceiveQuit*.tla"):
+        for path in sorted(ROOT.glob(pattern)):
+            rel = path.relative_to(ROOT).as_posix()
+            if rel not in scan_files:
+                scan_files.append(rel)
+    for rel in scan_files:
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(errors="replace")
+        for m in CITATION_RE.finditer(text):
+            target_rel, line_no = m.group(1), int(m.group(2))
+            target = ROOT / target_rel
+            if not target.is_file():
+                failures.append(f"{rel}: citation {target_rel}:{line_no} "
+                                f"names no file")
+                continue
+            context = text[max(0, m.start() - 200):m.start()]
+            named = FUNC_RE.findall(context)
+            named = named[-1] if named else None
+            if named is None:
+                failures.append(f"{rel}: citation {target_rel}:{line_no} "
+                                f"names no symbol")
+                continue
+            target_text = target.read_text(errors="replace")
+            target_lines = target_text.splitlines()
+            header_window = target_lines[line_no - 1] \
+                if line_no <= len(target_lines) else ""
+            if re.search(rf"\b{re.escape(named)}\s*\(", header_window):
+                continue
+            enclosing = enclosing_symbol(target_text, line_no)
+            if enclosing != named:
+                failures.append(
+                    f"{rel}: citation {target_rel}:{line_no} is inside "
+                    f"{enclosing}, not {named}")
+    return failures
 
 
 def iter_rows():
@@ -103,9 +260,10 @@ def check_row(row, dst_names):
         cite = f"tla/{module}.tla"
         if cite not in text:
             failures.append(f"{module}: {code} does not cite {cite}")
-        for fn in sorted(FUNC_RE.findall(note)):
-            if f"{fn}(" not in text:
-                failures.append(f"{module}: {fn} not defined in {code}")
+        for fn, fn_path in note_function_citations(note):
+            if not function_defined(fn, fn_path, text):
+                where = fn_path or code
+                failures.append(f"{module}: {fn} not defined in {where}")
     return failures
 
 
@@ -570,6 +728,7 @@ def main():
                 failures.append(f"{module}: no coverage row")
 
     failures.extend(owed_but_cited(rows))
+    failures.extend(check_citations())
 
     if args.actions or args.actions_strict:
         action_modules = sorted({r["module"] for r in rows
