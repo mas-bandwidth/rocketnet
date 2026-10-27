@@ -790,6 +790,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # tools/check_client_server_words.py.
     add_executable(source_audit
         tests/source_audit_main.cpp
+        tests/source_audit_client_counter_access.cpp
         tests/source_audit_client_server_say_messages.cpp
         tests/source_audit_config_env_names.cpp
         tests/source_audit_counter_classes.cpp
@@ -805,6 +806,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     set_property( SOURCE tests/source_audit_example_send_safety.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
         "ROCKETNET_EXAMPLE_MANIFEST=\"${ROCKETNET_EXAMPLE_MANIFEST_LIST}\"" )
+    set_property( SOURCE tests/source_audit_client_counter_access.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
@@ -1102,6 +1105,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
         functional/session_reconnect_isolation.cpp
+        functional/destroy_early_keep.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)

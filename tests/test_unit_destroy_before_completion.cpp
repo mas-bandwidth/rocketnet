@@ -13,7 +13,11 @@
 //
 // Everything runs over the in-memory loopback transport with step-driven
 // clients: no socket, no thread, no wall clock; time is an argument starting
-// at 1000.0.
+// at 1000.0. This file covers the loopback/step-driven path, where the early
+// destroy completes because the loopback stop is always complete. The
+// threaded path, where an early destroy normally keeps the object and a
+// second destroy after completion frees it, is covered by
+// functional/destroy_early_keep.cpp.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"

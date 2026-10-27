@@ -387,9 +387,18 @@ jobs:
 
       # This run includes test_unit_case_memory, the row that enforces the unit
       # cases' measured RSS against their existing registry and fallback bound.
+      # io_uring is a documented host requirement on Linux (docs/LINUX.md):
+      # a full-suite run that skips an io_uring row fails here, naming it.
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
         if: contains(matrix.leg, 'b')
-        run: ./bin/functional
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/functional | tee functional-auto.log
+          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-auto.log; then
+            echo "io_uring functional rows skipped on a Linux runner" >&2
+            exit 1
+          fi
 
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
@@ -401,6 +410,10 @@ jobs:
           set -euo pipefail
           ./bin/functional | tee functional-pinned.log
           grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
+          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-pinned.log; then
+            echo "io_uring functional rows skipped on a Linux runner" >&2
+            exit 1
+          fi
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
