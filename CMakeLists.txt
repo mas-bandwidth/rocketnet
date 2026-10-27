@@ -1134,6 +1134,72 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     else()
         add_dependencies(functional test_serialize test_transport_control)
     endif()
+    # functional_production: the production-library functional executable.
+    # Built only in a production build (ROCKETNET_DEV=OFF), where the
+    # `rocketnet` target is the production (ROCKETNET_DEV=0) library; it
+    # links that library, never rocketnet_dev. In a development build the
+    # production library is not in the tree (rocketnet and rocketnet_shared
+    # are then development libraries), so the target is not created there;
+    # CI creates it on the Linux, macOS and Windows Release rows.
+    # Excluded from functional_production, by source file, because the case
+    # needs development scaffolding (never by weakening a case):
+    #   functional/channel_*.cpp (in-memory network simulator/lossy link)
+    #   functional/environment_wiring.cpp (development env/simulator cases)
+    #   functional/shared_library_tokens.cpp (development-token minting)
+    #   functional/process_thread_counts.cpp (development server secret)
+    #   functional/posix_hard_killed_client.cpp (platform test seams)
+    # and, in functional/rocketnet_functional_tests.cpp, the registry entries
+    # for those files plus test_client_ipv4_without_ipv6_stack (ipv6 test
+    # seam), test_server_handshake_deadline_from_config (internal client
+    # protocol test filter) and test_public_client_server_queries,
+    # test_public_client_reads_server_disconnected and
+    # test_two_address_token_connects_over_ipv4 (published development keys),
+    # and the Linux ROCKETNET_SEND_ERROR_TEST_HOOKS cases
+    # test_gso_client_transport_wire_ipv4, test_gso_client_transport_wire_ipv6,
+    # test_gso_client_transport_wire_plain, test_gso_client_transport_wire_gro,
+    # test_gso_shutdown_send_interruptions, test_gso_transport_held_receive_view,
+    # test_gso_transport_linux_sendmmsg_errors, test_gso_transport_linux_recvmmsg_errors,
+    # test_io_uring_transport_linux_receive_cqe_errors,
+    # test_io_uring_transport_linux_send_cqe_errors,
+    # test_gso_server_refuses_explicit_port_in_use,
+    # test_uring_server_refuses_explicit_port_in_use,
+    # test_xdp_transport_linux_receive_weather_ipv4 and
+    # test_xdp_transport_linux_receive_weather_ipv6. Every other functional case runs here through the production
+    # shim in functional/harness.inc (test-owned production keys minted with
+    # rocketnet_write_production_connect_token), so the portable transport
+    # and each native transport the OS builds (gso/io_uring on Linux, msgx
+    # on macOS, iocp/rio on Windows) execute against the shipped library.
+    if(NOT ROCKETNET_DEV)
+        set(ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_functional_production_shim.h")
+        file(GENERATE OUTPUT "${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}" CONTENT
+"#pragma once\n#include \"rocketnet.h\"\n#include \"rocketnet_layers.h\"\n#include \"rocketnet_connect_token.h\"\n#include <stddef.h>\n#include <stdint.h>\nvoid rocketnet_functional_production_server_config( struct rocketnet_server_transport_config_t * config );\nenum rocketnet_status_t rocketnet_functional_production_write_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );\nenum rocketnet_status_t rocketnet_functional_production_create_token( const char * server_address_ipv4, const char * server_address_ipv6, const uint8_t * server_public_key, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, uint64_t unix_timestamp, const uint8_t * user_data, char * connect_token );\nextern const uint8_t rocketnet_functional_production_backend_secret_key[64];\n#define rocketnet_server_transport_dev_config rocketnet_functional_production_server_config\n#define rocketnet_write_test_connect_token rocketnet_functional_production_write_token\n#define rocketnet_create_dev_connect_token rocketnet_functional_production_create_token\n#define rocketnet_dev_backend_secret_key rocketnet_functional_production_backend_secret_key\n#define rocketnet_platform_set_ipv6_socket_available_for_testing( x ) ((void)0)\n")
+        add_executable(functional_production
+            functional/main.cpp
+            functional/rocketnet_functional_tests.cpp
+            functional/platform_primitives.cpp
+            functional/server_receive_backlog.cpp
+            functional/server_receive_low_tick.cpp
+            functional/lifecycle_driver.cpp
+            functional/cpp_transports.cpp
+            functional/live_matrix.cpp
+            functional/windows_socket_errors.cpp
+            functional/windows_connreset.cpp
+            functional/windows_lifecycle_stress.cpp
+            functional/posix_lifecycle_stress.cpp
+            functional/posix_socket_errors.cpp
+            functional/corpus_consistency.cpp
+            functional/session_reconnect_isolation.cpp)
+        target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
+        rocketnet_use_sodium(functional_production)
+        rocketnet_warning_floor(functional_production)
+        target_compile_definitions(functional_production PRIVATE ROCKETNET_FUNCTIONAL_PRODUCTION=1)
+        target_compile_features(functional_production PRIVATE cxx_std_11)
+        if(MSVC)
+            target_compile_options(functional_production PRIVATE "/FI${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
+        else()
+            target_compile_options(functional_production PRIVATE "-include" "${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
+        endif()
+    endif()
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
