@@ -778,8 +778,16 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( region->send_descriptors[wrapped[0]].ordering == 0xFFFFFEu );
     rocketnet_unit_check( region->send_descriptors[wrapped[1]].ordering == 0xFFFFFFu );
     rocketnet_unit_check( ( region->send_descriptors[wrapped[0]].ordering & 0xFFFFFFu ) == 0xFFFFFEu );
+    rocketnet_unit_check( ( region->send_descriptors[wrapped[1]].ordering & 0xFFFFFFu ) == 0xFFFFFFu );
     rocketnet_unit_check( region->send_descriptors[wrapped[0]].enqueue_ticket < region->send_descriptors[wrapped[1]].enqueue_ticket );
-    rocketnet_unit_check( region->channel_send[0].ordered_write == 0 );
+    // ordered_write is the full counter. The wire value is its low 24 bits (rn_u24).
+    rocketnet_unit_check( region->channel_send[0].ordered_write == 0x1000000u );
+    rocketnet_unit_check( schedule_enqueue( channels, 0, 16 ) );
+    uint32_t wrapped_next[3];
+    rocketnet_unit_check( schedule_walk( channels, 0, wrapped_next, 3 ) == 3 );
+    rocketnet_unit_check( region->send_descriptors[wrapped_next[2]].ordering == 0x1000000u );
+    rocketnet_unit_check( ( region->send_descriptors[wrapped_next[2]].ordering & 0xFFFFFFu ) == 0 );
+    rocketnet_unit_check( region->channel_send[0].ordered_write == 0x1000001u );
     rn_arena_destroy( arena );
 
     arena = schedule_arena( &config );

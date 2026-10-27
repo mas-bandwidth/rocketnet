@@ -809,6 +809,7 @@ static bool rn_endpoint_unreliable_receipt( const rn_send_descriptor_t * descrip
     return descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
 }
 
+// tla/RNChannelQueues.tla EnqueueUnreliable, StaleEpoch and Expire.
 // One forward pass. Drops holes and entries from another schedule epoch.
 // Live entries keep their order. schedule_work counts each link once.
 static void rn_endpoint_unreliable_rebuild( rn_endpoint_t * endpoint )

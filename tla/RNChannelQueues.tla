@@ -27,9 +27,11 @@ DropHoles(seq) ==
 
 Live(seq) == {i \in DOMAIN seq : ~seq[i].hole}
 
-Take ==
-    LET n == IF ticketNext >= MaxQ * 3 THEN 1 ELSE ticketNext + 1
-    IN <<ticketNext, n>>
+\* Tickets stay strictly increasing inside this instance. The C++ counter is a
+\* uint32 that skips 0 and RN_ENQUEUE_HOLE; a compact restamps one channel.
+TicketLimit == MaxQ * 4
+
+Take == <<ticketNext, ticketNext + 1>>
 
 Init ==
     /\ epoch = 1
@@ -43,6 +45,7 @@ Init ==
 
 Enqueue ==
     /\ Len(queue) < MaxQ
+    /\ ticketNext < TicketLimit
     /\ LET pair == Take
            rec == Rec(Len(queue) + 1, 1, pair[1])
        IN /\ queue' = Append(queue, rec)
@@ -54,13 +57,11 @@ Enqueue ==
 \* so the new head holds the smallest ticket and the previous order remains.
 Front ==
     /\ Len(queue) < MaxQ
-    /\ LET pair == Take
-           inserted == <<Rec(0, 1, pair[1])>> \o queue
+    /\ LET inserted == <<Rec(0, 1, 1)>> \o queue
            kept == DropHoles(inserted)
-           base == pair[2]
-           rebuilt == [i \in 1..Len(kept) |-> Rec(kept[i].id, kept[i].gen, base + i - 1)]
+           rebuilt == [i \in 1..Len(kept) |-> Rec(kept[i].id, kept[i].gen, i)]
        IN /\ queue' = rebuilt
-          /\ ticketNext' = IF base + Len(kept) > MaxQ * 3 THEN 1 ELSE base + Len(kept)
+          /\ ticketNext' = Len(kept) + 1
           /\ holes' = 0
           /\ ready' = <<1>>
           /\ UNCHANGED <<epoch, unreliable, resend, staleRemoved>>
@@ -93,6 +94,13 @@ StaleCancel ==
 EnqueueUnreliable ==
     /\ Len(unreliable) < MaxQ
     /\ unreliable' = Append(unreliable, [id |-> Len(unreliable) + 1, gen |-> 1, epoch |-> epoch, hole |-> FALSE])
+    /\ UNCHANGED <<epoch, ticketNext, queue, ready, resend, holes, staleRemoved>>
+
+\* An outside event stamps one live unreliable entry with a previous epoch.
+StaleEpoch ==
+    /\ \E i \in 1..Len(unreliable) :
+        /\ ~unreliable[i].hole
+        /\ unreliable' = [unreliable EXCEPT ![i].epoch = 0]
     /\ UNCHANGED <<epoch, ticketNext, queue, ready, resend, holes, staleRemoved>>
 
 Expire ==
@@ -158,6 +166,7 @@ Next ==
     \/ Cancel
     \/ StaleCancel
     \/ EnqueueUnreliable
+    \/ StaleEpoch
     \/ Expire
     \/ Resend
     \/ Ack
@@ -171,7 +180,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Compact)
 
 TypeOK ==
     /\ epoch \in 1..2
-    /\ ticketNext \in 1..(MaxQ * 4)
+    /\ ticketNext \in 1..TicketLimit
     /\ Len(queue) <= MaxQ
     /\ Len(unreliable) <= MaxQ
     /\ Len(resend) <= MaxQ

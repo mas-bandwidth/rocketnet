@@ -90,7 +90,7 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
     ack->resend_count--;
 }
 
-// Names the link with the live descriptor's generation and this connection's
+// tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation and this connection's
 // schedule epoch. Generation 0 is never a live name.
 static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 {
@@ -668,8 +668,21 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
         if ( rn_resend_fifo_is_linked( ack, slot_index ) )
         {
-            const uint32_t generation = region->resend_fifo[slot_index].generation;
-            if ( !rn_resend_fifo_unlink_named( ack, slot_index, slot->number, generation ) )
+            const rn_resend_link_t * link = &region->resend_fifo[slot_index];
+            // A named generation unlinks only that generation. Generation 0 means
+            // the link was stamped with no in-use descriptor (tla/RNChannelQueues.tla
+            // Ack). That link still leaves on this ack while the epoch matches and
+            // no descriptor has been attached since the stamp.
+            if ( link->generation == 0 )
+            {
+                const bool descriptor_live = slot->descriptor != RN_DESCRIPTOR_NONE &&
+                    slot->descriptor < region->queue &&
+                    region->send_descriptors[slot->descriptor].in_use;
+                if ( link->owner_epoch != region->schedule_epoch || descriptor_live )
+                    continue;
+                rn_resend_fifo_unlink( ack, slot_index );
+            }
+            else if ( !rn_resend_fifo_unlink_named( ack, slot_index, slot->number, link->generation ) )
                 continue;
         }
 
