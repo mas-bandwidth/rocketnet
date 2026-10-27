@@ -14,6 +14,7 @@
 #include <sys/resource.h>
 #endif
 #include <atomic>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -182,18 +183,306 @@ static int lifecycle(const rocketnet_server_transport_config_t & transport_confi
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// The light sufficiency rows: each light endpoint is created with a context
+// that routes its allocator calls into one 64-byte-aligned block of exactly
+// rocketnet_*_required_memory bytes for the pinned transport, dirty-filled,
+// with guarded canaries immediately outside it. The arena is thread-safe
+// (transport workers allocate and free concurrently), refuses any byte
+// beyond the block, tracks every request and free, and reports high-water
+// and final live bytes. Allocations with any other context (library init)
+// fall back to the counting allocator above; OS-owned memory (thread
+// stacks, kernel rings, UMEM) stays classified by the plan, never counted
+// as an allocator underestimate.
+// ---------------------------------------------------------------------------
+
+#define LIGHT_MAX_SEGMENTS 16384
+#define LIGHT_GUARD_BYTES ((size_t) 64)
+#define LIGHT_GUARD_BYTE 0xC7
+#define LIGHT_DIRTY_BYTE 0xA5
+
+struct light_segment_t { size_t offset; size_t bytes; int used; };
+struct light_arena_t
+{
+    uint8_t * allocation = nullptr;
+    uint8_t * base = nullptr;
+    size_t bytes = 0;
+    size_t live = 0;
+    size_t peak = 0;
+    size_t refused = 0;
+    size_t invalid_frees = 0;
+    light_segment_t * segments = nullptr;
+    int num_segments = 0;
+    std::mutex mutex;
+};
+static light_arena_t light_server_arena, light_client_arena;
+
+static bool light_arena_setup(light_arena_t & arena, size_t bytes)
+{
+    if (!arena.segments) arena.segments = (light_segment_t *) calloc(LIGHT_MAX_SEGMENTS, sizeof(light_segment_t));
+    arena.allocation = (uint8_t *) malloc(bytes + 2 * LIGHT_GUARD_BYTES + ROCKETNET_ALLOCATION_ALIGNMENT);
+    if (!arena.segments || !arena.allocation) return false;
+    const uintptr_t first = (uintptr_t) arena.allocation + LIGHT_GUARD_BYTES;
+    arena.base = (uint8_t *) ((first + ROCKETNET_ALLOCATION_ALIGNMENT - 1) & ~(uintptr_t) (ROCKETNET_ALLOCATION_ALIGNMENT - 1));
+    arena.bytes = bytes;
+    arena.live = arena.peak = arena.refused = arena.invalid_frees = 0;
+    memset(arena.base - LIGHT_GUARD_BYTES, LIGHT_GUARD_BYTE, LIGHT_GUARD_BYTES);
+    memset(arena.base + bytes, LIGHT_GUARD_BYTE, LIGHT_GUARD_BYTES);
+    memset(arena.base, LIGHT_DIRTY_BYTE, bytes);
+    arena.segments[0] = {0, bytes, 0};
+    arena.num_segments = 1;
+    return true;
+}
+
+static bool light_arena_canaries_ok(const light_arena_t & arena)
+{
+    for (size_t i = 0; i < LIGHT_GUARD_BYTES; i++)
+        if (arena.base[-(ptrdiff_t) LIGHT_GUARD_BYTES + (ptrdiff_t) i] != LIGHT_GUARD_BYTE || arena.base[arena.bytes + i] != LIGHT_GUARD_BYTE) return false;
+    return true;
+}
+
+static void * light_arena_allocate(light_arena_t & arena, size_t bytes)
+{
+    if (bytes == 0) bytes = 1;
+    std::lock_guard<std::mutex> lock(arena.mutex);
+    const bool large = bytes >= (size_t) 1024 * 1024;
+    int pick = -1;
+    for (int i = 0; i < arena.num_segments; i++)
+    {
+        const light_segment_t & candidate = arena.segments[i];
+        if (candidate.used || candidate.bytes < bytes) continue;
+        if (pick < 0 || (large ? candidate.bytes > arena.segments[pick].bytes : candidate.bytes < arena.segments[pick].bytes)) pick = i;
+    }
+    if (pick < 0) { arena.refused++; return NULL; }
+    light_segment_t & segment = arena.segments[pick];
+    size_t offset = segment.offset;
+    if (segment.bytes == bytes) segment.used = 1;
+    else if (arena.num_segments >= LIGHT_MAX_SEGMENTS) { arena.refused++; return NULL; }
+    else if (large)
+    {
+        offset = segment.offset + segment.bytes - bytes;
+        memmove(&arena.segments[pick + 2], &arena.segments[pick + 1], (size_t) (arena.num_segments - pick - 1) * sizeof(light_segment_t));
+        arena.segments[pick + 1] = {offset, bytes, 1};
+        arena.num_segments++;
+        segment.bytes -= bytes;
+    }
+    else
+    {
+        memmove(&arena.segments[pick + 2], &arena.segments[pick + 1], (size_t) (arena.num_segments - pick - 1) * sizeof(light_segment_t));
+        arena.segments[pick + 1] = {offset + bytes, segment.bytes - bytes, 0};
+        arena.num_segments++;
+        segment.bytes = bytes;
+        segment.used = 1;
+    }
+    arena.live += bytes;
+    if (arena.live > arena.peak) arena.peak = arena.live;
+    return arena.base + offset;
+}
+
+static void light_arena_release(light_arena_t & arena, void * pointer)
+{
+    std::lock_guard<std::mutex> lock(arena.mutex);
+    const size_t offset = (size_t) ((uint8_t *) pointer - arena.base);
+    for (int i = 0; i < arena.num_segments; i++)
+    {
+        light_segment_t & segment = arena.segments[i];
+        if (!segment.used || segment.offset != offset) continue;
+        segment.used = 0;
+        arena.live -= segment.bytes;
+        if (i + 1 < arena.num_segments && !arena.segments[i + 1].used && segment.offset + segment.bytes == arena.segments[i + 1].offset)
+        {
+            segment.bytes += arena.segments[i + 1].bytes;
+            memmove(&arena.segments[i + 1], &arena.segments[i + 2], (size_t) (arena.num_segments - i - 2) * sizeof(light_segment_t));
+            arena.num_segments--;
+        }
+        if (i > 0 && !arena.segments[i - 1].used && arena.segments[i - 1].offset + arena.segments[i - 1].bytes == segment.offset)
+        {
+            arena.segments[i - 1].bytes += segment.bytes;
+            memmove(&arena.segments[i], &arena.segments[i + 1], (size_t) (arena.num_segments - i - 1) * sizeof(light_segment_t));
+            arena.num_segments--;
+        }
+        return;
+    }
+    arena.invalid_frees++;
+}
+
+static bool light_in_arena(const light_arena_t & arena, const void * pointer)
+{
+    return arena.base && pointer >= arena.base && pointer < arena.base + arena.bytes;
+}
+
+static void * light_allocate(void * context, size_t bytes)
+{
+    if (context == &light_server_arena) return light_arena_allocate(light_server_arena, bytes);
+    if (context == &light_client_arena) return light_arena_allocate(light_client_arena, bytes);
+    return allocate(context, bytes);
+}
+
+static void light_release(void * context, void * pointer)
+{
+    if (!pointer) return;
+    if (light_in_arena(light_server_arena, pointer)) { light_arena_release(light_server_arena, pointer); return; }
+    if (light_in_arena(light_client_arena, pointer)) { light_arena_release(light_client_arena, pointer); return; }
+    release(context, pointer);
+}
+
+static void light_arena_teardown(light_arena_t & arena)
+{
+    free(arena.allocation);
+    arena.allocation = nullptr;
+    arena.base = nullptr;
+    arena.bytes = 0;
+    arena.num_segments = 0;
+}
+
+static bool light_pump_until(rocketnet_server_t * server, rocketnet_client_t * client, bool (*done)(void *), void * object)
+{
+    const double deadline = rocketnet_time() + 10.0;
+    while (!done(object))
+    {
+        if (rocketnet_time() >= deadline) return false;
+        rocketnet_client_update(client, rocketnet_time());
+        rocketnet_client_send_packets(client);
+        rocketnet_server_update(server, rocketnet_time());
+        rocketnet_server_send_packets(server);
+        rocketnet_sleep(0.001);
+    }
+    return true;
+}
+static bool light_client_connected(void * client) { return rocketnet_client_state((rocketnet_client_t *) client) == ROCKETNET_CLIENT_STATE_CONNECTED; }
+
+// one connected light cycle's work: four reliable receipted messages each
+// way, all received, with receipts reported on at least one end
+static bool light_exchange(rocketnet_server_t * server, rocketnet_client_t * client, int index)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        uint8_t * out = rocketnet_client_start_message(client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2);
+        if (!out) return false;
+        out[0] = 0x4C; out[1] = (uint8_t) i;
+        if (!rocketnet_client_finish_message(client, 2)) return false;
+        out = rocketnet_server_start_message(server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2);
+        if (!out) return false;
+        out[0] = 0x53; out[1] = (uint8_t) i;
+        if (!rocketnet_server_finish_message(server, 2)) return false;
+    }
+    int at_server = 0, at_client = 0;
+    bool receipts = false;
+    const double deadline = rocketnet_time() + 10.0;
+    while ((at_server < 4 || at_client < 4 || !receipts) && rocketnet_time() < deadline)
+    {
+        rocketnet_client_update(client, rocketnet_time());
+        rocketnet_client_send_packets(client);
+        rocketnet_server_update(server, rocketnet_time());
+        rocketnet_server_send_packets(server);
+        const rocketnet_message_batch_t * batch = NULL;
+        while ((batch = rocketnet_server_receive_messages(server)) != NULL) at_server += batch->num_messages;
+        while ((batch = rocketnet_client_receive_messages(client)) != NULL) at_client += batch->num_messages;
+        rocketnet_receipt_t found[4];
+        if (rocketnet_client_receipts(client, found, 4) > 0 || rocketnet_server_receipts(server, index, found, 4) > 0) receipts = true;
+        rocketnet_sleep(0.001);
+    }
+    return at_server == 4 && at_client == 4 && receipts;
+}
+
+static int light_lifecycle(const rocketnet_server_transport_config_t & transport_config, const char * transport,
+    const rocketnet_server_memory_plan_t & plan)
+{
+    if (rocketnet_init(NULL, light_allocate, light_release) != ROCKETNET_STATUS_OK) return 1;
+    rocketnet_forbid_xdp_commit();
+    uint8_t seed[32], backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[64];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(0x6C ^ i);
+    const uint64_t protocol_id = 0x7A11C1C1E5EED0B1ULL;
+    rocketnet_server_config_t server_config;
+    if (rocketnet_generate_backend_keypair_from_seed(seed, backend_public, backend_secret) != ROCKETNET_STATUS_OK ||
+        rocketnet_server_light_config(&server_config) != ROCKETNET_STATUS_OK) { rocketnet_term(); return 1; }
+    server_config.protocol_id = protocol_id;
+    memcpy(server_config.backend_public_key, backend_public, sizeof(server_config.backend_public_key));
+    server_config.transport = transport;
+    server_config.max_clients = transport_config.max_clients;
+    const size_t server_required = rocketnet_server_required_memory(&server_config);
+
+    rocketnet_client_config_t client_config;
+    if (rocketnet_client_light_config(&client_config) != ROCKETNET_STATUS_OK) { rocketnet_term(); return 1; }
+    client_config.transport = transport;
+    const size_t client_required = rocketnet_client_required_memory(&client_config);
+
+    if (!server_required || !client_required ||
+        !light_arena_setup(light_server_arena, server_required) ||
+        !light_arena_setup(light_client_arena, client_required))
+    { fprintf(stderr, "light lifecycle arena setup refused\n"); rocketnet_term(); return 1; }
+
+    rocketnet_server_t * server = rocketnet_server_create(&light_server_arena, "127.0.0.1:0", NULL, &server_config, NULL);
+    rocketnet_client_t * client = NULL;
+    bool ok = server != NULL;
+    size_t server_peaks[2] = {0, 0}, client_peaks[2] = {0, 0};
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    for (int cycle = 0; cycle < 2 && ok; cycle++)
+    {
+        ok = rocketnet_server_start(server) == ROCKETNET_STATUS_OK;
+        if (ok && cycle == 0)
+        {
+            client = rocketnet_client_create(&light_client_arena, &client_config, NULL);
+            ok = client != NULL;
+        }
+        if (ok)
+        {
+            // a fresh token each cycle: a restarted server may bind a new port
+            char address[64];
+            snprintf(address, sizeof(address), "127.0.0.1:%u", (unsigned) rocketnet_server_port(server));
+            const char * addresses[] = { address };
+            const uint64_t now = (uint64_t) time(NULL);
+            ok = rn_test_server_token_string(backend_secret, server, protocol_id, addresses, 1, 0x4C4946, now, now + 300, 30, NULL, token) == ROCKETNET_STATUS_OK;
+        }
+        if (ok) ok = rocketnet_client_connect(client, token) == ROCKETNET_STATUS_OK && light_pump_until(server, client, light_client_connected, client);
+        if (ok)
+        {
+            const int index = rocketnet_client_index(client);
+            ok = index >= 0 && rocketnet_server_client_connected(server, index) && light_exchange(server, client, index);
+        }
+        if (ok) { rocketnet_client_disconnect(client); ok = wait_until(client_disconnected, client_step, client); }
+        if (ok) { rocketnet_server_stop(server); ok = wait_until(server_stopped, NULL, server); }
+        server_peaks[cycle] = light_server_arena.peak;
+        client_peaks[cycle] = light_client_arena.peak;
+    }
+    if (client) rocketnet_client_destroy(client);
+    if (server) rocketnet_server_destroy(server);
+    const bool server_freed = light_server_arena.live == 0, client_freed = light_client_arena.live == 0;
+    const bool canaries_ok = light_arena_canaries_ok(light_server_arena) && light_arena_canaries_ok(light_client_arena);
+    printf("{\"lifecycle\":\"server\",\"profile\":\"light\",\"transport\":\"%s\",\"required_bytes\":%zu,\"first_cycle_peak_bytes\":%zu,"
+        "\"second_cycle_peak_bytes\":%zu,\"arena_capacity_bytes\":%zu,\"final_live_bytes\":%zu,\"refused_allocations\":%zu,\"invalid_frees\":%zu,"
+        "\"canaries_ok\":%s,\"allocator_plan_bytes\":%llu,\"os_bytes\":%llu,\"thread_stack_bytes\":%llu,"
+        "\"umem_bytes\":%llu,\"mapped_ring_bytes\":%llu,\"worker_threads\":%d}\n",
+        transport, server_required, server_peaks[0], server_peaks[1], light_server_arena.bytes, light_server_arena.live,
+        light_server_arena.refused, light_server_arena.invalid_frees, light_arena_canaries_ok(light_server_arena) ? "true" : "false",
+        (unsigned long long)plan.allocator_bytes, (unsigned long long)plan.os_bytes, (unsigned long long)plan.thread_stack_bytes,
+        (unsigned long long)plan.umem_bytes, (unsigned long long)plan.mapped_ring_bytes, plan.worker_threads);
+    printf("{\"lifecycle\":\"client\",\"profile\":\"light\",\"required_bytes\":%zu,\"first_cycle_peak_bytes\":%zu,\"second_cycle_peak_bytes\":%zu,"
+        "\"arena_capacity_bytes\":%zu,\"final_live_bytes\":%zu,\"refused_allocations\":%zu,\"invalid_frees\":%zu,\"canaries_ok\":%s}\n",
+        client_required, client_peaks[0], client_peaks[1], light_client_arena.bytes, light_client_arena.live,
+        light_client_arena.refused, light_client_arena.invalid_frees, light_arena_canaries_ok(light_client_arena) ? "true" : "false");
+    rocketnet_term();
+    const bool fallback_freed = live.load() == 0 && count.load() == 0;
+    light_arena_teardown(light_client_arena);
+    light_arena_teardown(light_server_arena);
+    if (!ok) { fprintf(stderr, "light lifecycle step refused\n"); return 1; }
+    if (!server_freed || !client_freed || !canaries_ok || !fallback_freed) { fprintf(stderr, "light lifecycle leaked or damaged allocations\n"); return 1; }
+    return 0;
+}
+
 int main(int argc, char ** argv)
 {
     if (argc < 4 || argc > 7)
     {
-        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only|--lifecycle]]]\n");
+        fprintf(stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only|--lifecycle|--light-lifecycle]]]\n");
         return 1;
     }
     const char * transport = argc >= 5 ? argv[4] : "portable";
     const bool plan_only = argc == 7 && strcmp(argv[6], "--plan-only") == 0;
     const bool session_plan_only = argc == 7 && strcmp(argv[6], "--session-plan-only") == 0;
     const bool lifecycle_only = argc == 7 && strcmp(argv[6], "--lifecycle") == 0;
-    if (argc == 7 && !plan_only && !session_plan_only && !lifecycle_only) return 1;
+    const bool light_lifecycle_only = argc == 7 && strcmp(argv[6], "--light-lifecycle") == 0;
+    if (argc == 7 && !plan_only && !session_plan_only && !lifecycle_only && !light_lifecycle_only) return 1;
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
@@ -260,6 +549,7 @@ int main(int argc, char ** argv)
         (unsigned long long)plan.thread_stack_bytes, (unsigned long long)plan.mapped_ring_bytes);
     if (plan_only) return 0; // No init, sockets, worker threads or UMEM registration.
     if (lifecycle_only) return lifecycle(config, transport, plan);
+    if (light_lifecycle_only) return light_lifecycle(config, transport, plan);
     if (rocketnet_init( NULL, allocate, release ) != ROCKETNET_STATUS_OK) return 1;
     rocketnet_forbid_xdp_commit();
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
