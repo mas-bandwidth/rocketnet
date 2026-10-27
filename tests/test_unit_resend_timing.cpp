@@ -575,7 +575,7 @@ static void test_resend_named_generation_and_park()
     const uint32_t s0 = (uint32_t) ( n0 & ( W - 1 ) );
     const uint32_t s1 = (uint32_t) ( n1 & ( W - 1 ) );
     check( f.ack.resend_head == s0 );
-    check( f.region->resend_fifo[s0].next == s1 );
+    check( rn_window_ack_resend_next( &f.ack, false, s0 ) == s1 );
     check( f.region->resend_fifo[s0].generation != 0 );
     check( f.region->resend_fifo[s0].generation == f.region->send_descriptors[f.region->send_numbers[s0].descriptor].generation );
     check( f.region->resend_fifo[s0].owner_epoch == f.region->schedule_epoch );

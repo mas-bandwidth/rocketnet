@@ -533,8 +533,8 @@ void rn_region_carve( rn_region_t * region )
     for ( uint32_t n = 0; n < region->window; n++ )
     {
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
-        region->resend_fifo[n].prev = RN_RESEND_NONE;
-        region->resend_fifo[n].next = RN_RESEND_NONE;
+        region->resend_fifo[n].prev = 0;
+        region->resend_fifo[n].next = 0;
         region->resend_fifo[n].generation = 0;
         region->resend_fifo[n].owner_epoch = 0;
     }
