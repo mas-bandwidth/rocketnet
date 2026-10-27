@@ -98,6 +98,33 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         return resolve(supplied, trusted, backend_id, true);
     }
 
+    // A lease insert placed and a later reset retired, still unmodified.
+    // reset bumps the epoch and leaves the entry in place, so finish can tell
+    // that miss from a context that was never leased, already consumed, or
+    // modified. Does not consume the entry.
+    bool retired( const rocketnet_packet_context_t & supplied ) const
+    {
+        if ( !epoch || !supplied.frame || !supplied.packet_id )
+            return false;
+        size_t slot = hash(supplied.frame);
+        for ( size_t probe = 0; probe < Capacity; ++probe, slot = (slot + 1) & (Capacity - 1) )
+        {
+            const auto & entry = entries[slot];
+            const uint64_t state = entry.state.load(std::memory_order_acquire);
+            const uint64_t entry_epoch = state >> 2;
+            if ( entry_epoch == 0 )
+                return false;
+            if ( entry_epoch == epoch || (state & 3) == 1 )
+                continue;
+            const auto & owned = entry.context;
+            if ( owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
+                 owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
+                 owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity )
+                return true;
+        }
+        return false;
+    }
+
     void reset()
     {
         epoch = epoch && epoch < (UINT64_MAX >> 2) ? epoch + 1 : 0;

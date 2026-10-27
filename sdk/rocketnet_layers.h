@@ -1121,6 +1121,15 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
 // route -- never the request itself: a caller may write up to it, and
 // finish_packet routes on what was actually written.
 //
+// update, send_packets and stop each reset the packet-lease epoch before
+// they do their own work, and none of them may run while a fill is open.
+// A finish_packet of a lease that reset already retired is caller misuse:
+// it returns 0 in every build, counts one api_misuse, and logs. It does
+// not assert, and it does not seal the frame. The lease does not outlive
+// the reset. A context that was never started, already consumed, aborted,
+// modified, or owned by another transport still asserts in a debug build
+// and returns 0 in a release build.
+//
 // Threading contract: update and send_packets run on the main thread, and
 // so do disconnect, disconnect_client and stop -- never while a fill is
 // open. start_packet, finish_packet and abort_packet may run on any number
@@ -1196,13 +1205,15 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 // a NULL server_transport or context is a counted no-op that returns 0.
-// An unstarted, consumed, stale, modified or wrong-owner context asserts in a
-// debug build and returns 0 in a release build.
+// A lease reset by update, send_packets or stop is caller misuse: finish
+// returns 0 in every build, counts one api_misuse and logs, and does not
+// assert. An unstarted, consumed, modified or wrong-owner context asserts
+// in a debug build and returns 0 in a release build.
 /**
  * @brief Seals and stages bytes written into a server packet lease.
  *
  * @param server_transport Server transport that created the lease; NULL is a counted no-op.
- * @param context Active, unmodified lease from start_packet; this call consumes it. Invalid or stale leases assert in a debug build and return zero in a release build.
+ * @param context Active, unmodified lease from start_packet; this call consumes it. A lease reset by update, send_packets or stop returns zero, counts api_misuse and logs in every build. Other invalid leases assert in a debug build and return zero in a release build.
  * @param payload_bytes Initialized byte count, from 1 through reported capacity.
  * @return Sealed wire size, or zero when refused or dropped.
  */

@@ -2012,6 +2012,8 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+    // tla/RNDriverSendStaging.tla ResetLeases: stop bumps the lease epoch.
+    // A finish of a packet started before this reset is caller misuse.
     server_transport->packet_leases.reset();
     rocketnet_server_transport_io_stop( &server_transport->io );
 }
@@ -2192,6 +2194,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
 
+    // tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
+    // before it reads. A fill still open here was not joined.
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
@@ -2721,6 +2725,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         context->sequence = 0;
         context->client_index = client_index;
 
+        // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
+        // until finish, abort, or a reset.
         if ( !server_transport->packet_leases.insert(*context) )
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
@@ -2776,6 +2782,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     context->sequence = 0;
     context->client_index = client_index;
 
+    // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
+    // until finish, abort, or a reset.
     if ( !server_transport->packet_leases.insert(*context) )
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
@@ -3197,6 +3205,19 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     uint64_t backend_id;
     if ( !server_transport->packet_leases.take(*context, trusted, backend_id) )
     {
+        // tla/RNDriverSendStaging.tla FinishPacket: a lease reset by update,
+        // send_packets or stop is caller misuse. Refuse in every build.
+        // Return 0, count api_misuses, and log. Do not assert: a debug-only
+        // trap compiled out of release is not a refusal the caller can see.
+        // The frame is not sealed. Any other miss (no start, a second finish,
+        // a finish after abort, a modified or wrong-owner context) still asserts.
+        if ( server_transport->packet_leases.retired(*context) )
+        {
+            rocketnet_api_misuse_record();
+            rocketnet_error( "server finish packet refused: the lease was reset by update, send_packets or stop" );
+            context->frame = NULL;
+            return 0;
+        }
         rocketnet_assert( false );
         context->frame = NULL;
         return 0;
@@ -3222,6 +3243,8 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
     rocketnet_assert( server_transport );
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
+    // tla/RNDriverSendStaging.tla ResetLeases: send_packets bumps the lease
+    // epoch before it flushes. Same bump as update and stop.
     server_transport->packet_leases.reset();
 
     const int stats_index = server_transport->current_stats_index;

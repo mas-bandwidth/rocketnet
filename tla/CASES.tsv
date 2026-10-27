@@ -69,6 +69,7 @@ MCReceiveOrderBrokenClaimBeforeSignature.cfg	MCReceiveOrder.tla	invariant	ClaimO
 MCReceiveOrderBrokenClaimOutlivesMapping.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
+MCRNDriverSendStagingBrokenFinishAfterReset.cfg	MCRNDriverSendStaging.tla	invariant	FinishAfterResetRecorded	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
 MCRNSecurityTablesClaims.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
 MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
