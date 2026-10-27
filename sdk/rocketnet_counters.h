@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// The handshake work budget: the most post-cookie handshakes (connection
+// the handshake work budget: the most post-cookie handshakes (connection
 // requests whose cookie validated) one update will process, per server. A
 // request past the budget is dropped before any asymmetric work and counted,
 // so a flood of staged attempts cannot spend the whole update on signature
@@ -24,7 +24,7 @@
  */
 #define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE      1024
 
-// Returned by rocketnet_server_protocol_process_connection_request when the
+// returned by rocketnet_server_protocol_process_connection_request when the
 // handshake budget is exhausted: the next value after
 // ROCKETNET_SERVER_PROCESS_ACCEPTED (5). Declared here, in the same header as
 // the drop counter it causes, so the test reads the code it asserts from the
@@ -32,7 +32,7 @@
 /** @brief Status returned when the per-update handshake work budget is exhausted. */
 #define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
 
-// Counters, per the standard's observability section: one counter per
+// counters, per the standard's observability section: one counter per
 // distinct reason a packet is rejected, arrival counted separately from
 // outcome, monotonic and never reset. Names are the standard's; indices are
 // this implementation's contract and are never renumbered -- new counters
@@ -515,7 +515,7 @@ struct rocketnet_counters_t
     /** @brief Monotonic totals indexed by the `ROCKETNET_COUNTER_*` values. */
     uint64_t values[ROCKETNET_NUM_COUNTERS];
 
-    // Per-server, per-update handshake budget state, not a published counter:
+    // per-server, per-update handshake budget state, not a published counter:
     // how many post-cookie connection requests this server has processed in
     // the current update. Reset by the protocol sweep once per update, so the
     // cap is enforced per server rather than process-wide; the drop it causes
@@ -524,7 +524,7 @@ struct rocketnet_counters_t
     uint64_t handshakes_processed_this_update;
 };
 
-// Surface a transport's kernel prefilter counters through the transport counter
+// surface a transport's kernel prefilter counters through the transport counter
 // surface: prefilter holds ROCKETNET_SERVER_XDP_NUM_COUNTERS values in
 // ROCKETNET_SERVER_XDP_COUNTER_* order. Each value is assigned (the kernel
 // totals are cumulative) to its transport counter; nothing else moves.
@@ -542,4 +542,4 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
 
 #include "rocketnet_internal.h"                  // rocketnet_counter_name lives in the forest header
 
-#endif // ROCKETNET_SDK_ROCKETNET_COUNTERS_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_COUNTERS_H

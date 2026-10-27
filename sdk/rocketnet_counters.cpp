@@ -15,6 +15,7 @@ uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int cou
 {
     if ( !rocketnet_api_null_guard( counters ) )
         return 0;
+
     return counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ? counters->values[counter] : 0;
 }
 
@@ -47,6 +48,7 @@ const char * rocketnet_counter_name( int counter )
         rocketnet_assert( 0 );
         return "???";
     }
+
     return rocketnet_counter_names[counter];
 }
 
@@ -54,6 +56,7 @@ int rocketnet_counter_class( int counter )
 {
     if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
         return -1;
+
     return rocketnet_counter_classes[counter];
 }
 
@@ -76,8 +79,9 @@ const char * rocketnet_counter_class_name( int counter_class )
 
 void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter )
 {
-    // One transport counter per kernel prefilter counter, in
-    // ROCKETNET_SERVER_XDP_COUNTER_* index order.
+    // one transport counter per kernel prefilter counter, in
+    // ROCKETNET_SERVER_XDP_COUNTER_* index order
+
     static const int rocketnet_prefilter_table[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
         ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,

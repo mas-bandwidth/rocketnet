@@ -18,7 +18,7 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
 
-// Layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
+// layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
 // objects over the transports. tla/RNSlots.tla is the spec of the object's
 // update, release and slot rules; tla/RNConnectionMemory.tla of exhaustion and
@@ -55,7 +55,7 @@ struct rn_message_link_t
     // link leaves *client_index NULL.
     int ( *payloads )( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
-    // Publish ACK eligibility only after successful message processing.
+    // publish ACK eligibility only after successful message processing
     void ( *accept_payload )( void * transport, int k );
 
     // the transport's acked packet ids of the last update (R1: the only ack).
@@ -72,7 +72,7 @@ struct rn_message_link_t
     uint64_t ( *payload_connection )( void * transport, int k );
     uint64_t ( *acked_connection )( void * transport, int k );
 
-    // The configured payload limit, after transport defaults. A large
+    // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );
     uint8_t * ( *start_packet )( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
@@ -80,12 +80,13 @@ struct rn_message_link_t
     void ( *abort_packet )( void * transport, struct rocketnet_packet_context_t * context );
     void ( *send_packets )( void * transport );
 
-    // How many payload frames the transport may still start this update.
+    // how many payload frames the transport may still start this update.
     // NULL (the client's link, the unit suite's fakes): no transport-side
     // cap. The server's link reads it so a rotation advances only over
     // clients that had a chance to send.
     int ( *send_capacity_available )( void * transport );
-    // Connected clients whose next send round must remain available.
+
+    // connected clients whose next send round must remain available
     int ( *send_connected_count )( void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
@@ -132,7 +133,7 @@ struct rn_message_link_t
 #define RN_MESSAGE_VIEW_HELD                1   // handed out by receive, not yet released
 #define RN_MESSAGE_VIEW_RELEASED            2   // released, or refused because the connection ended
 
-// The small slot record is scanned on every server update and send pass. Keep
+// the small slot record is scanned on every server update and send pass. Keep
 // it contiguous, apart from the endpoint's channel/builder/receipt payload.
 #define RN_MESSAGE_CONNECTION_HOT_LAYOUT_FIELDS( X ) \
     X( connection_id, uint64_t connection_id ) \
@@ -150,7 +151,7 @@ struct rn_message_connection_hot_t
 
 static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot must stay compact" );
 
-// The cold connection owns the endpoint (CHANNELS.md 10.1), its channels,
+// the cold connection owns the endpoint (CHANNELS.md 10.1), its channels,
 // budget, queued sends and write pass. The pointer binds its hot slot for
 // receive/release helpers that only have a connection address.
 
@@ -160,7 +161,8 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
-// One open outgoing packet per connection. Only headers are written when a
+
+// one open outgoing packet per connection. Only headers are written when a
 // message finishes; its bytes already occupy their final position in the frame.
 #define RN_MESSAGE_RECEIPT_SERIALS_MAX 16 // same bound as the endpoint's receipt_serials
 
@@ -220,7 +222,7 @@ struct rn_message_object_t
     int32_t batch_connection[ROCKETNET_RECEIVE_BATCH_MESSAGES];
     uint32_t batch_entry[ROCKETNET_RECEIVE_BATCH_MESSAGES];
 
-    // The send pass's rotation: the first connection to offer a frame next
+    // the send pass's rotation: the first connection to offer a frame next
     // update. A cap below the client count then serves every client in turn
     // instead of always serving the low indices.
     int send_next_connection;
@@ -244,12 +246,12 @@ struct rocketnet_message_server_t
     struct rn_message_object_t object;
 };
 
-// The block an object of num_connections connections needs at config: the
+// the block an object of num_connections connections needs at config: the
 // object, its connections, their receive bookkeeping and the arena. 0 for a
 // refused config or count.
 uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server );
 
-// Builds the object on a link, in `memory` (NULL: one rocketnet_malloc). The
+// builds the object on a link, in `memory` (NULL: one rocketnet_malloc). The
 // object owns the link's transport when link->destroy is set. NULL, with the
 // link's transport destroyed, on a refused argument.
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
@@ -258,7 +260,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
-// The update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
+// the update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
 // ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
 
@@ -267,21 +269,21 @@ void rn_message_object_send_packets( struct rn_message_object_t * object );
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
 
-// The room query: true when rn_message_object_start with these arguments, now,
+// the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would
 // find no room and end the connection (R5). Pure, O(1), allocates nothing.
 bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
 
-// The one receive queue, pumped by each receive: 1 with the next delivery of the
+// the one receive queue, pumped by each receive: 1 with the next delivery of the
 // update, its connection in *index and the channel it was delivered on in
 // *channel (either NULL: not reported), 0 when the queue is empty. Release
 // finds the held view in whichever connection holds it.
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data );
 
-// The batch form over the same queue: releases the last batch, then fills
+// the batch form over the same queue: releases the last batch, then fills
 // out with up to ROCKETNET_RECEIVE_BATCH_MESSAGES next deliveries in queue
 // order and returns how many (out->num_messages too); 0 when none is pending.
 int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out );
@@ -295,18 +297,18 @@ int rn_message_object_connected( const struct rn_message_object_t * object, int 
 // reused (RNConnectionMemory Kick, then Reuse).
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason );
 
-// The connection's state, for the unit suite.
+// the connection's state, for the unit suite
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index );
 
 #if ROCKETNET_DEV
-// The message half of the delivery capture (rocketnet_layers.h) for one
+// the message half of the delivery capture (rocketnet_layers.h) for one
 // connection: the ordered path's window, resend FIFOs, RTT estimate and send
 // budget. A connection that is not CONNECTED leaves the capture untouched.
 void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture );
 #endif // #if ROCKETNET_DEV
 
-// The client and server links over the real transports.
+// the client and server links over the real transports
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport );
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport );
 
-#endif // ROCKETNET_SDK_ROCKETNET_MESSAGE_OBJECT_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MESSAGE_OBJECT_H

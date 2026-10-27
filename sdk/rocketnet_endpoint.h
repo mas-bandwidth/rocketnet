@@ -269,4 +269,4 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
 // RN_ENDPOINT_NO_DEADLINE when there is none.
 double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint );
 
-#endif // ROCKETNET_SDK_ROCKETNET_ENDPOINT_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_ENDPOINT_H

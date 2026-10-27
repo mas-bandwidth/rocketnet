@@ -46,6 +46,7 @@ static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
     const int found = rocketnet_platform_getenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
     if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
         return 1;
+
     char * end = NULL;
     errno = 0;
     const unsigned long long parsed = found == 1 ? strtoull( text, &end, 0 ) : 0;
@@ -55,13 +56,15 @@ static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
         rocketnet_error( "ROCKETNET_DEV_SESSION_SEQUENCE_START=\"%s\" refused: expected 1 .. 2^62; using 1", text );
         return 1;
     }
+
     return (uint64_t) parsed;
 }
 
-// one read per process, at the first caller; a function-local static is
-// initialized once even when two threads create at once
 uint64_t rocketnet_dev_session_sequence_start( void )
 {
+    // one read per process, at the first caller; a function-local static is
+    // initialized once even when two threads create at once
+
     static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
     return start;
 }
@@ -71,6 +74,7 @@ uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )
 {
     if ( capacity < 1 )
         return 0;
+
     const uint64_t n = (uint64_t) capacity;
     return rocketnet_memory_allocations( { sizeof( rocketnet_encryption_map_t ),
                                            n * sizeof( uint32_t ), n * sizeof( uint32_t ), n * sizeof( uint64_t ), n * sizeof( rocketnet_address_t ),
@@ -81,21 +85,24 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 {
     rocketnet_assert( capacity > 0 );
 
-    // Preserve the table family's established capacity bound. Besides keeping
+    // preserve the table family's established capacity bound. Besides keeping
     // allocation products representable, this leaves both reserved uint32_t
     // index sentinels outside the stable public-index domain.
+
     if ( capacity < 1 || capacity > INT_MAX / 2 )
         return NULL;
 
     struct rocketnet_encryption_map_t * map = (struct rocketnet_encryption_map_t *) rocketnet_malloc( context, sizeof( struct rocketnet_encryption_map_t ) );
     if ( !map )
         return NULL;
+
     memset( map, 0, sizeof( struct rocketnet_encryption_map_t ) );
 
     map->context = context;
     map->capacity = capacity;
     map->next_generation = 1;
     randombytes_buf( map->hash_key, sizeof( map->hash_key ) );
+
 #if ROCKETNET_TEST_SEAMS
     (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -124,20 +131,24 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
         map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
         map->generation[i] = 0;
         map->address[i].type = ROCKETNET_ADDRESS_NONE;
-        // Pop returns 0, 1, ... initially while subsequent removes remain LIFO.
+
+        // pop returns 0, 1, ... initially while subsequent removes remain LIFO
+
         map->free_indices[capacity - 1 - i] = (uint32_t) i;
     }
+
     map->num_free = capacity;
 
     return map;
 }
 
-// the mapping's secrets, and only those: the session keys, the session
-// nonce they were derived with, and the connect token's user data, which
-// came out of the token's private part and can carry the game's secrets
-// (tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
 static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encryption_mapping_t * mapping )
 {
+    // the mapping's secrets, and only those: the session keys, the session
+    // nonce they were derived with, and the connect token's user data, which
+    // came out of the token's private part and can carry the game's secrets
+    // (tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
+
     sodium_memzero( &mapping->keys, sizeof( mapping->keys ) );
     sodium_memzero( mapping->session_nonce, sizeof( mapping->session_nonce ) );
     sodium_memzero( mapping->user_data, sizeof( mapping->user_data ) );
@@ -146,11 +157,14 @@ static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encrypti
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
+
     // a removed mapping was wiped by its remove; a live one still holds its
     // secrets, and those are the only secrets here
+
     for ( int i = 0; i < map->capacity; i++ )
         if ( map->address[i].type != ROCKETNET_ADDRESS_NONE )
             rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
+
     rocketnet_free( map->context, map->index );
     rocketnet_free( map->context, map->free_indices );
     rocketnet_free( map->context, map->generation );
@@ -169,8 +183,10 @@ static uint64_t rocketnet_encryption_map_hash_value( const struct rocketnet_encr
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, map->hash_key );
+
     uint64_t value;
     memcpy( &value, hash, 8 );
+
     return value;
 }
 
@@ -178,31 +194,36 @@ static uint64_t rocketnet_encryption_map_hash( const struct rocketnet_encryption
                                                const struct rocketnet_address_t * address )
 {
     const uint64_t value = rocketnet_encryption_map_hash_value( map, address );
+
 #if ROCKETNET_TEST_SEAMS
     map->test_hashes++;
 #endif // #if ROCKETNET_TEST_SEAMS
+
     return value;
 }
 
-// Returns the stable public slot index, or -1. insertion_position receives
-// the first empty cell for an absent key. A table with fewer than capacity
-// live entries always has an empty cell. At full capacity, an absent lookup
-// examines all cells and stops. This keeps the old metadata budget exactly:
-// the keyed index, dense free sequence and full-width generation tags
-// together occupy the old bucket/next/live bytes.
 static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_map_t * map,
                                             const struct rocketnet_address_t * address,
                                             uint64_t hash,
                                             int * insertion_position )
 {
+    // returns the stable public slot index, or -1. insertion_position receives
+    // the first empty cell for an absent key. A table with fewer than capacity
+    // live entries always has an empty cell. At full capacity, an absent lookup
+    // examines all cells and stops. This keeps the old metadata budget exactly:
+    // the keyed index, dense free sequence and full-width generation tags
+    // together occupy the old bucket/next/live bytes.
+
     const int home = (int) ( hash % (uint64_t) map->capacity );
     for ( int probe = 0; probe < map->capacity; ++probe )
     {
         const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->capacity );
         const uint32_t candidate = map->index[position];
+
 #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
         map->test_probes++;
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
         {
             if ( insertion_position )
@@ -212,6 +233,7 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
 
         if ( candidate >= (uint32_t) map->capacity )
             continue;
+
         const int index = (int) candidate;
         if ( map->address[index].type != ROCKETNET_ADDRESS_NONE &&
              rocketnet_address_equal( &map->address[index], address ) )
@@ -221,20 +243,24 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
             return index;
         }
     }
+
     if ( insertion_position )
         *insertion_position = -1;
+
     return -1;
 }
 
-// Backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
-// hole and shifting every later entry whose home is not cyclically in
-// (hole, scan] back into the hole keeps every surviving probe cluster
-// searchable and leaves no tombstone. The scan does not count as a lookup
-// probe. A full table has no empty cell, so the hole itself, cleared first,
-// is the empty cell the scan stops at.
 static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_map_t * map, int hole )
 {
+    // backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
+    // hole and shifting every later entry whose home is not cyclically in
+    // (hole, scan] back into the hole keeps every surviving probe cluster
+    // searchable and leaves no tombstone. The scan does not count as a lookup
+    // probe. A full table has no empty cell, so the hole itself, cleared first,
+    // is the empty cell the scan stops at.
+
     map->index[hole] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
+
     int scan = hole;
     for ( int step = 0; step < map->capacity; ++step )
     {
@@ -242,14 +268,17 @@ static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_ma
         const uint32_t candidate = map->index[scan];
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
             break;
+
         if ( candidate >= (uint32_t) map->capacity )
             continue;
+
         const int slot = (int) candidate;
         const int home = (int) ( rocketnet_encryption_map_hash_value( map, &map->address[slot] ) % (uint64_t) map->capacity );
         const bool stays = hole <= scan ? ( hole < home && home <= scan )
                                         : ( hole < home || home <= scan );
         if ( stays )
             continue;
+
         map->index[hole] = candidate;
         map->index[scan] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
         hole = scan;
@@ -271,13 +300,15 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->num_free == 0 || map->next_generation == 0;
 }
 
-// tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
 {
+    // tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
+
     rocketnet_assert( map );
     rocketnet_assert( address );
+
     if ( rocketnet_encryption_map_full( map ) )
         return -1;
 
@@ -290,6 +321,7 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 
     const int index = (int) map->free_indices[--map->num_free];
     rocketnet_assert( index >= 0 && index < map->capacity );
+
     const uint64_t generation = map->next_generation;
     map->next_generation = map->next_generation == UINT64_MAX ? 0 : map->next_generation + 1;
 
@@ -352,6 +384,7 @@ static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_
 {
     if ( handle.identity >= (uint64_t) map->capacity )
         return false;
+
     const int index = (int) handle.identity;
     const uint64_t generation = map->generation[index];
     if ( map->address[index].type == ROCKETNET_ADDRESS_NONE ||
@@ -363,10 +396,12 @@ static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_
     if ( rocketnet_encryption_map_lookup( map, &map->address[index], hash, &index_position ) != index ||
          index_position < 0 )
         return false;
+
     rocketnet_encryption_map_erase_index( map, index_position );
 
     // the secrets are wiped; the rest of the entry is unreachable once it is
     // not live, and the next add writes it whole
+
     rocketnet_encryption_mapping_wipe_secrets( &map->mapping[index] );
     map->address[index].type = ROCKETNET_ADDRESS_NONE;
     map->free_indices[map->num_free++] = (uint32_t) index;
@@ -379,6 +414,7 @@ bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * 
                                             uint64_t owner_generation )
 {
     rocketnet_assert( map );
+
     if ( index < 0 || index >= map->capacity || owner_generation == 0 )
         return false;
 
@@ -387,12 +423,14 @@ bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * 
     handle.generation = owner_generation;
     handle.owner_epoch = owner_generation;
     handle.ticket = owner_generation;
+
     return rocketnet_encryption_map_remove_handle( map, handle );
 }
 
-// tla/RNDestroyWipe.tla Remove: drops the current mapping from live and wipes its secrets.
 void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index )
 {
+    // tla/RNDestroyWipe.tla Remove: drops the current mapping from live and wipes its secrets.
+
     rocketnet_assert( map );
     rocketnet_assert( index >= 0 && index < map->capacity );
     rocketnet_assert( map->address[index].type != ROCKETNET_ADDRESS_NONE );
@@ -405,6 +443,7 @@ void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t 
 bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
+
     if ( map->next_generation == 0 )
         return false;
 
@@ -413,12 +452,14 @@ bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map )
             rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
 
     map->num_free = map->capacity;
+
     for ( int i = 0; i < map->capacity; ++i )
     {
         map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
         map->address[i].type = ROCKETNET_ADDRESS_NONE;
         map->free_indices[map->capacity - 1 - i] = (uint32_t) i;
     }
+
     return true;
 }
 
@@ -435,6 +476,7 @@ int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map
             return 1;
         }
     }
+
     return 0;
 }
 
@@ -477,13 +519,16 @@ bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map
                                            struct rn_sequence_buffer_handle_t * handle )
 {
     rocketnet_assert( map );
+
     if ( handle == NULL || index < 0 || index >= map->capacity ||
          map->address[index].type == ROCKETNET_ADDRESS_NONE )
         return false;
+
     handle->identity = (uint64_t) index;
     handle->generation = map->generation[index];
     handle->owner_epoch = map->generation[index];
     handle->ticket = map->generation[index];
+
     return true;
 }
 

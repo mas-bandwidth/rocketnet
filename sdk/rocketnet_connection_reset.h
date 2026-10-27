@@ -123,6 +123,7 @@ struct rn_message_object_t;
 */
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client );
+
 // the client protocol's secrets, and only those: the session keys, the
 // token (its private connect data holds the keys), the ephemeral secret and
 // the session nonce. Every terminal state and the transport's destroy run it.
@@ -181,4 +182,4 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
 
 #endif // #if ROCKETNET_DEV
 
-#endif // ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H

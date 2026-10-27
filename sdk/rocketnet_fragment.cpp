@@ -12,7 +12,7 @@
 
 #include <string.h>
 
-// The transport's reassembled payload maximum lies between one packet's
+// the transport's reassembled payload maximum lies between one packet's
 // payload and the wire's fragmented payload maximum.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
                              ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
@@ -80,13 +80,14 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
-// the delivered arena's bytes when every completion may be a maximum
-// payload: capacity x the 16-aligned maximum (the packing stride bound)
-
 static uint64_t rocketnet_reassembly_full_delivered_bytes( int max_payload_bytes, int delivered_capacity )
 {
+    // the delivered arena's bytes when every completion may be a maximum
+    // payload: capacity x the 16-aligned maximum (the packing stride bound)
+
     if ( max_payload_bytes < 1 || delivered_capacity < 1 )
         return 0;
+
     return (uint64_t) delivered_capacity * (uint64_t) ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( max_payload_bytes );
 }
 
@@ -96,6 +97,7 @@ uint64_t rocketnet_reassembly_memory_required_delivered( int num_connections, in
          max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1 ||
          delivered_bytes < (uint64_t) max_payload_bytes )
         return 0;
+
     uint64_t total = sizeof( rocketnet_reassembly_set_t );
     const uint64_t slots = (uint64_t) num_connections * (uint64_t) num_slots;
     if ( !rocketnet_memory_add( total, slots, sizeof( rocketnet_reassembly_slot_t ) ) ||
@@ -103,6 +105,7 @@ uint64_t rocketnet_reassembly_memory_required_delivered( int num_connections, in
          !rocketnet_memory_add( total, slots, (uint64_t) max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES ) ||
          !rocketnet_memory_add( total, 1, delivered_bytes ) || total > SIZE_MAX )
         return 0;
+
     return total;
 }
 
@@ -128,58 +131,66 @@ bool rocketnet_reassembly_memory_allowed_delivered( int num_connections, int num
                          (unsigned long long) bytes, (unsigned long long) budget );
         return false;
     }
+
     return true;
 }
 
-// the completion bound (rocketnet_fragment.h; the delivered bound of
-// tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
-// packets one update drains, a payload begun earlier completes on one and
-// a payload begun in the update on two, and at most connections x slots
-// payloads are begun earlier
-
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots )
 {
+    // the completion bound (rocketnet_fragment.h; the delivered bound of
+    // tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
+    // packets one update drains, a payload begun earlier completes on one and
+    // a payload begun in the update on two, and at most connections x slots
+    // payloads are begun earlier
+
     if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS )
         return 0;
+
     const int64_t drain = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
     const int64_t begun_earlier = (int64_t) max_clients * (int64_t) num_slots;
+
     return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
 }
-
-// the completion bound (rocketnet_fragment.h; the delivered bound of
-// tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2), at the
-// client's one connection and drain: of the N packets one update drains, a
-// payload begun earlier completes on one and a payload begun in the update
-// on two, and at most num_slots payloads are begun earlier
 
 int rocketnet_client_reassembly_delivered_capacity( int num_slots )
 {
+    // the completion bound (rocketnet_fragment.h; the delivered bound of
+    // tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2), at the
+    // client's one connection and drain: of the N packets one update drains, a
+    // payload begun earlier completes on one and a payload begun in the update
+    // on two, and at most num_slots payloads are begun earlier
+
     if ( num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS )
         return 0;
+
     const int64_t drain = ROCKETNET_NUM_CLIENT_PACKETS;
     const int64_t begun_earlier = num_slots;
+
     return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
 }
 
-// the byte bound beside the count bound (rocketnet_fragment.h; finding D2
-// of tla/README-FragmentsAndAcks.md): a payload completed in an update is
-// made of fragments drained in that update -- one fragment per packet, at
-// most ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES each -- plus the bytes its slot
-// already held from earlier updates, at most one payload per slot and no
-// more than the completions. Each completion pads to the 16-byte packing
-// stride. The bound is the smaller of that and capacity x the aligned
-// maximum payload, and both are true upper bounds.
-
 uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_slots, int max_payload_bytes )
 {
+    // the byte bound beside the count bound (rocketnet_fragment.h; finding D2
+    // of tla/README-FragmentsAndAcks.md): a payload completed in an update is
+    // made of fragments drained in that update -- one fragment per packet, at
+    // most ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES each -- plus the bytes its slot
+    // already held from earlier updates, at most one payload per slot and no
+    // more than the completions. Each completion pads to the 16-byte packing
+    // stride. The bound is the smaller of that and capacity x the aligned
+    // maximum payload, and both are true upper bounds.
+
     const int capacity = rocketnet_server_reassembly_delivered_capacity( max_clients, num_slots );
     if ( capacity < 1 || max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
         return 0;
+
     const uint64_t by_count = rocketnet_reassembly_full_delivered_bytes( max_payload_bytes, capacity );
     const uint64_t begun_earlier = (uint64_t) max_clients * (uint64_t) num_slots;
     const uint64_t held = ( begun_earlier < (uint64_t) capacity ? begun_earlier : (uint64_t) capacity ) * (uint64_t) max_payload_bytes;
+
     const uint64_t by_drain = (uint64_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * (uint64_t) ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
                               held + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 );
+
     return by_drain < by_count ? by_drain : by_count;
 }
 
@@ -220,7 +231,7 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
     set->slots = (struct rocketnet_reassembly_slot_t *) rocketnet_malloc( context, slot_records_bytes + (size_t) num_connections * sizeof( uint32_t ) );
     set->arena = (uint8_t *) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
 
-    // The delivered mirror is this implementation's own addition beyond
+    // the delivered mirror is this implementation's own addition beyond
     // the standard's arena arithmetic: the per-update home of completed
     // payloads, which is what lets a reassembly slot clear and reuse
     // immediately while the delivered bytes stay valid. The capacity is
@@ -250,12 +261,14 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
 void rocketnet_reassembly_set_destroy( struct rocketnet_reassembly_set_t * set )
 {
     rocketnet_assert( set );
+
     if ( set->slots )
         rocketnet_free( set->context, set->slots );
     if ( set->arena )
         rocketnet_free( set->context, set->arena );
     if ( set->delivered )
         rocketnet_free( set->context, set->delivered );
+
     rocketnet_free( set->context, set );
 }
 
@@ -274,10 +287,12 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
     set->newest_completed[connection_index] = 0;
 }
 
-// tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set )
 {
+    // tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
+
     rocketnet_assert( set );
+
     set->num_delivered = 0;
     set->delivered_used = 0;
     set->completed_payload = NULL;
@@ -289,10 +304,10 @@ static void rocketnet_reassembly_clear_slot( struct rocketnet_reassembly_slot_t 
     memset( slot, 0, sizeof( struct rocketnet_reassembly_slot_t ) );
 }
 
-// a fragment bit, and setting it: num_received tracks the set bits
-
 static int rocketnet_reassembly_bit( const struct rocketnet_reassembly_slot_t * slot, int index )
 {
+    // a fragment bit, and setting it: num_received tracks the set bits
+
     return ( slot->received[index / 8] >> ( index % 8 ) ) & 1;
 }
 
@@ -302,12 +317,6 @@ static void rocketnet_reassembly_set_bit( struct rocketnet_reassembly_slot_t * s
     slot->num_received++;
 }
 
-// tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
-// placement and delivery inside this call (DeliveredExact, DeliveredOnce,
-// CompleteDelivers, ArenaBounded, CountPinned). The stale test is the rule
-// StaleOnlyIfOlder asks for: an honest fragment newer than its slot's
-// occupant is never refused (finding D1 in tla/README-FragmentsAndAcks.md)
-
 int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * set,
                                            int connection_index,
                                            const uint8_t * type_data,
@@ -315,6 +324,12 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
                                            uint64_t * counters,
                                            const struct rocketnet_reassembly_counters_t * table )
 {
+    // tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
+    // placement and delivery inside this call (DeliveredExact, DeliveredOnce,
+    // CompleteDelivers, ArenaBounded, CountPinned). The stale test is the rule
+    // StaleOnlyIfOlder asks for: an honest fragment newer than its slot's
+    // occupant is never refused (finding D1 in tla/README-FragmentsAndAcks.md)
+
     rocketnet_assert( set );
     rocketnet_assert( connection_index >= 0 && connection_index < set->num_connections );
     rocketnet_assert( type_data );
@@ -402,7 +417,6 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // displaces. The stale test before this rule had the same worst case.
 
     const uint32_t reference = set->newest_completed[connection_index];
-
     if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
     {
         rocketnet_spam( "reassembly refused fragment. payload id far from the newest completed" );
@@ -466,6 +480,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
             counters[table->size_mismatch]++;
             return 0;
         }
+
         if ( is_final && fragment_bytes > slot->fragment_stride )
         {
             rocketnet_spam( "reassembly refused fragment. final fragment exceeds the stride" );
@@ -536,6 +551,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
             rocketnet_spam( "reassembly abandoned incomplete payload %u", slot->payload_id );
             counters[table->abandoned]++;
         }
+
         rocketnet_reassembly_clear_slot( slot );
         slot->payload_id = payload_id;
         slot->fragment_count = fragment_count;
@@ -550,6 +566,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
         if ( slot->fragment_stride == 0 )
         {
             slot->fragment_stride = stride;
+
             if ( slot->final_staged )
             {
                 memcpy( slot_payload + (size_t) stride * (size_t) ( slot->fragment_count - 1 ), slot_staging, (size_t) slot->final_bytes );
@@ -601,7 +618,6 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
         // bound and the byte bound (rocketnet_fragment.h) both hold here
 
         const size_t delivered_offset = ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( set->delivered_used );
-
         if ( set->num_delivered < set->delivered_capacity && delivered_offset + (size_t) payload_bytes <= set->delivered_bytes )
         {
             uint8_t * delivered = set->delivered + delivered_offset;
@@ -641,6 +657,7 @@ uint64_t rocketnet_send_arena_allocation_bytes( int slots, int bytes )
 {
     if ( slots < 1 || bytes < 1 )
         return 0;
+
     return rocketnet_memory_allocations( { sizeof( rocketnet_send_arena_t ), (uint64_t) slots * (uint64_t) bytes } );
 }
 

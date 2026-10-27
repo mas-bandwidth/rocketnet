@@ -21,9 +21,12 @@ template <size_t Capacity> struct rocketnet_pending_frames_t
     {
         if ( length > available() )
             return false;
+
         for ( size_t i = 0; i < length; ++i )
             frames[count + i] = source[i];
+
         count += length;
+
         return true;
     }
 
@@ -32,15 +35,19 @@ template <size_t Capacity> struct rocketnet_pending_frames_t
     {
         if ( !count )
             return true;
+
         uint32_t index = 0;
         if ( reserve( (uint32_t) count, &index ) != count )
             return false;
+
         for ( size_t i = 0; i < count; ++i )
             write( index + (uint32_t) i, frames[i] );
+
         submit( (uint32_t) count );
         count = 0;
+
         return true;
     }
 };
 
-#endif // ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H

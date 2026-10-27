@@ -1,4 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
+
 #pragma once
 
 #ifndef ROCKETNET_SDK_ROCKETNET_MEMORY_H
@@ -15,37 +16,42 @@
 // 1000, so 512 at the default and 5120 at 10000.
 #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
 #define ROCKETNET_REASSEMBLY_MEMORY_MIB ( 512 * ( ( ROCKETNET_MAX_CLIENTS + 999 ) / 1000 ) )
-#endif
+#endif // #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
+
 #ifndef ROCKETNET_XDP_MEMORY_MIB
 #define ROCKETNET_XDP_MEMORY_MIB 4096
-#endif
+#endif // #ifndef ROCKETNET_XDP_MEMORY_MIB
 
 // Component budgets are explicit build choices; they do not estimate available
 // host RAM or authorize overcommit. Callers must leave room for other components,
 // allocator overhead, thread stacks, kernel buffers and their application.
 #if ROCKETNET_REASSEMBLY_MEMORY_MIB < 1 || ROCKETNET_REASSEMBLY_MEMORY_MIB > 1048576 || ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
 #error RocketNet memory budgets must be 1..1048576 MiB
-#endif
+#endif // #if ROCKETNET_REASSEMBLY_MEMORY_MIB < 1 || ROCKETNET_REASSEMBLY_MEMORY_MIB > 1048576 || ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
 
 inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t stride )
 {
     if ( stride && count > ( UINT64_MAX - total ) / stride )
         return false;
+
     total += count * stride;
     return true;
 }
 
-// The allocator's alignment and ownership header, measured in its defining TU.
+// the allocator's alignment and ownership header, measured in its defining TU
 uint64_t rocketnet_allocation_overhead();
+
 inline uint64_t rocketnet_memory_allocations( std::initializer_list<uint64_t> sizes )
 {
     uint64_t total = 0;
     const uint64_t overhead = rocketnet_allocation_overhead();
+
     for ( uint64_t bytes : sizes )
     {
         if ( bytes > SIZE_MAX - overhead || !rocketnet_memory_add( total, 1, bytes + overhead ) )
             return 0;
     }
+
     return total <= SIZE_MAX ? total : 0;
 }
 
@@ -63,7 +69,7 @@ void rocketnet_direct_allocation_add( uint64_t bytes );
 void rocketnet_direct_allocation_remove( uint64_t bytes );
 extern "C" uint64_t rocketnet_direct_allocation_bytes( void );
 
-// Internal component accounting stays beside the corresponding concrete types.
+// internal component accounting stays beside the corresponding concrete types
 uint64_t rocketnet_client_slots_allocation_bytes( int clients );
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity );
 uint64_t rocketnet_token_table_allocation_bytes( int capacity );
@@ -75,6 +81,7 @@ uint64_t rocketnet_server_gso_allocation_bytes( int queues );
 uint64_t rocketnet_server_iocp_allocation_bytes( int workers );
 uint64_t rocketnet_server_xdp_allocation_bytes( int queues );
 uint64_t rocketnet_server_rio_registered_region_bytes();
+
 // UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
 uint64_t rocketnet_xdp_umem_bytes( int queues );
 
@@ -100,13 +107,14 @@ struct rocketnet_server_memory_plan_t
 };
 bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_config_t * config,
                                              const char * transport, rocketnet_server_memory_plan_t & plan );
+
 // Native built-in adapter resource policy; fills transport, UMEM, RIO registered
 // region, worker and socket fields.
 // the xdp transport's queue count when num_xdp_queues is zero or negative; the
 // xdp create and rocketnet_builtin_server_memory_plan both take it
 #ifndef ROCKETNET_XDP_DEFAULT_QUEUES
 #define ROCKETNET_XDP_DEFAULT_QUEUES 7
-#endif
+#endif // #ifndef ROCKETNET_XDP_DEFAULT_QUEUES
 
 bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_config_t * config,
                                            const char * transport, rocketnet_server_memory_plan_t & plan );
@@ -116,6 +124,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 // creates, which stop retires and the next start frees before it creates the
 // next. A candidate with no plan (a custom transport) adds nothing.
 uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config );
+
 struct rocketnet_client_transport_config_t;
 uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config );
 
@@ -144,14 +153,16 @@ inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet
 {
     uint8_t * base = (uint8_t *) storage;
     size_t at = 0;
+
     for ( int i = 0; i < num_skip; i++ )
     {
         if ( skip[i].offset > at )
             memset( base + at, 0, skip[i].offset - at );
         at = skip[i].offset + skip[i].bytes;
     }
+
     if ( at < bytes )
         memset( base + at, 0, bytes - at );
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_MEMORY_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MEMORY_H

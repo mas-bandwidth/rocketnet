@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include "rocketnet_internal.h"
 
-// Layer 2 of the message layer (docs/CHANNELS.md section 5): message records
+// layer 2 of the message layer (docs/CHANNELS.md section 5): message records
 // inside one transport payload, and the zero-copy single-message form. The
 // wire is STANDARD.md _Messages_, to the byte; this file is its codec and the
 // receiver's checks 1 to 9 and 12, in the standard's order. It is pure: no
@@ -66,7 +66,7 @@
 #define ROCKETNET_MESSAGE_CONFIG_VERSION                    1
 #define ROCKETNET_MESSAGE_CONFIG_BYTES                      28
 
-// The receiver's violations, one per check of STANDARD.md _Messages_, in the
+// the receiver's violations, one per check of STANDARD.md _Messages_, in the
 // standard's order. A parse names exactly one, or none. The window
 // (MESSAGE_NUMBER_OUTSIDE_WINDOW, MESSAGE_SLOT_COLLISION) and ordering
 // (MESSAGE_ORDERING_BEHIND) checks belong to layers 3 and 4, and the
@@ -90,7 +90,7 @@
 
 const char * rocketnet_message_violation_name( int violation );
 
-// One record as the wire carries it. Fields the record's code does not carry
+// one record as the wire carries it. Fields the record's code does not carry
 // are zero, so a parsed record packs back to the same bytes and a record
 // packs only one way. WIDE is not a field: the writer sets it exactly when
 // channel >= 256, and the reader refuses it otherwise.
@@ -111,11 +111,11 @@ struct rocketnet_message_record_t
     int bytes;                      // 1 to 65535
 };
 
-// The header bytes the record's fields take on the wire (3 to 20).
+// the header bytes the record's fields take on the wire (3 to 20)
 
 int rocketnet_message_record_header_bytes( const struct rocketnet_message_record_t * record );
 
-// Nonzero when the record is one a correct sender may write, before any
+// nonzero when the record is one a correct sender may write, before any
 // receiver's limits: a code 0 to 4, flags the standard allows, absent fields
 // zero, each present field inside its wire width, 1 to 65535 data bytes, and
 // a block's index inside its count.
@@ -126,7 +126,7 @@ int rocketnet_message_record_valid( const struct rocketnet_message_record_t * re
 //                                  writing
 // -----------------------------------------
 
-// A RECORDS payload, built in place in the caller's buffer (a transport frame
+// a RECORDS payload, built in place in the caller's buffer (a transport frame
 // at payload_index). capacity counts every byte the payload may take,
 // including the trailing form byte. add copies the record's data after its
 // header: the one copy from the send store into the frame (CHANNELS.md R5).
@@ -141,16 +141,16 @@ struct rocketnet_message_writer_t
 
 void rocketnet_message_writer_begin( struct rocketnet_message_writer_t * writer, uint8_t * payload, int capacity );
 
-// The space left for one more record's header and data.
+// the space left for one more record's header and data
 
 int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * writer );
 
-// Appends one valid record. Returns 1, or 0 when it does not fit, leaving the
+// appends one valid record. Returns 1, or 0 when it does not fit, leaving the
 // payload unchanged: a record is never split (CHANNELS.md 9.3).
 
 int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
-// Appends one valid record whose data is already in place, right after the
+// appends one valid record whose data is already in place, right after the
 // header's room (record->data == payload + bytes so far + its header bytes):
 // only the header is written, and nothing is copied. The in-place unreliable
 // send (docs/OUTGOING-BUILD.md) writes its one record this way. Returns 1, or
@@ -159,18 +159,18 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
 int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
 #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
-// Test builds only (the unit suite's library, never the release library): the
+// test builds only (the unit suite's library, never the release library): the
 // payload copies writer_add has made, from a send store into a frame -- the
 // message-to-packet copy a fitting unreliable send never makes.
 uint64_t rn_message_payload_copy_count();
-#endif
+#endif // #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
 
-// Writes the RECORDS form byte. Returns the payload's length L, or 0 when no
+// writes the RECORDS form byte. Returns the payload's length L, or 0 when no
 // record was added (an empty plan writes nothing).
 
 int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer );
 
-// The SINGLE form, zero copy. The caller writes the message at payload offset
+// the SINGLE form, zero copy. The caller writes the message at payload offset
 // 0 -- frame + payload_index, 16-aligned -- in place, then finish writes the
 // one form byte after it. single_capacity is the message room in a payload of
 // payload_capacity bytes. finish returns the payload's length L, or 0 when the
@@ -184,7 +184,7 @@ int rocketnet_message_single_finish( uint8_t * payload, int payload_capacity, in
 //                                  reading
 // -----------------------------------------
 
-// The receiver's own bounds, which checks 5 to 8 compare against: its
+// the receiver's own bounds, which checks 5 to 8 compare against: its
 // runtime channel count (never the compile-time maximum), the wire codes its
 // enabled mask admits, and its W, max_message_bytes and B.
 
@@ -197,12 +197,12 @@ struct rocketnet_message_limits_t
     int receive_message_buffer_bytes;         // B, a multiple of 16
 };
 
-// The wire codes a mask of enabled reliabilities (bit r = reliability r, the
+// the wire codes a mask of enabled reliabilities (bit r = reliability r, the
 // CONFIG enabled byte) admits: 5 travels as 0, 6 as 2, 7 as 3.
 
 uint32_t rocketnet_message_enabled_codes( uint32_t enabled_reliabilities );
 
-// A reader over one payload. begin runs every check of this layer over the
+// a reader over one payload. begin runs every check of this layer over the
 // whole payload, in order, and stops at the first failure: the payload is
 // then refused whole, and no record of it is ever handed out. On success,
 // next hands the records out one at a time, in wire order, each whole, with
@@ -219,16 +219,16 @@ struct rocketnet_message_reader_t
     const struct rocketnet_message_limits_t * limits;
 };
 
-// Returns ROCKETNET_MESSAGE_VIOLATION_NONE, or the one violation the payload
+// returns ROCKETNET_MESSAGE_VIOLATION_NONE, or the one violation the payload
 // hit (also left in reader->violation).
 
 int rocketnet_message_reader_begin( struct rocketnet_message_reader_t * reader, const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits );
 
-// Returns 1 with the next record, or 0 when the payload is done or was refused.
+// returns 1 with the next record, or 0 when the payload is done or was refused
 
 int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, struct rocketnet_message_record_t * record );
 
-// The whole-payload check alone: the violation begin would return.
+// the whole-payload check alone: the violation begin would return
 
 int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits );
 
@@ -236,7 +236,7 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
 //                           CONFIG control
 // -----------------------------------------
 
-// The CONFIG body (STANDARD.md _Messages_). The record carrying it is code 2
+// the CONFIG body (STANDARD.md _Messages_). The record carrying it is code 2
 // with CONTROL set and its first reliable number; the layers above number and
 // compare it. read refuses an unknown kind, a wrong length, or a version 1
 // body with nonzero reserved bytes (MESSAGE_BAD_CONTROL); a version it does
@@ -257,4 +257,4 @@ void rocketnet_message_write_config_body( uint8_t * output, const struct rocketn
 
 int rocketnet_message_read_config_body( const uint8_t * data, int bytes, struct rocketnet_message_config_body_t * body );
 
-#endif // ROCKETNET_SDK_ROCKETNET_MESSAGE_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MESSAGE_H

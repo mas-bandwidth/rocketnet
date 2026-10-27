@@ -69,6 +69,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
+
 // each queue's UMEM: the send half (ROCKETNET_XDP_NUM_FRAMES / 2 frames from
 // offset 0), then exactly the receive frames put on the fill ring at create
 #define ROCKETNET_XDP_UMEM_FRAMES     ( ROCKETNET_XDP_NUM_FRAMES / 2 + ROCKETNET_XDP_FILL_FRAMES )
@@ -114,13 +115,13 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 
 #endif // #if ROCKETNET_XDP
 
-// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. Every receive batch in one update (socket process batch, per-update receive budget and payload batch) shares this one bound and one storage cap.
+// one update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. Every receive batch in one update (socket process batch, per-update receive budget and payload batch) shares this one bound and one storage cap
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
 #if ROCKETNET_XDP
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the XDP send queue" );
-#endif
+#endif // #if ROCKETNET_XDP
 
 // Portable and msgx buffered batch sizes. The per-update receive budget
 // holds at least twice the send batch. The transport uses max_clients with
@@ -240,16 +241,17 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 
 #define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
 
-// Any accepted eliciting packet makes an ack due on the next update.
+// any accepted eliciting packet makes an ack due on the next update
 
 #define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
 
-// The adaptive resend delay: it follows the measured round trip.
+// the adaptive resend delay: it follows the measured round trip
 
 #define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          200
 #define ROCKETNET_MESSAGE_RESEND_DELAY_VARIANCE_SCALE                           4
 #define ROCKETNET_MESSAGE_RESEND_DELAY_GRANULARITY_MS                          30
-// Retained for historical benchmark comparisons; it does not cap live resends.
+
+// retained for historical benchmark comparisons; it does not cap live resends
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
 
 // ROCKETNET_IPV4_HEADER_BYTES and ROCKETNET_UDP_HEADER_BYTES live in
@@ -270,4 +272,4 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 
 #define ROCKETNET_VALUE_TRACKER_HISTORY                                   1024
 
-#endif // ROCKETNET_SDK_ROCKETNET_CONSTANTS_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONSTANTS_H

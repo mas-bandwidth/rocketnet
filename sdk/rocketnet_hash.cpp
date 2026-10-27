@@ -32,6 +32,8 @@ uint64_t rocketnet_hash_string( const char * string )
 {
     rocketnet_fnv_t fnv;
     rocketnet_fnv_init( &fnv );
+
     rocketnet_fnv_write( &fnv, (const uint8_t *) ( string ), strlen( string ) );
+
     return rocketnet_fnv_finalize( &fnv );
 }

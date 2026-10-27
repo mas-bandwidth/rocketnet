@@ -20,7 +20,7 @@
 #include <linux/neighbour.h>
 #include <netinet/in.h>
 
-// Every header and attribute is copied out of the byte buffer with memcpy
+// every header and attribute is copied out of the byte buffer with memcpy
 // before it is read, so nothing depends on the buffer's alignment. The walks
 // keep the NLMSG_OK and RTA_OK rules with size_t arithmetic: a header must
 // fit in the bytes left, its length must cover at least the header, and its
@@ -40,23 +40,28 @@ struct rocketnet_gateway_netlink_attributes_t
 static bool rocketnet_gateway_netlink_walk_attributes( const uint8_t * data, size_t bytes, rocketnet_gateway_netlink_attributes_t * attributes )
 {
     memset( attributes, 0, sizeof( *attributes ) );
+
     size_t offset = 0;
     while ( offset < bytes )
     {
         struct rtattr attribute;
         if ( bytes - offset < sizeof( attribute ) )
             return false;
+
         memcpy( &attribute, data + offset, sizeof( attribute ) );
         if ( attribute.rta_len < sizeof( attribute ) || attribute.rta_len > bytes - offset )
             return false;
+
         const unsigned int type = (unsigned int) ( attribute.rta_type & NLA_TYPE_MASK );
         if ( type < ROCKETNET_GATEWAY_NETLINK_MAX_ATTRIBUTE && attributes->value[type] == NULL )
         {
             attributes->value[type] = data + offset + RTA_LENGTH( 0 );
             attributes->bytes[type] = attribute.rta_len - RTA_LENGTH( 0 );
         }
+
         offset += RTA_ALIGN( attribute.rta_len );
     }
+
     return true;
 }
 
@@ -64,7 +69,9 @@ static bool rocketnet_gateway_netlink_u32( const rocketnet_gateway_netlink_attri
 {
     if ( attributes->value[type] == NULL || attributes->bytes[type] != sizeof( uint32_t ) )
         return false;
+
     memcpy( value, attributes->value[type], sizeof( uint32_t ) );
+
     return true;
 }
 
@@ -78,12 +85,12 @@ static size_t rocketnet_gateway_netlink_address_bytes( int family )
 
 typedef int ( *rocketnet_gateway_netlink_match_t )( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context );
 
-// the walk of one received datagram, shared by both dumps
-
 static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id,
                                             uint16_t message_type, size_t body_bytes,
                                             rocketnet_gateway_netlink_match_t match, void * context, int * error )
 {
+    // the walk of one received datagram, shared by both dumps
+
     rocketnet_assert( data || bytes == 0 );
     rocketnet_assert( error );
 
@@ -94,6 +101,7 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
         struct nlmsghdr header;
         if ( bytes - offset < sizeof( header ) )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         memcpy( &header, data + offset, sizeof( header ) );
         if ( header.nlmsg_len < sizeof( header ) || header.nlmsg_len > bytes - offset )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
@@ -108,6 +116,7 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
             if ( header.nlmsg_flags & NLM_F_DUMP_INTR )
             {
                 // the table changed while the kernel dumped it
+
                 *error = EINTR;
                 return ROCKETNET_GATEWAY_NETLINK_ERROR;
             }
@@ -117,12 +126,14 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
                 int code;
                 if ( payload_bytes < sizeof( code ) )
                     return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
                 memcpy( &code, payload, sizeof( code ) );
                 if ( code != 0 )
                 {
                     *error = code < 0 ? -code : code;
                     return ROCKETNET_GATEWAY_NETLINK_ERROR;
                 }
+
                 // an acknowledgement carries no answer
             }
             else if ( header.nlmsg_type == NLMSG_DONE )
@@ -139,15 +150,18 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
                         return ROCKETNET_GATEWAY_NETLINK_ERROR;
                     }
                 }
+
                 return ROCKETNET_GATEWAY_NETLINK_DONE;
             }
             else if ( header.nlmsg_type == message_type )
             {
                 if ( payload_bytes < NLMSG_ALIGN( body_bytes ) )
                     return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
                 rocketnet_gateway_netlink_attributes_t attributes;
                 if ( !rocketnet_gateway_netlink_walk_attributes( payload + NLMSG_ALIGN( body_bytes ), payload_bytes - NLMSG_ALIGN( body_bytes ), &attributes ) )
                     return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
                 const int result = match( payload, body_bytes, &attributes, context );
                 if ( result != ROCKETNET_GATEWAY_NETLINK_MORE )
                     return result;
@@ -156,6 +170,7 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
 
         offset += NLMSG_ALIGN( header.nlmsg_len );
     }
+
     return ROCKETNET_GATEWAY_NETLINK_MORE;
 }
 
@@ -169,33 +184,38 @@ struct rocketnet_gateway_netlink_route_context_t
     uint8_t * gateway;
 };
 
-// every next hop of a multipath default route (RTA_MULTIPATH: rtnexthop
-// records, each followed by its own attributes), for either family. The
-// first hop whose interface is this one and whose RTA_GATEWAY is the
-// family's address size is the route. A short or oversized record is
-// malformed. No hop on this interface is not this interface's route.
-
 static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * data, size_t bytes, int family, int want_interface,
                                                              int * interface_index, const uint8_t ** gateway, size_t * gateway_bytes )
 {
+    // every next hop of a multipath default route (RTA_MULTIPATH: rtnexthop
+    // records, each followed by its own attributes), for either family. The
+    // first hop whose interface is this one and whose RTA_GATEWAY is the
+    // family's address size is the route. A short or oversized record is
+    // malformed. No hop on this interface is not this interface's route.
+
     const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
+
     size_t offset = 0;
     while ( offset < bytes )
     {
         if ( bytes - offset < sizeof( struct rtnexthop ) )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         struct rtnexthop next_hop;
         memcpy( &next_hop, data + offset, sizeof( next_hop ) );
         const size_t raw = (size_t) next_hop.rtnh_len;
         if ( raw < sizeof( next_hop ) || raw > bytes - offset )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         // the record's attributes start RTNH_ALIGN( sizeof(next_hop) ) in, which
         // is sizeof(next_hop): the record is already a multiple of RTNH_ALIGNTO
 
         static_assert( sizeof( struct rtnexthop ) % RTNH_ALIGNTO == 0, "an rtnexthop record ends aligned" );
+
         rocketnet_gateway_netlink_attributes_t attributes;
         if ( !rocketnet_gateway_netlink_walk_attributes( data + offset + sizeof( next_hop ), raw - sizeof( next_hop ), &attributes ) )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL && attributes.bytes[RTA_GATEWAY] == address_bytes )
         {
             *interface_index = next_hop.rtnh_ifindex;
@@ -203,11 +223,14 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
             *gateway_bytes = attributes.bytes[RTA_GATEWAY];
             return ROCKETNET_GATEWAY_NETLINK_FOUND;
         }
+
         const size_t step = ( raw + (size_t) RTNH_ALIGNTO - 1 ) & ~(size_t) ( RTNH_ALIGNTO - 1 );
         if ( step < raw || step > bytes - offset )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         offset += step;
     }
+
     return ROCKETNET_GATEWAY_NETLINK_MORE;
 }
 
@@ -226,6 +249,7 @@ static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t b
     uint32_t table = message.rtm_table;
     if ( attributes->value[RTA_TABLE] && !rocketnet_gateway_netlink_u32( attributes, RTA_TABLE, &table ) )
         return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
     if ( table != RT_TABLE_MAIN )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
 
@@ -238,27 +262,32 @@ static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t b
     {
         if ( !rocketnet_gateway_netlink_u32( attributes, RTA_OIF, &output_interface ) )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         interface_index = (int) output_interface;
     }
     else if ( attributes->value[RTA_MULTIPATH] )
     {
         // both families: the first next hop on this interface. Hops on
         // another interface are not this route, so the walk keeps going.
+
         const int hop = rocketnet_gateway_netlink_multipath_on_interface(
             attributes->value[RTA_MULTIPATH], attributes->bytes[RTA_MULTIPATH],
             route->family, route->interface_index, &interface_index, &gateway, &gateway_bytes );
         if ( hop == ROCKETNET_GATEWAY_NETLINK_MALFORMED )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
         if ( hop != ROCKETNET_GATEWAY_NETLINK_FOUND )
             return ROCKETNET_GATEWAY_NETLINK_MORE;
     }
 
     if ( interface_index != route->interface_index || gateway == NULL )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
+
     if ( gateway_bytes != rocketnet_gateway_netlink_address_bytes( route->family ) )
         return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
 
     memcpy( route->gateway, gateway, gateway_bytes );
+
     return ROCKETNET_GATEWAY_NETLINK_FOUND;
 }
 
@@ -268,6 +297,7 @@ int rocketnet_gateway_netlink_parse_route( const uint8_t * data, size_t bytes, u
     rocketnet_assert( family == AF_INET || family == AF_INET6 );
     rocketnet_assert( interface_index > 0 );
     rocketnet_assert( gateway );
+
     rocketnet_gateway_netlink_route_context_t context = { family, interface_index, gateway };
     return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWROUTE, sizeof( struct rtmsg ), rocketnet_gateway_netlink_match_route, &context, error );
 }
@@ -310,10 +340,12 @@ static int rocketnet_gateway_netlink_match_neighbor( const uint8_t * body, size_
 
     if ( ( message.ndm_state & ROCKETNET_GATEWAY_NETLINK_USABLE_STATES ) == 0 )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
+
     if ( attributes->value[NDA_LLADDR] == NULL || attributes->bytes[NDA_LLADDR] != 6 )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
 
     memcpy( neighbor->mac, attributes->value[NDA_LLADDR], 6 );
+
     return ROCKETNET_GATEWAY_NETLINK_FOUND;
 }
 
@@ -324,6 +356,7 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
     rocketnet_assert( interface_index > 0 );
     rocketnet_assert( gateway );
     rocketnet_assert( mac );
+
     rocketnet_gateway_netlink_neighbor_context_t context = { family, interface_index, gateway, mac };
     return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWNEIGH, sizeof( struct ndmsg ), rocketnet_gateway_netlink_match_neighbor, &context, error );
 }
@@ -389,7 +422,9 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
 
     uint8_t request[NLMSG_SPACE( sizeof( struct rtmsg ) > sizeof( struct ndmsg ) ? sizeof( struct rtmsg ) : sizeof( struct ndmsg ) )];
     memset( request, 0, sizeof( request ) );
+
     const size_t body_bytes = request_type == RTM_GETROUTE ? sizeof( struct rtmsg ) : sizeof( struct ndmsg );
+
     struct nlmsghdr header;
     memset( &header, 0, sizeof( header ) );
     header.nlmsg_len = (uint32_t) NLMSG_LENGTH( body_bytes );
@@ -397,6 +432,7 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
     header.nlmsg_seq = ROCKETNET_GATEWAY_NETLINK_SEQUENCE;
     memcpy( request, &header, sizeof( header ) );
+
     if ( request_type == RTM_GETROUTE )
     {
         struct rtmsg message;
@@ -426,6 +462,7 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     alignas( 8 ) uint8_t buffer[ROCKETNET_GATEWAY_NETLINK_BUFFER_BYTES];
 
     // the read bound running out is SYSTEM with E2BIG
+
     int result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     *error = E2BIG;
 
@@ -433,9 +470,11 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     {
         struct sockaddr_nl from;
         memset( &from, 0, sizeof( from ) );
+
         struct iovec vector;
         vector.iov_base = buffer;
         vector.iov_len = sizeof( buffer );
+
         struct msghdr message;
         memset( &message, 0, sizeof( message ) );
         message.msg_name = &from;
@@ -448,10 +487,12 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
         {
             if ( errno == EINTR )
                 continue;
+
             *error = errno;
             result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
             break;
         }
+
         if ( message.msg_flags & MSG_TRUNC )
         {
             *error = EMSGSIZE;
@@ -467,11 +508,13 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
         result = parse( buffer, (size_t) received, ROCKETNET_GATEWAY_NETLINK_SEQUENCE, local.nl_pid, context, error );
         if ( result != ROCKETNET_GATEWAY_NETLINK_MORE )
             break;
+
         result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
         *error = E2BIG;
     }
 
     close( fd );
+
     return result;
 }
 
