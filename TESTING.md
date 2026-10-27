@@ -214,6 +214,19 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnclientreceivequit (5 required) | planned for the final deliverable |
 | TLA+ model check: rnserversendfair (4 required) | planned for the final deliverable |
 | TLA+ model check: sendhandoff (3 required) | planned for the final deliverable |
+| TLA+ model check: rnbufferhandoff (9 required) | planned for the final deliverable |
+| TLA+ model check: rnlazypool (3 required) | planned for the final deliverable |
+| TLA+ model check: rnwrittenring (3 required) | planned for the final deliverable |
+| TLA+ model check: rndestroywipe (6 required) | planned for the final deliverable |
+| TLA+ model check: rnserverstats (8 required) | planned for the final deliverable |
+| TLA+ model check: rnbufferhandoffbase (4 required) | planned for the final deliverable |
+| TLA+ model check: ackblockwrap (2 required) | planned for the final deliverable |
+| TLA+ model check: rnclientiocp (2 required) | planned for the final deliverable |
+| TLA+ model check: rnsentmap (3 required) | planned for the final deliverable |
+| TLA+ model check: loopbackqueue (2 required) | planned for the final deliverable |
+| TLA+ model check: rnupdateclock (2 required) | planned for the final deliverable |
+| TLA+ model check: rnmsgxpause (2 required) | planned for the final deliverable |
+| TLA+ model check: rngsohandoff (2 required) | planned for the final deliverable |
 | CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | planned for the final deliverable |
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
 | Holistic review: six independent whole-system reviewers | planned for the final deliverable |

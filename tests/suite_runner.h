@@ -179,31 +179,87 @@ inline long suite_max_case_rss_mb()
 // itself with SUITE_CASE_RSS_BOUND( name, function ): function returns the
 // bound in MiB, computed from the memory plan for the configuration the case
 // uses plus a margin the case states (suite_rss_bound_mb). A static
-// registrar adds it to a list before main runs, so the parent reads it by
+// registrar adds it to a fixed registry before main runs, so the parent reads it by
 // case name. Every other case keeps ROCKETNET_TEST_MAX_CASE_RSS_MB.
 
 struct suite_case_rss_bound_t
 {
     const char * name;
     long ( *bound_mb )();
-    suite_case_rss_bound_t * next;
 };
 
-inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
+// Fifteen bounds existed when this registry replaced the pointer chain. The
+// next power of two with another full doubling of headroom is 64. It remains
+// allocation-free during static initialization and refuses overflow loudly.
+#define SUITE_CASE_RSS_BOUND_CAPACITY 64
+
+struct suite_case_rss_bound_registry_t
 {
-    static suite_case_rss_bound_t * head = NULL;
-    return &head;
+    suite_case_rss_bound_t entries[SUITE_CASE_RSS_BOUND_CAPACITY];
+    int count;
+};
+
+inline suite_case_rss_bound_registry_t * suite_case_rss_bound_registry()
+{
+    static suite_case_rss_bound_registry_t registry = {};
+    return &registry;
+}
+
+// Adds a bound at the front, the order the pointer chain had: the most
+// recently constructed registrar is enumerated first, so when a name is
+// registered twice the later registration is the one a lookup finds, exactly
+// as the chain did. A full registry is left unchanged and the overflow
+// function is called with the omitted name and the capacity; false then.
+inline bool suite_case_rss_bound_add( suite_case_rss_bound_registry_t * registry, int capacity, const char * name,
+                                      long ( *bound_mb )(), void ( *overflow )( const char * name, int capacity ) )
+{
+    if ( registry->count >= capacity )
+    {
+        overflow( name, capacity );
+        return false;
+    }
+    if ( registry->count > 0 )
+        memmove( &registry->entries[1], &registry->entries[0],
+                 (size_t) registry->count * sizeof( registry->entries[0] ) );
+    registry->entries[0].name = name;
+    registry->entries[0].bound_mb = bound_mb;
+    registry->count++;
+    return true;
+}
+
+// The first entry under a name (the latest registered), or NULL.
+inline suite_case_rss_bound_t * suite_case_rss_bound_find( suite_case_rss_bound_registry_t * registry, const char * name )
+{
+    for ( int i = 0; i < registry->count; i++ )
+        if ( strcmp( registry->entries[i].name, name ) == 0 )
+            return &registry->entries[i];
+    return NULL;
+}
+
+// The line printed before the abort when a registration would overflow.
+inline int suite_case_rss_bound_overflow_text( char * text, size_t bytes, const char * name, int capacity )
+{
+    return snprintf( text, bytes, "error: suite RSS bound registry capacity %d exceeded while registering %s\n",
+                     capacity, name );
+}
+
+// A static registrar's overflow: print the omitted name, then abort before
+// main runs, so a bound is never silently dropped.
+inline void suite_case_rss_bound_overflow_abort( const char * name, int capacity )
+{
+    char text[256];
+    suite_case_rss_bound_overflow_text( text, sizeof( text ), name, capacity );
+    fputs( text, stderr );
+    fflush( stderr );
+    abort();
 }
 
 struct suite_case_rss_bound_registrar_t
 {
-    suite_case_rss_bound_t entry;
     suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
     {
-        entry.name = name;
-        entry.bound_mb = bound_mb;
-        entry.next = *suite_case_rss_bound_head();
-        *suite_case_rss_bound_head() = &entry;
+        suite_case_rss_bound_add( suite_case_rss_bound_registry(), SUITE_CASE_RSS_BOUND_CAPACITY, name, bound_mb,
+                                  suite_case_rss_bound_overflow_abort );
     }
 };
 
@@ -252,15 +308,12 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
     if ( bound <= 0 )
         return bound;
     long planned = plan_mb > 0 ? plan_mb : 0;
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    suite_case_rss_bound_t * entry = suite_case_rss_bound_find( suite_case_rss_bound_registry(), name.c_str() );
+    if ( entry != NULL )
     {
-        if ( name == entry->name )
-        {
-            const long declared = entry->bound_mb();
-            if ( declared > 0 )
-                planned = declared;
-            break;
-        }
+        const long declared = entry->bound_mb();
+        if ( declared > 0 )
+            planned = declared;
     }
     if ( planned <= 0 )
         return bound;
@@ -493,8 +546,17 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --enforce-rss]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
     return 2;
+}
+
+inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )( int ) )
+{
+    const int n = count ? count() : 0;
+    for ( int i = 0; i < n; i++ )
+        printf( "%s\n", name_at( i ) );
+    fflush( stdout );
+    return 0;
 }
 
 // Calls emit( line ) for each line of output, without its line ending.
@@ -651,8 +713,10 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
             return false;
         }
     }
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    suite_case_rss_bound_registry_t * rss_registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < rss_registry->count; i++ )
     {
+        suite_case_rss_bound_t * entry = &rss_registry->entries[i];
         if ( !suite_name_is_test_snake_case( entry->name ) )
         {
             printf( "check failed: SUITE_CASE_RSS_BOUND name %s is not test_ lowercase snake_case\n", entry->name );
@@ -689,9 +753,58 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     return true;
 }
 
+// Rows a suite omitted because their runs_here predicate is false on this
+// host. A suite that filters its table by predicate (the functional suite)
+// notes each omitted row here; suite_finish then prints one SKIPPED line
+// per row and the skipped count, so an omitted row is never silent. Suites
+// that never note a row print nothing extra.
+struct suite_skipped_row
+{
+    std::string name;
+    std::string predicate;
+};
+
+inline std::vector<suite_skipped_row> & suite_skipped_rows()
+{
+    static std::vector<suite_skipped_row> rows;
+    return rows;
+}
+
+inline bool & suite_skipped_reporting()
+{
+    static bool enabled = false;
+    return enabled;
+}
+
+inline void suite_enable_skipped_reporting()
+{
+    suite_skipped_reporting() = true;
+}
+
+inline void suite_note_skipped( const char * name, const char * predicate )
+{
+    suite_enable_skipped_reporting();
+    suite_skipped_row row;
+    row.name = name;
+    row.predicate = predicate;
+    suite_skipped_rows().push_back( row );
+}
+
+inline void suite_print_skipped()
+{
+    if ( !suite_skipped_reporting() )
+        return;
+    const std::vector<suite_skipped_row> & rows = suite_skipped_rows();
+    for ( size_t i = 0; i < rows.size(); i++ )
+        printf( "SKIPPED %s: %s\n", rows[i].name.c_str(), rows[i].predicate.c_str() );
+    printf( "skipped: %d\n", (int) rows.size() );
+    fflush( stdout );
+}
+
 inline int suite_finish( const std::vector<suite_result> & results, bool passed )
 {
     suite_print_report( results );
+    suite_print_skipped();
     if ( !passed )
         return 1;
     printf( "\n*** ALL TESTS PASSED ***\n\n" );
@@ -782,6 +895,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;
@@ -1080,8 +1195,9 @@ inline std::string suite_spawn_failure_text( const char * call, DWORD error )
 // runs alone.
 inline bool suite_case_runs_alone( const std::string & name )
 {
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
-        if ( name == entry->name )
+    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < registry->count; i++ )
+        if ( name == registry->entries[i].name )
             return true;
     return false;
 }
@@ -1097,6 +1213,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;

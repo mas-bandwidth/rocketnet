@@ -32,7 +32,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: make
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024
@@ -54,7 +54,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: make
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024

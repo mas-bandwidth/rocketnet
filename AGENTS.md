@@ -50,7 +50,7 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
   server stopped before synchronous destroy joins and frees resources. An early
   destroy logs and counts the misuse, then completes the shutdown and join
   itself with bounded updates and no sleep; a worker that has not exited is
-  logged and its object kept, not freed. Long soak, load and profiling runs remain part of hardening.
+  logged and its object kept, not freed. An early destroy on a threaded transport normally keeps the object, and a second destroy after completion frees it. Long soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
@@ -458,7 +458,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 
 ## Testing an integration
 
-- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`. The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack.
+- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`. The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack. The loopback client's I/O still runs on a real thread: the built-in loopback uses the same worker I/O core as the other built-in client transports, with bounded worker-side idle polling. Only in a development build (`ROCKETNET_DEV=1`) does `ROCKETNET_CLIENT_STEP_DRIVEN=1` instead run the client's transport receive and send work inside `rocketnet_client_update` and `rocketnet_client_send_packets` on the caller's thread, with no client I/O thread; a production build does not recognize that variable. While the development link simulator is running, its frame work and backend sends are the simulator path and remain caller-owned; that exception is development only.
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
 - **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, call `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`, or set the environment variables `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` / `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` (`0 .. 100`), `ROCKETNET_DEV_CLIENT_LATENCY_MS` / `ROCKETNET_DEV_SERVER_LATENCY_MS`, `ROCKETNET_DEV_CLIENT_JITTER_MS` / `ROCKETNET_DEV_SERVER_JITTER_MS` and `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` / `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` (`0 .. 100`), to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 

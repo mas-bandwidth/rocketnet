@@ -872,7 +872,7 @@ REGISTER_UNIT_TEST( test_ack_received_stats_blocks_match_scan_edges );
 // and leaves the endpoint byte-identical when the slot already holds this or a
 // newer sequence, when the sequence fell more than one buffer behind the
 // highest sent, or when the time is not finite. Sequence 0 is an assert, not a
-// refusal. The snapshot compares only initialized record fields, not padding
+// refusal. The read compares only initialized record fields, not padding
 // or unwritten storage.
 struct ack_sent_state_t
 {

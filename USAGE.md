@@ -11,7 +11,7 @@ for workers. Their completion queries let a game keep its frame loop running;
 after completion synchronous destroy joins and frees. An early destroy logs and
 counts the misuse, then performs the shutdown and join itself with a bounded
 number of updates and no sleep; a worker that has not exited by then is logged
-and its object is kept, not freed. Soak, load and
+and its object is kept, not freed. An early destroy on a threaded transport normally keeps the object, and a second destroy after completion frees it. Soak, load and
 profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
@@ -674,7 +674,9 @@ sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
 other two receipt types ignore it, since they are neither ordered nor sequenced:
 any channel is accepted for them, never refused, and they travel with no
-channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
+channel (`rn_message_send_channel` in `sdk/rocketnet_message_server.cpp`,
+which `rn_message_object_start` calls to map the channel before reserving
+the message).
 
 A send the connection's region has no room for ends the connection: the
 server disconnects that client with
@@ -856,7 +858,11 @@ a larger buffer before the next update. Each entry carries the serial and
 a status. A zero-filled receipt reads `ROCKETNET_RECEIPT_STATUS_NONE`. The library
 writes `ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;
-the `max_message_receipts` config field sets its size.
+the `max_message_receipts` config field sets its size. The outcomes recorded
+for a connection remain readable after that connection ends, until its next
+update. A receipt-bearing send, reliable or
+`ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, that is still in flight
+when its connection ends gets no terminal outcome.
 
 ## Counters and stats
 

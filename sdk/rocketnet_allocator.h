@@ -130,11 +130,12 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[6];                // unused, inside the pinned 64
+    uint8_t reserved[2];                // unused, inside the pinned 64
+    uint32_t span_next;                 // RN_SEND_FLAG_SPAN: the next live span, RN_DESCRIPTOR_NONE at the newest; while free, the free list's next descriptor
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
     uint32_t span_ticket;               // RN_SEND_FLAG_SPAN: the span's allocation ticket (order among live spans)
-    uint32_t free_handle;               // the descriptor free stack's slot: stack entry `i` lives here in descriptor `i`
+    uint32_t span_prev;                 // RN_SEND_FLAG_SPAN: the previous live span, RN_DESCRIPTOR_NONE at the oldest
 };
 
 // a send descriptor's flags
@@ -377,7 +378,7 @@ struct rn_region_t
     uint32_t span_head;                 // the byte offset of the oldest live span's start (the reclaim floor)
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
-    uint32_t span_ticket_next;          // the next span allocation ticket; live spans order by ticket, not by a linked list
+    uint32_t span_ticket_next;          // the next span allocation ticket; the intrusive span_prev/span_next list orders live spans, tickets mirror that order
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -391,7 +392,8 @@ struct rn_region_t
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 
-    uint32_t descriptors_free_top;      // the descriptor free stack's depth: entries [0, top) hold taken-then-freed handles
+    uint32_t descriptors_free_top;      // the descriptor free list's depth: taken-then-freed handles on the list
+    uint32_t descriptors_free_head;     // the descriptor free list's head descriptor, RN_DESCRIPTOR_NONE when empty; links run through free descriptors' span_next
     uint32_t descriptors_free;          // queue less the descriptors in use
     uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (tla/RNLazyPool.tla)
 
@@ -400,6 +402,17 @@ struct rn_region_t
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
+
+#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+// Present only in the unit-test library; counts descriptors examined by
+// rn_span_unlink's edge search, never production state.
+struct rn_span_cost_t
+{
+    uint64_t edge_visits;
+};
+void rn_span_cost_reset();
+rn_span_cost_t rn_span_cost_read();
+#endif
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,
