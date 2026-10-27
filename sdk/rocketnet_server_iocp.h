@@ -33,7 +33,7 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
                          "receive budget twice send: IOCP receive queue holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the IOCP send queue" );
 
 // UDP segmentation offload (USO) on send and UDP receive offload (URO) on

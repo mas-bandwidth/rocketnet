@@ -1546,7 +1546,7 @@ void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp )
         while ( worker->ready_count > 0 )
         {
             const int candidate = worker->ready_banks[worker->ready_head];
-            const int remaining = ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS - iocp->process.num_packets;
+            const int remaining = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE - iocp->process.num_packets;
             if ( worker->buffers[candidate].num_packets > remaining )
                 break; // preserve the oldest complete bank for the next call
             worker->ready_head = ( worker->ready_head + 1 ) % ROCKETNET_IOCP_RECEIVE_BANKS;

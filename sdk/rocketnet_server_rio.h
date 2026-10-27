@@ -48,7 +48,7 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
                          "receive budget twice send: RIO receives hold at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 

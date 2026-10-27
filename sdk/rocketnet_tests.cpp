@@ -6697,7 +6697,7 @@ void rocketnet_test_transport_payload_capacity()
     // as a replay. Silent, uncounted, unrecoverable, and only on the
     // production transport. The arrays must cover a full drain.
 
-    rocketnet_check( ROCKETNET_MAX_PAYLOADS_PER_UPDATE >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS );
+    rocketnet_check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE );
 
     // and the storage behind them must cover a full-size RECEIVED payload
     // for every one of those slots. The receiver enforces the same rounded
@@ -6705,8 +6705,8 @@ void rocketnet_test_transport_payload_capacity()
     // the same loss into an overrun instead
 
     rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
-                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
+    rocketnet_check( (size_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
+                     >= (size_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 }
 
 
