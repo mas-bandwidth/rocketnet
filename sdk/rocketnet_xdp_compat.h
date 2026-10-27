@@ -11,7 +11,7 @@
 
 #ifndef ROCKETNET_XDP_LEGACY_LIBBPF
 #define ROCKETNET_XDP_LEGACY_LIBBPF 0
-#endif
+#endif // #ifndef ROCKETNET_XDP_LEGACY_LIBBPF
 
 #if ROCKETNET_XDP_LEGACY_LIBBPF
 #include <bpf/xsk.h>
@@ -20,7 +20,7 @@ typedef struct bpf_program rocketnet_xdp_program_t;
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
 typedef struct xdp_program rocketnet_xdp_program_t;
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 
 static inline int rocketnet_xdp_probe_program( const struct bpf_insn * instructions, size_t count )
 {
@@ -31,10 +31,11 @@ static inline int rocketnet_xdp_probe_program( const struct bpf_insn * instructi
     attributes.license = "GPL";
     attributes.insns = instructions;
     attributes.insns_cnt = count;
+
     return bpf_load_program_xattr( &attributes, NULL, 0 );
 #else
     return bpf_prog_load( BPF_PROG_TYPE_XDP, "rocketnet_pf", "GPL", instructions, count, NULL );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
 // The programs attached to an interface, one id per attach mode. prog_id is
@@ -57,11 +58,13 @@ static inline int rocketnet_xdp_query_attached( int interface_index, rocketnet_x
     struct bpf_xdp_query_opts info = {};
     info.sz = sizeof( info );
     const int result = bpf_xdp_query( interface_index, 0, &info );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
+
     attached->prog_id = info.prog_id;
     attached->drv_prog_id = info.drv_prog_id;
     attached->skb_prog_id = info.skb_prog_id;
     attached->hw_prog_id = info.hw_prog_id;
+
     return result;
 }
 
@@ -73,14 +76,16 @@ static inline rocketnet_xdp_program_t * rocketnet_xdp_program_open( struct bpf_o
     struct bpf_program * program = bpf_object__find_program_by_name( object, "server_xdp_filter" );
     if ( !program )
         return NULL;
+
     bpf_program__set_type( program, BPF_PROG_TYPE_XDP );
     if ( bpf_object__load( object ) != 0 )
         return NULL;
+
     return program;
 #else
     struct xdp_program * program = xdp_program__from_bpf_obj( object, "server_xdp" );
     return libxdp_get_error( program ) ? NULL : program;
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
 static inline int rocketnet_xdp_program_attach( rocketnet_xdp_program_t * program, int interface_index, bool skb )
@@ -90,7 +95,7 @@ static inline int rocketnet_xdp_program_attach( rocketnet_xdp_program_t * progra
     return bpf_set_link_xdp_fd( interface_index, bpf_program__fd( program ), flags );
 #else
     return xdp_program__attach( program, interface_index, skb ? XDP_MODE_SKB : XDP_MODE_NATIVE, 0 );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
 static inline int rocketnet_xdp_program_detach( rocketnet_xdp_program_t * program, int interface_index, bool skb )
@@ -98,14 +103,16 @@ static inline int rocketnet_xdp_program_detach( rocketnet_xdp_program_t * progra
 #if ROCKETNET_XDP_LEGACY_LIBBPF
     // Compare-and-detach: never remove a program that replaced ours after
     // attachment. The kernel checks old_fd atomically with the detach.
+
     struct bpf_xdp_set_link_opts options = {};
     options.sz = sizeof( options );
     options.old_fd = bpf_program__fd( program );
+
     const __u32 flags = ( skb ? XDP_FLAGS_SKB_MODE : XDP_FLAGS_DRV_MODE ) | XDP_FLAGS_REPLACE;
     return bpf_set_link_xdp_fd_opts( interface_index, -1, flags, &options );
 #else
     return xdp_program__detach( program, interface_index, skb ? XDP_MODE_SKB : XDP_MODE_NATIVE, 0 );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
 static inline void rocketnet_xdp_program_close( rocketnet_xdp_program_t * program )
@@ -114,7 +121,7 @@ static inline void rocketnet_xdp_program_close( rocketnet_xdp_program_t * progra
     (void) program; // owned by the bpf_object; the caller closes it once
 #else
     xdp_program__close( program );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H

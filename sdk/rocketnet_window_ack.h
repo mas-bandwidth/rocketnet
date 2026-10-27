@@ -49,7 +49,7 @@ struct rn_ack_cost_t
 };
 void rn_window_ack_cost_reset();
 rn_ack_cost_t rn_window_ack_cost_read();
-#endif
+#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
 #if ROCKETNET_DEV
 

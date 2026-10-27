@@ -55,6 +55,7 @@ static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t m
     size_t length = strlen( text );
     if ( length > 0 && text[length - 1] == '\n' )
         length--;
+
     if ( length != 17 )
         return false;
 
@@ -78,6 +79,7 @@ static inline bool rocketnet_xdp_parse_mac_address( const char * text, uint8_t m
         const int low = rocketnet_xdp_mac_hex_digit( text[3 * i + 1] );
         parsed[i] = (uint8_t) ( ( high << 4 ) | low );
     }
+
     memcpy( mac, parsed, sizeof( parsed ) );
     return true;
 }
@@ -104,10 +106,13 @@ static inline uint16_t rocketnet_xdp_frame_checksum( const uint8_t * data, size_
         data += 2;
         bytes -= 2;
     }
+
     if ( bytes )
         sum += ( (uint32_t) data[0] << 8 );
+
     while ( sum >> 16 )
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+
     return (uint16_t) ~sum;
 }
 
@@ -125,6 +130,7 @@ static inline uint16_t rocketnet_xdp_frame_ipv6_udp_checksum(
         sum += ( (uint32_t) src[i] << 8 ) | src[i + 1];
     for ( i = 0; i < 16; i += 2 )
         sum += ( (uint32_t) dst[i] << 8 ) | dst[i + 1];
+
     sum += (uint16_t) ( udp_length >> 16 );
     sum += (uint16_t) ( udp_length & 0xFFFF );
     sum += 0x0011; // three zero bytes then next header 17
@@ -139,9 +145,11 @@ static inline uint16_t rocketnet_xdp_frame_ipv6_udp_checksum(
 
     while ( sum >> 16 )
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+
     uint16_t result = (uint16_t) ~sum;
     if ( result == 0 )
         result = 0xFFFF;
+
     return result;
 }
 
@@ -201,6 +209,7 @@ static inline int rocketnet_xdp_frame_build(
         rocketnet_xdp_frame_write_be16( f + 18, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
         f[20] = ROCKETNET_UDP_PROTOCOL;
         f[21] = 64;
+
         for ( int i = 0; i < 8; ++i )
             rocketnet_xdp_frame_write_be16( f + 22 + 2 * i, source->data.ipv6[i] );
         for ( int i = 0; i < 8; ++i )
@@ -228,18 +237,22 @@ static inline int rocketnet_xdp_frame_build(
         f[31] = destination->data.ipv4[1];
         f[32] = destination->data.ipv4[2];
         f[33] = destination->data.ipv4[3];
+
         uint16_t ip_check = rocketnet_xdp_frame_checksum( f + 14, ROCKETNET_IPV4_HEADER_BYTES );
         rocketnet_xdp_frame_write_be16( f + 24, ip_check );
     }
 
     // UDP header
+
     rocketnet_xdp_frame_write_be16( f + payload_index - 8, source->port );
     rocketnet_xdp_frame_write_be16( f + payload_index - 6, destination->port );
     rocketnet_xdp_frame_write_be16( f + payload_index - 4, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
+
     if ( ipv6 )
     {
         // the checksum sums the UDP header with its checksum field zero: a
         // reused frame still holds the previous datagram's checksum there
+
         f[payload_index - 2] = 0;
         f[payload_index - 1] = 0;
         uint16_t udp_check = rocketnet_xdp_frame_ipv6_udp_checksum(
@@ -293,6 +306,7 @@ static inline bool rocketnet_xdp_frame_parse(
             return false;
         if ( f[23] != ROCKETNET_UDP_PROTOCOL )
             return false;
+
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
@@ -312,10 +326,12 @@ static inline bool rocketnet_xdp_frame_parse(
     {
         // the version nibble only: the traffic class and the 20-bit flow
         // label carry any value (a Linux sender sets a flow label by default)
+
         if ( ( f[14] & 0xF0 ) != ROCKETNET_IPV6_VERSION )
             return false;
         if ( f[20] != ROCKETNET_UDP_PROTOCOL )
             return false;
+
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
         if ( frame_bytes < (size_t) header_bytes )
             return false;
@@ -342,6 +358,7 @@ static inline bool rocketnet_xdp_frame_parse(
     payload_bytes = (int) ( frame_bytes - (size_t) header_bytes );
     if ( (int) udp_len - ROCKETNET_UDP_HEADER_BYTES > payload_bytes )
         return false;
+
     payload_bytes = (int) udp_len - ROCKETNET_UDP_HEADER_BYTES;
 
     *out_payload = f + header_bytes;
@@ -416,6 +433,7 @@ static inline bool rocketnet_xdp_frame_receive(
     else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
     {
         family = ROCKETNET_ADDRESS_IPV6;
+
         if ( frame_bytes >= (size_t) ( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES ) && rocketnet_xdp_frame_ipv6_is_extension( f[20] ) )
         {
             drops->ipv6_extension++;
@@ -428,7 +446,8 @@ static inline bool rocketnet_xdp_frame_receive(
         return false;
     }
 
-    // address_type below zero accepts either family (ServedFamilies of two).
+    // address_type below zero accepts either family (ServedFamilies of two)
+
     if ( address_type >= 0 && family != address_type )
     {
         drops->other_family++;
@@ -438,6 +457,7 @@ static inline bool rocketnet_xdp_frame_receive(
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
+
     if ( !rocketnet_xdp_frame_parse( frame, frame_bytes, &from, &payload, &payload_bytes ) || payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
     {
         drops->malformed++;
@@ -474,6 +494,7 @@ static inline int rocketnet_xdp_send_copy(
             ( *refused )++;
         return -1;
     }
+
     memcpy( frame + header_bytes, packet, packet_bytes );
     return (int) packet_bytes;
 }
@@ -498,6 +519,7 @@ static inline const uint8_t * rocketnet_xdp_receive_descriptor(
             drops->descriptor++;
         return NULL;
     }
+
     return (const uint8_t *) umem + addr;
 }
 
@@ -515,6 +537,7 @@ static inline bool rocketnet_xdp_fill_return( uint64_t addr, uint64_t region_beg
 {
     if ( !frame_addr || addr < region_begin || addr >= region_end )
         return false;
+
     *frame_addr = addr - addr % ROCKETNET_XDP_FRAME_SIZE;
     return true;
 }
@@ -556,6 +579,7 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
         value = value * 10 + ( *p - '0' );
         if ( value > 0x7FFFFFFF )
             return false;
+
         p++;
     }
     *first = value;
@@ -566,12 +590,14 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
         p++;
         if ( *p < '0' || *p > '9' )
             return false;
+
         value = 0;
         while ( *p >= '0' && *p <= '9' )
         {
             value = value * 10 + ( *p - '0' );
             if ( value > 0x7FFFFFFF )
                 return false;
+
             p++;
         }
         *last = value;
@@ -627,12 +653,14 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
         {
             int first = 0;
             int last = 0;
+
             if ( !rocketnet_xdp_cpu_list_entry( &check, &first, &last ) )
             {
                 if ( first_missing )
                     *first_missing = num_os_cpus > 0 ? num_os_cpus : 0;
                 return false;
             }
+
             if ( *check == '\0' )
                 break;
         }
@@ -648,14 +676,17 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
             int last = 0;
             if ( !rocketnet_xdp_cpu_list_entry( &scan, &first, &last ) )
                 break; // validated above
+
             if ( cpu >= first && cpu <= last )
             {
                 found = true;
                 break;
             }
+
             if ( *scan == '\0' )
                 break;
         }
+
         if ( !found )
         {
             if ( first_missing )
@@ -755,6 +786,7 @@ struct rocketnet_xdp_reply_macs_t
 static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
 {
     memset( table, 0, sizeof( *table ) );
+
     if ( gateway_mac )
     {
         memcpy( table->gateway_mac, gateway_mac, 6 );
@@ -765,28 +797,34 @@ static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_ma
 static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t * address )
 {
     // FNV-1a over the family, the port and the address bytes the family uses
+
     uint32_t hash = 2166136261u;
     const int bytes = ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? 16 : 4;
     const uint8_t * data = (const uint8_t *) &address->data;
+
     hash = ( hash ^ address->type ) * 16777619u;
     hash = ( hash ^ (uint8_t) ( address->port & 0xFF ) ) * 16777619u;
     hash = ( hash ^ (uint8_t) ( address->port >> 8 ) ) * 16777619u;
     for ( int i = 0; i < bytes; ++i )
         hash = ( hash ^ data[i] ) * 16777619u;
+
     return hash & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 );
 }
 
 static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find_state( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, uint8_t state )
 {
     const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
+
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
     {
         struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
         if ( entry->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             return NULL;
+
         if ( entry->state == state && rocketnet_address_equal( &entry->address, address ) )
             return entry;
     }
+
     return NULL;
 }
 
@@ -817,10 +855,12 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
     if ( !entry )
         entry = rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
+
     if ( !entry )
     {
         const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
+
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
             struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
@@ -829,11 +869,14 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
                 entry = candidate;
                 break;
             }
+
             if ( !oldest || candidate->learned < oldest->learned )
                 oldest = candidate;
         }
+
         if ( !entry )
             entry = oldest;
+
         entry->address = *address;
     }
 
@@ -859,6 +902,7 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
     {
         const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
+
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
             struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
@@ -867,13 +911,17 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
                 entry = candidate;
                 break;
             }
+
             if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_ANSWERED && ( !oldest || candidate->learned < oldest->learned ) )
                 oldest = candidate;
         }
+
         if ( !entry )
             entry = oldest;
+
         if ( !entry )
             return;
+
         entry->address = *address;
         entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
     }
@@ -892,11 +940,13 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
     if ( !entry )
         return;
+
     if ( rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED ) )
     {
         entry->state = ROCKETNET_XDP_REPLY_MAC_TOMBSTONE;
         return;
     }
+
     entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
 }
 
@@ -913,12 +963,14 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
     if ( entry )
         return entry->mac;
+
     if ( destination && destination->type == ROCKETNET_ADDRESS_IPV4 && table->gateway_ipv4_known )
         return table->gateway_ipv4;
     if ( destination && destination->type == ROCKETNET_ADDRESS_IPV6 && table->gateway_ipv6_known )
         return table->gateway_ipv6;
     if ( table->gateway_known )
         return table->gateway_mac;
+
     if ( answered_mac )
     {
         if ( rocketnet_xdp_reply_mac_usable( answered_mac ) )
@@ -934,9 +986,10 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
         if ( entry )
             return entry->mac;
     }
+
     if ( refused )
         ( *refused )++;
     return NULL;
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H

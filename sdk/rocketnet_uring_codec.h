@@ -35,11 +35,11 @@
 
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
-#endif
+#endif // #ifndef UDP_SEGMENT
 
 #ifndef UDP_GRO
 #define UDP_GRO 104
-#endif
+#endif // #ifndef UDP_GRO
 
 // the control bytes of one segmented send: one UDP_SEGMENT cmsg holding the
 // 16-bit stride
@@ -107,6 +107,7 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
             *gro_faults += 1;
         return 0;
     }
+
     int offset = 0;
     while ( control_bytes - offset >= (int) sizeof( struct cmsghdr ) )
     {
@@ -118,6 +119,7 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
                 *gro_faults += 1;
             return 0;
         }
+
         if ( header.cmsg_level == IPPROTO_UDP && header.cmsg_type == UDP_GRO )
         {
             if ( header.cmsg_len < CMSG_LEN( sizeof( int ) ) )
@@ -126,12 +128,15 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
                     *gro_faults += 1;
                 return 0;
             }
+
             int stride = 0;
             memcpy( &stride, control + offset + CMSG_LEN( 0 ), sizeof( stride ) );
             return stride > 0 ? stride : 0;
         }
+
         offset += (int) CMSG_ALIGN( header.cmsg_len );
     }
+
     return 0;
 }
 
@@ -152,28 +157,35 @@ static inline int rocketnet_uring_recvmsg_parse(
 {
     if ( segment_bytes )
         *segment_bytes = 0;
+
     if ( msg_namelen < 0 || msg_controllen < 0 )
         return ROCKETNET_URING_RECV_SHORT_BUFFER;
+
     struct io_uring_recvmsg_out out;
     if ( buffer_bytes < (int) sizeof( out ) + msg_namelen + msg_controllen )
         return ROCKETNET_URING_RECV_SHORT_BUFFER;
+
     memcpy( &out, buffer, sizeof( out ) );
     if ( out.namelen > (uint32_t) msg_namelen )
         return ROCKETNET_URING_RECV_NAME_TRUNCATED;
     if ( out.flags & MSG_TRUNC )
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
+
     int payload_left = buffer_bytes - (int) sizeof( out ) - msg_namelen - msg_controllen;
     if ( (int) out.payloadlen > payload_left )
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
+
     *name = buffer + sizeof( out );
     *name_bytes = (int) out.namelen;
     *payload = buffer + sizeof( out ) + msg_namelen + msg_controllen;
     *payload_bytes = (int) out.payloadlen;
+
     if ( segment_bytes && msg_controllen > 0 )
     {
         const int control_bytes = out.controllen < (uint32_t) msg_controllen ? (int) out.controllen : msg_controllen;
         *segment_bytes = rocketnet_uring_recvmsg_gro_stride( buffer + sizeof( out ) + msg_namelen, control_bytes, out.flags, gro_faults );
     }
+
     return ROCKETNET_URING_RECV_OK;
 }
 
@@ -188,24 +200,32 @@ static inline bool rocketnet_uring_sockaddr_to_address(
 {
     if ( !input || !out )
         return false;
+
     if ( input->ss_family == AF_INET6 )
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in6 ) )
             return false;
+
         const struct sockaddr_in6 * addr = (const struct sockaddr_in6 *) input;
         out->type = ROCKETNET_ADDRESS_IPV6;
+
         for ( int i = 0; i < 8; ++i )
             out->data.ipv6[i] = ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] );
+
         out->port = ntohs( addr->sin6_port );
+
         return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
+
     if ( input->ss_family == AF_INET )
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in ) )
             return false;
+
         rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
         return true;
     }
+
     return false;
 }
 
@@ -254,10 +274,12 @@ static inline int rocketnet_uring_gso_message(
         memset( control, 0, ROCKETNET_URING_GSO_CONTROL_BYTES );
         message->msg_control = control;
         message->msg_controllen = ROCKETNET_URING_GSO_CONTROL_BYTES;
+
         struct cmsghdr * cmsg = CMSG_FIRSTHDR( message );
         cmsg->cmsg_level = IPPROTO_UDP;
         cmsg->cmsg_type = UDP_SEGMENT;
         cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
+
         const uint16_t stride = (uint16_t) packet_bytes[0];
         memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
     }
@@ -265,6 +287,6 @@ static inline int rocketnet_uring_gso_message(
     return run;
 }
 
-#endif // IORING_RECV_MULTISHOT
-#endif // __linux__
-#endif // ROCKETNET_SDK_ROCKETNET_URING_CODEC_H
+#endif // #ifdef IORING_RECV_MULTISHOT
+#endif // #if defined( __linux__ )
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_URING_CODEC_H

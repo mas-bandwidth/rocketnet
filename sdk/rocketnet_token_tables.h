@@ -103,4 +103,4 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
 
 int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history );
 
-#endif // ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
