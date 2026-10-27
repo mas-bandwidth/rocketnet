@@ -16,6 +16,7 @@ uint64_t rocketnet_next_packet_lease_id();
 template <size_t Capacity> struct rocketnet_packet_leases_t
 {
     static_assert( ( Capacity & ( Capacity - 1 ) ) == 0, "lease table must be a power of two" );
+
     struct alignas( 64 ) entry_t
     {
         std::atomic<uint64_t> state{ 0 };
@@ -24,7 +25,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         // the rest of the cache line, explicit so the compiler adds no tail padding
         uint8_t padding[64 - sizeof( std::atomic<uint64_t> ) - sizeof( rocketnet_packet_context_t ) - sizeof( uint64_t )];
     };
+
     static_assert( sizeof( entry_t ) == 64 && alignof( entry_t ) == 64, "one lease entry per cache line" );
+
     entry_t entries[Capacity];
     std::atomic<uint64_t> used{ 0 };
     uint64_t epoch = 1;
@@ -35,6 +38,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         value ^= value >> 33;
         value *= UINT64_C( 0xff51afd7ed558ccd );
         value ^= value >> 33;
+
         return (size_t) value & ( Capacity - 1 );
     }
 
@@ -42,9 +46,11 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     {
         if ( !epoch || used.fetch_add( 1, std::memory_order_relaxed ) >= Capacity / 2 )
             return false;
+
         const uint64_t ticket = rocketnet_next_packet_lease_id();
         if ( !ticket )
             return false;
+
         const uint64_t writing = ( epoch << 2 ) | 1;
         size_t slot = hash( context.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
@@ -53,16 +59,20 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) == epoch )
                 continue;
+
             if ( !entry.state.compare_exchange_strong( state, writing, std::memory_order_acq_rel ) )
             {
                 continue;
             }
+
             entry.backend_id = context.packet_id;
             context.packet_id = ticket;
             entry.context = context;
             entry.state.store( ( epoch << 2 ) | 2, std::memory_order_release );
+
             return true;
         }
+
         return false;
     }
 
@@ -70,6 +80,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     {
         if ( !epoch || !supplied.frame )
             return false;
+
         size_t slot = hash( supplied.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
         {
@@ -77,22 +88,29 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) != epoch )
                 return false;
+
             while ( ( state & 3 ) == 1 )
                 state = entry.state.load( std::memory_order_acquire );
+
             const auto & owned = entry.context;
             if ( owned.frame != supplied.frame || owned.packet_id != supplied.packet_id )
                 continue;
+
             if ( owned.sequence != supplied.sequence ||
                  owned.client_index != supplied.client_index || owned.payload_index != supplied.payload_index ||
                  owned.payload_capacity != supplied.payload_capacity )
                 return false;
+
             uint64_t active = ( epoch << 2 ) | 2;
             if ( consume ? !entry.state.compare_exchange_strong( active, ( epoch << 2 ) | 3, std::memory_order_acq_rel ) : state != active )
                 return false;
+
             trusted = owned;
             backend_id = entry.backend_id;
+
             return true;
         }
+
         return false;
     }
 
@@ -109,6 +127,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     {
         if ( !epoch || !supplied.frame || !supplied.packet_id )
             return false;
+
         size_t slot = hash( supplied.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
         {
@@ -117,14 +136,17 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             const uint64_t entry_epoch = state >> 2;
             if ( entry_epoch == 0 )
                 return false;
+
             if ( entry_epoch == epoch || ( state & 3 ) != 2 )
                 continue;
+
             const auto & owned = entry.context;
             if ( owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
                  owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
                  owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity )
                 return true;
         }
+
         return false;
     }
 
@@ -135,4 +157,4 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     }
 };
 
-#endif // ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H

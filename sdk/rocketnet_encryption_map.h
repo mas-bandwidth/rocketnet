@@ -58,6 +58,7 @@ struct rocketnet_encryption_mapping_control_t
     ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE )
 #undef ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE
 };
+
 static_assert( sizeof( struct rocketnet_encryption_mapping_control_t ) == 32, "timeout control stays compact" );
 
 /*
@@ -183,4 +184,4 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
                                                   const struct rn_sequence_buffer_handle_t * handle );
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
-#endif // ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H

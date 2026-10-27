@@ -62,10 +62,10 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
                                            int drop_every_nth,
                                            int reverse_window );
 
-// Whether either pattern is on.
+// whether either pattern is on
 bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network_simulator_t * simulator );
 
-// Emits the held window reversed, whole; a no-op with nothing held.
+// emits the held window reversed, whole; a no-op with nothing held
 void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * simulator );
 
 // Sends a packet into the wire. Loss is rolled here; delivery time is
@@ -176,7 +176,6 @@ void rocketnet_network_simulator_test_index_stats( const struct rocketnet_networ
 
 void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_network_simulator_t * simulator );
 
-
 #else // #if ROCKETNET_TEST_SEAMS
 
 // A production library has no network simulator: the transports' link
@@ -195,4 +194,4 @@ static inline int rocketnet_network_simulator_receive_any( struct rocketnet_netw
 
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H

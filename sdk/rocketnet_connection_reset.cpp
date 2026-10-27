@@ -43,8 +43,9 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     if ( retire_keys )
         retire_keys( keys_context );
 
-    // Key and token erasure must not be optimized away. The following memset
+    // key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
+
     rocketnet_client_protocol_wipe_secrets( client );
     rocketnet_client_protocol_zero_state( client );
 
@@ -62,14 +63,16 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     client->keys_context = keys_context;
 
     rocketnet_ack_endpoint_reset( &client->ack );
+
     if ( reassembly )
         rocketnet_reassembly_set_reset_connection( reassembly, 0 );
 }
 
-// tla/RNXdpReplay.tla Release: ends the session for this slot.
-// tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
 void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index )
 {
+    // tla/RNXdpReplay.tla Release: ends the session for this slot.
+    // tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
+
     rocketnet_assert( server );
 
     if ( !server->client_slots || client_index < 0 ||
@@ -84,19 +87,19 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         mapping_generation = rocketnet_client_slots_owner_generation( server->client_slots, client_index );
     }
 
-    /*
-        Remove first: generation-aware removal wipes the session keys and
-        nonce only when the slot still owns this exact mapping instance. A
-        delayed reset that names a reused index leaves the replacement mapping
-        untouched. The stale slot is still released afterwards.
-    */
+    // remove first: generation-aware removal wipes the session keys and
+    // nonce only when the slot still owns this exact mapping instance. A
+    // delayed reset that names a reused index leaves the replacement mapping
+    // untouched. The stale slot is still released afterwards.
+
     if ( mapping_index >= 0 && server->encryption_map )
         (void) rocketnet_encryption_map_remove_owned( server->encryption_map, mapping_index, mapping_generation );
 
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );
 
-    // tla/RNSlots.tla Disconnect: the slot's connection id returns to none.
+    // tla/RNSlots.tla Disconnect: the slot's connection id returns to none
+
     if ( server->connection_ids )
         server->connection_ids[client_index] = 0;
 
@@ -116,13 +119,12 @@ static void rocketnet_message_connection_reset( struct rn_message_object_t * obj
     struct rn_message_connection_t * connection = &object->connections[client_index];
     const int disconnect_reason = connection->disconnect_reason;
 
-    /*
-        rn_endpoint_reset releases queued channel state and resets its region.
-        views is an allocation inside that region and remains stable; its
-        contents and the receive cursor become fresh with the region. A start
-        pending on this connection is cancelled by the update before it calls this reset
-        (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
-    */
+    // rn_endpoint_reset releases queued channel state and resets its region.
+    // views is an allocation inside that region and remains stable; its
+    // contents and the receive cursor become fresh with the region. A start
+    // pending on this connection is cancelled by the update before it calls this reset
+    // (sdk/rocketnet_message_server.cpp, rn_message_connection_cancel_at_reset).
+
     rn_endpoint_reset( connection, object->time );
     memset( &connection->unreliable_build, 0, sizeof( connection->unreliable_build ) );
     memset( connection->hot->views, 0, connection->region->delivery_entries );
@@ -161,6 +163,7 @@ bool rocketnet_reset_inventory_matches( const char * structure,
                                         char * failure, size_t failure_bytes )
 {
     rocketnet_assert( structure && members && decisions && failure && failure_bytes > 0 );
+
     failure[0] = '\0';
 
     for ( size_t i = 0; i < num_members; i++ )
@@ -170,13 +173,16 @@ bool rocketnet_reset_inventory_matches( const char * structure,
         {
             if ( strcmp( members[i].name, decisions[j].name ) != 0 )
                 continue;
+
             matches++;
+
             if ( decisions[j].offset != members[i].offset || decisions[j].bytes != members[i].bytes )
             {
                 snprintf( failure, failure_bytes, "%s.%s: the inventory entry does not cover the member", structure, members[i].name );
                 return false;
             }
         }
+
         if ( matches != 1 )
         {
             snprintf( failure, failure_bytes, "%s.%s: %s", structure, members[i].name,
@@ -207,14 +213,17 @@ bool rocketnet_reset_inventory_matches( const char * structure,
             snprintf( failure, failure_bytes, "%s.%s: bytes before it are covered by no member", structure, members[i].name );
             return false;
         }
+
         end = members[i].offset + members[i].bytes;
     }
+
     if ( rocketnet_reset_align_up( end, struct_alignment ) != struct_bytes )
     {
         snprintf( failure, failure_bytes, "%s.%s: bytes after it are covered by no member", structure,
                   num_members ? members[num_members - 1].name : "(none)" );
         return false;
     }
+
     return true;
 }
 

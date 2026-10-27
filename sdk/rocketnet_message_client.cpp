@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The client message object (docs/CHANNELS.md 11.3): the object core of
+// the client message object (docs/CHANNELS.md 11.3): the object core of
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
 // bound again; when its region is exhausted the client disconnects itself with
@@ -70,10 +70,11 @@ static uint64_t rn_client_link_connection( void * transport, int client_index )
     return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? 1 : 0;
 }
 
-// the client transport holds one connection, which the object binds at
-// create with the id 1 (rn_message_object_create): every entry is that one's
 static uint64_t rn_client_link_entry_connection( void * transport, int k )
 {
+    // the client transport holds one connection, which the object binds at
+    // create with the id 1 (rn_message_object_create): every entry is that one's
+
     (void) transport;
     (void) k;
     return 1;
@@ -90,14 +91,15 @@ static int rn_client_link_state( void * transport )
     return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport );
 }
 
-// A client transport runs one connection attempt (its create connects,
-// rocketnet_client_transport.cpp:765), so its CLIENT_DISCONNECT_ACCEPTED
-// counter is nonzero exactly when that attempt ended on the server's
-// disconnect: rocketnet_client_process_disconnect counts it
-// (rocketnet_client_protocol.cpp:1202) before it sets the protocol
-// DISCONNECTED.
 static int rn_client_link_end_reason( void * transport )
 {
+    // a client transport runs one connection attempt (its create connects,
+    // rocketnet_client_transport.cpp:765), so its CLIENT_DISCONNECT_ACCEPTED
+    // counter is nonzero exactly when that attempt ended on the server's
+    // disconnect: rocketnet_client_process_disconnect counts it
+    // (rocketnet_client_protocol.cpp:1202) before it sets the protocol
+    // DISCONNECTED.
+
     const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( (rocketnet_client_transport_t *) transport );
     if ( counters && counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] )
         return ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
@@ -131,8 +133,10 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
     link->accept_payload = rn_client_link_accept_payload;
+
     if ( transport )
         rocketnet_client_transport_defer_payload_acks( transport );
+
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
     link->acked_connection = rn_client_link_entry_connection;
@@ -211,6 +215,7 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
     // config; a positive value overrides it for this create. The create
     // argument is uint32_t, so refuse above the maximum before narrowing:
     // a value in [2^31, 2^32) must not wrap negative and become uncapped.
+
     if ( send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
     {
         rocketnet_error( "message client create refused: send budget above maximum" );
@@ -227,10 +232,12 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
             rocketnet_message_default_config( &defaults );
             resolved = &defaults;
         }
+
         kbps = resolved->client_send_kbps;
     }
 
     // refuse before the transport opens a socket
+
     if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message client create refused: message config or send budget" );
@@ -254,8 +261,10 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
+
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0, reserve_unlimited != 0 );
     *status = client ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
+
     return client;
 }
 
@@ -310,10 +319,11 @@ uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * cl
     return rn_message_object_start( &client->object, 0, channel, reliability, bytes );
 }
 
-// finishes the open message reservation on connection 0; asserts in a debug
-// build and returns 0 in a release build when no reservation is open
 uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written )
 {
+    // finishes the open message reservation on connection 0; asserts in a debug
+    // build and returns 0 in a release build when no reservation is open
+
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
     return rn_message_object_finish( &client->object, 0, bytes_written );

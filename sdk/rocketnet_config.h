@@ -117,6 +117,7 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
 
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+
 // the current-size creates with the section-2.1 code written to *status (NULL skips it)
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
@@ -124,6 +125,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 #endif // #if ROCKETNET_DEV
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+
 // the creates behind public connect and start: config is the one the public
 // create resolved (DEFAULT < STRUCT < ENV, rn_client_split and
 // rn_server_split in sdk/rocketnet_api.cpp) and memory_budget_bytes the
@@ -168,7 +170,7 @@ bool rocketnet_public_link_simulator_development( void );
 
 #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 void rocketnet_public_link_simulator_test_development( int enabled );
-#endif
+#endif // #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 
 // The development values: the published test packet filter
 // (ROCKETNET_TEST_FILTER_VALUE) and a connect token sealed to the published
@@ -225,7 +227,7 @@ struct rocketnet_transport_ladder_t
     int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
-// the ladder must hold every transport the registry can put in an auto order.
+// the ladder must hold every transport the registry can put in an auto order
 static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "ROCKETNET_MAX_TRANSPORT_CANDIDATES is smaller than the transport registry" );
 
 // parse a candidate list against an explicit availability order --
@@ -256,4 +258,4 @@ const int * rocketnet_server_transport_io_availability( int * num_available );
 
 const int * rocketnet_client_transport_io_availability( int * num_available );
 
-#endif // ROCKETNET_SDK_ROCKETNET_CONFIG_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H

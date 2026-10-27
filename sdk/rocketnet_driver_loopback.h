@@ -66,6 +66,6 @@ void rocketnet_loopback_test_send_contention( bool busy );
 // Read-only queue-index seam; test library only. Writes the endpoint's
 // free-running head and tail and its fixed capacity.
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
-#endif
+#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
 
-#endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

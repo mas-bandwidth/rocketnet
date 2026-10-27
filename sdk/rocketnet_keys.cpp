@@ -30,9 +30,12 @@ static void rocketnet_derive_key( uint8_t * out,
 {
     uint8_t buffer[128];
     rocketnet_assert( input_bytes + 8 <= (int) sizeof( buffer ) );
+
     memcpy( buffer, input, (size_t) input_bytes );
     memcpy( buffer + input_bytes, context, 8 );
+
     crypto_generichash( out, 32, buffer, (unsigned long long) ( input_bytes + 8 ), token_key, 32 );
+
     sodium_memzero( buffer, sizeof( buffer ) );
 }
 
@@ -95,4 +98,4 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     return 1;
 }
 
-#endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+#endif // #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY

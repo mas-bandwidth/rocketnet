@@ -20,4 +20,4 @@ void rocketnet_fnv_write( rocketnet_fnv_t * fnv, const uint8_t * data, size_t si
 
 uint64_t rocketnet_fnv_finalize( rocketnet_fnv_t * fnv );
 
-#endif // ROCKETNET_SDK_ROCKETNET_HASH_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_HASH_H

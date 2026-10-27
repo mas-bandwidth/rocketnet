@@ -12,7 +12,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
-// The frame sync primitive, built to the issue #56 measurements: an absolute
+// the frame sync primitive, built to the issue #56 measurements: an absolute
 // deadline per frame, the platform sleep that honors it, priority taken on
 // the waiting thread, and a capped adaptive spin guard covering the sleeper's
 // oversleep. On Windows, creation requires a high-resolution waitable timer
@@ -65,20 +65,20 @@ struct rocketnet_frame_sync_t
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 };
 
-// The pure parts, tested directly.
+// the pure parts, tested directly
 
-// The guard actually applied ahead of the deadline: the oversleep estimate
+// the guard actually applied ahead of the deadline: the oversleep estimate
 // plus the margin, never past the cap.
 
 uint64_t rocketnet_frame_sync_guard_ns( double guard_ewma_ns, uint64_t guard_cap_ns );
 
-// Folds one observed oversleep into the estimate. The cap binds the estimate
+// folds one observed oversleep into the estimate. The cap binds the estimate
 // itself, not just the applied guard, so one pathological wake cannot wind
 // it up into a long recovery.
 
 void rocketnet_frame_sync_adapt_guard( double * guard_ewma_ns, uint64_t oversleep_ns, uint64_t guard_cap_ns );
 
-// Advances the deadline past a wake at woke_ns, detecting dropped frames: a
+// advances the deadline past a wake at woke_ns, detecting dropped frames: a
 // wake more than one whole period late drops error/period frames and the
 // deadline resynchronizes to the next boundary ahead of the wake rather than
 // chasing the backlog. Returns the drops; writes the wake's lateness.
@@ -87,7 +87,7 @@ void rocketnet_frame_sync_adapt_guard( double * guard_ewma_ns, uint64_t overslee
 
 uint64_t rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, uint64_t woke_ns, uint64_t * error_ns );
 
-// The time constraint policy values in mach time units for a period: period,
+// the time constraint policy values in mach time units for a period: period,
 // period / 4 of computation and period / 2 of constraint. Range rule: returns
 // 0 and writes nothing when period_ns * denom would overflow uint64_t or the
 // period in mach units exceeds UINT32_MAX (the policy fields are uint32_t);
@@ -95,7 +95,7 @@ uint64_t rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_n
 
 int rocketnet_frame_sync_time_constraint( uint64_t period_ns, uint32_t numer, uint32_t denom, uint32_t * period, uint32_t * computation, uint32_t * constraint );
 
-// The monotonic clock the waits run against, nanoseconds.
+// the monotonic clock the waits run against, nanoseconds.
 
 uint64_t rocketnet_frame_sync_now_ns();
 
@@ -103,4 +103,4 @@ uint64_t rocketnet_frame_sync_now_ns();
 int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns );
 #endif // #if ROCKETNET_DEV
 
-#endif // ROCKETNET_SDK_ROCKETNET_FRAME_SYNC_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_FRAME_SYNC_H
