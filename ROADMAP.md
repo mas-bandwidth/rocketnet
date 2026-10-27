@@ -340,7 +340,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 
 ## Platforms
 
-Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux, macOS and Windows; the nightly jobs run on Linux, and their macOS and Windows jobs are not yet enabled.
+Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux and macOS; on Windows every push runs the unit suite, the lifecycle binary, the native driver contract and the transport family matrix, and the whole functional suite runs in the nightly tier (about 223 s, over the per-commit bound). The nightly jobs run on Linux, macOS and Windows.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
