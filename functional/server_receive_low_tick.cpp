@@ -104,6 +104,7 @@ static void server_receive_low_tick_clear_log()
     server_receive_low_tick_log_lock.clear( std::memory_order_release );
 }
 
+#if !defined(_WIN32) || ROCKETNET_DEV
 // the limit the warning names on this platform (sdk/rocketnet_platform.cpp,
 // rocketnet_server_receive_buffer_granted)
 static const char * server_receive_low_tick_limit_name()
@@ -116,6 +117,7 @@ static const char * server_receive_low_tick_limit_name()
     return "kern.ipc.maxsockbuf";
 #endif
 }
+#endif
 
 // The server socket's request is the formula's value at the server's
 // max_clients, the grant is read back, and a short grant names the limit.
